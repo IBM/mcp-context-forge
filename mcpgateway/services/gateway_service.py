@@ -1972,6 +1972,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_cert=getattr(gateway, "client_cert", None),
             client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
             gateway_mode=preparation.gateway_mode,
+            refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
             status="pending",
             status_message="Gateway registration accepted and pending initialization",
             registration_attempts=0,
@@ -2399,6 +2400,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
                 # Gateway mode configuration
                 gateway_mode=preparation.gateway_mode,
+                refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
             )
 
             # Add to DB and commit immediately so tools/resources/prompts are visible
@@ -3299,6 +3301,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+                if "refresh_interval_seconds" in getattr(gateway_update, "model_fields_set", ()):
+                    gateway.refresh_interval_seconds = gateway_update.refresh_interval_seconds
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
                     # Validate visibility transitions
