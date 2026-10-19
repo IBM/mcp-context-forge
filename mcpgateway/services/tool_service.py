@@ -51,6 +51,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
@@ -4135,6 +4136,7 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         user_context: Optional[UserContext] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -4151,6 +4153,7 @@ class ToolService(BaseService):
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
             user_context: Optional UserContext for identity propagation.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -4301,9 +4304,9 @@ class ToolService(BaseService):
                         # Call tool with meta if provided
                         if request_meta_data:
                             logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data, progress_callback=progress_callback)
                         else:
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, progress_callback=progress_callback)
                     with create_span(
                         "mcp.client.response",
                         {

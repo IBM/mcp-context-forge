@@ -3452,6 +3452,101 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_forwards_progress_callback_to_session(self, tool_service, mock_tool, test_db):
+        """invoke_tool hands the caller's progress callback to the upstream session."""
+        # Standard
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",  # attribute your error complained about
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        # Configure tool as REST
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None  # No auth
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None  # Or whatever makes sense as a default
+
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            if value is None:
+                m.all.return_value = []
+            else:
+                m.all.return_value = [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        callback = AsyncMock()
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            # ------------------------------------------------------------------
+            # 4.  Act
+            # ------------------------------------------------------------------
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None, progress_callback=callback)
+
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=callback, allow_input_required=True, input_responses=None, request_state=None)
+
+        # Our ToolResult bubbled back out
+        assert result.content[0].text == "MCP response"
+
+        # Set a concrete ID
+        mock_tool.id = "1"
+
+        # Final mock object with tool_id
+        mock_metric = Mock()
+        mock_metric.tool_id = mock_tool.id
+        mock_metric.is_success = True
+        mock_metric.error_message = None
+        mock_metric.response_time = 1
+
+        # Setup the chain for test_db.query().filter_by().first()
+        query_mock = Mock()
+        test_db.query = Mock(return_value=query_mock)
+        query_mock.filter_by.return_value.first.return_value = mock_metric
+
+        # ----------------------------------------
+        # Now, simulate the actual method call
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
         """Registry-not-initialised path must fall through to per-call streamablehttp client.
 
@@ -10065,7 +10160,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"}, progress_callback=None)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10107,6 +10202,41 @@ class TestInvokeToolDirect:
         assert result.meta == expected_meta
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("meta_data", [None, {"request_id": "abc-123"}])
+    async def test_invoke_tool_direct_passes_progress_callback(self, tool_service, mock_direct_gateway, meta_data):
+        """The progress callback reaches client.call_tool with and without _meta."""
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
+        callback = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+                progress_callback=callback,
+            )
+
+        assert session_mock.call_tool.await_args.kwargs["progress_callback"] is callback
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
         """Meta data should be forwarded to session.call_tool when provided."""
         expected_result = MagicMock()
@@ -10140,7 +10270,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
@@ -10195,6 +10325,7 @@ class TestInvokeToolDirect:
                 "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
                 "request_id": "abc-123",
             },
+            progress_callback=None,
         )
         assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
@@ -10412,7 +10543,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # The remote call should use the original_name, not the slugified prefixed name
-        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
@@ -10447,7 +10578,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
-        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
+        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):

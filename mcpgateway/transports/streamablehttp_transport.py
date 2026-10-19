@@ -2118,6 +2118,7 @@ async def call_tool(
                         user_email=user_email,
                         token_teams=token_teams,
                         user_context=user_identity_var.get(),
+                        progress_callback=_downstream_progress_relay(),
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
@@ -3508,6 +3509,7 @@ async def complete(
                 params,
                 user_email=user_email,
                 token_teams=token_teams,
+                progress_callback=_downstream_progress_relay(),
             )
 
             # ✅ Normalize the result for MCP
