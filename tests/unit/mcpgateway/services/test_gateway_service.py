@@ -646,11 +646,13 @@ class TestGatewayService:
             name="test_gateway",
             url=url,
             description="A test gateway",
+            refresh_interval_seconds=120,
         )
 
         result = await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
+        assert test_db.add.call_args.args[0].refresh_interval_seconds == 120
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
@@ -726,7 +728,7 @@ class TestGatewayService:
             lambda x: mock_model,
         )
 
-        gateway_create = GatewayCreate(name="test_gateway", url=url_normalize("example.com"), description="A test gateway")
+        gateway_create = GatewayCreate(name="test_gateway", url=url_normalize("example.com"), description="A test gateway", refresh_interval_seconds=120)
 
         result = await gateway_service.register_gateway(test_db, gateway_create, owner_email="owner@example.com")
 
@@ -739,6 +741,7 @@ class TestGatewayService:
         assert captured_gateway["gateway"].status == "pending"
         assert captured_gateway["gateway"].status_message == "Gateway registration accepted and pending initialization"
         assert captured_gateway["gateway"].reachable is False
+        assert captured_gateway["gateway"].refresh_interval_seconds == 120
         assert result.status == "pending"
 
     @pytest.mark.asyncio
@@ -2022,6 +2025,29 @@ class TestGatewayService:
         gateway_service._notify_gateway_updated.assert_called_once()
         assert mock_gateway.name == "updated_gateway"
         assert result.name == "updated_gateway"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("changes", "expected"),
+        [({"description": "Updated description"}, 300), ({"refresh_interval_seconds": 120}, 120), ({"refresh_interval_seconds": None}, None)],
+        ids=["omitted-keeps", "set", "explicit-null-clears"],
+    )
+    async def test_update_gateway_refresh_interval_seconds(self, gateway_service, mock_gateway, test_db, changes, expected):
+        """refresh_interval_seconds changes only when the update payload carries it."""
+        mock_gateway.refresh_interval_seconds = 300
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(**changes))
+
+        test_db.commit.assert_called_once()
+        assert mock_gateway.refresh_interval_seconds == expected
 
     @pytest.mark.asyncio
     async def test_update_gateway_not_found(self, gateway_service, test_db):
