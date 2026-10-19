@@ -12,28 +12,23 @@
 
 ### Overview
 
-Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **federated completions**, **MCP catalog pagination**, **MCP Origin/Host transport security enforcement**, **federated gateway tool-name collision detection**, and **configuration import ownership enforcement**. It also removes deprecated anyio monkey-patch settings and the in-tree `mcp-servers/` directory.
+Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **federated completions**, **MCP catalog pagination**, **MCP Origin/Host transport security enforcement**, **federated gateway tool-name collision detection**, and **configuration import ownership enforcement**. It also removes deprecated anyio monkey-patch settings and the in-tree `mcp-servers/` directory. This release consolidates **61 PRs** across:
 
-### Breaking Changes
-
-- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
-
-- **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
-
-- **Experimental anyio cancellation monkey-patch removed** ([#5427](https://github.com/IBM/mcp-context-forge/pull/5427)) - Removed the opt-in `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` and `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` workaround from `mcpgateway/transports/sse_transport.py`, together with the `SSE_TASK_GROUP_CLEANUP_TIMEOUT` setting. The gateway now requires `anyio>=4.15.0`, which fixes the `_deliver_cancellation` CPU spin loop upstream (anyio issues [#695](https://github.com/agronholm/anyio/issues/695) and [#1111](https://github.com/agronholm/anyio/issues/1111)). Unknown environment keys are ignored, so existing deployments start without changes. Remove the retired variables from your configuration to keep it accurate. The matching Helm values and docker-compose entries are also removed. Dangling `MCP_SESSION_POOL_CLEANUP_TIMEOUT` references, which no code path ever read, are removed from docker-compose, the Helm chart, and `.env.example`. SSE connection protection and cleanup timeouts remain the containment strategy; see [`docs/docs/operations/cpu-spin-loop-mitigation.md`](docs/docs/operations/cpu-spin-loop-mitigation.md).
+- **Protocol & Transport** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto`, inbound MCP era negotiation is complete, `completion/complete` is forwarded to the owning upstream, downstream MCP catalog lists are paginated, and federated resource names carry the gateway name as a prefix.
+- **Security & Auth** - Added `private_key_jwt` token endpoint client authentication, MCP Origin/Host enforcement, configuration import ownership enforcement, call-time URL scheme allowlisting, DCR outbound request pinning, and external IdP token fallback on all auth paths.
+- **API & Platform** - Added named A2A response models, the invitee invitations API, passwordless SSO user provisioning, per-user MCP server rate limiting, and success and error counts in the metrics timeseries.
+- **Operations** - Added `make container-bump-image-versions`, moved CSS linting from Stylelint to Biome, migrated Tailwind CSS to v4, removed the anyio monkey-patch settings, the Rust MCP config surface, and the in-tree `mcp-servers/` directory.
+- **Testing** - Eliminated pytest warnings and redundant tests, restored OAuth gateway membership coverage, verified resource template federation, and fixed the live-gateway E2E suite.
 
 ### Added
 
-- **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
+#### **Protocol & Transport**
 
-- **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
-
-- **CSS linting moves from Stylelint to Biome** - `make lint-web` and the `lint-web` CI job now lint `mcpgateway/static/*.css` with Biome, configured in `biome.json`. The CI matrix entry is renamed from `stylelint` to `biome-css`. Stylelint and its configs leave the dev dependencies, which removes the `braces` advisory (GHSA-vfj7-8cjw-p6xm) from `npm audit`.
-
-- **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
-
-- **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.
-
+- **Modern MCP protocol negotiation is on by default** ([#7061](https://github.com/IBM/mcp-context-forge/pull/7061)) - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto` instead of `legacy`. Outbound upstream connections probe `server/discover` and negotiate the 2026-07-28 revision, with transparent fallback to the legacy `initialize` handshake. Inbound clients may send `mcp-protocol-version: 2026-07-28` instead of receiving a 400. Set either variable to `legacy` to restore the previous behaviour.
+- **Inbound MCP era negotiation** ([#7156](https://github.com/IBM/mcp-context-forge/pull/7156)) - Completed inbound MCP era negotiation.
+- **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629), [#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
+- **Streamable HTTP `serverInfo` stamping** ([#6566](https://github.com/IBM/mcp-context-forge/issues/6566), [#7145](https://github.com/IBM/mcp-context-forge/pull/7145)) - The streamable HTTP server is configured with the app name and version for `serverInfo`.
+- **Federated resource names prefixed with gateway names** ([#6780](https://github.com/IBM/mcp-context-forge/pull/6780)) - Federated resource names carry the owning gateway's name as a prefix.
 - **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, rename, and visibility updates now reject detected tool-name collisions in public, team, and private visibility scopes. Gateway automation must handle the endpoint's conflict response when a previously accepted colliding registration is rejected. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
 
   ```sql
@@ -42,22 +37,110 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
   SELECT owner_email, name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'private' GROUP BY owner_email, name HAVING COUNT(*) > 1 ORDER BY owner_email, name;
   ```
 
-- **Modern MCP protocol negotiation is on by default** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto` instead of `legacy`. Outbound upstream connections probe `server/discover` and negotiate the 2026-07-28 revision, with transparent fallback to the legacy `initialize` handshake. Inbound clients may send `mcp-protocol-version: 2026-07-28` instead of receiving a 400. Set either variable to `legacy` to restore the previous behaviour.
-- **`mcp-servers/` directory removed** - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
+#### **API & Platform**
+
+- **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
+- **Invitee invitations API** ([#6960](https://github.com/IBM/mcp-context-forge/pull/6960)) - Added an API for invitee invitations.
+- **Per-user MCP server rate limiting** ([#7191](https://github.com/IBM/mcp-context-forge/pull/7191)) - Adopted per-user rate limiting for MCP servers.
+- **Metrics timeseries counts** ([#7138](https://github.com/IBM/mcp-context-forge/pull/7138)) - The observability metrics timeseries returns success and error counts.
+
+#### **Security & Auth**
+
+- **`private_key_jwt` token endpoint client authentication** ([#6991](https://github.com/IBM/mcp-context-forge/pull/6991)) - OAuth token requests can authenticate with RFC 7523 `private_key_jwt`.
+- **Passwordless SSO user provisioning** ([#6692](https://github.com/IBM/mcp-context-forge/pull/6692), [#7180](https://github.com/IBM/mcp-context-forge/pull/7180), [#7219](https://github.com/IBM/mcp-context-forge/pull/7219)) - Added a passwordless SSO user provisioning service and its API. #7180 gated the API behind a feature flag. #7219 removes that flag.
+- **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.
+
+#### **Operations & Tooling**
+
+- **Container image version bumper** ([#5811](https://github.com/IBM/mcp-context-forge/issues/5811)) - Added `make container-bump-image-versions` to bump container image version pins.
+- **CSS linting moves from Stylelint to Biome** ([#7162](https://github.com/IBM/mcp-context-forge/pull/7162)) - `make lint-web` and the `lint-web` CI job now lint `mcpgateway/static/*.css` with Biome, configured in `biome.json`. The CI matrix entry is renamed from `stylelint` to `biome-css`. Stylelint and its configs leave the dev dependencies, which removes the `braces` advisory (GHSA-vfj7-8cjw-p6xm) from `npm audit`.
+- **`make testing-up` web UI URL** ([#6415](https://github.com/IBM/mcp-context-forge/pull/6415)) - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
+- **Pinned-resource load test** ([#6984](https://github.com/IBM/mcp-context-forge/pull/6984)) - Added a pinned-resource performance benchmark stack and run history to the load test suite.
+- **`mcp-servers/` directory removed** ([#7078](https://github.com/IBM/mcp-context-forge/pull/7078)) - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
+
+### Breaking Changes
+
+- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990), [#7171](https://github.com/IBM/mcp-context-forge/pull/7171)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
+- **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
+- **Experimental anyio cancellation monkey-patch removed** ([#5427](https://github.com/IBM/mcp-context-forge/pull/5427)) - Removed the opt-in `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` and `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` workaround from `mcpgateway/transports/sse_transport.py`, together with the `SSE_TASK_GROUP_CLEANUP_TIMEOUT` setting. The gateway now requires `anyio>=4.15.0`, which fixes the `_deliver_cancellation` CPU spin loop upstream (anyio issues [#695](https://github.com/agronholm/anyio/issues/695) and [#1111](https://github.com/agronholm/anyio/issues/1111)). Unknown environment keys are ignored, so existing deployments start without changes. Remove the retired variables from your configuration to keep it accurate. The matching Helm values and docker-compose entries are also removed. Dangling `MCP_SESSION_POOL_CLEANUP_TIMEOUT` references, which no code path ever read, are removed from docker-compose, the Helm chart, and `.env.example`. SSE connection protection and cleanup timeouts remain the containment strategy; see [`docs/docs/operations/cpu-spin-loop-mitigation.md`](docs/docs/operations/cpu-spin-loop-mitigation.md).
+- **Rust MCP config surface removed** ([#7255](https://github.com/IBM/mcp-context-forge/pull/7255), [#6177](https://github.com/IBM/mcp-context-forge/pull/6177)) - Removed the Rust MCP configuration surface (closes #5819) and the Python Rust-runtime proxy integration (closes #5818), together with the remaining Rust MCP references in the Makefile, docs, and comments.
 
 ### Security
 
-- **Configuration import ownership enforcement** - `POST /v1/import` with `conflict_strategy=update` no longer overwrites tools, resources, prompts, or gateways that the importer does not own. Bulk registration now runs `check_resource_ownership()` before it modifies an existing row and reports `Permission denied` for rows the caller does not own. Bulk update without a caller identity changes nothing. The import call to `update_gateway()` now passes the importer identity. The `admin.import` routes use `global_only=True`, so a team-scoped role no longer satisfies them. The Admin UI import now passes the authenticated email as `imported_by`. Deployments that grant `admin.import` through a team-scoped role must move that grant to a global role.
-
+- **Configuration import ownership enforcement** ([#7243](https://github.com/IBM/mcp-context-forge/pull/7243)) - `POST /v1/import` with `conflict_strategy=update` no longer overwrites tools, resources, prompts, or gateways that the importer does not own. Bulk registration now runs `check_resource_ownership()` before it modifies an existing row and reports `Permission denied` for rows the caller does not own. Bulk update without a caller identity changes nothing. The import call to `update_gateway()` now passes the importer identity. The `admin.import` routes use `global_only=True`, so a team-scoped role no longer satisfies them. The Admin UI import now passes the authenticated email as `imported_by`. Deployments that grant `admin.import` through a team-scoped role must move that grant to a global role.
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
+- **A2A plugin header trust** ([#7157](https://github.com/IBM/mcp-context-forge/pull/7157)) - A2A pre-invoke plugins can supply credentials and custom headers without the agent caller-header allowlist. Plugin output now overrides configured agent authentication, and an empty `Authorization` value suppresses all fallback authorization. The gateway retains inbound caller filtering, sanitizes plugin input, resolves output case-insensitively, and strips `X-Vault-Tokens` before egress.
+- **Outbound request validation in the DCR path** ([#6961](https://github.com/IBM/mcp-context-forge/pull/6961)) - Dynamic client registration validates and pins outbound requests.
+- **Rate limit tier matching for `/v1` paths** ([#6879](https://github.com/IBM/mcp-context-forge/pull/6879)) - Rate limit tier matching normalizes `/v1` paths.
+- **URL scheme allowlist at call time** ([#6881](https://github.com/IBM/mcp-context-forge/pull/6881)) - The gateway enforces the URL scheme allowlist at call time and scans the database on startup.
+- **JSON Schema pattern evaluation** ([#6957](https://github.com/IBM/mcp-context-forge/pull/6957)) - The gateway bounds JSON Schema pattern evaluation in a worker process.
+- **Outbound HTTP connection handling** ([#6965](https://github.com/IBM/mcp-context-forge/pull/6965)) - Hardened outbound HTTP connection handling.
+- **Candidate credential handshakes** ([#6877](https://github.com/IBM/mcp-context-forge/pull/6877)) - Candidate credential handshakes are isolated.
+- **Virtual-server scoped tool invocation** ([#6672](https://github.com/IBM/mcp-context-forge/pull/6672)) - Hardened virtual-server scoped tool invocation.
+- **Token scoping for plugin-binding and completion routes** ([#6709](https://github.com/IBM/mcp-context-forge/pull/6709)) - Token scoping maps plugin-binding routes. Token scoping maps the completion route to `tools.read`.
 
 ### Fixed
 
-- **A2A plugin header trust** - A2A pre-invoke plugins can supply credentials and custom headers without the agent caller-header allowlist. Plugin output now overrides configured agent authentication, and an empty `Authorization` value suppresses all fallback authorization. The gateway retains inbound caller filtering, sanitizes plugin input, resolves output case-insensitively, and strips `X-Vault-Tokens` before egress.
+#### **Auth & OAuth**
 
-- **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
+- **Email claim for generic OIDC providers** ([#6484](https://github.com/IBM/mcp-context-forge/pull/6484)) - SSO resolves an email claim for generic OIDC providers.
+- **External-IdP verification in `get_current_user()`** ([#6424](https://github.com/IBM/mcp-context-forge/pull/6424), [#7049](https://github.com/IBM/mcp-context-forge/pull/7049)) - External-IdP verification is wired into `get_current_user()`, and all auth paths fall back to external IdP tokens.
+- **`private_key_jwt` follow-ups** ([#7190](https://github.com/IBM/mcp-context-forge/pull/7190)) - Restored `private_key_jwt` follow-ups dropped from #6991.
+- **OAuth token handling** ([#7240](https://github.com/IBM/mcp-context-forge/pull/7240)) - Improved OAuth token handling.
+- **OAuth gateway catalog on empty fetch** ([#6049](https://github.com/IBM/mcp-context-forge/pull/6049)) - The gateway preserves its catalog when an OAuth fetch returns empty.
 
-- **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
+#### **Gateway, Catalog & Tools**
+
+- **Frontend email routes** ([#6953](https://github.com/IBM/mcp-context-forge/pull/6953)) - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
+- **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631), [#7030](https://github.com/IBM/mcp-context-forge/pull/7030)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
+- **Session-affinity worker ID** ([#6688](https://github.com/IBM/mcp-context-forge/pull/6688)) - The gateway computes the session-affinity worker ID from the live PID after fork.
+- **Refresh throttle anchor** ([#7130](https://github.com/IBM/mcp-context-forge/pull/7130)) - The refresh throttle anchors to `cycle_started_at`, so the gateway no longer skips refreshes.
+- **Gateway URL rejection messages** ([#7096](https://github.com/IBM/mcp-context-forge/pull/7096)) - Gateway URL rejections name the cause. Fixed CA signing status.
+- **Oversize `_meta`** ([#7259](https://github.com/IBM/mcp-context-forge/pull/7259)) - The gateway rejects oversize `_meta` with `-32602` and keeps the upstream resource error.
+- **`psutil.cpu_freq()` on macOS** ([#7087](https://github.com/IBM/mcp-context-forge/pull/7087)) - Guarded `psutil.cpu_freq()` against `SystemError`.
+
+#### **Observability & A2A**
+
+- **W3C trace context in A2A invocations** ([#7093](https://github.com/IBM/mcp-context-forge/pull/7093)) - A2A invocations propagate W3C trace context.
+- **Tenantless background spans** ([#7155](https://github.com/IBM/mcp-context-forge/pull/7155)) - OpenTelemetry suppresses tenantless background spans.
+
+#### **Admin UI**
+
+- **Admin UI edit modals** ([#7271](https://github.com/IBM/mcp-context-forge/pull/7271)) - Table rows stay in the `innerHTML` guard. Edit modals use delegated handlers.
+
+#### **Build, CI & Dependencies**
+
+- **OS package refresh before Docker security scans** ([#7186](https://github.com/IBM/mcp-context-forge/pull/7186)) - CI refreshes OS packages before Docker security scans.
+- **Checkov skip placement** - Moved the checkov skip off the nginx `FROM` line.
+
+### Changed
+
+- **Duplicate `Gateway.last_seen` annotation removed** ([#6682](https://github.com/IBM/mcp-context-forge/pull/6682)) - Removed the duplicate model annotation.
+
+### Documentation
+
+- **Container image version bumping** ([#7137](https://github.com/IBM/mcp-context-forge/pull/7137)) - Replaced the manual UBI tag steps with `make container-bump-image-versions`.
+- **Deprecation lifecycle** ([#6996](https://github.com/IBM/mcp-context-forge/pull/6996)) - Adopted the MCP-style deprecation lifecycle and recorded the deprecation backlog.
+
+### Testing
+
+- **Pytest warnings and redundant tests** ([#6895](https://github.com/IBM/mcp-context-forge/pull/6895)) - Eliminated pytest warnings, dead test code, and redundant auth tests.
+- **Resource template federation** ([#6962](https://github.com/IBM/mcp-context-forge/pull/6962)) - Verified resource template federation through the gateway.
+- **OAuth gateway membership** ([#7210](https://github.com/IBM/mcp-context-forge/pull/7210)) - Restored OAuth gateway membership regression coverage.
+- **Pre-provisioned SSO** ([#7183](https://github.com/IBM/mcp-context-forge/pull/7183)) - Validated pre-provisioned SSO authentication and documented onboarding.
+- **Live-gateway E2E suite** - Fixed suite ordering, error shapes, and cleanup.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#7132](https://github.com/IBM/mcp-context-forge/pull/7132) | routine dependencies update - 2026-10-05 |
+| [#7135](https://github.com/IBM/mcp-context-forge/pull/7135) | migrate Tailwind CSS v3 to v4 and fix npm CVEs |
+| [#6769](https://github.com/IBM/mcp-context-forge/pull/6769) | validate the Code Engine registry secret and clarify env logging |
+| [#7213](https://github.com/IBM/mcp-context-forge/pull/7213) | rate limit middleware updates |
+| [#7250](https://github.com/IBM/mcp-context-forge/pull/7250) | replace `mcp-server-filesystem` examples with `mcp-server-fetch` |
+
+Release preparation bumped every version reference to 1.1.0, refreshed npm dependencies (12 packages updated, 0 vulnerabilities), bumped the `NODEJS_IMAGE` pin to 10.2-1792386062, updated `uv.lock` and `Cargo.lock`, normalised `.bumpversion.cfg` indentation, and removed Rust MCP leftovers from the Makefile, docs, and comments.
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 
