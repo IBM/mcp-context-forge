@@ -17,13 +17,10 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import fakeredis
-import fakeredis.aioredis as fakeredis_async
 from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ResourcesListChanged, ResourceUpdated, ToolsListChanged
 import pytest
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.services import modern_listener_service as mls
 from mcpgateway.services.modern_listener_service import _GatewaySnapshot, ModernListenerService
 from mcpgateway.services.notification_service import NotificationType
@@ -47,6 +44,10 @@ async def _fake_proxy_client(client, *_args, **_kwargs):
 
 class TestModernListenerService:
     """Event dispatch, era gating, eligibility filtering, and reconnect behavior."""
+
+    @pytest.fixture(autouse=True)
+    def _primary_worker(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: True)
 
     @pytest.mark.asyncio
     async def test_dispatch_maps_events_to_notification_types(self):
@@ -140,7 +141,6 @@ class TestModernListenerService:
     @pytest.mark.asyncio
     async def test_reconcile_starts_and_stops_listeners(self):
         service = ModernListenerService(MagicMock())
-        service._try_acquire_holder = AsyncMock(return_value=True)
         snapshots = [_snapshot()]
 
         started = asyncio.Event()
@@ -164,7 +164,6 @@ class TestModernListenerService:
     @pytest.mark.asyncio
     async def test_reconcile_respects_unsupported_cooldown(self):
         service = ModernListenerService(MagicMock())
-        service._try_acquire_holder = AsyncMock(return_value=True)
         service._unsupported_until["gw-1"] = time.monotonic() + 3600
 
         with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever") as listen_mock:
@@ -172,19 +171,6 @@ class TestModernListenerService:
 
         listen_mock.assert_not_called()
         assert "gw-1" not in service._listener_tasks
-
-
-HOLDER_KEY = settings.redis_leader_key + ":modern_listener"
-
-
-@pytest.fixture
-def fake_redis(monkeypatch):
-    """Route the holder onto a fakeredis client (CACHE_TYPE=redis)."""
-    client = fakeredis_async.FakeRedis(server=fakeredis.FakeServer(), decode_responses=True)
-    monkeypatch.setattr(settings, "cache_type", "redis")
-    monkeypatch.setattr(mls, "REDIS_AVAILABLE", True, raising=False)
-    monkeypatch.setattr(mls, "get_redis_client", AsyncMock(return_value=client), raising=False)
-    return client
 
 
 class _EmptySubscription:
@@ -212,13 +198,13 @@ async def _sleep_forever(_gw):
     await asyncio.sleep(3600)
 
 
-class TestModernListenerHolder:
-    """Single holder per cluster (Redis) or per host (FileLock)."""
+class TestModernListenerPrimaryGate:
+    """Listeners run only on the primary worker (``is_primary_worker()``)."""
 
     @pytest.mark.asyncio
-    async def test_reconcile_skips_when_not_holder(self):
+    async def test_reconcile_skips_when_not_primary(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: False)
         service = ModernListenerService(MagicMock())
-        service._try_acquire_holder = AsyncMock(return_value=False)
 
         with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever") as listen_mock:
             await service._reconcile()
@@ -227,9 +213,9 @@ class TestModernListenerHolder:
         assert service._listener_tasks == {}
 
     @pytest.mark.asyncio
-    async def test_reconcile_starts_when_holder(self):
+    async def test_reconcile_starts_when_primary(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: True)
         service = ModernListenerService(MagicMock())
-        service._try_acquire_holder = AsyncMock(return_value=True)
 
         with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever", side_effect=_sleep_forever):
             await service._reconcile()
@@ -238,99 +224,21 @@ class TestModernListenerHolder:
         await service.shutdown()
 
     @pytest.mark.asyncio
-    async def test_losing_holder_cancels_listeners(self):
+    async def test_losing_primary_cancels_listeners(self, monkeypatch):
+        primary = True
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: primary)
         service = ModernListenerService(MagicMock())
-        service._try_acquire_holder = AsyncMock(return_value=True)
 
         with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever", side_effect=_sleep_forever):
             await service._reconcile()
             task = service._listener_tasks["gw-1"]
 
-            service._try_acquire_holder.return_value = False
+            primary = False
             await service._reconcile()
 
         assert service._listener_tasks == {}
         await asyncio.sleep(0)
         assert task.cancelled()
-
-    @pytest.mark.asyncio
-    async def test_redis_holder_uses_dedicated_key_and_ttl(self, fake_redis):
-        service = ModernListenerService(MagicMock())
-        other = ModernListenerService(MagicMock())
-
-        assert await service._try_acquire_holder() is True
-        assert await fake_redis.get(HOLDER_KEY) == service._instance_id
-        assert 0 < await fake_redis.ttl(HOLDER_KEY) <= settings.redis_leader_ttl
-        # NX: a second instance cannot take the held key.
-        assert await other._try_acquire_holder() is False
-        assert await fake_redis.get(HOLDER_KEY) == service._instance_id
-
-    @pytest.mark.asyncio
-    async def test_current_holder_reacquire_returns_true(self, fake_redis):
-        service = ModernListenerService(MagicMock())
-        await fake_redis.set(HOLDER_KEY, service._instance_id)
-
-        with patch.object(fake_redis, "set", wraps=fake_redis.set) as set_spy:
-            assert await service._try_acquire_holder() is True
-
-        set_spy.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_heartbeat_renews_ttl(self, fake_redis, monkeypatch):
-        monkeypatch.setattr(settings, "redis_leader_heartbeat_interval", 0.01)
-        service = ModernListenerService(MagicMock())
-        assert await service._try_acquire_holder() is True
-        await fake_redis.expire(HOLDER_KEY, 1)
-
-        heartbeat = asyncio.create_task(service._holder_heartbeat())
-        await asyncio.sleep(0.05)
-        heartbeat.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat
-
-        assert await fake_redis.ttl(HOLDER_KEY) > 1
-
-    @pytest.mark.asyncio
-    async def test_heartbeat_detects_lost_holder(self, fake_redis, monkeypatch):
-        monkeypatch.setattr(settings, "redis_leader_heartbeat_interval", 0.01)
-        service = ModernListenerService(MagicMock())
-
-        with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever", side_effect=_sleep_forever):
-            await service._reconcile()
-            task = service._listener_tasks["gw-1"]
-
-            await fake_redis.set(HOLDER_KEY, "another-instance")
-            await asyncio.sleep(0.05)
-            await service._reconcile()
-
-        assert service._listener_tasks == {}
-        assert task.cancelled()
-        assert await fake_redis.get(HOLDER_KEY) == "another-instance"
-        await service.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_filelock_holder_single_winner(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(settings, "cache_type", "database")
-        monkeypatch.setattr(mls.tempfile, "gettempdir", lambda: str(tmp_path))
-        first = ModernListenerService(MagicMock())
-        second = ModernListenerService(MagicMock())
-
-        assert await first._try_acquire_holder() is True
-        assert await first._try_acquire_holder() is True  # holder keeps it
-        assert await second._try_acquire_holder() is False
-
-        await first._release_holder()
-        assert await second._try_acquire_holder() is True
-        await second._release_holder()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_releases_holder(self, fake_redis):
-        service = ModernListenerService(MagicMock())
-        assert await service._try_acquire_holder() is True
-
-        await service.shutdown()
-
-        assert await fake_redis.get(HOLDER_KEY) is None
 
 
 class TestModernListenerReconnect:
