@@ -16,7 +16,7 @@ import orjson
 import pytest
 
 # First-Party
-from mcpgateway.cache.registry_cache import _get_cleanup_timeout, CacheEntry, RegistryCache, RegistryCacheConfig
+from mcpgateway.cache.registry_cache import _get_cleanup_timeout, CacheEntry, CacheInvalidationSubscriber, RegistryCache, RegistryCacheConfig
 
 
 class TestCacheEntry:
@@ -442,3 +442,77 @@ class TestRegistryCache:
         cache._get_redis_client = AsyncMock(return_value=redis)
 
         await cache.invalidate("tools")
+
+
+NOTIFY = "mcpgateway.cache.registry_cache.notify_catalog_change"
+
+
+def _redis_with_keys(keys, publish=None):
+    redis = MagicMock()
+
+    async def _scan_iter(*_args, **_kwargs):
+        for key in keys:
+            yield key
+
+    redis.scan_iter = _scan_iter
+    redis.delete = AsyncMock()
+    redis.publish = publish or AsyncMock()
+    return redis
+
+
+class TestCatalogChangeEmission:
+    """RegistryCache invalidation emits a catalog change on the local worker."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_emits_locally_without_redis(self):
+        cache = RegistryCache()
+        cache._get_redis_client = AsyncMock(return_value=None)
+        with patch(NOTIFY, MagicMock()) as notify:
+            await cache.invalidate("tools")
+        notify.assert_called_once_with("tools")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_emits_locally_when_redis_scan_fails(self):
+        cache = RegistryCache()
+        cache._get_redis_client = AsyncMock(return_value=_redis_with_keys([123]))
+        with patch(NOTIFY, MagicMock()) as notify:
+            await cache.invalidate("tools")
+        notify.assert_called_once_with("tools")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_emits_locally_when_redis_publish_raises(self):
+        cache = RegistryCache()
+        cache._get_redis_client = AsyncMock(return_value=_redis_with_keys([b"k"], publish=AsyncMock(side_effect=RuntimeError("boom"))))
+        with patch(NOTIFY, MagicMock()) as notify:
+            await cache.invalidate("tools")
+        notify.assert_called_once_with("tools")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_emits_before_redis_block(self):
+        cache = RegistryCache()
+        order = []
+        redis = _redis_with_keys([b"k"])
+        original_scan = redis.scan_iter
+
+        def _scan_iter(*args, **kwargs):
+            order.append("scan_iter")
+            return original_scan(*args, **kwargs)
+
+        redis.scan_iter = _scan_iter
+        cache._get_redis_client = AsyncMock(return_value=redis)
+        with patch(NOTIFY, MagicMock(side_effect=lambda _t: order.append("notify"))):
+            await cache.invalidate("tools")
+        assert order[0] == "notify"
+        assert "scan_iter" in order
+
+    @pytest.mark.asyncio
+    async def test_subscriber_registry_message_emits(self):
+        with patch(NOTIFY, MagicMock()) as notify:
+            await CacheInvalidationSubscriber()._process_invalidation("registry:prompts")
+        notify.assert_called_once_with("prompts")
+
+    @pytest.mark.asyncio
+    async def test_subscriber_non_registry_message_does_not_emit(self):
+        with patch(NOTIFY, MagicMock()) as notify:
+            await CacheInvalidationSubscriber()._process_invalidation("tool_lookup:key:x")
+        notify.assert_not_called()
