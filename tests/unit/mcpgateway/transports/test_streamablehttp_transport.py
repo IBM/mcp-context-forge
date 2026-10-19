@@ -24,11 +24,13 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import time
 from types import SimpleNamespace
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
+import anyio
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
 from fastapi import HTTPException
@@ -38,6 +40,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import PromptArgument
 import orjson
@@ -20729,6 +20732,89 @@ async def test_listen_oauth_server_unauth_rejected(monkeypatch):
     with pytest.raises(OAuthRequiredError):
         await tr._list_catalog_page("tools/list", None)
     delegate.assert_not_awaited()
+
+
+def _listen_context_with_exp(exp):
+    """Build an authenticated user context carrying a JWT ``exp`` claim."""
+    return {**_scoped_user_context([]), "exp": exp}
+
+
+async def _block_forever(_ctx, _params):
+    """Fake shared handler that never completes on its own."""
+    await anyio.sleep_forever()
+
+
+def _assert_listen_completed(result):
+    """Assert the adapter returned a completion result tagged with the request id."""
+    assert isinstance(result, types.SubscriptionsListenResult)
+    assert result.meta[SUBSCRIPTION_ID_META_KEY] == _MODERN_LISTEN_CTX.request_id
+
+
+async def test_listen_ends_at_token_exp(monkeypatch, listen_requires_auth):
+    """A stream outliving the token exp ends with a completion result tagged with the subscription id."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.25))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_without_exp_ends_at_max_lifetime(monkeypatch, listen_requires_auth):
+    """A token without exp is bounded by MCP_LISTEN_MAX_LIFETIME_SECONDS."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_exp_none_treated_as_missing(monkeypatch, listen_requires_auth):
+    """A JWT-path context with exp=None falls back to the max-lifetime deadline."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(None))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_deadline_floor_ack_precedes_result(monkeypatch, listen_requires_auth):
+    """A token about to expire still gets the floor, so the handler can send its ack first."""
+    floor = 0.3
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", floor)
+    started = {}
+
+    async def recording_delegate(_ctx, _params):
+        started["at"] = time.monotonic()
+        await anyio.sleep_forever()
+
+    _patch_listen_delegate(monkeypatch, recording_delegate)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.01))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert time.monotonic() - started["at"] >= floor - 0.02
+    _assert_listen_completed(result)
+
+
+async def test_listen_delegate_completing_early_returns_its_result(monkeypatch, listen_requires_auth):
+    """A delegate that finishes before the deadline keeps its own result."""
+    expected = types.SubscriptionsListenResult()
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=expected))
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 3600))
+
+    assert await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True)) is expected
 
 
 async def test_listen_does_not_open_db_session(monkeypatch):
