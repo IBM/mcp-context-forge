@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-07 - Modern MCP Protocol, Federated Completions, and Catalog Pagination
+## [1.1.0] - 2026-10-19 - Modern MCP Protocol, Federated Completions, and Catalog Pagination
 
 ### Overview
 
