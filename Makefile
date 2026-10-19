@@ -1472,11 +1472,13 @@ populate-report:                           ## Show latest population report
 # help: 📊 MONITORING STACK
 # help: monitoring-up          - Start monitoring stack (Grafana, Prometheus, Loki, Tempo)
 # help: monitoring-down        - Stop monitoring stack
+# deprecated: monitoring-down        - Use "make compose-down" instead (v1.3.0)
 # help: monitoring-clean       - Stop and remove all monitoring data (volumes)
 # help: monitoring-status      - Show status of monitoring services
 # help: monitoring-logs        - Show monitoring stack logs
 # help: monitoring-lite-up    - Start lite monitoring (excludes pgAdmin, Redis CLI)
 # help: monitoring-lite-down  - Stop lite monitoring stack
+# help: profile-gateway       - Record py-spy CPU profiles of gateway replicas (PROFILE_DURATION=60)
 
 # Compose command for monitoring (requires --profile support)
 # podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose
@@ -1491,7 +1493,7 @@ COMPOSE_CMD_MONITOR := $(shell \
 
 NGINX_PORT_SPECS := nginx:NGINX_PORT:8080
 LANGFUSE_PORT_SPECS := langfuse-web:LANGFUSE_PORT:3100 langfuse-worker:LANGFUSE_WORKER_PORT:3130
-MONITORING_PORT_SPECS := postgres_exporter:POSTGRES_EXPORTER_PORT:9187 redis_exporter:REDIS_EXPORTER_PORT:9121 pgbouncer_exporter:PGBOUNCER_EXPORTER_PORT:9127 nginx_exporter:NGINX_EXPORTER_PORT:9113 cadvisor:CADVISOR_PORT:8085 prometheus:PROMETHEUS_PORT:9090 loki:LOKI_PORT:3101 tempo:TEMPO_PORT:3200 tempo:TEMPO_OTLP_GRPC_PORT:4317 tempo:TEMPO_OTLP_HTTP_PORT:4318 grafana:GRAFANA_PORT:3000 pgadmin:PGADMIN_PORT:5050 redis_commander:REDIS_COMMANDER_PORT:8081
+MONITORING_PORT_SPECS := portal:PORTAL_PORT:9200 tempo:TEMPO_OTLP_GRPC_PORT:4317 tempo:TEMPO_OTLP_HTTP_PORT:4318
 
 define CHECK_PORT_SPECS
 	@PORT_SPECS='$(1)'; \
@@ -1541,19 +1543,20 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	$(COMPOSE_CMD_MONITOR) up -d --no-deps --force-recreate nginx
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -s -o /dev/null -w '' http://localhost:$${GRAFANA_PORT:-3000}/api/health 2>/dev/null; then break; fi; \
+		if curl -s -o /dev/null -w '' -H "Host: grafana.localhost" http://localhost:$${PORTAL_PORT:-9200}/api/health 2>/dev/null; then break; fi; \
 		sleep 2; \
 	done
-	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme "http://localhost:$${GRAFANA_PORT:-3000}/api/user/stars/dashboard/uid/mcp-gateway-overview" >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/org/preferences" >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/user/preferences" >/dev/null 2>&1 || true
+	@# Configure Grafana: star dashboard and set as home (via portal vhost)
+	@curl -s -X POST -u admin:changeme -H "Host: grafana.localhost" "http://localhost:$${PORTAL_PORT:-9200}/api/user/stars/dashboard/uid/mcp-gateway-overview" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${PORTAL_PORT:-9200}/api/org/preferences" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${PORTAL_PORT:-9200}/api/user/preferences" >/dev/null 2>&1 || true
 	@echo ""
 	@echo "✅ Monitoring stack started!"
 	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:$${PROMETHEUS_PORT:-9090}"
-	@echo "   🧵 Tempo:      http://localhost:$${TEMPO_PORT:-3200} (OTLP: $${TEMPO_OTLP_GRPC_PORT:-4317} gRPC, $${TEMPO_OTLP_HTTP_PORT:-4318} HTTP)"
+	@echo "   🌐 Portal:       http://localhost:$${PORTAL_PORT:-9200} (all services, auto-linked)"
+	@echo "   🌐 Grafana:    http://grafana.localhost:$${PORTAL_PORT:-9200} (admin/changeme)"
+	@echo "   🔥 Prometheus: http://prometheus.localhost:$${PORTAL_PORT:-9200}"
+	@echo "   🧵 Tempo:      http://tempo.localhost:$${PORTAL_PORT:-9200} (OTLP: $${TEMPO_OTLP_GRPC_PORT:-4317} gRPC, $${TEMPO_OTLP_HTTP_PORT:-4318} HTTP)"
 	@echo ""
 	@echo "   ★ ContextForge Overview (home dashboard):"
 	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
@@ -1570,9 +1573,8 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 
 .PHONY: monitoring-down
 monitoring-down:                           ## Stop monitoring stack
-	@echo "📊 Stopping monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down --remove-orphans
-	@echo "✅ Monitoring stack stopped."
+	$(call deprecated_target,monitoring-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: monitoring-status
 monitoring-status:                         ## Show status of monitoring services
@@ -1591,10 +1593,36 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
+# CPU profiling (py-spy sidecars; no gateway changes needed)
+PROFILE_DURATION ?= 60
+PROFILE_RATE ?= 99
+PROFILE_FORMAT ?= flamegraph
+
+.PHONY: profile-gateway
+profile-gateway:                           ## Record py-spy CPU profiles of all gateway replicas (PROFILE_DURATION=60, PROFILE_FORMAT=flamegraph|speedscope)
+	@command -v docker >/dev/null || { echo "❌ docker is required for py-spy sidecars"; exit 1; }
+	@mkdir -p reports/profiles
+	@docker build -q -t mcpgateway/py-spy:0.4.2 infra/profiler
+	@TS=$$(date +%Y%m%d-%H%M%S); \
+	EXT=$$([ "$(PROFILE_FORMAT)" = "flamegraph" ] && echo "svg" || echo "speedscope.json"); \
+	REPLICAS=$$($(COMPOSE_CMD_MONITOR) ps gateway --format '{{.Names}}' 2>/dev/null); \
+	if [ -z "$$REPLICAS" ]; then echo "❌ No gateway containers running. Start the stack first (make testing-up / monitoring-up)."; exit 1; fi; \
+	echo "🔥 Profiling for $(PROFILE_DURATION)s @ $(PROFILE_RATE)Hz: $$REPLICAS"; \
+	for c in $$REPLICAS; do \
+		( docker run --rm --pid="container:$$c" --cap-add SYS_PTRACE \
+			-v "$(CURDIR)/reports/profiles:/profiles" mcpgateway/py-spy:0.4.2 \
+			record --pid 1 --subprocesses -d $(PROFILE_DURATION) -r $(PROFILE_RATE) \
+			-f $(PROFILE_FORMAT) -o "/profiles/$$TS-$$c.$$EXT" >/dev/null 2>&1 ) & \
+	done; \
+	wait; \
+	echo "✅ Profiles:"; ls -la reports/profiles/$$TS-*; \
+	echo "   🌐 View flamegraphs at http://localhost:$${PORTAL_PORT:-9200}/profiles/"
+
 # =============================================================================
 # help: 🔭 LANGFUSE LLM OBSERVABILITY
 # help: langfuse-up              - Start Langfuse stack (trace viz, evals, cost tracking)
 # help: langfuse-down            - Stop Langfuse stack
+# deprecated: langfuse-down            - Use "make compose-down" instead (v1.3.0)
 # help: langfuse-status          - Show status of Langfuse services
 # help: langfuse-logs            - Show Langfuse stack logs
 # help: langfuse-reset-data      - Stop the Langfuse stack and remove only Langfuse data volumes
@@ -1671,9 +1699,8 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 
 .PHONY: langfuse-down
 langfuse-down:                             ## Stop Langfuse stack
-	@echo "🔭 Stopping Langfuse stack..."
-	$(LANGFUSE_COMPOSE) down --remove-orphans
-	@echo "✅ Langfuse stack stopped."
+	$(call deprecated_target,langfuse-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: langfuse-status
 langfuse-status:                           ## Show status of Langfuse services
@@ -1760,19 +1787,29 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo ""
 
 .PHONY: langfuse-monitoring-down
+# deprecated: langfuse-monitoring-down  - Use "make compose-down" instead (v1.3.0)
 langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
-	@echo "🔭📊 Stopping Langfuse + monitoring stack..."
-	$(LANGFUSE_COMPOSE) --profile monitoring down --remove-orphans
-	@echo "✅ Langfuse + monitoring stack stopped."
+	$(call deprecated_target,langfuse-monitoring-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 # =============================================================================
-# help: 🧪 TESTING STACK (Locust + A2A echo)
-# help: testing-up            - Start testing stack (Locust + A2A echo)
+# help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
+# help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
+# help:                         TESTING_MONITORING=1 also starts the monitoring stack (Prometheus/Grafana/Tempo)
+# help:                         TESTING_QUERY_LOG=1 enables gateway DB query logging to ./logs (N+1 detection)
 # help: testing-down          - Stop testing stack
+# deprecated: testing-down          - Use "make compose-down" instead (v1.3.0)
 # help: testing-status        - Show status of testing services
 # help: testing-logs          - Show testing stack logs
 
 TESTING_LOCUST_WORKERS ?= 1
+# Set TESTING_MONITORING=1 to also activate the monitoring profile (Prometheus,
+# Grafana, Loki, Tempo) and enable OTEL trace export from the gateway to Tempo.
+TESTING_MONITORING ?= 0
+# Set TESTING_QUERY_LOG=1 to layer docker-compose.with-querylog.yml onto the stack:
+# enables per-request SQL query logging on the gateway (N+1 detection) and
+# bind-mounts ./logs so 'make query-log-tail/query-log-analyze' work as usual.
+TESTING_QUERY_LOG ?= 0
 # Used by docker-compose testing profile to run Locust as the host user so it
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
@@ -1791,24 +1828,61 @@ testing-up:                                ## Start testing stack (Locust + Fast
 		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
 		exit 1; \
 	fi
+ifneq ($(filter 1 true yes on,$(TESTING_MONITORING)),)
+	$(call CHECK_PORT_SPECS,$(MONITORING_PORT_SPECS))
+endif
+ifneq ($(filter 1 true yes on,$(TESTING_QUERY_LOG)),)
+	@mkdir -p logs
+	@chmod 777 logs 2>/dev/null || true  # Gateway container runs as UID 10001 and must write here (Linux; harmless on Docker Desktop)
+endif
 	@mkdir -p reports
 	@echo "   Using image $(IMAGE_LOCAL)"
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
-	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@# TESTING_MONITORING=1 activates the monitoring profile and wires the gateway's
+	@# OTEL exporter to Tempo directly. Otherwise, if the monitoring stack (Tempo) is
+	@# already running, pass the same OTEL env as monitoring-up so the shared gateway
+	@# container is not recreated with tracing off.
+	@PROFILES="$(TESTING_COMPOSE_PROFILES)"; \
+		OTEL_ENV=""; \
+		QUERYLOG_FILES=""; \
+		if [ "$(TESTING_MONITORING)" = "1" ]; then \
+			echo "   📊 TESTING_MONITORING=1 - activating monitoring profile (Prometheus, Grafana, Loki, Tempo)"; \
+			echo "   🔭 Enabling OTEL trace export to http://tempo:4317"; \
+			PROFILES="$$PROFILES --profile monitoring"; \
+			OTEL_ENV="LOG_FORMAT=json OTEL_ENABLE_OBSERVABILITY=true OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317"; \
+		elif $(COMPOSE_CMD_MONITOR) ps --services --status running 2>/dev/null | grep -qx "tempo"; then \
+			echo "   🔭 Tempo detected (monitoring stack running) - enabling OTEL trace export to http://tempo:4317"; \
+			OTEL_ENV="LOG_FORMAT=json OTEL_ENABLE_OBSERVABILITY=true OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317"; \
+		fi; \
+		if [ -n "$(filter 1 true yes on,$(TESTING_QUERY_LOG))" ]; then \
+			echo "   📊 TESTING_QUERY_LOG=1 - enabling gateway DB query logging (docker-compose.with-querylog.yml)"; \
+			QUERYLOG_FILES="-f docker-compose.yml -f docker-compose.with-querylog.yml"; \
+		fi; \
+		env HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+		LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+		$$OTEL_ENV \
+		$(COMPOSE_CMD_MONITOR) $$QUERYLOG_FILES $$PROFILES up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
-	@echo "Service              URL                           Purpose"
-	@echo "──────────────────────────────────────────────────────────────────────────"
-	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@echo "Service              URL                                       Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────────────"
+	@echo "Gateway (nginx)      http://localhost:8080                       API proxy"
 	@WEB_UI_PUBLISHED_PORT=$$(COMPOSE_CMD='$(COMPOSE_CMD_MONITOR)' COMPOSE_PROFILES='$(TESTING_COMPOSE_PROFILES)' scripts/testing-web-ui-port.sh); \
 		echo "ContextForge Web UI  http://localhost:$$WEB_UI_PUBLISHED_PORT         Gateway Supported UX"
-	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
-	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
-	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
-	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
-	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
+	@echo "Portal               http://localhost:$${PORTAL_PORT:-9200}      Single entry to all services below"
+	@echo "Locust Web UI        http://locust.localhost:$${PORTAL_PORT:-9200}  Load testing (master+workers)"
+	@echo "Fast Test Server     http://fasttest.localhost:$${PORTAL_PORT:-9200}  MCP benchmark target"
+	@echo "A2A Echo Agent       http://a2aecho.localhost:$${PORTAL_PORT:-9200}  A2A protocol target"
+	@echo "MCP Inspector        http://localhost:6274                       Interactive MCP client (direct; dual-port app)"
+	@echo "Keycloak             http://localhost:8180                       SSO / OAuth 2.1 provider (realm: mcp-gateway)"
+	@if [ "$(TESTING_MONITORING)" = "1" ]; then \
+		echo "Grafana              http://grafana.localhost:$${PORTAL_PORT:-9200}  Dashboards + Tempo trace viewer (TraceQL)"; \
+		echo "Tempo API            http://tempo.localhost:$${PORTAL_PORT:-9200}  OTLP trace backend (gRPC :4317, HTTP :4318)"; \
+		echo "Prometheus           http://prometheus.localhost:$${PORTAL_PORT:-9200}  Metrics"; \
+	fi
+	@if [ -n "$(filter 1 true yes on,$(TESTING_QUERY_LOG))" ]; then \
+		echo "   📊 Query logging: ./logs/db-queries.log (+ .jsonl) - tail: make query-log-tail, analyze: make query-log-analyze"; \
+	fi
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1817,7 +1891,7 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
-	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
+	@echo "      • Open the Portal: http://localhost:$${PORTAL_PORT:-9200} (live links to everything)"
 
 .PHONY: testing-up-rust
 testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
@@ -1833,30 +1907,29 @@ testing-up-rust-full:                      ## Start testing stack with RUST_MCP_
 
 .PHONY: testing-rebuild-rust
 testing-rebuild-rust:                      ## Rebuild Rust image with no cache, then start testing stack in edge mode
-	@$(MAKE) testing-down
+	@$(MAKE) --no-print-directory compose-down
 	@$(MAKE) compose-clean
 	@$(MAKE) docker-prod-rust-no-cache
 	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-rebuild-rust-shadow
 testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, then start testing stack in shadow mode
-	@$(MAKE) testing-down
+	@$(MAKE) --no-print-directory compose-down
 	@$(MAKE) compose-clean
 	@$(MAKE) docker-prod-rust-no-cache
 	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-rebuild-rust-full
 testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
-	@$(MAKE) testing-down
+	@$(MAKE) --no-print-directory compose-down
 	@$(MAKE) compose-clean
 	@$(MAKE) docker-prod-rust-no-cache
 	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
-	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast --profile sso down --remove-orphans
-	@echo "✅ Testing stack stopped."
+	$(call deprecated_target,testing-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
@@ -1877,21 +1950,22 @@ testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requi
 	@echo ""
 	@echo "✅ ZAP DAST daemon started!"
 	@echo ""
-	@echo "   OWASP ZAP API:    http://localhost:8090"
-	@echo "   OWASP ZAP API UI: http://localhost:8090/UI"
+	@echo "   OWASP ZAP API:    http://zap.localhost:$${PORTAL_PORT:-9200} (via portal; start it with the testing/monitoring stack)"
+	@echo "   OWASP ZAP API UI: http://zap.localhost:$${PORTAL_PORT:-9200}/UI"
 	@echo ""
 	@echo "   Run security tests: make test-zap"
 
 .PHONY: testing-zap-down
+# deprecated: testing-zap-down          - Use "make compose-down" instead (v1.3.0)
 testing-zap-down:                          ## Stop OWASP ZAP DAST daemon
-	@echo "🔒 Stopping ZAP DAST daemon..."
-	$(COMPOSE_CMD_MONITOR) --profile dast down --remove-orphans
-	@echo "✅ ZAP stopped."
+	$(call deprecated_target,testing-zap-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 # =============================================================================
 # help: 🔍 MCP INSPECTOR (Interactive MCP Client)
 # help: inspector-up           - Start MCP Inspector (http://localhost:6274)
 # help: inspector-down         - Stop MCP Inspector
+# deprecated: inspector-down         - Use "make compose-down" instead (v1.3.0)
 # help: inspector-logs         - Show MCP Inspector logs
 # help: inspector-status       - Show status of MCP Inspector
 
@@ -1916,9 +1990,8 @@ inspector-up:                              ## Start MCP Inspector (interactive M
 	@echo ""
 
 inspector-down:                            ## Stop MCP Inspector
-	@echo "🔍 Stopping MCP Inspector..."
-	$(COMPOSE_CMD_MONITOR) --profile inspector down --remove-orphans
-	@echo "✅ MCP Inspector stopped."
+	$(call deprecated_target,inspector-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 inspector-logs:                            ## Show MCP Inspector logs
 	$(COMPOSE_CMD_MONITOR) --profile inspector logs -f --tail=100
@@ -2032,18 +2105,19 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 # help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
 # help: resilience-up          - Start slow-time-server for timeout/circuit breaker testing
 # help: resilience-down        - Stop resilience testing stack
+# deprecated: resilience-down        - Use "make compose-down" instead (v1.3.0)
 # help: resilience-logs        - Show resilience stack logs
 # help: resilience-locust      - Run Locust load test against slow-time-server (10 users, 120s)
 # help: resilience-locust-ui   - Start Locust web UI for slow-time-server
 # help: test-secrets-detection-plugin - Validate the secrets detection plugin end to end
 # help: test-pii-filter-plugin        - Validate the PII filter plugin changes
 
-RESILIENCE_HOST ?= http://localhost:8889
+RESILIENCE_HOST ?= http://slowtime.localhost:9200
 RESILIENCE_LOCUSTFILE := tests/loadtest/locustfile_slow_time_server.py
 
 .PHONY: resilience-up
 resilience-up:                             ## Start slow-time-server for resilience testing
-	@echo "Starting resilience testing stack (slow-time-server on port 8889)..."
+	@echo "Starting resilience testing stack (slow-time-server, via portal at $(RESILIENCE_HOST))..."
 	$(COMPOSE_CMD_MONITOR) --profile resilience up -d
 	@echo ""
 	@echo "Resilience stack started!"
@@ -2060,9 +2134,8 @@ resilience-up:                             ## Start slow-time-server for resilie
 
 .PHONY: resilience-down
 resilience-down:                           ## Stop resilience testing stack
-	@echo "Stopping resilience testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile resilience down --remove-orphans
-	@echo "Resilience stack stopped."
+	$(call deprecated_target,resilience-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: resilience-logs
 resilience-logs:                           ## Show resilience stack logs
@@ -2104,6 +2177,7 @@ resilience-locust-ui:                      ## Start Locust web UI for slow-time-
 # help: 🎯 BENCHMARK STACK (Rust benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
+# deprecated: benchmark-down         - Use "make compose-down" instead (v1.3.0)
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
@@ -2137,9 +2211,8 @@ benchmark-up:                              ## Start benchmark stack (MCP servers
 
 .PHONY: benchmark-down
 benchmark-down:                            ## Stop benchmark stack
-	@echo "🎯 Stopping benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down --remove-orphans
-	@echo "✅ Benchmark stack stopped."
+	$(call deprecated_target,benchmark-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: benchmark-clean
 benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
@@ -2164,6 +2237,7 @@ benchmark-logs:                            ## Show benchmark stack logs
 # help: 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK
 # help: embedded-up              - Start embedded stack (iframe mode + benchmark servers)
 # help: embedded-down            - Stop embedded stack
+# deprecated: embedded-down            - Use "make compose-down" instead (v1.3.0)
 # help: embedded-clean           - Stop and remove all embedded data (volumes)
 # help: embedded-status          - Show status of embedded services
 # help: embedded-logs            - Show embedded stack logs
@@ -2203,9 +2277,8 @@ embedded-up:                               ## Start embedded stack (iframe mode 
 
 .PHONY: embedded-down
 embedded-down:                             ## Stop embedded stack
-	@echo "🖼️  Stopping embedded stack..."
-	$(EMBEDDED_COMPOSE) down --remove-orphans
-	@echo "✅ Embedded stack stopped."
+	$(call deprecated_target,embedded-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: embedded-clean
 embedded-clean:                            ## Stop and remove all embedded data (volumes)
@@ -2661,7 +2734,7 @@ with open('$(LOADTEST_CSV_PREFIX)_stats.csv') as f: \
 # help: load-test-baseline-ui  - Baseline test with Locust Web UI
 # help: load-test-baseline-stress - Baseline stress test (2000 users, 3min)
 
-BASELINE_HOST ?= http://localhost:8888
+BASELINE_HOST ?= http://fasttime.localhost:9200
 
 load-test-baseline:                        ## Baseline test: Fast Time Server REST API (1000 users, 3min)
 	@echo "📊 Running BASELINE load test (Fast Time Server REST API)..."
@@ -5703,6 +5776,7 @@ docker-shell:
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
 # help: compose-sso-down      - Stop & remove SSO-profile containers (keep named volumes)
+# deprecated: compose-sso-down      - Use "make compose-down" instead (v1.3.0)
 # help: compose-sso-clean     - ✨ Down SSO stack and delete named volumes (data-loss ⚠)
 # help: sso-test-login        - Run SSO smoke checks against compose stack
 # help: compose-lite-up       - Start lite stack (reduced resources for local dev)
@@ -5735,6 +5809,7 @@ docker-shell:
 # help: compose-tls-e2e-logs - Tail logs from end-to-end TLS stack
 # help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
 # help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
+# deprecated: compose-siem-down     - Use "make compose-down" instead (v1.3.0)
 # help: compose-siem-logs     - 📜 Tail logs for gateway + OpenSearch SIEM services
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5897,6 +5972,7 @@ compose-sso-monitoring: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) \
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile monitoring up -d
 	@echo "✅ SSO + monitoring stack started."
+	@echo "   🌐 Portal:  http://localhost:$${PORTAL_PORT:-9200} (Grafana: http://grafana.localhost:$${PORTAL_PORT:-9200})"
 
 compose-sso-testing: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5911,16 +5987,11 @@ compose-sso-testing: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) \
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo "✅ SSO + testing stack started."
+	@echo "   🌐 Portal:  http://localhost:$${PORTAL_PORT:-9200} (Locust: http://locust.localhost:$${PORTAL_PORT:-9200})"
 
-compose-sso-down: compose-validate
-	@if [ ! -f "docker-compose.sso.yml" ]; then \
-		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
-		exit 1; \
-	fi
-	@echo "🛑 Stopping SSO stack..."
-	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso stop -t 10 2>/dev/null || true
-	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso down --remove-orphans
-	@echo "✅ SSO stack stopped."
+compose-sso-down:
+	$(call deprecated_target,compose-sso-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 compose-sso-clean: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5958,15 +6029,9 @@ compose-siem-up: compose-validate ## 🛡️ Start stack with OpenSearch SIEM si
 	@echo "   OpenSearch: http://localhost:9200"
 	@echo "   Tip: curl -s http://localhost:9200/_cat/indices?v"
 
-compose-siem-down: compose-validate ## 🛑 Stop SIEM test stack
-	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
-		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
-		exit 1; \
-	fi
-	@echo "🛑 Stopping SIEM stack..."
-	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml stop -t 10 2>/dev/null || true
-	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml down --remove-orphans
-	@echo "✅ SIEM stack stopped."
+compose-siem-down:
+	$(call deprecated_target,compose-siem-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
@@ -5998,6 +6063,7 @@ compose-logs:
 compose-ps:
 	$(COMPOSE) ps
 
+
 .PHONY: compose-shell
 compose-shell:
 	$(COMPOSE) exec gateway /bin/sh
@@ -6008,14 +6074,13 @@ compose-stop:
 
 .PHONY: compose-down
 compose-down:
-	$(COMPOSE) down --remove-orphans
+	$(COMPOSE) --profile "*" down --remove-orphans
 
 .PHONY: compose-lite-down
+# deprecated: compose-lite-down     - Use "make compose-down" instead (v1.3.0)
 compose-lite-down: ## 💻 Stop lite stack (docker-compose.yml + docker-compose.override.lite.yml)
-	@echo "🛑  Stopping lite stack..."
-	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml stop -t 10 2>/dev/null || true
-	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml down --remove-orphans
-	@echo "✅ Lite stack stopped."
+	$(call deprecated_target,compose-lite-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: monitoring-lite-up
 monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, Grafana, exporters - excludes pgAdmin, Redis CLI)
@@ -6027,24 +6092,24 @@ monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, G
 	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
+		if curl -s -o /dev/null -w '' -H "Host: grafana.localhost" http://localhost:$${PORTAL_PORT:-9200}/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
 		echo "  Attempt $$i: Grafana not ready yet..."; \
 		sleep 2; \
 	done
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
+	@curl -s -X POST -u admin:changeme -H "Host: grafana.localhost" 'http://localhost:$${PORTAL_PORT:-9200}/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:$${PORTAL_PORT:-9200}/api/org/preferences' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:$${PORTAL_PORT:-9200}/api/user/preferences' >/dev/null 2>&1 || true
 	@echo ""
 	@echo "✅ Lite monitoring stack started!"
-	@echo "📊 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "📈 Prometheus: http://localhost:9090"
+	@echo "🌐 Portal:     http://localhost:$${PORTAL_PORT:-9200}"
+	@echo "📊 Grafana:    http://grafana.localhost:$${PORTAL_PORT:-9200} (admin/changeme)"
+	@echo "📈 Prometheus: http://prometheus.localhost:$${PORTAL_PORT:-9200}"
 
 .PHONY: monitoring-lite-down
+# deprecated: monitoring-lite-down  - Use "make compose-down" instead (v1.3.0)
 monitoring-lite-down: ## 📊 Stop lite monitoring stack
-	@echo "📊 Stopping lite monitoring stack..."
-	@$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite stop -t 10 2>/dev/null || true
-	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite down --remove-orphans
-	@echo "✅ Lite monitoring stack stopped."
+	$(call deprecated_target,monitoring-lite-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 .PHONY: compose-rm
 compose-rm:
@@ -6141,10 +6206,10 @@ compose-tls-https: compose-validate
 	@echo ""
 	@echo "✅ TLS stack started! All HTTP requests redirect to HTTPS."
 
+# deprecated: compose-tls-down      - Use "make compose-down" instead (v1.3.0)
 compose-tls-down:
-	@echo "🛑 Stopping TLS stack..."
-	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls down --remove-orphans
-	@echo "✅ TLS stack stopped"
+	$(call deprecated_target,compose-tls-down,make compose-down,1.3.0)
+	@$(MAKE) --no-print-directory compose-down
 
 compose-tls-logs:
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
@@ -6966,7 +7031,7 @@ DEVPI_HOST := localhost
 DEVPI_PORT := 3141
 DEVPI_URL := http://$(DEVPI_HOST):$(DEVPI_PORT)
 DEVPI_USER := $(USER)
-DEVPI_PASS := dev123
+DEVPI_PASS := dev123 # pragma: allowlist secret
 DEVPI_INDEX := $(DEVPI_USER)/dev
 DEVPI_DATA_DIR := $(HOME)/.devpi
 DEVPI_PID := /tmp/devpi-server.pid
@@ -7453,7 +7518,7 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
-ZAP_BASE_URL   ?= http://localhost:8090
+ZAP_BASE_URL   ?= http://zap.localhost:9200
 ZAP_API_KEY    ?= changeme
 # URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
 # (host sees it as 8080 via port mapping), so ZAP inside Docker must use port 80.
