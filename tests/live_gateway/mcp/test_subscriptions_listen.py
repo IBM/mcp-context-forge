@@ -58,7 +58,6 @@ ALL_KINDS = {"toolsListChanged": True, "promptsListChanged": True, "resourcesLis
 LEGACY_CAPABILITIES = {"logging": {}, "prompts": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "tools": {"listChanged": False}, "completions": {}}
 POLL_WINDOW = 62
 LISTENER_WINDOW = 10
-LISTENER_DEBOUNCE_SECONDS = 5.0
 
 _UPSTREAM = '''
 import sys
@@ -217,11 +216,9 @@ def gateway_polling(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Stack
     """Gateway that finds upstream changes only through the scheduled auto-refresh.
 
     The fixture waits for the first scheduled refresh, so a later upstream change
-    is found only on a following 60 s tick. ``GATEWAY_AUTO_REFRESH_INTERVAL``
-    carries the 60 s interval because the per-server PUT is not persisted
-    (see ``test_put_refresh_interval_seconds_is_persisted``).
+    is found only on a following tick of the per-server 60 s interval.
     """
-    with _start(tmp_path_factory.mktemp("polling"), {"AUTO_REFRESH_SERVERS": "true", "GATEWAY_AUTO_REFRESH_INTERVAL": "60"}, upstream=True) as stack:
+    with _start(tmp_path_factory.mktemp("polling"), {"AUTO_REFRESH_SERVERS": "true"}, upstream=True) as stack:
         with _admin(stack) as client:
             response = client.put(f"/gateways/{stack.gateway_id}", json={"refresh_interval_seconds": 60})
             assert response.status_code == 200, response.text
@@ -506,7 +503,6 @@ def test_legacy_client_capabilities_and_listen_unchanged(gateway_listener: _Stac
     assert _payload(response)["error"]["code"] == -32601, response.text
 
 
-@pytest.mark.xfail(strict=True, reason="GatewayUpdate accepts refresh_interval_seconds but GatewayService.update_gateway never writes it (pre-existing on main)")
 def test_put_refresh_interval_seconds_is_persisted(gateway_polling: _Stack) -> None:
     """The per-server refresh interval set in the fixture reads back."""
     with _admin(gateway_polling) as client:
@@ -540,16 +536,9 @@ async def test_scheduled_refresh_reaches_downstream_listen(gateway_polling: _Sta
 
 
 def _wait_upstream_listen(stack: _Stack) -> None:
-    """Wait for the modern listener to hold its upstream stream and for a quiet debounce window.
-
-    NotificationService drops a listener event that arrives within
-    ``LISTENER_DEBOUNCE_SECONDS`` of the previous enqueue once that refresh has run
-    (see ``test_listener_second_change_within_debounce_is_refreshed``), so each
-    test starts outside that window.
-    """
+    """Wait for the gateway's modern listener to open its stream on the upstream."""
     assert stack.upstream_methods is not None
     _wait(lambda: "subscriptions/listen" in stack.upstream_methods.read_text(encoding="utf-8"), "modern listener to reach the upstream", timeout=45)
-    time.sleep(LISTENER_DEBOUNCE_SECONDS)
 
 
 def test_modern_listener_picks_up_upstream_change_without_polling(gateway_listener: _Stack) -> None:
@@ -571,9 +560,8 @@ async def test_listener_refresh_reaches_downstream_listen(gateway_listener: _Sta
                 return
 
 
-@pytest.mark.xfail(strict=True, reason="NotificationService._enqueue_refresh drops an event inside the debounce window when the earlier refresh already ran; no trailing refresh")
 def test_listener_second_change_within_debounce_is_refreshed(gateway_listener: _Stack) -> None:
-    """A second upstream change seconds after a listener refresh is still listed."""
+    """A second upstream change inside the debounce window is listed by the trailing refresh."""
     _wait_upstream_listen(gateway_listener)
     first = asyncio.run(_grow(gateway_listener))
     _wait(lambda: _listed(gateway_listener, first), f"listener refresh to list {first}", timeout=LISTENER_WINDOW)
