@@ -2179,7 +2179,7 @@ class ResourceService(BaseService):
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
-                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback)
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None)
                                     set_upstream_cache_directive(resource_response)
                                     return getattr(getattr(resource_response, "contents")[0], "text")
                                 except Exception as exc:
