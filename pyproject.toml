@@ -17,16 +17,15 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-oauthlib = "2026-10-05T23:59:59Z" # allow 4.0.0 (2026-09-28); PYSEC-2026-4114 fixed in 4.0.0
-cpex = "2026-10-05T23:59:59Z"
-cpex-url-reputation = "2026-10-05T23:59:59Z"
-cpex-rate-limiter = "2026-10-15T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-10-05T23:59:59Z"
-cpex-pii-filter = "2026-10-05T23:59:59Z"
-cpex-retry-with-backoff = "2026-10-05T23:59:59Z"
-cpex-output-length-guard = "2026-10-05T23:59:59Z"
-cpex-secrets-detection = "2026-10-05T23:59:59Z"
-cpex-sql-sanitizer = "2026-10-05T23:59:59Z"
+cpex = "2026-10-16T23:59:59Z"
+cpex-url-reputation = "2026-10-16T23:59:59Z"
+cpex-rate-limiter = "2026-10-16T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-10-16T23:59:59Z"
+cpex-pii-filter = "2026-10-16T23:59:59Z"
+cpex-retry-with-backoff = "2026-10-16T23:59:59Z"
+cpex-output-length-guard = "2026-10-16T23:59:59Z"
+cpex-secrets-detection = "2026-10-16T23:59:59Z"
+cpex-sql-sanitizer = "2026-10-16T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
