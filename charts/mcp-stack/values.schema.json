@@ -1984,6 +1984,9 @@
             "MCP_CLIENT_AUTH_ENABLED": {
               "type": "string"
             },
+            "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
+              "type": "string"
+            },
             "MCP_REQUIRE_AUTH": {
               "type": "string"
             },

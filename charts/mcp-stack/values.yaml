@@ -841,6 +841,7 @@ mcpContextForge:
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
+    MCP_LISTEN_MAX_LIFETIME_SECONDS: "3600" # max lifetime of a subscriptions/listen stream (60-86400)
     #checkov:skip=CKV_SECRET_6:JWT example jwt
     JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
