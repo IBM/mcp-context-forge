@@ -2804,6 +2804,38 @@ async def test_assign_imported_items_to_team_personal_team_missing_returns(impor
 
 
 @pytest.mark.asyncio
+async def test_assign_imported_items_to_team_invalidates_catalog_caches(import_service):
+    # First-Party
+    from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
+
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = SimpleNamespace(id="team-1", name="Personal Team")
+    orphan = SimpleNamespace(team_id=None, owner_email=None, visibility=None, federation_source="")
+    orphan_query = MagicMock()
+    orphan_query.filter.return_value = orphan_query
+    orphan_query.all.return_value = [orphan]
+    empty_query = MagicMock()
+    empty_query.filter.return_value = empty_query
+    empty_query.all.return_value = []
+    user_query = MagicMock()
+    user_query.filter.return_value.first.return_value = user
+    queries = {EmailUser: user_query, Tool: orphan_query, Server: empty_query, Resource: empty_query, Prompt: empty_query, Gateway: empty_query, A2AAgent: empty_query}
+    db = MagicMock()
+    db.query.side_effect = lambda model: queries[model]
+    cache = AsyncMock()
+
+    with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=cache):
+        await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+
+    db.commit.assert_called_once()
+    cache.invalidate_tools.assert_awaited_once()
+    cache.invalidate_resources.assert_awaited_once()
+    cache.invalidate_prompts.assert_awaited_once()
+    cache.invalidate_servers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_assign_imported_items_to_team_assigns_and_commits(import_service):
     # First-Party
     from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
