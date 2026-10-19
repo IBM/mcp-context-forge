@@ -53,7 +53,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
@@ -1531,6 +1531,10 @@ class A2AAgentService(BaseService):
                 if field == "owner_email":
                     continue  # ownership is set at creation; never overwritten by an update
 
+                # auth_value is persisted by the credential block below, which preserves masked placeholders
+                if field == "auth_value":
+                    continue
+
                 if hasattr(agent, field):
                     setattr(agent, field, value)
 
@@ -1539,13 +1543,11 @@ class A2AAgentService(BaseService):
                 agent.auth_value = ""
 
             # Persist basic/bearer/legacy-single-header credential updates.
-            # `auth_value` is schema-computed by A2AAgentUpdate.create_auth_value (a
-            # field_validator with validate_default=True) and therefore never appears in
-            # model_fields_set, so the generic per-field loop above never writes it. The
-            # multi-header `auth_headers` list case is handled inline in that loop; this
-            # covers the remaining single-value auth types. A masked placeholder in any
-            # submitted component field means the caller did not retype the secret, so the
-            # existing encrypted value is preserved (mirrors GatewayService.update_gateway).
+            # `auth_value` is built by A2AAgentUpdate.create_auth_value from the component
+            # fields. The Admin UI form also submits it (as "") so it can be in
+            # `model_fields_set`; the generic loop skips it and this block owns the write.
+            # A masked placeholder in a component field means the caller did not retype the
+            # secret, so the stored credential is preserved (mirrors GatewayService.update_gateway).
             auth_headers_list_submitted = bool(agent_data.auth_headers) and isinstance(agent_data.auth_headers, list)
             if agent_data.auth_type in ("basic", "bearer", "authheaders") and not auth_headers_list_submitted:
                 token = agent_data.auth_token
@@ -1553,6 +1555,15 @@ class A2AAgentService(BaseService):
                 header_value = agent_data.auth_header_value
                 if agent_data.auth_value and settings.masked_auth_value not in (token, password, header_value):
                     agent.auth_value = agent_data.auth_value
+                elif agent_data.auth_type == "basic" and password == settings.masked_auth_value and agent_data.auth_username:
+                    stored = decode_auth(agent.auth_value) if isinstance(agent.auth_value, str) and agent.auth_value else {}
+                    rebuilt = rebuild_basic_auth_with_stored_password(stored, agent_data.auth_username)
+                    if rebuilt is None:
+                        raise PublicValidationError("auth_password is required when changing auth_username on an agent without stored basic credentials.")
+                    if rebuilt != stored:
+                        agent.auth_value = encode_auth(rebuilt)
+                else:
+                    logger.debug("Masked credential placeholder submitted for agent %s; preserving stored auth_value", agent.id)
 
             # Handle query_param auth updates
             # Clear auth_query_params when switching away from query_param auth

@@ -8,7 +8,21 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+
 ### Fixed
+
+- **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
+
+- **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
+
+- **Admin UI A2A edit keeps stored credentials** - The Admin UI form resubmits the mask for an unchanged credential. `update_agent` no longer stores the mask in place of the real credential, for basic, bearer, and multi-header auth.
+
+- **Masked password with a new username** - An update that changes `auth_username` and keeps the masked `auth_password` now pairs the new username with the stored password, for A2A agents and gateways.
+
+- **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
 
@@ -53,8 +67,6 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 - **Metrics timeseries counts** ([#7138](https://github.com/IBM/mcp-context-forge/pull/7138)) - The observability metrics timeseries returns success and error counts.
 
 #### **Security & Auth**
-
-- **A2A agent and gateway credential rotation no longer fails silently** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` already masked stored `auth_password`/`auth_token`/`auth_header_value` before returning them through `a2a.read`/`gateways.read`; that contract is now documented and covered by regression tests for basic, bearer, and authheaders auth types. Fixed two related update-path bugs found during the audit: submitting `auth_password`/`auth_token`/`auth_header_value` without resubmitting `auth_type` used to silently keep the old A2A agent credential active, or silently wipe the gateway's stored credential entirely. `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` (and the admin UI equivalents) now reject that combination with a 422 instead. Also fixed: updating an A2A agent's basic/bearer credential with a real new value never persisted it at all; it does now.
 
 - **`private_key_jwt` token endpoint client authentication** ([#6991](https://github.com/IBM/mcp-context-forge/pull/6991)) - OAuth token requests can authenticate with RFC 7523 `private_key_jwt`.
 - **Passwordless SSO user provisioning** ([#6692](https://github.com/IBM/mcp-context-forge/pull/6692), [#7180](https://github.com/IBM/mcp-context-forge/pull/7180), [#7219](https://github.com/IBM/mcp-context-forge/pull/7219)) - Added a passwordless SSO user provisioning service and its API. #7180 gated the API behind a feature flag. #7219 removes that flag.

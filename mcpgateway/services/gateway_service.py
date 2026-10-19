@@ -144,7 +144,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -3394,6 +3394,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     current_auth = getattr(gateway, "auth_value", {}) or {}
                     if current_auth != decoded_auth:
                         gateway.auth_value = decoded_auth
+                elif gateway_update.auth_type == "basic" and password == settings.masked_auth_value and gateway_update.auth_username:
+                    stored = getattr(gateway, "auth_value", None)
+                    stored = decode_auth(stored) if isinstance(stored, str) and stored else (stored or {})
+                    rebuilt = rebuild_basic_auth_with_stored_password(stored, gateway_update.auth_username)
+                    if rebuilt is None:
+                        raise PublicValidationError("auth_password is required when changing auth_username on a gateway without stored basic credentials.")
+                    if rebuilt != stored:
+                        gateway.auth_value = rebuilt
 
                 # Handle query_param auth updates with service-layer enforcement
                 auth_query_params_decrypted: Optional[Dict[str, str]] = None

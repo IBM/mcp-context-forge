@@ -1456,6 +1456,36 @@ class TestGatewayService:
         # Should NOT have changed — masked value preserves existing
         assert mock_gateway.client_key == "existing-encrypted-value"
 
+    async def _update_with_stored_auth(self, gateway_service, mock_gateway, test_db, stored, update):
+        mock_gateway.team_id = 1
+        mock_gateway.auth_value = stored
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, update)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_description_only_keeps_auth_value(self, gateway_service, mock_gateway, test_db):
+        """A description-only update leaves the stored credential untouched."""
+        stored = {"Authorization": "Bearer keep-me"}  # pragma: allowlist secret
+        await self._update_with_stored_auth(gateway_service, mock_gateway, test_db, stored, GatewayUpdate(description="new"))
+
+        assert mock_gateway.auth_value == stored
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_new_username_with_masked_password_keeps_stored_password(self, gateway_service, mock_gateway, test_db):
+        """A new username with a masked password pairs the new username with the stored password."""
+        stored = {"Authorization": "Basic " + base64.b64encode(b"old-user:stored-pw").decode()}  # pragma: allowlist secret
+        update = GatewayUpdate(auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
+        await self._update_with_stored_auth(gateway_service, mock_gateway, test_db, stored, update)
+
+        assert mock_gateway.auth_value == {"Authorization": "Basic " + base64.b64encode(b"new-user:stored-pw").decode()}  # pragma: allowlist secret
+
     @pytest.mark.asyncio
     async def test_update_gateway_async_enabled_returns_pending(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Async lifecycle flag should persist update state as pending without remote re-init."""
@@ -6598,7 +6628,7 @@ class TestConvertGatewayToRead:
 
         assert result.auth_password == settings.masked_auth_value
         assert result.auth_value == settings.masked_auth_value
-        assert "s3cr3t" not in (result.auth_value or "")  # pragma: allowlist secret
+        assert result.auth_username == "admin"
 
     def test_masks_bearer_auth_credentials(self, gateway_service, monkeypatch):
         """convert_gateway_to_read must never return a usable bearer token (issue #6704)."""
@@ -6609,7 +6639,7 @@ class TestConvertGatewayToRead:
 
         assert result.auth_token == settings.masked_auth_value
         assert result.auth_value == settings.masked_auth_value
-        assert "top-secret-token" not in (result.auth_value or "")
+        assert result.auth_type == "bearer"
 
     def test_masks_authheaders_credentials(self, gateway_service, monkeypatch):
         """convert_gateway_to_read must never return a usable custom auth header value (issue #6704)."""
@@ -6620,8 +6650,7 @@ class TestConvertGatewayToRead:
 
         assert result.auth_header_value == settings.masked_auth_value
         assert result.auth_value == settings.masked_auth_value
-        assert all(header.get("value") == settings.masked_auth_value for header in (result.auth_headers or []))
-        assert "top-secret-key" not in (result.auth_value or "")
+        assert result.auth_headers == [{"key": "X-API-Key", "value": settings.masked_auth_value}]
 
 
 # ---------------------------------------------------------------------------
