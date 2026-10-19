@@ -436,6 +436,9 @@ class NotificationService:
     def unregister_gateway(self, gateway_id: str) -> None:
         """Unregister a gateway and cleanup its state.
 
+        Cancels the gateway's trailing refresh and drops its pending refresh
+        flags. A refresh already on the worker queue still runs.
+
         Args:
             gateway_id: The gateway ID to unregister.
 
@@ -450,6 +453,10 @@ class NotificationService:
         """
         self._gateway_capabilities.pop(gateway_id, None)
         self._last_refresh_enqueued.pop(gateway_id, None)
+        self._pending_refresh_flags.pop(gateway_id, None)
+        trailing = self._trailing_refresh_tasks.pop(gateway_id, None)
+        if trailing is not None:
+            trailing.cancel()
 
     def supports_list_changed(self, gateway_id: str) -> bool:
         """Check if a gateway supports any list_changed notifications.
