@@ -961,7 +961,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return raw_oauth_config
 
         # First-Party
-        from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint  # pylint: disable=import-outside-toplevel
 
         try:
             SecurityValidator.validate_url(issuer, "OAuth issuer URL")
@@ -969,34 +969,39 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.warning("OAuth endpoint discovery skipped for issuer %s: %s", issuer, _e)
             return raw_oauth_config
 
-        def _validate_discovered(url: str, name: str) -> bool:
+        async def _validate_discovered(url: str, name: str, issuer_scoped: bool = False) -> bool:
             """Validate a discovered OAuth endpoint URL.
 
             Args:
                 url: The endpoint URL to validate
                 name: Human-readable name of the endpoint for logging
+                issuer_scoped: Require the URL to share the issuer origin
 
             Returns:
                 True if URL passes security validation, False otherwise
             """
             try:
-                SecurityValidator.validate_url(url, name)
+                if issuer_scoped:
+                    await validate_issuer_scoped_endpoint(url, issuer, name)
+                else:
+                    SecurityValidator.validate_url(url, name)
                 return True
-            except ValueError as _e:
+            except (ValueError, DcrError) as _e:
                 logger.warning("Discovered %s rejected for issuer %s: %s", name, issuer, _e)
                 return False
 
         try:
             _dcr = DcrService()
             _metadata = await _dcr.discover_as_metadata(issuer)
+            issuer_scoped = not raw_oauth_config.get("client_id")
             token_endpoint = _metadata.get("token_endpoint")
-            if token_endpoint and not raw_oauth_config.get("token_url") and _validate_discovered(token_endpoint, "token_endpoint"):
+            if token_endpoint and not raw_oauth_config.get("token_url") and await _validate_discovered(token_endpoint, "token_endpoint", issuer_scoped):
                 raw_oauth_config["token_url"] = token_endpoint
             authz_endpoint = _metadata.get("authorization_endpoint")
-            if authz_endpoint and not raw_oauth_config.get("authorization_url") and _validate_discovered(authz_endpoint, "authorization_endpoint"):
+            if authz_endpoint and not raw_oauth_config.get("authorization_url") and await _validate_discovered(authz_endpoint, "authorization_endpoint", issuer_scoped):
                 raw_oauth_config["authorization_url"] = authz_endpoint
             jwks_uri = _metadata.get("jwks_uri")
-            if jwks_uri and not raw_oauth_config.get("jwks_uri") and _validate_discovered(jwks_uri, "jwks_uri"):
+            if jwks_uri and not raw_oauth_config.get("jwks_uri") and await _validate_discovered(jwks_uri, "jwks_uri"):
                 raw_oauth_config["jwks_uri"] = jwks_uri
             raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
             raw_oauth_config["endpoints_discovered"] = True
