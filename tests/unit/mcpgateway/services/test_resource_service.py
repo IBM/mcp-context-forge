@@ -8136,7 +8136,6 @@ class TestInvokeResourceCoverageEdges:
             ):
                 mock_trace.get = MagicMock(return_value=None)
                 # mcp_proxy_client yields a client which has .session property
-                session_mock = cs_session
                 cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-fallback-ok", blob=None)])
                 mock_http.return_value.__aenter__ = AsyncMock(return_value=cs_session)
                 mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -9086,9 +9085,9 @@ class TestRaiseUnresolvedGatewayResource:
         # First-Party
         from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError
 
-        err = MCPError(code=-32603, message="failed https://up.example/mcp?api_key=SECRETVALUE", data="https://up.example/mcp?api_key=SECRETVALUE")
+        err = MCPError(code=-32603, message="failed https://up.example/mcp?api_key=SECRETVALUE", data="https://up.example/mcp?api_key=SECRETVALUE")  # pragma: allowlist secret
         with pytest.raises(ResourceUpstreamError) as exc_info:
-            _raise_unresolved_gateway_resource(err, {"api_key": "SECRETVALUE"})
+            _raise_unresolved_gateway_resource(err, {"api_key": "SECRETVALUE"})  # pragma: allowlist secret
         assert "SECRETVALUE" not in str(exc_info.value)
         assert "SECRETVALUE" not in exc_info.value.data
 
