@@ -3270,6 +3270,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    progress_callback=_downstream_progress_relay(),
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
