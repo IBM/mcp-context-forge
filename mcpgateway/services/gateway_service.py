@@ -5527,7 +5527,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 ref_now = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
                                 time_since_refresh = (ref_now - last_refresh).total_seconds()
 
-                                if time_since_refresh < refresh_interval:
+                                # Ticks last at least (1 - HEALTH_LOOP_JITTER_FRACTION) of the interval, so this keeps a refresh from slipping a tick later.
+                                if time_since_refresh < refresh_interval * (1 - HEALTH_LOOP_JITTER_FRACTION):
                                     refresh_needed = False
                                     logger.debug("Skipping auto-refresh for %s: last refreshed %ss ago", gateway_name, int(time_since_refresh))
 
