@@ -499,6 +499,15 @@
             "GATEWAY_MAX_REDIRECTS": {
               "type": "string"
             },
+            "GATEWAY_MODERN_LISTENERS_ENABLED": {
+              "type": "string",
+              "description": "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
             "GATEWAY_TOOL_NAME_SEPARATOR": {
               "type": "string"
             },
