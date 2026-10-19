@@ -4480,6 +4480,38 @@ async def test_get_prompt_forwards_plugin_contexts_from_scope(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_prompt_passes_modern_progress_relay(monkeypatch):
+    """The get_prompt handler hands the modern-only progress relay to the service."""
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as tr
+
+    mock_result = MagicMock()
+    mock_result.messages = []
+    mock_result.description = "desc"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    relay = object()
+    relay_calls = []
+
+    def fake_relay(**kwargs):
+        relay_calls.append(kwargs)
+        return relay
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=("server-1", {}, {})))
+    monkeypatch.setattr(tr.prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+    monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+
+    await tr.get_prompt("my_prompt", {"a": "b"})
+
+    assert tr.prompt_service.get_prompt.await_args.kwargs["progress_callback"] is relay
+    assert relay_calls == [{}]
+
+
+@pytest.mark.asyncio
 async def test_read_resource_forwards_plugin_contexts_from_scope(monkeypatch):
     """``read_resource`` on /mcp must carry cross-hook plugin state like ``call_tool``.
 

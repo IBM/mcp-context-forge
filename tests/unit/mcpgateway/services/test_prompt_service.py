@@ -544,10 +544,29 @@ class TestPromptService:
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
             meta_data=None,
+            progress_callback=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"
         assert result.messages[0].content.text == "Rendered prompt for America/New_York and Europe/Dublin"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_forwards_progress_callback_to_gateway_fetch(self, prompt_service, test_db):
+        """get_prompt hands progress_callback to _fetch_gateway_prompt_result."""
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        db_prompt = _build_db_prompt(name="remote-prompt", template="", desc="remote")
+        db_prompt.gateway_id = gateway.id
+        db_prompt.gateway = gateway
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        test_db.commit = Mock()
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(return_value=PromptResult(messages=[], description="remote"))
+        callback = AsyncMock()
+
+        await prompt_service.get_prompt(test_db, db_prompt.name, {"a": "b"}, user="user@test.com", progress_callback=callback)
+
+        assert prompt_service._fetch_gateway_prompt_result.await_args.kwargs["progress_callback"] is callback
 
     @pytest.mark.asyncio
     async def test_get_prompt_by_name(self, prompt_service, test_db):
@@ -4213,3 +4232,106 @@ class TestFetchGatewayPromptRegistryPath:
         get_prompt_mock.assert_awaited_once()
         assert get_prompt_mock.await_args.args[0] is sentinel_session
         assert result.description == "from sse fallback"
+
+
+class TestGetPromptWithMetaProgress:
+    """_get_prompt_with_meta relays upstream progress and never forwards the client token."""
+
+    @staticmethod
+    def _session():
+        session = MagicMock()
+        session.send_request = AsyncMock(return_value="result")
+        session.get_prompt = AsyncMock(return_value="plain")
+        return session
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_passes_progress_callback(self):
+        """A callback alone selects send_request and is handed to it."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session, cb = self._session(), AsyncMock()
+        assert await _get_prompt_with_meta(session, "p", {"a": "b"}, None, cb) == "result"
+        assert session.send_request.await_args.kwargs["progress_callback"] is cb
+        wire = session.send_request.await_args.args[0].model_dump(by_alias=True)["params"]
+        assert wire["name"] == "p" and wire["arguments"] == {"a": "b"} and wire.get("_meta") is None
+        session.get_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_keeps_other_meta(self):
+        """Non-progress _meta survives next to a callback."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        await _get_prompt_with_meta(session, "p", None, {"traceparent": "00-a-b-01"}, AsyncMock())
+        request = session.send_request.await_args.args[0]
+        assert request.model_dump(by_alias=True)["params"]["_meta"]["traceparent"] == "00-a-b-01"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_strips_client_token(self):
+        """The client's progress token never goes upstream when no callback is set."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        await _get_prompt_with_meta(session, "p", None, {"progress_token": 7, "traceparent": "t"}, None)
+        meta = session.send_request.await_args.args[0].model_dump(by_alias=True)["params"]["_meta"]
+        assert "progressToken" not in meta and "progress_token" not in meta
+        assert meta["traceparent"] == "t"
+        assert session.send_request.await_args.kwargs["progress_callback"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_token_only_meta_takes_plain_path(self):
+        """Meta holding only a client token reduces to nothing and uses get_prompt."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        assert await _get_prompt_with_meta(session, "p", None, {"progressToken": "x"}, None) == "plain"
+        session.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_plain_path_unchanged(self):
+        """No meta and no callback keeps the plain SDK call."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        assert await _get_prompt_with_meta(session, "p", {"a": "b"}, None, None) == "plain"
+        session.get_prompt.assert_awaited_once_with("p", arguments={"a": "b"})
+        session.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_result_threads_progress_callback(self):
+        """progress_callback reaches _get_prompt_with_meta on the streamable HTTP arm."""
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        gateway = SimpleNamespace(id="gw", url="http://gw/mcp", transport="streamable_http", auth_type=None, auth_value=None, auth_query_params=None, ca_certificate=None)
+        prompt = SimpleNamespace(name="p", original_name="p", description="d", gateway=gateway, gateway_id="gw", template="")
+        remote = SimpleNamespace(messages=[], description="x")
+        sentinel_session = object()
+
+        class _Client:
+            session = sentinel_session
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        callback = AsyncMock()
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+            patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=_Client()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote) as get_mock,
+        ):
+            await PromptService()._fetch_gateway_prompt_result(prompt, None, meta_data=None, progress_callback=callback)
+
+        assert get_mock.await_args.args[0] is sentinel_session
+        assert get_mock.await_args.args[-1] is callback
