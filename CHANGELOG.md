@@ -8,11 +8,19 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-07 - Modern MCP Protocol, Federated Completions, and Catalog Pagination
+
+### Overview
+
+Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **federated completions**, **MCP catalog pagination**, **MCP Origin/Host transport security enforcement**, **federated gateway tool-name collision detection**, and **configuration import ownership enforcement**. It also removes deprecated anyio monkey-patch settings and the in-tree `mcp-servers/` directory.
+
 ### Breaking Changes
 
 - **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
 
 - **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
+
+- **Experimental anyio cancellation monkey-patch removed** ([#5427](https://github.com/IBM/mcp-context-forge/pull/5427)) - Removed the opt-in `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` and `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` workaround from `mcpgateway/transports/sse_transport.py`, together with the `SSE_TASK_GROUP_CLEANUP_TIMEOUT` setting. The gateway now requires `anyio>=4.15.0`, which fixes the `_deliver_cancellation` CPU spin loop upstream (anyio issues [#695](https://github.com/agronholm/anyio/issues/695) and [#1111](https://github.com/agronholm/anyio/issues/1111)). Unknown environment keys are ignored, so existing deployments start without changes. Remove the retired variables from your configuration to keep it accurate. The matching Helm values and docker-compose entries are also removed. Dangling `MCP_SESSION_POOL_CLEANUP_TIMEOUT` references, which no code path ever read, are removed from docker-compose, the Helm chart, and `.env.example`. SSE connection protection and cleanup timeouts remain the containment strategy; see [`docs/docs/operations/cpu-spin-loop-mitigation.md`](docs/docs/operations/cpu-spin-loop-mitigation.md).
 
 ### Added
 
@@ -50,10 +58,6 @@
 - **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
 
 - **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
-
-### Breaking Changes
-
-- **Experimental anyio cancellation monkey-patch removed** ([#5427](https://github.com/IBM/mcp-context-forge/pull/5427)) - Removed the opt-in `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` and `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` workaround from `mcpgateway/transports/sse_transport.py`, together with the `SSE_TASK_GROUP_CLEANUP_TIMEOUT` setting. The gateway now requires `anyio>=4.15.0`, which fixes the `_deliver_cancellation` CPU spin loop upstream (anyio issues [#695](https://github.com/agronholm/anyio/issues/695) and [#1111](https://github.com/agronholm/anyio/issues/1111)). Unknown environment keys are ignored, so existing deployments start without changes. Remove the retired variables from your configuration to keep it accurate. The matching Helm values and docker-compose entries are also removed. Dangling `MCP_SESSION_POOL_CLEANUP_TIMEOUT` references, which no code path ever read, are removed from docker-compose, the Helm chart, and `.env.example`. SSE connection protection and cleanup timeouts remain the containment strategy; see [`docs/docs/operations/cpu-spin-loop-mitigation.md`](docs/docs/operations/cpu-spin-loop-mitigation.md).
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 
