@@ -14,28 +14,32 @@ It also publishes event notifications for server changes.
 import asyncio
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, union
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 
 # First-Party
+from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Base
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_a2a_association, server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import ServerMetric, ServerMetricsHourly
+from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -464,6 +468,7 @@ class ServerService(BaseService):
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            "instructions": getattr(server, "instructions", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -631,6 +636,7 @@ class ServerService(BaseService):
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
+                instructions=getattr(server_in, "instructions", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1426,6 +1432,10 @@ class ServerService(BaseService):
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
+            # NULL means "not set" and "" means "send no instructions", so only a supplied field changes the value
+            if "instructions" in getattr(server_update, "model_fields_set", ()):
+                server.instructions = server_update.instructions
+
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
             if modified_by:
@@ -2038,6 +2048,120 @@ class ServerService(BaseService):
 
         metrics_cache.invalidate("servers")
         metrics_cache.invalidate_prefix("top_servers:")
+
+    @staticmethod
+    def _instructions_visible(visibility: str, team_id: Optional[str], owner_email: Optional[str], user_email: Optional[str], token_teams: Optional[Sequence[str]]) -> bool:
+        """Apply the ``_check_server_access`` Layer-1 rule to a server row.
+
+        Args:
+            visibility: Server visibility (``public``, ``team`` or ``private``).
+            team_id: Team that owns the server.
+            owner_email: Owner of the server.
+            user_email: Authenticated caller, or None.
+            token_teams: ``None`` is admin bypass, ``[]`` is public-only, a list is team-scoped.
+
+        Returns:
+            bool: True when the caller can see the server.
+        """
+        if visibility == "public":
+            return True
+        if token_teams is not None and len(token_teams) == 0:
+            return False
+        if visibility == "private":
+            return bool(user_email) and owner_email == user_email
+        if token_teams is None:
+            return True
+        return team_id in token_teams
+
+    @staticmethod
+    def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
+        """Choose the ``instructions`` text for a virtual server (blocking database read).
+
+        An operator override wins when it is not NULL. An empty override sends nothing.
+        Without an override, a virtual server is single-upstream when every tool,
+        resource and prompt has the same non-null ``gateway_id`` and the server has
+        no A2A agent. Such a server sends the text of that upstream server, or the
+        default text when the upstream has no text. Every other server sends the
+        default text.
+
+        A server that the caller cannot see returns the default text instead of
+        leaking operator or upstream text (CWE-639 / CWE-200). The visibility rule
+        matches ``_check_server_access``. Admin bypass (``token_teams=None``) sees
+        public servers, team servers and the caller's own private servers, never
+        another user's private server. ``token_teams=[]`` sees public servers only.
+        A caller that passes no scope gets the public-only rule.
+
+        Args:
+            server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass.
+
+        Returns:
+            Optional[str]: The text to send, or None when the server sends no ``instructions``.
+        """
+        db: Session = SessionLocal()
+        try:
+            row = db.execute(select(DbServer.visibility, DbServer.team_id, DbServer.owner_email).where(DbServer.id == server_id)).one_or_none()
+            if row is None or not ServerService._instructions_visible(row.visibility, row.team_id, row.owner_email, user_email, token_teams):
+                logger.debug("Server %s not visible to caller; sending default instructions", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+
+            override = db.execute(select(DbServer.instructions).where(DbServer.id == server_id)).scalar_one_or_none()
+            if override is not None:
+                # Empty string override: suppress instructions entirely.
+                winning_rule = "override"
+                result = override or None
+                logger.debug("Instructions for server %s: rule=%s", server_id, winning_rule)
+                return result
+            gateway_ids = (
+                db.execute(
+                    union(
+                        select(DbTool.gateway_id).join(server_tool_association, server_tool_association.c.tool_id == DbTool.id).where(server_tool_association.c.server_id == server_id),
+                        select(DbResource.gateway_id)
+                        .join(server_resource_association, server_resource_association.c.resource_id == DbResource.id)
+                        .where(server_resource_association.c.server_id == server_id),
+                        select(DbPrompt.gateway_id).join(server_prompt_association, server_prompt_association.c.prompt_id == DbPrompt.id).where(server_prompt_association.c.server_id == server_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(gateway_ids) != 1 or gateway_ids[0] is None:
+                logger.debug("Instructions for server %s: rule=default (multi-upstream or no items)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            has_a2a_agent = db.execute(select(server_a2a_association.c.a2a_agent_id).where(server_a2a_association.c.server_id == server_id).limit(1)).first() is not None
+            if has_a2a_agent:
+                logger.debug("Instructions for server %s: rule=default (a2a agent present)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            upstream_instructions = db.execute(select(DbGateway.upstream_instructions).where(DbGateway.id == gateway_ids[0])).scalar_one_or_none()
+            if upstream_instructions:
+                logger.debug("Instructions for server %s: rule=upstream", server_id)
+                return upstream_instructions
+            # Single upstream with no text: return the default so clients keep the hint.
+            logger.debug("Instructions for server %s: rule=default (upstream has no text)", server_id)
+            return DEFAULT_SERVER_INSTRUCTIONS
+        finally:
+            db.close()
+
+    async def resolve_instructions(self, server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
+        """Choose the ``instructions`` text for a virtual server.
+
+        Call this only after the request passed server authorization.
+
+        Args:
+            server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass; the default is public-only.
+
+        Returns:
+            Optional[str]: The text to send, or None when the server sends no ``instructions``.
+            A lookup failure returns the default text.
+        """
+        try:
+            return await asyncio.to_thread(self._resolve_instructions_sync, server_id, user_email, token_teams)
+        except Exception:  # noqa: BLE001 — instructions are advisory; never fail a handshake over them
+            logger.warning("Could not resolve instructions for server %s; sending the default text", server_id, exc_info=True)
+            return DEFAULT_SERVER_INSTRUCTIONS
 
     def get_oauth_protected_resource_metadata(self, db: Session, server_id: str, resource_base_url: str) -> Dict[str, Any]:
         """

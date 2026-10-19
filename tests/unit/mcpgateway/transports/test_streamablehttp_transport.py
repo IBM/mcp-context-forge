@@ -154,6 +154,43 @@ async def test_streamable_server_discover_omits_logging_key_for_modern_protocol(
     assert "logging" not in raw_result["capabilities"]
 
 
+@pytest.mark.parametrize("mode", ("legacy", "2026-07-28"))
+@pytest.mark.parametrize(
+    "resolved_server_id, resolved_text, expected",
+    [
+        pytest.param("default_server_id", "unused", tr.DEFAULT_SERVER_INSTRUCTIONS, id="unscoped-sends-default-text"),
+        pytest.param("srv-1", "Call the clock tools in UTC.", "Call the clock tools in UTC.", id="scoped-sends-resolved-text"),
+        pytest.param("srv-1", None, None, id="scoped-with-no-text-omits-field"),
+    ],
+)
+async def test_handshake_instructions_follow_the_server_scope_in_both_protocol_eras(monkeypatch, mode, resolved_server_id, resolved_text, expected):
+    """Legacy ``initialize`` and modern ``server/discover`` carry the same ``instructions`` for one scope."""
+    monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=(resolved_server_id, {}, {})))
+    resolve = AsyncMock(return_value=resolved_text)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", resolve)
+
+    async with Client(tr.mcp_app, mode=mode, cache=None) as client:
+        if mode == "legacy":
+            assert client.instructions == expected
+        else:
+            discovered = await client.session.send_discover("2026-07-28")
+            assert discovered.get("instructions") == expected
+
+    if resolved_server_id == "default_server_id":
+        resolve.assert_not_awaited()
+    else:
+        # Caller passes user_email and token_teams derived from the request user_context.
+        resolve.assert_awaited_with("srv-1", user_email=None, token_teams=[])
+
+
+async def test_legacy_initialize_middleware_leaves_other_methods_untouched():
+    """Only ``initialize`` answers get new ``instructions``."""
+    call_next = AsyncMock(return_value={"tools": []})
+    result = await tr._legacy_initialize_instructions(SimpleNamespace(method="tools/list"), call_next)  # pylint: disable=protected-access
+
+    assert result == {"tools": []}
+
+
 def test_streamable_server_app_info():
     """Verify that mcp_app is constructed with settings.app_name and __version__."""
     from mcpgateway import __version__
@@ -13625,6 +13662,48 @@ async def test_handle_streamable_http_server_scope_requires_servers_use(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_denied_caller_never_reaches_the_instructions_resolver(monkeypatch):
+    """A caller without permission on the virtual server gets 403 before any handshake answer or text lookup."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+    dummy_manager = DummySessionManager()
+    dummy_manager.handle_request = AsyncMock()
+    resolve = AsyncMock(return_value="secret text")
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", resolve)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["other-team"], "is_admin": False, "is_authenticated": True})
+    try:
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=False))
+
+        scope = _make_scope("/servers/abc-123-def/mcp", method="POST", headers=[])
+        receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}))
+        send, messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        starts = [m for m in messages if m["type"] == "http.response.start"]
+        assert starts and starts[0]["status"] == tr.HTTP_403_FORBIDDEN
+        dummy_manager.handle_request.assert_not_awaited()
+        resolve.assert_not_awaited()
+    finally:
+        user_context_var.reset(token)
+
+
 async def test_handle_streamable_http_server_scope_rbac_forbidden_on_get(monkeypatch):
     """#4205 regression guard: GET without RBAC permission must 403, not 405.
 
