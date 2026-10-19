@@ -1747,6 +1747,23 @@ class TestEnqueueRefreshDebounceEdge:
         assert notification_service._trailing_refresh_tasks == {}
         assert notification_service._refresh_queue.qsize() == 0
 
+    @pytest.mark.asyncio
+    async def test_unregister_gateway_cancels_only_its_trailing_refresh(self, notification_service):
+        """Unregister cancels that gateway's trailing refresh and pending flags, and leaves other gateways alone."""
+        notification_service.debounce_seconds = 0.2
+        for gateway_id in ("gw-1", "gw-2"):
+            await self._refresh_already_ran(notification_service, gateway_id, NotificationType.TOOLS_LIST_CHANGED)
+            await notification_service._enqueue_refresh(gateway_id, NotificationType.TOOLS_LIST_CHANGED)
+        task = notification_service._trailing_refresh_tasks["gw-1"]
+
+        notification_service.unregister_gateway("gw-1")
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert "gw-1" not in notification_service._pending_refresh_flags
+        assert [notification_service._refresh_queue.get_nowait().gateway_id] == ["gw-2"]
+        assert notification_service._trailing_refresh_tasks == {}
+
     @staticmethod
     async def _drain_backlog_then_schedule_trailing(service: NotificationService) -> asyncio.Task[None]:
         """Run two refreshes that waited in the queue past the window, then trigger trailing refreshes."""
