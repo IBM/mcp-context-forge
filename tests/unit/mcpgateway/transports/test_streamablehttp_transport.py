@@ -19423,7 +19423,7 @@ class TestProgressStreamRouting:
     """JSON mode answers modern requests that carry a progress token on the SSE manager (#6647)."""
 
     @staticmethod
-    async def _route(monkeypatch, body, headers, *, json_mode=True):
+    async def _route(monkeypatch, body, headers, *, json_mode=True, receive=None):
         """Send one POST /mcp through a wrapper whose managers are recording doubles."""
         monkeypatch.setattr(tr.settings, "json_response_enabled", json_mode)
         monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
@@ -19432,7 +19432,7 @@ class TestProgressStreamRouting:
         await wrapper.initialize()
         send, _messages = _make_send_collector()
         try:
-            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=headers), _make_receive(body), send)
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=headers), receive or _make_receive(body), send)
         finally:
             await wrapper.shutdown()
         return wrapper
@@ -19481,6 +19481,13 @@ class TestProgressStreamRouting:
             assert wrapper.progress_session_manager.bodies == []
         else:
             assert wrapper.progress_session_manager is None
+
+    @pytest.mark.asyncio
+    async def test_progress_routing_stops_when_client_disconnects_during_drain(self, monkeypatch):
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, _PROGRESS_HEADERS, receive=_make_receive_disconnect())
+
+        assert wrapper.session_manager.bodies == []
+        assert wrapper.progress_session_manager.bodies == []
 
     @pytest.mark.asyncio
     async def test_progress_routing_skips_repeated_version_header(self, monkeypatch):
@@ -19957,6 +19964,7 @@ class TestProgressRelay:
         with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
             relay = tr._downstream_progress_relay()
         await relay(1.0, None, None)
+        ctx.session.report_progress.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("era", "expect_relay"), [("2026-07-28", True), ("2025-11-25", False)])
