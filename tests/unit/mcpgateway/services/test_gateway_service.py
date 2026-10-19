@@ -55,6 +55,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    HEALTH_LOOP_JITTER_FRACTION,
     MCP_SYNC_CREATED_VIA_VALUES,
     GatewayToolNameConflictError,
     OAuthToolValidationError,
@@ -5092,7 +5093,6 @@ class TestGatewayHealth:
             return await coro
 
         with patch("mcpgateway.services.gateway_service.asyncio.sleep", side_effect=_fake_sleep), \
-             patch("mcpgateway.services.gateway_service._jittered_tick", side_effect=lambda interval: interval), \
              patch("mcpgateway.services.gateway_service.asyncio.wait_for", side_effect=_fake_wait_for), \
              patch("mcpgateway.services.gateway_service.asyncio.to_thread", side_effect=_fake_to_thread), \
              patch("mcpgateway.services.gateway_service.time.monotonic", side_effect=lambda: fake_mono[0]), \
@@ -5130,10 +5130,83 @@ class TestGatewayHealth:
         # This fails with the old scheduler when jitter-shortened gaps trip the throttle.
         for i in range(1, len(refresh_calls)):
             gap = (refresh_calls[i] - refresh_calls[i - 1]).total_seconds()
-            assert gap >= interval, (
+            assert gap >= interval * (1 - HEALTH_LOOP_JITTER_FRACTION), (
                 f"Cycle {i}: gap between cycle_started_at values ({gap:.3f}s) "
-                f"< refresh_interval ({interval}s); scheduler re-basing is broken"
+                f"< jitter-adjusted refresh_interval ({interval}s); scheduler re-basing is broken"
             )
+
+    @pytest.mark.asyncio
+    async def test_max_jitter_refresh_fires_on_fifth_tick_not_sixth(self, gateway_service, mock_gateway_health, mock_db_session):
+        """With R=300 and T=60, ticks forced to 54 s still refresh on the 5th tick, as before jitter existed."""
+        tick, refresh_interval, target_cycles = 60, 300, 7
+        base_dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        fake_mono = [0.0]
+        sleeps = [0]
+
+        async def _fake_sleep(dur):
+            if dur < 1.0:
+                return
+            fake_mono[0] += dur
+            sleeps[0] += 1
+            if sleeps[0] >= target_cycles:
+                raise asyncio.CancelledError
+
+        async def _fake_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        async def _fake_wait_for(coro, timeout=None):
+            return await coro
+
+        refresh_offsets: list[float] = []
+
+        async def _fake_refresh(*_a, gateway=None, cycle_started_at=None, **_kw):
+            refresh_offsets.append((cycle_started_at - base_dt).total_seconds())
+            mock_gateway_health.last_refresh_at = cycle_started_at
+
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(side_effect=_fake_refresh)
+        gateway_service.set_gateway_state = AsyncMock()
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock = MagicMock(return_value=lock)
+        mock_gateway_health.last_refresh_at = None
+        mock_gateway_health.refresh_interval_seconds = refresh_interval
+        gateway_service._health_check_interval = tick
+        gateway_service._get_gateways = MagicMock(return_value=[mock_gateway_health])
+
+        mock_http_client = AsyncMock()
+        mock_http_client.__aenter__.return_value = mock_http_client
+        mock_http_client.__aexit__.return_value = None
+        mock_http_client.get.return_value = MagicMock(status_code=200)
+
+        fake_datetime_cls = MagicMock(wraps=datetime)
+        fake_datetime_cls.now.side_effect = lambda tz=None: base_dt + timedelta(seconds=fake_mono[0])
+
+        with patch("mcpgateway.services.gateway_service.asyncio.sleep", side_effect=_fake_sleep), \
+             patch("mcpgateway.services.gateway_service._jittered_tick", side_effect=lambda interval: _jittered_tick(interval, rand=lambda: 1.0)), \
+             patch("mcpgateway.services.gateway_service.asyncio.wait_for", side_effect=_fake_wait_for), \
+             patch("mcpgateway.services.gateway_service.asyncio.to_thread", side_effect=_fake_to_thread), \
+             patch("mcpgateway.services.gateway_service.time.monotonic", side_effect=lambda: fake_mono[0]), \
+             patch("mcpgateway.services.gateway_service.datetime", fake_datetime_cls), \
+             patch("mcpgateway.services.gateway_service.settings") as mock_settings, \
+             patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_http_client), \
+             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = refresh_interval
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            mock_settings.health_check_timeout = 5.0
+            mock_settings.max_concurrent_health_checks = 10
+            mock_settings.gateway_health_check_timeout = 10.0
+            mock_settings.skip_ssl_verify = False
+            mock_settings.classification_enabled = False
+            mock_db_session.__enter__.return_value.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+            with pytest.raises(asyncio.CancelledError):
+                await gateway_service._run_gateway_maintenance_cycle("admin@example.com")
+
+        assert refresh_offsets == [0.0, 5 * 54.0]
 
     @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
