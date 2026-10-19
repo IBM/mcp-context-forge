@@ -2,7 +2,8 @@
 # Based on Red Hat UBI 10.2 Minimal for consistency with gateway container
 
 ARG NGINX_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1791891203
-FROM ${NGINX_IMAGE} # checkov:skip=CKV_DOCKER_7:version pinned in ARG default
+# checkov:skip=CKV_DOCKER_7:version pinned in ARG default
+FROM ${NGINX_IMAGE}
 
 # Install nginx and curl (for healthchecks)
 RUN microdnf install -y \
