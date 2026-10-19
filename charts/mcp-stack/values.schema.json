@@ -501,7 +501,7 @@
             },
             "GATEWAY_MODERN_LISTENERS_ENABLED": {
               "type": "string",
-              "description": "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh",
+              "description": "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster",
               "default": "false",
               "enum": [
                 "true",
