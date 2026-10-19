@@ -1847,3 +1847,109 @@ class TestSyncToolsUnchanged:
 
         # Verify no mutation happened
         assert existing_tool.url == "localhost:50051"
+
+
+def _db_grpc_service(**overrides) -> DbGrpcService:
+    now = datetime.now(timezone.utc)
+    values = {
+        "id": "svc-1",
+        "name": "svc",
+        "slug": "svc",
+        "target": "localhost:50051",
+        "description": "d",
+        "reflection_enabled": True,
+        "tls_enabled": False,
+        "grpc_metadata": {},
+        "enabled": True,
+        "reachable": False,
+        "service_count": 0,
+        "method_count": 0,
+        "discovered_services": {},
+        "tags": [],
+        "created_at": now,
+        "updated_at": now,
+        "version": 1,
+        "visibility": "public",
+        "owner_email": "owner@example.com",
+    }
+    values.update(overrides)
+    return DbGrpcService(**values)
+
+
+class TestToolCacheInvalidation:
+    """Tool-row changes invalidate the registry tool cache, after the commit."""
+
+    @pytest.fixture(autouse=True)
+    def _no_target_validation(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.fixture
+    def db(self):
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def invalidate_tools(self, db):
+        cache = MagicMock()
+        cache.invalidate_tools = AsyncMock(side_effect=db.commit.assert_called)
+        with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=cache):
+            yield cache.invalidate_tools
+
+    @pytest.fixture
+    def reflection_stub(self):
+        with patch("mcpgateway.services.grpc_service.grpc"), patch("mcpgateway.services.grpc_service.reflection_pb2"), patch("mcpgateway.services.grpc_service.reflection_pb2_grpc") as stub_module:
+            stub = stub_module.ServerReflectionStub.return_value
+            stub.ServerReflectionInfo.return_value = iter([])
+            yield stub
+
+    async def test_register_with_reflection_invalidates_tools(self, db, invalidate_tools, reflection_stub):
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def refresh(obj):
+            for key, value in {"id": "svc-1", "slug": obj.name, "enabled": True, "reachable": False, "service_count": 0, "method_count": 0, "discovered_services": {}}.items():
+                if getattr(obj, key) is None:
+                    setattr(obj, key, value)
+
+        db.refresh.side_effect = refresh
+        await GrpcService().register_service(db, GrpcServiceCreate(name="svc", target="localhost:50051", reflection_enabled=True))
+
+        invalidate_tools.assert_awaited_once()
+
+    async def test_reflect_service_invalidates_tools(self, db, invalidate_tools, reflection_stub):
+        db.execute.return_value.scalar_one_or_none.return_value = _db_grpc_service()
+
+        await GrpcService().reflect_service(db, "svc-1")
+
+        invalidate_tools.assert_awaited_once()
+
+    async def test_failed_reflection_does_not_invalidate_tools(self, db, invalidate_tools, reflection_stub):
+        db.execute.return_value.scalar_one_or_none.return_value = _db_grpc_service()
+        reflection_stub.ServerReflectionInfo.side_effect = RuntimeError("unreachable")
+
+        with pytest.raises(GrpcServiceError):
+            await GrpcService().reflect_service(db, "svc-1")
+
+        invalidate_tools.assert_not_awaited()
+
+    async def test_update_scoping_change_invalidates_tools(self, db, invalidate_tools):
+        db.execute.return_value.scalar_one_or_none.return_value = _db_grpc_service()
+
+        await GrpcService().update_service(db, "svc-1", GrpcServiceUpdate(visibility="private"))
+
+        invalidate_tools.assert_awaited_once()
+
+    async def test_update_without_scoping_change_keeps_tools_cache(self, db, invalidate_tools):
+        db.execute.return_value.scalar_one_or_none.return_value = _db_grpc_service()
+
+        await GrpcService().update_service(db, "svc-1", GrpcServiceUpdate(description="new"))
+
+        invalidate_tools.assert_not_awaited()
+
+    async def test_delete_with_tools_invalidates_tools(self, db, invalidate_tools):
+        doomed = MagicMock(spec=DbGrpcService)
+        doomed.name = "svc"
+        doomed.tools = [MagicMock(id="tool-1")]
+        db.execute.return_value.scalar_one_or_none.return_value = doomed
+
+        await GrpcService().delete_service(db, "svc-1")
+
+        invalidate_tools.assert_awaited_once()
