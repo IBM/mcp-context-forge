@@ -1670,21 +1670,81 @@ class TestForwardNotificationErrorBranches:
 
 
 class TestEnqueueRefreshDebounceEdge:
-    """Cover the ``debounce window but no pending`` branch (lines 1080-1086)."""
+    """Cover the ``debounce window but no pending`` branch: a trailing refresh replaces the drop."""
+
+    @staticmethod
+    async def _refresh_already_ran(service: NotificationService, gateway_id: str, kind: NotificationType) -> None:
+        """Queue a refresh and take it off the queue as the worker would."""
+        await service._enqueue_refresh(gateway_id, kind)
+        await service._execute_refresh(service._refresh_queue.get_nowait())
 
     @pytest.mark.asyncio
-    async def test_debounce_without_pending_entry_counts_as_debounced(self, notification_service):
-        """When ``_last_refresh_enqueued`` is recent but no ``_pending_refresh_flags`` entry exists,
-        the notification is counted as debounced and the log-debug branch runs.
-        """
-        # Simulate: refresh was recently enqueued and then processed (flags popped),
-        # but debounce window still applies.
+    async def test_debounce_without_pending_entry_schedules_trailing_refresh(self, notification_service):
+        """An event after the refresh ran, inside the window, is deferred rather than dropped."""
         notification_service._last_refresh_enqueued["gw-x"] = time.time()
-        # Deliberately DO NOT add a _pending_refresh_flags entry.
 
         before = notification_service._notifications_debounced
         await notification_service._enqueue_refresh("gw-x", NotificationType.TOOLS_LIST_CHANGED)
         assert notification_service._notifications_debounced == before + 1
+        assert notification_service._refresh_queue.qsize() == 0
+        assert "gw-x" in notification_service._trailing_refresh_tasks
+        await notification_service.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_event_after_processed_refresh_gets_one_trailing_refresh_with_merged_flags(self, notification_service):
+        """Events inside the window after the refresh ran yield exactly one later refresh with OR-merged flags."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.PROMPTS_LIST_CHANGED)
+
+        await notification_service._enqueue_refresh("gw-1", NotificationType.RESOURCES_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.PROMPTS_LIST_CHANGED)
+        assert notification_service._refresh_queue.qsize() == 0
+
+        await asyncio.sleep(0.3)
+        assert notification_service._refresh_queue.qsize() == 1
+        trailing = notification_service._refresh_queue.get_nowait()
+        assert (trailing.include_resources, trailing.include_prompts) == (True, True)
+        assert trailing.triggered_by == {NotificationType.RESOURCES_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED}
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_burst_inside_window_yields_one_trailing_refresh(self, notification_service):
+        """A burst after the refresh ran schedules one trailing task and queues one refresh."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+
+        for _ in range(5):
+            await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+            assert len(notification_service._trailing_refresh_tasks) == 1
+
+        await asyncio.sleep(0.3)
+        assert notification_service._refresh_queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_event_outside_window_queues_immediately(self, notification_service):
+        """An event after the window closes takes the immediate path with no trailing task."""
+        notification_service.debounce_seconds = 0.1
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await asyncio.sleep(0.15)
+
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+
+        assert notification_service._refresh_queue.qsize() == 1
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_scheduled_trailing_refresh(self, notification_service):
+        """Shutdown cancels a scheduled trailing refresh before it queues."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        task = notification_service._trailing_refresh_tasks["gw-1"]
+
+        await notification_service.shutdown()
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert notification_service._trailing_refresh_tasks == {}
         assert notification_service._refresh_queue.qsize() == 0
 
 
