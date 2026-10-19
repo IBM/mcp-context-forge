@@ -259,7 +259,6 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
-    get_auth_bearer_token_from_request,
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_admin_auth,
@@ -5903,8 +5902,7 @@ async def preview_tool(
     if server_id:
         cached = getattr(request.state, "_jwt_verified_payload", None)
         payload = cached[1] if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict) else None
-        token = get_auth_bearer_token_from_request(request) or request.cookies.get("jwt_token") or request.cookies.get("access_token")
-        if payload is None and (token or cached is not None):
+        if cached is not None and payload is None:
             raise HTTPException(status_code=403, detail="Unable to read verified token scopes")
         # Legacy and session tokens may omit scopes; malformed scopes must not grant access.
         token_scopes = payload.get("scopes", {}) if payload is not None else {}
