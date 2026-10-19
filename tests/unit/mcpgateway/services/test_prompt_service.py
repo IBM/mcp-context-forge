@@ -2451,6 +2451,26 @@ class TestPromptBulkRegistration:
         assert added.gateway_name_cache == "Gateway One"
 
     @pytest.mark.asyncio
+    async def test_register_prompts_bulk_invalidates_prompts_once(self, prompt_service):
+        """A bulk call invalidates the prompts cache once, not per row."""
+        gateway_result = MagicMock()
+        gateway_result.scalars.return_value.all.return_value = []
+        prompts_result = MagicMock()
+        prompts_result.scalars.return_value.all.return_value = []
+        db = MagicMock()
+        db.execute.side_effect = [gateway_result, prompts_result]
+        prompt_service._notify_prompt_added = AsyncMock()
+        cache = MagicMock()
+        cache.invalidate_prompts = AsyncMock()
+
+        prompts = [PromptCreate(name=f"p{i}", template="Hello!", arguments=[]) for i in range(3)]
+        with patch("mcpgateway.services.prompt_service._get_registry_cache", return_value=cache):
+            result = await prompt_service.register_prompts_bulk(db=db, prompts=prompts, created_by="tester", conflict_strategy="skip")
+
+        assert result["created"] == 3
+        cache.invalidate_prompts.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_register_prompts_bulk_fail_conflict_records_error(self, prompt_service):
         existing = MagicMock(spec=DbPrompt)
         existing.name = "conflict"

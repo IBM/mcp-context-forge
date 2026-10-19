@@ -3495,6 +3495,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     cache = _get_registry_cache()
                     await cache.invalidate_gateways()
+                    await cache.invalidate_tools()
+                    await cache.invalidate_resources()
+                    await cache.invalidate_prompts()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                     # First-Party
@@ -3688,6 +3691,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                 # Also invalidate tags cache since gateway tags may have changed
@@ -4469,6 +4475,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
 
@@ -4610,6 +4619,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         cache = _get_registry_cache()
         await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        await cache.invalidate_resources()
+        await cache.invalidate_prompts()
         await cache.invalidate_catalog()
         tool_lookup_cache = _get_tool_lookup_cache()
         await tool_lookup_cache.invalidate_gateway(gateway_id)
@@ -6365,6 +6377,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         db.commit()
         db.refresh(gateway)
+
+        cache = _get_registry_cache()
+        await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        await cache.invalidate_resources()
+        await cache.invalidate_prompts()
 
         # Audit log (uses its own session — never pass db)
         audit = get_audit_trail_service()
