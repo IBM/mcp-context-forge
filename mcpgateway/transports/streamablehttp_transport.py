@@ -3028,6 +3028,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    progress_callback=_downstream_progress_relay(),
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
