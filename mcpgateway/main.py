@@ -10500,7 +10500,8 @@ async def _execute_rpc_initialize(
         if effective_owner and not requester_is_admin and requester_email != effective_owner:
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "initialize"})
 
-    result = await session_registry.handle_initialize_logic(params, session_id=init_session_id, server_id=server_id)
+    scoped_user_email, scoped_token_teams = get_scoped_resource_access_context(request, user)
+    result = await session_registry.handle_initialize_logic(params, session_id=init_session_id, server_id=server_id, user_email=scoped_user_email, token_teams=scoped_token_teams)
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
 
