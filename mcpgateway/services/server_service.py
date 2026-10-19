@@ -14,7 +14,7 @@ It also publishes event notifications for server changes.
 import asyncio
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
 
 # Third-Party
 import httpx
@@ -2051,7 +2051,31 @@ class ServerService(BaseService):
         metrics_cache.invalidate_prefix("top_servers:")
 
     @staticmethod
-    def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+    def _instructions_visible(visibility: str, team_id: Optional[str], owner_email: Optional[str], user_email: Optional[str], token_teams: Optional[Sequence[str]]) -> bool:
+        """Apply the ``_check_server_access`` Layer-1 rule to a server row.
+
+        Args:
+            visibility: Server visibility (``public``, ``team`` or ``private``).
+            team_id: Team that owns the server.
+            owner_email: Owner of the server.
+            user_email: Authenticated caller, or None.
+            token_teams: ``None`` is admin bypass, ``[]`` is public-only, a list is team-scoped.
+
+        Returns:
+            bool: True when the caller can see the server.
+        """
+        if visibility == "public":
+            return True
+        if token_teams is not None and len(token_teams) == 0:
+            return False
+        if visibility == "private":
+            return bool(user_email) and owner_email == user_email
+        if token_teams is None:
+            return True
+        return team_id in token_teams
+
+    @staticmethod
+    def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
         """Choose the ``instructions`` text for a virtual server (blocking database read).
 
         An operator override wins when it is not NULL. An empty override sends nothing.
@@ -2061,37 +2085,27 @@ class ServerService(BaseService):
         default text when the upstream has no text. Every other server sends the
         default text.
 
-        The caller must supply ``user_email`` and ``token_teams`` (from the authenticated
-        request) when the server is not already verified as visible to the caller.
-        A server that is not visible to the caller returns the default text instead of
-        leaking operator or upstream text (CWE-639 / CWE-200).
-
-        ``token_teams=None`` means an API admin token — no visibility restriction applies.
-        ``token_teams=[]`` means a public-only token — only public servers are visible.
+        A server that the caller cannot see returns the default text instead of
+        leaking operator or upstream text (CWE-639 / CWE-200). The visibility rule
+        matches ``_check_server_access``. Admin bypass (``token_teams=None``) sees
+        public servers, team servers and the caller's own private servers, never
+        another user's private server. ``token_teams=[]`` sees public servers only.
+        A caller that passes no scope gets the public-only rule.
 
         Args:
             server_id: Identifier of the virtual server.
-            user_email: Email of the authenticated caller, or None for admin bypass.
-            token_teams: Team IDs from the caller's token, or None for admin bypass.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass.
 
         Returns:
             Optional[str]: The text to send, or None when the server sends no ``instructions``.
         """
         db: Session = SessionLocal()
         try:
-            # Visibility check: confirm the caller can see this server before revealing
-            # operator or upstream text.  token_teams=None is the admin-bypass shape
-            # (API token with is_admin=True) and skips the filter.
-            if token_teams is not None:
-                vis_conditions = [DbServer.visibility == "public"]
-                if user_email:
-                    vis_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
-                if token_teams:
-                    vis_conditions.append(and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])))
-                visible = db.execute(select(DbServer.id).where(DbServer.id == server_id).where(or_(*vis_conditions))).first()
-                if not visible:
-                    logger.debug("Server %s not visible to caller; sending default instructions", server_id)
-                    return DEFAULT_SERVER_INSTRUCTIONS
+            row = db.execute(select(DbServer.visibility, DbServer.team_id, DbServer.owner_email).where(DbServer.id == server_id)).one_or_none()
+            if row is None or not ServerService._instructions_visible(row.visibility, row.team_id, row.owner_email, user_email, token_teams):
+                logger.debug("Server %s not visible to caller; sending default instructions", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
 
             override = db.execute(select(DbServer.instructions).where(DbServer.id == server_id)).scalar_one_or_none()
             if override is not None:
@@ -2130,15 +2144,15 @@ class ServerService(BaseService):
         finally:
             db.close()
 
-    async def resolve_instructions(self, server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+    async def resolve_instructions(self, server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
         """Choose the ``instructions`` text for a virtual server.
 
         Call this only after the request passed server authorization.
 
         Args:
             server_id: Identifier of the virtual server.
-            user_email: Email of the authenticated caller, or None for admin bypass.
-            token_teams: Team IDs from the caller's token, or None for admin bypass.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass; the default is public-only.
 
         Returns:
             Optional[str]: The text to send, or None when the server sends no ``instructions``.

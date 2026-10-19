@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import time
 import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 import uuid
 
 # Third-Party
@@ -2114,7 +2114,14 @@ class SessionRegistry(SessionBackend):
             db.close()
 
     # Handle initialize logic
-    async def handle_initialize_logic(self, body: Dict[str, Any], session_id: Optional[str] = None, server_id: Optional[str] = None) -> InitializeResult:
+    async def handle_initialize_logic(
+        self,
+        body: Dict[str, Any],
+        session_id: Optional[str] = None,
+        server_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[Sequence[str]] = (),
+    ) -> InitializeResult:
         """Process MCP protocol initialization request.
 
         Validates the protocol version and returns server capabilities and information.
@@ -2125,6 +2132,8 @@ class SessionRegistry(SessionBackend):
                 Expected keys: 'protocol_version' or 'protocolVersion', 'capabilities'.
             session_id: Optional session ID to associate client capabilities with.
             server_id: Optional server ID to query OAuth configuration for RFC 9728 support.
+            user_email: Authenticated caller, used for the ``instructions`` visibility check.
+            token_teams: Layer-1 team scope of the caller. ``None`` is admin bypass; the default is public-only.
 
         Returns:
             InitializeResult containing protocol version, server capabilities, and server info.
@@ -2196,7 +2205,7 @@ class SessionRegistry(SessionBackend):
                 # First-Party
                 from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
-                instructions = await server_service.resolve_instructions(server_id)
+                instructions = await server_service.resolve_instructions(server_id, user_email=user_email, token_teams=token_teams)
 
             return InitializeResult(
                 protocol_version=protocol_version,

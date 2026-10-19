@@ -6411,6 +6411,8 @@ class TestRpcHandling:
             {"session_id": "sess-1", "protocolVersion": "2025-11-25"},
             session_id="sess-1",
             server_id="srv-1",
+            user_email="user@example.com",
+            token_teams=["team-a"],
         )
 
     async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):

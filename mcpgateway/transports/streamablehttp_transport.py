@@ -3605,7 +3605,7 @@ async def _catalog_ttl_ms(server_id: Optional[str]) -> int:
     return _upstream_refresh_seconds(None) * 1000
 
 
-async def _instructions_for_server(server_id: Optional[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+async def _instructions_for_server(server_id: Optional[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = ()) -> Optional[str]:
     """``instructions`` text for a handshake answer: the virtual server's own text, or the default text when unscoped.
 
     ``user_email`` and ``token_teams`` are forwarded to the resolver so that it can enforce
@@ -3614,8 +3614,8 @@ async def _instructions_for_server(server_id: Optional[str], user_email: Optiona
 
     Args:
         server_id: The virtual server the request is scoped to, or None.
-        user_email: Email of the authenticated caller; None for admin bypass.
-        token_teams: Team IDs from the caller's token; None for admin bypass.
+        user_email: Email of the authenticated caller.
+        token_teams: Team IDs from the caller's token. ``None`` is admin bypass; the default is public-only.
 
     Returns:
         Optional[str]: The text to send, or None when the answer carries no ``instructions``.
