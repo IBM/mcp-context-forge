@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 
 PUBLIC_TEST_IP = "93.184.216.34"
 
@@ -2031,6 +2031,50 @@ class TestUpdateClientRegistrationErrorPaths:
         with patch_isolated_client(mock_client):
             with pytest.raises(DcrError, match="non-JSON"):
                 await dcr_service.update_client_registration(client_record, test_db)
+
+
+class TestValidateIssuerScopedEndpoint:
+    """Test the issuer-origin and URL-policy gate for endpoints read from AS metadata."""
+
+    ISSUER = "https://as.example.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("url", "issuer"),
+        [
+            pytest.param("https://evil.example.net/token", ISSUER, id="cross-origin"),
+            pytest.param("http://as.example.com/token", ISSUER, id="scheme-downgrade"),
+            pytest.param("https://as.example.com:8443/token", ISSUER, id="other-port"),
+            pytest.param(None, ISSUER, id="missing"),
+            pytest.param(["https://as.example.com/token"], ISSUER, id="non-string"),
+            pytest.param("https://as.example.com/token", "", id="empty-issuer"),
+        ],
+    )
+    async def test_rejects_endpoint_outside_issuer_origin(self, url, issuer):
+        """An endpoint that is absent, malformed, or on another origin is refused."""
+        with pytest.raises(DcrError, match="AS metadata token_endpoint must share the issuer origin"):
+            await validate_issuer_scoped_endpoint(url, issuer, "token_endpoint")
+
+    @pytest.mark.asyncio
+    async def test_rejects_endpoint_failing_url_policy(self):
+        """A same-origin endpoint that the URL policy blocks is refused with the policy error chained."""
+        policy_error = ValueError("blocked")
+        with patch("mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning", AsyncMock(side_effect=policy_error)):
+            with pytest.raises(DcrError, match="AS metadata token_endpoint blocked by URL policy") as exc_info:
+                await validate_issuer_scoped_endpoint("https://as.example.com/token", self.ISSUER, "token_endpoint")
+
+        assert exc_info.value.__cause__ is policy_error
+
+    @pytest.mark.asyncio
+    async def test_accepts_explicit_default_port(self):
+        """An explicit default port is the same origin as the issuer."""
+        assert await validate_issuer_scoped_endpoint("https://as.example.com:443/token", self.ISSUER, "token_endpoint") == "https://as.example.com:443/token"
+
+    @pytest.mark.asyncio
+    async def test_accepts_endpoint_under_issuer_path(self):
+        """An issuer with a path and trailing slash accepts endpoints on its origin."""
+        url = "https://as.example.com/realms/x/protocol/openid-connect/token"
+        assert await validate_issuer_scoped_endpoint(url, "https://as.example.com/realms/x/", "token_endpoint") == url
 
 
 if __name__ == "__main__":
