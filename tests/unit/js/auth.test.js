@@ -21,6 +21,8 @@ import {
   toggleTokenExchangeFields,
   toggleDiscoveryFields,
   bindDiscoveryToggle,
+  toggleActorClientFields,
+  bindActorClientToggle,
 } from "../../../mcpgateway/admin_ui/auth.js";
 import { showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils.js";
 
@@ -1301,6 +1303,55 @@ describe("token-exchange grant fields", () => {
     handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-a2a", value: "token-exchange" });
 
     expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("none");
+  });
+});
+
+describe("token-exchange actor client fields", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function render(prefix) {
+    document.body.innerHTML = `
+      <select id="oauth-actor-token-source-${prefix}">
+        <option value="none">none</option>
+        <option value="client_credentials">client_credentials</option>
+        <option value="client_assertion">client_assertion</option>
+      </select>
+      <div id="oauth-actor-client-fields-${prefix}" style="display:none"></div>
+    `;
+  }
+
+  test.each(["gw", "gw-edit"])("toggleActorClientFields shows the %s group only for client_credentials", (prefix) => {
+    render(prefix);
+    const group = document.getElementById(`oauth-actor-client-fields-${prefix}`);
+
+    toggleActorClientFields(prefix, "client_credentials");
+    expect(group.style.display).toBe("block");
+    toggleActorClientFields(prefix, "client_assertion");
+    expect(group.style.display).toBe("none");
+    toggleActorClientFields(prefix, "none");
+    expect(group.style.display).toBe("none");
+  });
+
+  test("bindActorClientToggle follows the source select", () => {
+    render("gw");
+    bindActorClientToggle("gw");
+    const select = document.getElementById("oauth-actor-token-source-gw");
+    const group = document.getElementById("oauth-actor-client-fields-gw");
+
+    select.value = "client_credentials";
+    select.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("block");
+
+    select.value = "none";
+    select.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("none");
+  });
+
+  test("is a no-op when the group is not rendered (non-admin)", () => {
+    expect(() => toggleActorClientFields("gw", "client_credentials")).not.toThrow();
+    expect(() => bindActorClientToggle("gw")).not.toThrow();
   });
 });
 

@@ -266,6 +266,34 @@ Authorization server support varies:
 
 See [Delegation (actor token)](../architecture/oauth-design.md#delegation-actor-token) for the request sequence, caching, and audit details.
 
+#### Using a separate actor client
+
+Some authorization servers, such as IBM Security Verify, ignore the `audience` parameter. They issue the exchanged token to the client that authenticates the exchange. On such a server, create one gateway entry per upstream MCP server. Each entry authenticates as that server's client, and all entries share one ContextForge actor client:
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://tenant.verify.ibm.com/oauth2/token",
+  "client_id": "<mcp1 client ID>",
+  "client_secret": "...",
+  "target_audience": "<mcp1 client ID>",
+  "actor_token_source": "client_credentials",
+  "actor": {
+    "client_id": "<contextforge client ID>",
+    "client_secret": "..."
+  }
+}
+```
+
+- The exchange authenticates as `client_id`, so the issued token has `aud` set to that MCP server.
+- The actor token comes from `actor`, so the issued token has `act` set to ContextForge.
+- `actor` also accepts `token_url` and `token_endpoint_auth_method`. Omitted keys inherit the parent values.
+- `actor` requires `actor_token_source` `client_credentials`.
+- `actor.client_secret` is encrypted at rest and masked on read. Each gateway entry holds its own copy, so a secret rotation needs an update on every entry.
+- On IBM Security Verify, the user token needs a `may_act` claim that names the ContextForge client.
+
+See [Actor client override](../architecture/oauth-design.md#actor-client-override) for the full key list and the IBM Security Verify setup.
+
 #### Configuring token exchange in the Admin UI
 
 Platform admins can create and edit token-exchange gateways from the Admin UI. Select **OAuth 2.0** as the authentication type and **Token Exchange (RFC 8693 On-Behalf-Of)** as the grant type. The option is rendered only for platform admins; the server also rejects a token-exchange submission from any other user with `403`, including a `team_admin` of the gateway's own team.
@@ -286,6 +314,17 @@ Platform admins can create and edit token-exchange gateways from the Admin UI. S
 
 The `client_assertion` actor source is selectable only on the edit form of a gateway that already has a stored `private_key`.
 
+When the actor token source is `client_credentials`, an optional actor client group appears:
+
+| Field | Required | Default |
+|-------|----------|---------|
+| Actor Client ID (`actor.client_id`) | no. A blank value stores no `actor`. | — |
+| Actor Client Secret (`actor.client_secret`) | no | Parent `client_secret` |
+| Actor Token URL (`actor.token_url`) | no | Parent `token_url` |
+| Actor Client Authentication (`actor.token_endpoint_auth_method`) | no | Parent method |
+
+Clear the actor client ID on the edit form to remove `actor`.
+
 The token-exchange section also has a **Use a discovery credential (client credentials)** checkbox. When you select it, these fields appear:
 
 | Field | Required | Default |
@@ -297,7 +336,7 @@ The token-exchange section also has a **Use a discovery credential (client crede
 
 Selecting the checkbox with scopes `mcp.discover` stores `{"grant_type": "client_credentials", "scopes": ["mcp.discover"]}`. The UI does not expose `discovery.token_endpoint_auth_method`; set it through the REST API.
 
-UI submissions pass through the same validation as `POST /gateways`, including the SSRF check on `token_url` and `discovery.token_url`.
+UI submissions pass through the same validation as `POST /gateways`, including the SSRF check on `token_url`, `discovery.token_url`, and `actor.token_url`.
 
 The Admin UI does not upload `private_key_jwt` key material. Configure `private_key`, `private_key_jwt_kid`, and `token_endpoint_auth_signing_alg` through the REST API. The edit form then shows the stored `private_key_jwt` method and keeps the key.
 

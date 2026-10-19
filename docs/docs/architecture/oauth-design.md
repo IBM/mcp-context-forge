@@ -208,6 +208,7 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 | `discovery` | no | — | Optional discovery credential for catalog discovery and health checks. See [Tool discovery for token-exchange gateways](#tool-discovery-for-token-exchange-gateways). |
 | `actor_token_source` | no | `none` | `none`, `client_credentials`, or `client_assertion`. Any value other than `none` turns on RFC 8693 delegation. See [Delegation (actor token)](#delegation-actor-token). |
 | `actor_token_type` | no | by source | The `actor_token_type` sent to the AS. Defaults to `urn:ietf:params:oauth:token-type:access_token` for `client_credentials` and `urn:ietf:params:oauth:token-type:jwt` for `client_assertion`. |
+| `actor` | no | — | Optional actor client for a `client_credentials` actor token: `client_id` (required in the object), `client_secret`, `token_url`, and `token_endpoint_auth_method`. Each present key overrides the parent value for the actor token request only. Accepted only with `actor_token_source` `client_credentials`. See [Actor client override](#actor-client-override). |
 
 ### Subject Token Sources
 
@@ -410,8 +411,9 @@ cached impersonation token is never served after delegation is turned on.
 `actor_token` is in `OAuthManager._SENSITIVE_TOKEN_KEYS`, and actor token
 values are redacted from every logged token request, response, and error. The
 delegation keys themselves are not secrets and are shown unmasked in gateway
-reads. They store no new credential: the actor uses the gateway's existing
-`client_secret` or `private_key`.
+reads. Without an [`actor` override](#actor-client-override) they store no new
+credential: the actor uses the gateway's existing `client_secret` or
+`private_key`. `actor.client_secret` is encrypted and masked like `client_secret`.
 
 #### Authorization server support
 
@@ -426,6 +428,89 @@ issued token for an `act` claim during setup.
 
 If the AS rejects `actor_token`, every exchange for the gateway fails. Set
 `actor_token_source` to `none` to restore impersonation at once.
+
+#### Actor client override
+
+Some authorization servers ignore the RFC 8693 `audience` parameter. They
+issue the exchanged token to the client that authenticates the exchange, so its
+`aud` is that client. On such a server, the gateway entry must authenticate as
+the upstream MCP server's own client. Without an override, the actor token then
+also comes from that client, and `act` never names ContextForge.
+
+The optional `actor` object separates the two clients. The exchange request
+still authenticates with the parent `client_id`. The `client_credentials`
+actor token request authenticates with the `actor` values instead:
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://tenant.verify.ibm.com/oauth2/token",
+  "client_id": "<mcp1 client ID>",
+  "client_secret": "...",
+  "target_audience": "<mcp1 client ID>",
+  "actor_token_source": "client_credentials",
+  "actor": {
+    "client_id": "<contextforge client ID>",
+    "client_secret": "..."
+  }
+}
+```
+
+| `actor` key | Effect |
+|-------------|--------|
+| `client_id` | Required. The client that requests the actor token. |
+| `client_secret` | Secret of the actor client. Encrypted at rest, masked on read. An update that submits the masked placeholder keeps the stored secret. |
+| `token_url` | Token endpoint for the actor token request only. Passes the same SSRF validation as `token_url`. Defaults to the parent `token_url`. |
+| `token_endpoint_auth_method` | Client authentication for the actor token request. Defaults to the parent method. A different method other than `private_key_jwt` drops the parent's signing key from the actor request. |
+
+- The actor token request carries no `scope`, `subject_token`, or `audience` parameter.
+- The actor token cache key includes the effective actor client. A change to `actor` never serves a token cached for the earlier actor client.
+- `actor` with `actor_token_source` `none` or `client_assertion` is rejected, and every grant other than `token-exchange` rejects it.
+- Only a platform admin can set, change, or remove `actor`.
+- Without `actor`, the actor token comes from the parent client, as before.
+
+Use one gateway entry per upstream MCP server. Each entry authenticates as
+that server's client and names the same ContextForge client in `actor`:
+
+| Gateway entry | `client_id` | `actor.client_id` | Exchanged token |
+|---------------|-------------|-------------------|-----------------|
+| mcp1 | mcp1 | contextforge | `aud=mcp1`, `act={client_id: contextforge}` |
+| mcp2 | mcp2 | contextforge | `aud=mcp2`, `act={client_id: contextforge}` |
+
+Each entry stores its own encrypted copy of the actor secret. To rotate the
+ContextForge client secret, update `actor.client_secret` on every entry.
+
+##### IBM Security Verify
+
+IBM Security Verify (ISV) ignores `audience`. It sets `aud` to the
+authenticating client plus that client's **Audiences** list. A manual test
+against an ISV tenant gave these results:
+
+| Question | Result |
+|----------|--------|
+| Does ISV honor `audience`? | No. `audience=mcp1`, an unlisted `audience`, and no `audience` return the same `aud`. |
+| Does ISV accept an actor token from another client? | Yes. Authenticated as mcp1 with a contextforge actor token, the result is `aud=[mcp1]`, `act={client_id: contextforge}`. |
+| Does ISV write `act` itself? | Yes. No custom `act` attribute rule is needed. |
+| Does ISV nest `act` on a second hop? | Yes. Authenticated as api1 with an mcp1 actor token, the result is `act={client_id: mcp1, act: {client_id: contextforge}}`. |
+| Does ISV reject an exchange with no actor token, or with the wrong actor? | Yes. `CSIAQ5242E` for a missing actor token, and `CSIAQ5201E` for an actor that `may_act` does not name. |
+
+ISV checks the `may_act` claim of the subject token against the actor token.
+`may_act` names the next actor. Configure it per client:
+
+| Client | Token it issues | `may_act` |
+|--------|-----------------|-----------|
+| The user's client (for example Claude Code) | User token | `{"client_id":"<contextforge client ID>"}` |
+| mcpN | Hop 1 token | `{"client_id":"<mcpN client ID>"}`, when mcpN exchanges again for its API |
+| apiN | Hop 2 token | none |
+
+Also configure these ISV settings:
+
+- Keep the **Audiences** list empty on every MCP and API client. ISV adds each entry to every token the client issues, so an entry can make a hop 1 token valid at the API.
+- Turn on **Require actor token** on each mcpN and apiN client.
+- Let each mcpN client accept subject tokens issued by the user's client.
+
+`infra/token-exchange-demo-isv-delegation` runs this setup end to end.
+`./demo.sh check-isv` runs both hops and the deny paths without the gateway.
 
 ### `subject_token_type`
 

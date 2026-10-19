@@ -7,9 +7,11 @@ RFC 8693 actor token resolution for token-exchange delegation.
 
 Every exchange path (tool call, resource read, manual refresh) resolves the
 actor token here, so the delegation rules live in one place. The actor is the
-gateway's own OAuth client. ``OAuthManager.token_exchange()`` independently
-refuses a delegation config without an actor token, so a call site that skips
-this resolver fails closed instead of impersonating.
+gateway's exchange client, unless the optional ``actor`` object names a
+different client. Authorization servers that issue the exchanged token to the
+authenticating client need that split. ``OAuthManager.token_exchange()``
+independently refuses a delegation config without an actor token, so a call
+site that skips this resolver fails closed instead of impersonating.
 
 SECURITY: an actor token is a bearer credential. Never log its value.
 """
@@ -19,7 +21,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 # First-Party
-from mcpgateway.common.oauth import ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION, ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS, ACTOR_TOKEN_SOURCE_NONE, DEFAULT_ACTOR_TOKEN_TYPES
+from mcpgateway.common.oauth import ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION, ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS, ACTOR_TOKEN_SOURCE_NONE, DEFAULT_ACTOR_TOKEN_TYPES, normalize_token_endpoint_auth_method
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
@@ -28,6 +30,9 @@ logger = logging.getLogger(__name__)
 ACTOR_PURPOSE = "actor"
 # Conservative TTL when the authorization server omits expires_in.
 _ACTOR_FALLBACK_TTL = 60
+# Keys of the optional ``actor`` object that override the parent client for the actor token request only.
+_ACTOR_OVERRIDE_KEYS = ("token_url", "client_id", "client_secret", "token_endpoint_auth_method")
+_SIGNING_KEY_MATERIAL_KEYS = ("private_key", "private_key_jwt_kid", "token_endpoint_auth_signing_alg")
 
 
 def actor_token_source(oauth_config: Optional[Dict[str, Any]]) -> str:
@@ -92,8 +97,10 @@ def exchange_cache_variant(oauth_config: Optional[Dict[str, Any]]) -> str:
 def build_actor_oauth_config(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
     """Derive the client-credentials config that requests a ``client_credentials`` actor token.
 
-    The config carries only the parent's client-auth keys: no scopes, no
-    ``discovery`` overrides, and no token-exchange keys.
+    The config carries the parent's client-auth keys, overridden by the non-empty
+    values of the optional ``actor`` object. It carries no scopes, no ``discovery``
+    overrides, and no token-exchange keys. An ``actor`` auth method other than the
+    parent's drops the inherited signing key, unless the method is ``private_key_jwt``.
 
     Args:
         oauth_config: Token-exchange gateway ``oauth_config``.
@@ -104,8 +111,24 @@ def build_actor_oauth_config(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
     Examples:
         >>> build_actor_oauth_config({"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "scopes": ["a"], "discovery": {"client_id": "svc"}})
         {'token_url': 'https://as/token', 'client_id': 'cf', 'grant_type': 'client_credentials'}
+        >>> build_actor_oauth_config({"token_url": "https://as/token", "client_id": "mcp1", "actor": {"client_id": "cf", "client_secret": "s", "token_url": ""}})
+        {'token_url': 'https://as/token', 'client_id': 'cf', 'client_secret': 's', 'grant_type': 'client_credentials'}
+        >>> parent = {"client_id": "mcp1", "token_endpoint_auth_method": "private_key_jwt", "private_key": "k", "private_key_jwt_kid": "kid"}
+        >>> build_actor_oauth_config({**parent, "actor": {"client_id": "cf", "client_secret": "s", "token_endpoint_auth_method": "client_secret_post"}})
+        {'client_id': 'cf', 'token_endpoint_auth_method': 'client_secret_post', 'client_secret': 's', 'grant_type': 'client_credentials'}
     """
     effective: Dict[str, Any] = {key: oauth_config[key] for key in SERVICE_TOKEN_CLIENT_AUTH_KEYS if oauth_config.get(key) is not None}
+    actor = oauth_config.get("actor")
+    if isinstance(actor, dict):
+        parent_method = normalize_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method"))
+        for key in _ACTOR_OVERRIDE_KEYS:
+            if actor.get(key) not in (None, ""):
+                effective[key] = actor[key]
+        actor_method = normalize_token_endpoint_auth_method(effective.get("token_endpoint_auth_method"))
+        if actor_method not in (parent_method, "private_key_jwt"):
+            # A secret-based actor client must never sign with the parent client's key.
+            for key in _SIGNING_KEY_MATERIAL_KEYS:
+                effective.pop(key, None)
     effective["grant_type"] = "client_credentials"
     return effective
 

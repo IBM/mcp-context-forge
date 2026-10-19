@@ -1020,6 +1020,52 @@ async def _assemble_discovery_from_fields(fields: Any, *, encrypt_secret: bool) 
     return discovery
 
 
+_ACTOR_OVERRIDE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_actor_client_id": "client_id",
+    "oauth_actor_token_url": "token_url",
+    "oauth_actor_token_endpoint_auth_method": "token_endpoint_auth_method",
+}
+
+
+async def _assemble_actor_from_fields(fields: Any, *, encrypt_secret: bool) -> Optional[Dict[str, Any]]:
+    """Assemble the token-exchange ``actor`` client override from the Admin UI actor fields.
+
+    Args:
+        fields: Mapping with ``.get()`` containing the ``oauth_actor_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+
+    Returns:
+        The ``actor`` dict, or ``None`` when the actor token source is not
+        ``client_credentials`` or the actor client ID is empty.
+
+    Examples:
+        >>> import asyncio
+        >>> fields = {"oauth_actor_token_source": "client_credentials", "oauth_actor_client_id": " contextforge ", "oauth_actor_token_url": ""}
+        >>> asyncio.run(_assemble_actor_from_fields(fields, encrypt_secret=False))
+        {'client_id': 'contextforge'}
+        >>> asyncio.run(_assemble_actor_from_fields({**fields, "oauth_actor_client_id": ""}, encrypt_secret=False)) is None
+        True
+        >>> asyncio.run(_assemble_actor_from_fields({**fields, "oauth_actor_token_source": "none"}, encrypt_secret=False)) is None
+        True
+    """
+    if str(fields.get("oauth_actor_token_source", "")).strip() != "client_credentials":
+        return None
+    actor: Dict[str, Any] = {}
+    for form_key, config_key in _ACTOR_OVERRIDE_FORM_FIELDS.items():
+        value = str(fields.get(form_key, "")).strip()
+        if value:
+            actor[config_key] = value
+    if "client_id" not in actor:
+        return None
+    secret = str(fields.get("oauth_actor_client_secret", ""))
+    if secret == settings.masked_auth_value:
+        # Encryption downstream swaps the masked placeholder for the stored secret.
+        actor["client_secret"] = secret
+    elif secret:
+        actor["client_secret"] = await get_encryption_service(settings.auth_encryption_secret).encrypt_secret_async(secret) if encrypt_secret else secret
+    return actor
+
+
 _CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
     "oauth_issuer": "issuer",
     "oauth_token_url": "token_url",
@@ -1124,6 +1170,9 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         discovery = await _assemble_discovery_from_fields(fields, encrypt_secret=encrypt_secret)
         if discovery is not None:
             oauth_config["discovery"] = discovery
+        actor = await _assemble_actor_from_fields(fields, encrypt_secret=encrypt_secret)
+        if actor is not None:
+            oauth_config["actor"] = actor
     return oauth_config
 
 
@@ -1193,6 +1242,7 @@ def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: A
         if form_key in form and not str(form.get(form_key) or "").strip() and config_key not in submitted:
             merged.pop(config_key, None)
     _merge_discovery_edit(merged, submitted, existing, form)
+    _merge_actor_edit(merged, submitted, existing, form)
     return merged
 
 
@@ -1237,6 +1287,50 @@ def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], exi
     if "scopes" not in submitted_discovery:
         discovery.pop("scopes", None)
     merged["discovery"] = discovery
+
+
+def _merge_actor_edit(merged: Dict[str, Any], submitted: Dict[str, Any], existing: Dict[str, Any], form: Any) -> None:
+    """Merge the ``actor`` client override of a token-exchange edit one level deep, in place.
+
+    A form without the actor field group keeps the stored object. A cleared
+    actor client ID removes it. A blank secret keeps the stored secret, and a
+    rendered override submitted blank clears its key.
+
+    Args:
+        merged: oauth_config being built from the stored and submitted configs.
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form.
+
+    Examples:
+        >>> stored = {"actor": {"client_id": "cf", "client_secret": "enc", "token_url": "https://as/token"}}  # pragma: allowlist secret
+        >>> merged = {"actor": {"client_id": "cf"}}
+        >>> _merge_actor_edit(merged, dict(merged), stored, {"oauth_actor_present": "1", "oauth_actor_token_url": ""})
+        >>> sorted(merged["actor"].items())
+        [('client_id', 'cf'), ('client_secret', 'enc')]
+        >>> merged = dict(stored)
+        >>> _merge_actor_edit(merged, {}, stored, {"oauth_actor_present": "1"})
+        >>> "actor" in merged
+        False
+        >>> merged = {}
+        >>> _merge_actor_edit(merged, {}, stored, {})
+        >>> merged["actor"]["client_id"]
+        'cf'
+    """
+    if "oauth_actor_present" not in form:
+        if isinstance(existing.get("actor"), dict):
+            merged["actor"] = existing["actor"]
+        return
+    submitted_actor = submitted.get("actor")
+    if not isinstance(submitted_actor, dict):
+        merged.pop("actor", None)
+        return
+    stored_actor = existing.get("actor") if isinstance(existing.get("actor"), dict) else {}
+    actor = {**stored_actor, **submitted_actor}
+    for form_key, config_key in _ACTOR_OVERRIDE_FORM_FIELDS.items():
+        if form_key in form and config_key not in submitted_actor:
+            actor.pop(config_key, None)
+    merged["actor"] = actor
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
