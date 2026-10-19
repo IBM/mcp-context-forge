@@ -536,3 +536,31 @@ class DcrService:
 
 class DcrError(Exception):
     """DCR-related errors."""
+
+
+async def validate_issuer_scoped_endpoint(url: Any, issuer: Optional[str], field_name: str) -> str:
+    """Validate that an AS metadata endpoint shares the issuer origin and passes URL policy.
+
+    Endpoints read from an authorization server's metadata document are attacker
+    influenced. Without the origin gate, a hostile metadata document redirects
+    token and registration traffic to a third-party host (GHSA-9hgc-g3w5-67cm).
+
+    Args:
+        url: Endpoint value taken from the AS metadata document.
+        issuer: Issuer URL whose origin the endpoint must share.
+        field_name: Metadata field name, used in error messages.
+
+    Returns:
+        The unchanged ``url`` when it is valid.
+
+    Raises:
+        DcrError: If ``url`` is not a non-empty string, ``issuer`` is empty, the
+            origins differ, or the URL policy rejects the endpoint.
+    """
+    if not isinstance(url, str) or not url or not issuer or not is_same_origin(url, origin_from_url(issuer)):
+        raise DcrError(f"AS metadata {field_name} must share the issuer origin")
+    try:
+        await SecurityValidator.validate_url_for_connection_pinning(url, f"AS metadata {field_name}")
+    except ValueError as exc:
+        raise DcrError(f"AS metadata {field_name} blocked by URL policy") from exc
+    return url
