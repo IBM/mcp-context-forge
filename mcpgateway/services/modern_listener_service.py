@@ -209,23 +209,25 @@ class ModernListenerService:
         """Hold a listen stream to one server, reconnecting with jittered backoff.
 
         The spec defines no event replay, so each re-listen after a drop or a
-        graceful close triggers one refresh of every list kind.
+        graceful close triggers one refresh of every list kind. The backoff
+        resets only after a stream stayed up for ``BACKOFF_MAX_SECONDS``, so a
+        server that acks and closes at once is re-listened ever less often.
         """
         backoff = BACKOFF_INITIAL_SECONDS
         relisten = False
         while not self._shutdown_event.is_set():
+            acked_at: Optional[float] = None
+            dropped: Optional[Exception] = None
             try:
                 async with mcp_proxy_client(url=gw.url, headers=gw.headers) as client:
                     async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True) as subscription:
+                        acked_at = time.monotonic()
                         logger.info("Listening for change events on modern server %s (%s)", gw.name, gw.url)
-                        backoff = BACKOFF_INITIAL_SECONDS
                         if relisten:
                             for kind in (NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED):
                                 await self._notification_service.notify_list_changed(gw.id, kind)
                         async for event in subscription:
                             await self._dispatch(gw, event)
-                delay = self._backoff_with_jitter(backoff)
-                logger.info("Listen stream to server %s closed by the server; reconnecting in %.0fs", gw.name, delay)
             except ListenNotSupportedError:
                 self._unsupported_until[gw.id] = time.monotonic() + UNSUPPORTED_REPROBE_SECONDS
                 logger.info(
@@ -237,8 +239,14 @@ class ModernListenerService:
             except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception as exc:  # pylint: disable=broad-except  # SubscriptionLost, MCPError, transport errors
-                delay = self._backoff_with_jitter(backoff)
-                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(exc).__name__, exc, delay)
+                dropped = exc
+            if acked_at is not None and time.monotonic() - acked_at >= BACKOFF_MAX_SECONDS:
+                backoff = BACKOFF_INITIAL_SECONDS
+            delay = self._backoff_with_jitter(backoff)
+            if dropped is None:
+                logger.info("Listen stream to server %s closed by the server; reconnecting in %.0fs", gw.name, delay)
+            else:
+                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(dropped).__name__, dropped, delay)
             relisten = True
             try:
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
