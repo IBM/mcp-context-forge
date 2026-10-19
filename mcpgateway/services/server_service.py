@@ -674,6 +674,11 @@ class ServerService(BaseService):
             db.commit()
             db.refresh(db_server)
             notify_dataplane()
+
+            # Invalidate cache after successful creation
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
