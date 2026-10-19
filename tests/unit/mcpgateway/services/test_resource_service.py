@@ -7795,6 +7795,63 @@ class TestInvokeResourceCoverageEdges:
         mock_sleep.assert_awaited_once_with(0.05)
 
     @pytest.mark.asyncio
+    async def test_invoke_resource_sse_retry_drops_progress_callback(self):
+        """A retried upstream read gets no progress callback, so progress values never restart on one client token."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
+        )
+
+        session = AsyncMock()
+        session.initialize = AsyncMock(return_value=None)
+        read_with_meta = AsyncMock(
+            side_effect=[
+                RuntimeError("upstream SSE closed"),
+                MagicMock(contents=[MagicMock(text="<html>retry-ok</html>", blob=None)]),
+            ]
+        )
+        progress_callback = AsyncMock()
+
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=False)
+        session.session = session
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.asyncio.sleep", new_callable=AsyncMock),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=session_context),
+            patch("mcpgateway.services.resource_service._read_resource_with_meta", read_with_meta),
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+
+            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway, progress_callback=progress_callback)
+
+        assert out == "<html>retry-ok</html>"
+        assert [call.args[3] for call in read_with_meta.await_args_list] == [progress_callback, None]
+
+    @pytest.mark.asyncio
     async def test_invoke_resource_streamablehttp_uses_registry_when_available(self):
         """Cover StreamableHTTP registry path (#4205)."""
         # First-Party
