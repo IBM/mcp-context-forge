@@ -1877,6 +1877,26 @@ def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
         raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
 
 
+def _is_modern_protocol(version: Optional[str]) -> bool:
+    """Return whether a protocol version belongs to the modern (non-handshake) era.
+
+    Args:
+        version: The negotiated or declared protocol version, or ``None``.
+
+    Returns:
+        ``True`` for a version that is not handshake-era; ``False`` for ``None`` or a handshake-era version.
+
+    Examples:
+        >>> _is_modern_protocol("2026-07-28")
+        True
+        >>> _is_modern_protocol("2025-11-25")
+        False
+        >>> _is_modern_protocol(None)
+        False
+    """
+    return version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS
+
+
 _PROGRESS_DRAIN_TIMEOUT_SECONDS = 5.0
 _PROGRESS_SEND_TIMEOUT_SECONDS = 5.0
 
@@ -1891,6 +1911,8 @@ class _ProgressRelay:
     Each send is shielded, because closing a per-call upstream ``Client`` cancels its task
     group and would abort sends still blocked on the sink. A send that hits
     ``_PROGRESS_SEND_TIMEOUT_SECONDS`` marks the relay stalled, and later updates are dropped.
+    On client hang-up, a pending send can hold handler teardown for at most
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS``.
 
     Examples:
         >>> relay = _ProgressRelay(session=None)
@@ -1989,8 +2011,7 @@ def _downstream_progress_relay(*, include_legacy: bool = False) -> _ProgressRela
     if session is None:
         return None
     protocol_version = getattr(ctx, "protocol_version", None)
-    modern = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
-    if not (modern or include_legacy):
+    if not (_is_modern_protocol(protocol_version) or include_legacy):
         return None
     return _ProgressRelay(session)
 
@@ -2114,7 +2135,7 @@ async def call_tool(
             # MRTR elicitation pass-through is modern-era only (scoping decision:
             # legacy clients keep today's no-elicitation behavior).
             protocol_version = getattr(ctx, "protocol_version", None)
-            mrtr_allowed = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+            mrtr_allowed = _is_modern_protocol(protocol_version)
             raw_params = getattr(ctx, "params", None) or {}
             raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
             inbound_request_state = raw_params.get("requestState") or raw_params.get("request_state")
@@ -4571,7 +4592,7 @@ def _has_single_modern_protocol_version(scope: Scope) -> bool:
         False
     """
     values = [item[1] for item in scope.get("headers") or [] if isinstance(item, (tuple, list)) and len(item) == 2 and item[0] == b"mcp-protocol-version"]
-    return len(values) == 1 and isinstance(values[0], bytes) and values[0].decode("latin-1") not in HANDSHAKE_PROTOCOL_VERSIONS
+    return len(values) == 1 and isinstance(values[0], bytes) and _is_modern_protocol(values[0].decode("latin-1"))
 
 
 def _bucket_method_label(method: Optional[str]) -> str:
@@ -5650,7 +5671,7 @@ class SessionManagerWrapper:
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         # check if modern era request
         _pv_header = headers.get("mcp-protocol-version")
-        is_modern_era_request = _pv_header is not None and _pv_header not in HANDSHAKE_PROTOCOL_VERSIONS
+        is_modern_era_request = _is_modern_protocol(_pv_header)
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
