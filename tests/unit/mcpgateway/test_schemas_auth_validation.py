@@ -1096,3 +1096,9 @@ class TestOauthConfigPrivateKeyJwtValidation:
     def test_non_private_key_method_ignores_private_key_requirement(self):
         gateway = GatewayUpdate(oauth_config=_oauth_config(token_endpoint_auth_method="client_secret_post"))
         assert gateway.oauth_config["token_endpoint_auth_method"] == "client_secret_post"
+
+
+@pytest.mark.parametrize("model", [GatewayUpdate, A2AAgentUpdate])
+def test_update_empty_credential_without_auth_type_treated_as_unset(model):
+    """Empty credential strings count as unset, so they do not require auth_type."""
+    assert model(auth_token="", auth_password="", auth_header_value="").auth_type is None

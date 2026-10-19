@@ -4019,8 +4019,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If a single-value credential field is set without `auth_type`.
         """
-        if self.auth_type is None and any(v is not None for v in (self.auth_token, self.auth_password, self.auth_header_value)):
-            raise ValueError("auth_type is required when setting auth_token, auth_password, or auth_header_value.")
+        submitted = [name for name in ("auth_token", "auth_password", "auth_header_value") if getattr(self, name)]
+        if self.auth_type is None and submitted:
+            raise ValueError(f"auth_type is required when setting {', '.join(submitted)}.")
         return self
 
 
@@ -6011,8 +6012,9 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If a single-value credential field is set without `auth_type`.
         """
-        if self.auth_type is None and any(v is not None for v in (self.auth_token, self.auth_password, self.auth_header_value)):
-            raise ValueError("auth_type is required when setting auth_token, auth_password, or auth_header_value.")
+        submitted = [name for name in ("auth_token", "auth_password", "auth_header_value") if getattr(self, name)]
+        if self.auth_type is None and submitted:
+            raise ValueError(f"auth_type is required when setting {', '.join(submitted)}.")
         return self
 
 
