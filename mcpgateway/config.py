@@ -2917,7 +2917,13 @@ class Settings(BaseSettings):
     # Modern (2026-07-28) change-event listeners
     # When enabled, the gateway holds one standing subscriptions/listen stream per
     # server to get the list changed event
-    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh")
+    gateway_modern_listeners_enabled: bool = Field(
+        default=False,
+        description=(
+            "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; "
+            "runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster"
+        ),
+    )
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
