@@ -3799,6 +3799,42 @@ class TestAdminGatewayRoutes:
         assert body["jwks_uri"] == "https://example.com/jwks"  # valid kept
         assert body["registration_endpoint"] is None  # empty string filtered
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_nulls_cross_origin_token_endpoint(self, mock_dcr_service_cls, mock_request):
+        """A token endpoint outside the issuer origin is returned as None."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://evil.example.net/token",
+            "authorization_endpoint": "https://as.example.com/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] is None
+        assert body["authorization_endpoint"] == "https://as.example.com/authorize"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_nulls_cross_origin_authorization_endpoint(self, mock_dcr_service_cls, mock_request):
+        """An authorization endpoint outside the issuer origin is returned as None."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://as.example.com/token",
+            "authorization_endpoint": "https://evil.example.net/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] == "https://as.example.com/token"
+        assert body["authorization_endpoint"] is None
+
 
 class TestAdminRootRoutes:
     """Test admin routes for root management with enhanced coverage."""
