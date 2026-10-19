@@ -679,7 +679,7 @@ These settings have the largest measured impact on MCP throughput:
 | `AUTH_CACHE_ENABLED` | `true` | Significant — reduces per-request DB queries | Caches user/team/role lookups |
 | `CACHE_TYPE` | `redis` | Significant — shared cache across workers | Enables cross-worker caching |
 
-With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent, so progress can reach the client; otherwise the response stays JSON. On that stream, errors after the first progress frame arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request.
+With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`. A body over `MCP_BODY_PEEK_MAX_BYTES` keeps the JSON response, with no progress.
 
 ### Settings with Negligible Impact
 

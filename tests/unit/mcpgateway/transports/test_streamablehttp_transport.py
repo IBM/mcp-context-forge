@@ -19530,17 +19530,14 @@ class TestProgressStreamRouting:
 
     @pytest.mark.asyncio
     async def test_progress_sse_hangup_cancels_handler(self, monkeypatch):
-        # Third-Party
-        import anyio
-
-        cancelled = anyio.Event()
-        progress_sent = anyio.Event()
+        cancelled = asyncio.Event()
+        progress_sent = asyncio.Event()
 
         async def invoke(**kwargs):
             await kwargs["progress_callback"](1, 2, "a")
             try:
-                await anyio.Event().wait()
-            except anyio.get_cancelled_exc_class():
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
                 cancelled.set()
                 raise
 
@@ -19555,7 +19552,7 @@ class TestProgressStreamRouting:
         wrapper = SessionManagerWrapper()
         await wrapper.initialize()
         try:
-            with anyio.fail_after(5):
+            async with asyncio.timeout(5):
                 await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, progress_sent), send)
         finally:
             await wrapper.shutdown()
