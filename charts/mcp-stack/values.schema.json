@@ -840,6 +840,9 @@
                 "false"
               ]
             },
+            "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
+              "type": "string"
+            },
             "MCP_SESSION_POOL_ENABLED": {
               "type": "string"
             },
@@ -1991,9 +1994,6 @@
               "type": "string"
             },
             "MCP_CLIENT_AUTH_ENABLED": {
-              "type": "string"
-            },
-            "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
               "type": "string"
             },
             "MCP_REQUIRE_AUTH": {
