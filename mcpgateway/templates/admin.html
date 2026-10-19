@@ -5707,6 +5707,40 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         </label>
                         <input type="text" name="oauth_actor_token_type" id="oauth-actor-token-type-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="Default for the selected source" />
                       </div>
+                      <div id="oauth-actor-client-fields-gw" class="space-y-4" style="display: none">
+                        <input type="hidden" name="oauth_actor_present" value="1" />
+                        <p class="text-sm text-gray-500">
+                          Actor client (optional). Set it when the authorization server issues the exchanged token to the authenticating client. The actor token is then requested as this client. Blank overrides inherit the values above.
+                        </p>
+                        <div>
+                          <label for="oauth-actor-client-id-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Actor Client ID (optional)
+                          </label>
+                          <input type="text" name="oauth_actor_client_id" id="oauth-actor-client-id-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="contextforge" />
+                        </div>
+                        <div>
+                          <label for="oauth-actor-client-secret-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Actor Client Secret (optional)
+                          </label>
+                          <input type="password" name="oauth_actor_client_secret" id="oauth-actor-client-secret-gw" autocomplete="off" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                        </div>
+                        <div>
+                          <label for="oauth-actor-token-url-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Actor Token URL (optional override)
+                          </label>
+                          <input type="url" name="oauth_actor_token_url" id="oauth-actor-token-url-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="https://oauth.example.com/token" />
+                        </div>
+                        <div>
+                          <label for="oauth-actor-token-endpoint-auth-method-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Actor Client Authentication (optional override)
+                          </label>
+                          <select name="oauth_actor_token_endpoint_auth_method" id="oauth-actor-token-endpoint-auth-method-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                            <option value="" selected>Inherit</option>
+                            <option value="client_secret_basic">client_secret_basic</option>
+                            <option value="client_secret_post">client_secret_post</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     <div id="oauth-discovery-section-gw" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
                       <input type="hidden" name="oauth_discovery_present" value="1" />
@@ -10410,6 +10444,40 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                                 Actor Token Type (optional)
                               </label>
                               <input type="text" name="oauth_actor_token_type" id="oauth-actor-token-type-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="Default for the selected source" />
+                            </div>
+                            <div id="oauth-actor-client-fields-gw-edit" class="space-y-4" style="display: none">
+                              <input type="hidden" name="oauth_actor_present" value="1" />
+                              <p class="text-sm text-gray-500">
+                                Actor client (optional). Set it when the authorization server issues the exchanged token to the authenticating client. The actor token is then requested as this client. Blank overrides inherit the values above.
+                              </p>
+                              <div>
+                                <label for="oauth-actor-client-id-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Actor Client ID (optional)
+                                </label>
+                                <input type="text" name="oauth_actor_client_id" id="oauth-actor-client-id-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="contextforge" />
+                              </div>
+                              <div>
+                                <label for="oauth-actor-client-secret-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Actor Client Secret (optional)
+                                </label>
+                                <input type="password" name="oauth_actor_client_secret" id="oauth-actor-client-secret-gw-edit" autocomplete="off" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                              </div>
+                              <div>
+                                <label for="oauth-actor-token-url-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Actor Token URL (optional override)
+                                </label>
+                                <input type="url" name="oauth_actor_token_url" id="oauth-actor-token-url-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="https://oauth.example.com/token" />
+                              </div>
+                              <div>
+                                <label for="oauth-actor-token-endpoint-auth-method-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Actor Client Authentication (optional override)
+                                </label>
+                                <select name="oauth_actor_token_endpoint_auth_method" id="oauth-actor-token-endpoint-auth-method-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                                  <option value="" selected>Inherit</option>
+                                  <option value="client_secret_basic">client_secret_basic</option>
+                                  <option value="client_secret_post">client_secret_post</option>
+                                </select>
+                              </div>
                             </div>
                           </div>
                           <div id="oauth-discovery-section-gw-edit" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">

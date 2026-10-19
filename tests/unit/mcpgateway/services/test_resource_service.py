@@ -4799,6 +4799,32 @@ class TestInvokeResourceCoverage:
         assert captured_headers.get("Authorization") == "Bearer exchanged-tok"
 
     @pytest.mark.asyncio
+    async def test_token_exchange_delegation_actor_override_sends_actor_client_token(self, resource_service, monkeypatch):
+        """A resource read on a gateway with an ``actor`` override requests the actor token as the actor client."""
+        # First-Party
+        from mcpgateway.services import gateway_service_token_cache
+
+        monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache())
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        oauth_config = {
+            "grant_type": "token-exchange",
+            "target_audience": "aud",
+            "token_url": "https://as.example.com/token",
+            "client_id": "mcp1",
+            "actor_token_source": "client_credentials",
+            "actor": {"client_id": "contextforge", "client_secret": "actor-secret"},  # pragma: allowlist secret
+        }
+        resource_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "actor-tok-contextforge", "expires_in": 300})
+        resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
+
+        outcome, _, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+
+        assert outcome == "ok"
+        assert resource_service.oauth_manager.get_client_credentials_token_response.call_args.args[0]["client_id"] == "contextforge"
+        call_kwargs = resource_service.oauth_manager.get_access_token.call_args.kwargs
+        assert call_kwargs["actor_token"] == "actor-tok-contextforge"
+
+    @pytest.mark.asyncio
     async def test_token_exchange_delegation_actor_failure_fails_read(self, resource_service, monkeypatch):
         """An actor token acquisition failure fails the read, sends no exchange, and never reaches upstream."""
         # First-Party

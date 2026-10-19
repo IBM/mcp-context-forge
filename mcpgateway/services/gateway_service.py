@@ -86,6 +86,7 @@ except ImportError:
 from mcpgateway import __version__
 from mcpgateway.common.oauth import (
     ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION,
+    ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS,
     ACTOR_TOKEN_SOURCE_NONE,
     ACTOR_TOKEN_SOURCES,
     DEFAULT_ACTOR_TOKEN_TYPES,
@@ -1168,13 +1169,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             oauth_config: Token-exchange oauth_config dict.
 
         Raises:
-            ValueError: If ``actor_token_source`` is not a supported value, or
-                ``actor_token_type`` is not an RFC 8693 token type URI.
+            ValueError: If ``actor_token_source`` is not a supported value,
+                ``actor_token_type`` is not an RFC 8693 token type URI, or the
+                ``actor`` override is invalid.
         """
         source = oauth_config.get("actor_token_source") or ACTOR_TOKEN_SOURCE_NONE
         if source not in ACTOR_TOKEN_SOURCES:
             raise PublicValidationError(f"actor_token_source must be one of {ACTOR_TOKEN_SOURCES}")
         oauth_config["actor_token_source"] = source
+        GatewayService._validate_actor_override(oauth_config.get("actor"), source)
         if source == ACTOR_TOKEN_SOURCE_NONE:
             oauth_config.pop("actor_token_type", None)
             return
@@ -1182,6 +1185,35 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not isinstance(token_type, str) or not token_type.startswith(GatewayService._TOKEN_TYPE_URI_PREFIX):
             raise PublicValidationError(f"actor_token_type must be an RFC 8693 token type URI starting with '{GatewayService._TOKEN_TYPE_URI_PREFIX}'")
         oauth_config["actor_token_type"] = token_type
+
+    @staticmethod
+    def _validate_actor_override(actor: Any, source: str) -> None:
+        """Validate the optional ``actor`` client override against the defaulted actor token source.
+
+        Args:
+            actor: The ``oauth_config["actor"]`` value, or ``None``.
+            source: The defaulted ``actor_token_source``.
+
+        Raises:
+            ValueError: If ``actor`` is not an object, has no ``client_id``, is used with a
+                source other than ``client_credentials``, or carries a ``token_url`` that fails egress validation.
+        """
+        if actor is None:
+            return
+        if not isinstance(actor, dict):
+            raise PublicValidationError("actor must be an object")
+        if not isinstance(actor.get("client_id"), str) or not actor["client_id"].strip():
+            raise PublicValidationError("actor.client_id is required")
+        if source != ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
+            raise PublicValidationError(f"actor is only supported with actor_token_source {ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS}")
+        token_url = actor.get("token_url")
+        if token_url:
+            # Same egress guard as the parent token_url: the gateway POSTs the actor client credentials here.
+            try:
+                SecurityValidator.validate_url(token_url, "OAuth token URL")
+            except ValueError as e:
+                logger.warning("Rejected token-exchange actor.token_url for SSRF/validation: %s", SecurityValidator.sanitize_log_message(str(e)))
+                raise
 
     @staticmethod
     def _validate_discovery_config(discovery: Any) -> None:

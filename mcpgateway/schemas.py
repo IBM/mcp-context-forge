@@ -39,7 +39,14 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import ACTOR_TOKEN_SOURCES, normalize_token_endpoint_auth_method, OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
+from mcpgateway.common.oauth import (
+    ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS,
+    ACTOR_TOKEN_SOURCES,
+    normalize_token_endpoint_auth_method,
+    OAUTH_SENSITIVE_KEYS,
+    SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
+    SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+)
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -200,7 +207,7 @@ def _validate_oauth_discovery(discovery: Any) -> None:
     validate_core_url(raw_value, "OAuth config discovery.token_url")
 
 
-TOKEN_EXCHANGE_ONLY_OAUTH_KEYS = ("discovery", "actor_token_source", "actor_token_type")
+TOKEN_EXCHANGE_ONLY_OAUTH_KEYS = ("discovery", "actor_token_source", "actor_token_type", "actor")
 _RFC8693_TOKEN_TYPE_PREFIX = "urn:ietf:params:oauth:token-type:"  # nosec B105 - RFC 8693 URI prefix
 
 
@@ -214,7 +221,8 @@ def _validate_oauth_actor_token(v: Dict[str, Any]) -> None:
         v: OAuth configuration dict.
 
     Raises:
-        ValueError: If ``actor_token_source`` is not a supported value or ``actor_token_type`` is not an RFC 8693 token type URI.
+        ValueError: If ``actor_token_source`` is not a supported value, ``actor_token_type`` is not an RFC 8693 token type URI,
+            or the ``actor`` override is invalid.
 
     Examples:
         >>> _validate_oauth_actor_token({"actor_token_source": "client_credentials"})
@@ -229,6 +237,57 @@ def _validate_oauth_actor_token(v: Dict[str, Any]) -> None:
     token_type = v.get("actor_token_type")
     if token_type not in (None, "") and (not isinstance(token_type, str) or not token_type.startswith(_RFC8693_TOKEN_TYPE_PREFIX)):
         raise ValueError(f"oauth_config.actor_token_type must be an RFC 8693 token type URI starting with '{_RFC8693_TOKEN_TYPE_PREFIX}'")
+    _validate_oauth_actor_override(v.get("actor"), source)
+
+
+def _validate_oauth_actor_override(actor: Any, source: Any) -> None:
+    """Validate the optional ``actor`` client override structurally.
+
+    Args:
+        actor: The ``oauth_config["actor"]`` value, or ``None``.
+        source: The raw ``actor_token_source`` value.
+
+    Raises:
+        ValueError: If ``actor`` is not an object, has no ``client_id``, names an unsupported
+            auth method, carries an invalid ``token_url``, or is used with a source other than ``client_credentials``.
+
+    Examples:
+        >>> _validate_oauth_actor_override(None, "none")
+        >>> _validate_oauth_actor_override({"client_id": "cf", "client_secret": "s"}, "client_credentials")
+        >>> _validate_oauth_actor_override("cf", "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor must be an object
+        >>> _validate_oauth_actor_override({"client_secret": "s"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.client_id is required
+        >>> _validate_oauth_actor_override({"client_id": "cf", "token_endpoint_auth_method": "tls"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: client_secret_basic, client_secret_post, none, private_key_jwt
+        >>> _validate_oauth_actor_override({"client_id": "cf"}, "client_assertion")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor is only supported with actor_token_source client_credentials
+    """
+    if actor is None:
+        return
+    if not isinstance(actor, dict):
+        raise ValueError("oauth_config.actor must be an object")
+    client_id = actor.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("oauth_config.actor.client_id is required")
+    raw_method = actor.get("token_endpoint_auth_method")
+    if raw_method is not None and normalize_token_endpoint_auth_method(raw_method) not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+    token_url = actor.get("token_url")
+    if token_url not in (None, ""):
+        if not isinstance(token_url, str):
+            raise ValueError("oauth_config.actor.token_url must be a string URL")
+        validate_core_url(token_url, "OAuth config actor.token_url")
+    if source != ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
+        raise ValueError(f"oauth_config.actor is only supported with actor_token_source {ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS}")
 
 
 def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

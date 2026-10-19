@@ -658,6 +658,32 @@ export function bindDiscoveryToggle(prefix) {
   }
 }
 
+/**
+ * Show the actor client fields of a token-exchange gateway form only for the
+ * client_credentials actor token source.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ * @param {string} source - Selected actor token source
+ */
+export function toggleActorClientFields(prefix, source) {
+  const fields = safeGetElement(`oauth-actor-client-fields-${prefix}`, true);
+  if (fields) {
+    fields.style.display = source === "client_credentials" ? "block" : "none";
+  }
+}
+
+/**
+ * Bind the actor token source select of a gateway form to its actor client fields.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ */
+export function bindActorClientToggle(prefix) {
+  const select = safeGetElement(`oauth-actor-token-source-${prefix}`, true);
+  if (select) {
+    select.addEventListener("change", () =>
+      toggleActorClientFields(prefix, select.value),
+    );
+  }
+}
+
 export function handleOAuthGrantTypeChange() {
   const grantType = this.value;
 
