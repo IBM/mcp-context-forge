@@ -39,8 +39,9 @@ from dataclasses import dataclass
 from enum import Enum
 import ipaddress
 import re
-from urllib.parse import urlsplit
+import time
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -54,6 +55,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -4080,11 +4082,34 @@ _LISTEN_FLAG_PERMISSIONS: dict[str, str] = {
 }
 
 
+LISTEN_DEADLINE_FLOOR_SECONDS: float = 5.0
+
+
+def _listen_lifetime_seconds(user_context: Any) -> float:
+    """Return how long a listen stream may stay open.
+
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``, whichever is sooner.
+    The floor keeps the stream open long enough for the handler to send its ack first.
+
+    Args:
+        user_context: Resolved caller context; a missing or ``None`` ``exp`` claim sets no token limit.
+
+    Returns:
+        float: Seconds from now until the stream ends.
+    """
+    lifetime = float(settings.mcp_listen_max_lifetime_seconds)
+    exp = (user_context or {}).get("exp")
+    if exp is not None:
+        lifetime = min(lifetime, float(exp) - time.time())
+    return max(LISTEN_DEADLINE_FLOOR_SECONDS, lifetime)
+
+
 async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListenRequestParams) -> types.SubscriptionsListenResult:
     """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
 
     Each requested list kind passes the same token-scope gate as its ``*/list`` call.
     ``resourceSubscriptions`` and unknown filter keys are always dropped.
+    The stream ends with a completion result at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
 
     Args:
         ctx: SDK request context.
@@ -4107,7 +4132,9 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
         if requested and not granted:
             raise PermissionError(_ACCESS_DENIED_MSG)
         narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted)})
-        return await get_listen_handler()(ctx, narrowed)
+        with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
+            return await get_listen_handler()(ctx, narrowed)
+        return types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
     finally:
         _v2_request_ctx.reset(token)
 
