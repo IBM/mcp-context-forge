@@ -62,8 +62,8 @@ import httpx2
 from mcp import ClientSession, MCPError as McpError
 from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
-from mcp.server.mcpserver import MCPServer
-from mcp.types import PaginatedRequestParams
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import GetPromptRequest, GetPromptRequestParams, GetPromptResult, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams, ReadResourceResult
 from mcp_types import LoggingMessageNotificationParams
 import pytest
 import uvicorn
@@ -392,6 +392,71 @@ def tool_error_upstream() -> Generator[str, None, None]:
         while not server.started and thread.is_alive() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert server.started, "Tool error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+@pytest.fixture
+def progress_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream that reports progress on a tool, a prompt and a resource (issue #6647).
+
+    Progress needs the SSE response, so this upstream runs with ``json_response=False``. The gateway
+    must reach this process: set MCP_PROGRESS_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_PROGRESS_UPSTREAM_HOST", "host.docker.internal")
+
+    class ProgressServer(MCPServer):
+        """Report resource progress here: the SDK gives a static resource handler no ``Context``."""
+
+        async def read_resource(self, uri: Any, context: Context | None = None) -> Any:
+            """Report progress 1..2 of 2 on ``progress://slow``, then read the resource."""
+            if str(uri) == "progress://slow" and context is not None:
+                for i in range(1, 3):
+                    await context.report_progress(i, 2)
+            return await super().read_resource(uri, context)
+
+    app = ProgressServer("progress")
+
+    @app.tool()
+    async def count(n: int, ctx: Context) -> str:
+        """Report progress ``1..n`` of ``n``, then answer ``done``."""
+        for i in range(1, n + 1):
+            await ctx.report_progress(i, n, f"step {i}")
+        return "done"
+
+    @app.tool()
+    async def fail_after_progress(ctx: Context) -> str:
+        """Report progress 1 and 2, then fail."""
+        await ctx.report_progress(1)
+        await ctx.report_progress(2)
+        raise RuntimeError("boom")
+
+    @app.prompt()
+    async def slow_prompt(ctx: Context) -> str:
+        """Report progress 1..3 of 3, then answer one user message."""
+        for i in range(1, 4):
+            await ctx.report_progress(i, 3)
+        return "slow prompt"
+
+    @app.resource("progress://slow")
+    def slow() -> str:
+        """Answer ``slow``; ``ProgressServer.read_resource`` reports its progress."""
+        return "slow"
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=False), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Progress upstream failed to start"
         yield f"http://{host}:{port}/mcp"
     finally:
         server.should_exit = True
@@ -869,6 +934,162 @@ class TestToolErrorTranslation:
                     await http.delete(f"/servers/{server_id}")
                 if gateway_id:
                     await http.delete(f"/gateways/{gateway_id}")
+
+
+@skip_no_modern_inbound
+class TestProgressRelay:
+    """Upstream progress reaches modern clients on tools/call, prompts/get and resources/read, in order and before the result (issue #6647)."""
+
+    _MODERN_META = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "e2e", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+    @pytest.fixture
+    async def progress_server(self, jwt_token: str, progress_upstream: str) -> AsyncIterator[dict[str, Any]]:
+        """Register the progress upstream, bundle its tools, prompt and resource in a virtual server, and yield the names and scoped URL."""
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        name = f"progress{uuid.uuid4().hex[:8]}"
+        gateway_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": progress_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                rows: dict[str, list[dict[str, Any]]] = {}
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    for kind in ("tools", "prompts", "resources"):
+                        response = await http.get(f"/{kind}", params={"gateway_id": gateway_id, "limit": 0})
+                        assert response.status_code == 200, response.text
+                        rows[kind] = response.json()
+                    if [len(rows[kind]) for kind in ("tools", "prompts", "resources")] == [2, 1, 1]:
+                        break
+                    await asyncio.sleep(0.5)
+                assert [len(rows.get(kind, [])) for kind in ("tools", "prompts", "resources")] == [2, 1, 1], f"Gateway did not discover the upstream: {rows}; check MCP_PROGRESS_UPSTREAM_HOST"
+                tools = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row["name"] for row in rows["tools"]}
+                assert "count" in tools, tools
+                server = {
+                    "name": name,
+                    "associated_tools": [row["id"] for row in rows["tools"]],
+                    "associated_prompts": [row["id"] for row in rows["prompts"]],
+                    "associated_resources": [row["id"] for row in rows["resources"]],
+                }
+                response = await http.post("/servers", json={"server": server, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                yield {
+                    "url": f"{BASE_URL}/servers/{server_id}/mcp/",
+                    "count": tools["count"],
+                    "fail": next(value for key, value in tools.items() if key != "count"),
+                    "prompt": rows["prompts"][0]["name"],
+                    "resource": rows["resources"][0]["uri"],
+                }
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
+    @staticmethod
+    @asynccontextmanager
+    async def _modern_client(url: str, token: str) -> AsyncIterator[Client]:
+        """Open a 2026-07-28 client on ``url``."""
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        async with Client(streamable_http_client(url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+            yield modern_client
+
+    @staticmethod
+    def _recorder() -> tuple[list[tuple[float, float | None, str | None]], Callable[..., Any]]:
+        """Return a list and a progress callback that appends ``(progress, total, message)`` to it."""
+        received: list[tuple[float, float | None, str | None]] = []
+
+        async def record(progress: float, total: float | None, message: str | None) -> None:
+            received.append((progress, total, message))
+
+        return received, record
+
+    def _raw_call(self, tool: str, arguments: dict[str, Any], token: str, progress_token: str | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+        """Build the JSON body and headers of a modern ``tools/call``, with ``progressToken`` when given."""
+        meta: dict[str, Any] = dict(self._MODERN_META)
+        if progress_token is not None:
+            meta["progressToken"] = progress_token
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments, "_meta": meta}}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": tool,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        return body, headers
+
+    async def test_tool_progress_in_order(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """Fifty upstream progress notifications reach the client in order with their totals, then the result."""
+        received, record = self._recorder()
+        async with self._modern_client(progress_server["url"], jwt_token) as modern_client:
+            result = await modern_client.call_tool(progress_server["count"], {"n": 50}, progress_callback=record)
+        assert [progress for progress, _, _ in received] == [float(i) for i in range(1, 51)], received
+        assert [total for _, total, _ in received] == [50.0] * 50, received
+        assert result.is_error is not True, result
+        assert result.content[0].text == "done", result.content
+
+    async def test_tool_progress_raw_frames(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """The SSE response carries fifty progress frames for the client token in order, and the result is the last frame."""
+        body, headers = self._raw_call(progress_server["count"], {"n": 50}, jwt_token, progress_token="raw-frames")
+        frames: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=60) as http:
+            async with http.stream("POST", progress_server["url"], json=body, headers=headers) as response:
+                assert response.status_code == 200, await response.aread()
+                assert response.headers["content-type"].startswith("text/event-stream"), response.headers
+                async for line in response.aiter_lines():
+                    if line.startswith("data:") and line[5:].strip():
+                        frames.append(json.loads(line[5:]))
+        assert frames, "no SSE data frames"
+        progress = frames[:-1]
+        assert all(frame.get("method") == "notifications/progress" for frame in progress), progress
+        assert [frame["params"]["progressToken"] for frame in progress] == ["raw-frames"] * 50, progress
+        assert [frame["params"]["progress"] for frame in progress] == list(range(1, 51)), progress
+        assert frames[-1].get("id") == 1 and "result" in frames[-1], frames[-1]
+        assert frames[-1]["result"]["content"][0]["text"] == "done", frames[-1]
+
+    async def test_progress_then_error(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """Progress sent before an upstream failure still reaches the client, and the failure is an isError result."""
+        received, record = self._recorder()
+        async with self._modern_client(progress_server["url"], jwt_token) as modern_client:
+            result = await modern_client.call_tool(progress_server["fail"], {}, progress_callback=record)
+        assert [progress for progress, _, _ in received] == [1.0, 2.0], received
+        assert result.is_error is True, result
+
+    async def test_prompt_progress(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """Upstream progress on prompts/get reaches the client in order."""
+        received, record = self._recorder()
+        async with self._modern_client(progress_server["url"], jwt_token) as modern_client:
+            request = GetPromptRequest(params=GetPromptRequestParams(name=progress_server["prompt"]))
+            result = await modern_client.session.send_request(request, GetPromptResult, progress_callback=record)
+        assert [progress for progress, _, _ in received] == [1.0, 2.0, 3.0], received
+        assert result.messages[0].content.text == "slow prompt", result.messages
+
+    async def test_resource_progress(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """Upstream progress on resources/read reaches the client in order."""
+        received, record = self._recorder()
+        async with self._modern_client(progress_server["url"], jwt_token) as modern_client:
+            request = ReadResourceRequest(params=ReadResourceRequestParams(uri=progress_server["resource"]))
+            result = await modern_client.session.send_request(request, ReadResourceResult, progress_callback=record)
+        assert [progress for progress, _, _ in received] == [1.0, 2.0], received
+        assert result.contents[0].text == "slow", result.contents
+
+    async def test_no_token_stays_json(self, jwt_token: str, progress_server: dict[str, Any]) -> None:
+        """A modern tools/call without a progressToken keeps the JSON response."""
+        body, headers = self._raw_call(progress_server["count"], {"n": 1}, jwt_token)
+        async with httpx.AsyncClient(timeout=60) as http:
+            response = await http.post(progress_server["url"], json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith("application/json"), response.headers
+        assert "result" in response.json(), response.text
 
 
 
