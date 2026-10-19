@@ -9,8 +9,8 @@ This module turns registry-cache invalidations into SDK ``ServerEvent`` values.
 It coalesces bursts into one event per kind per ``COALESCE_SECONDS`` window and
 publishes them on a per-worker ``InMemorySubscriptionBus``.
 
-Echo suppression is done by coalescing. A worker's own Redis echo arrives inside
-the window and merges with the local emit. A later echo causes one duplicate
+Coalescing suppresses a worker's own Redis echo. The echo arrives inside the
+window and merges with the local emit. A later echo causes one duplicate
 ``list_changed`` event, which is harmless.
 
 This module imports only the MCP SDK and the standard library, so
