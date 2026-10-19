@@ -158,6 +158,50 @@ workers.
 make testing-down
 ```
 
+## Change delivery per protocol era
+
+The GET stream on this page serves the legacy (handshake) era, `2024-11-05`
+through `2025-11-25`. MCP `2026-07-28` has no standing GET stream. A modern
+client opts in to catalog changes with a `subscriptions/listen` request whose
+SSE response is the stream:
+
+| | Legacy (`2025-11-25` and earlier) | Modern (`2026-07-28`) |
+|---|---|---|
+| Stream | `GET /mcp` with `Mcp-Session-Id` | `POST /mcp` or `/servers/{id}/mcp` with `Mcp-Method: subscriptions/listen` |
+| Session | Stateful (`USE_STATEFUL_SESSIONS=true`) | None |
+| First frame | — | `notifications/subscriptions/acknowledged` with the honored filter |
+| Events | Upstream notifications relayed per session | `notifications/{tools,prompts,resources}/list_changed`, stamped with `_meta["io.modelcontextprotocol/subscriptionId"]` |
+| `subscriptions/listen` | `-32601` (also on `/rpc`) | Served |
+
+Listen events carry only the kind, never names, IDs, or row data. Each worker
+coalesces a burst of catalog changes into one event per kind (0.3 s window).
+Each requested kind passes the same token-scope check as its `*/list` call;
+the ack lists only the kinds that pass. A stream ends with a completion result
+at the token `exp` or `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default 3600),
+whichever comes first, and the client listens again.
+
+**Cross-worker fan-out.** With `CACHE_TYPE=redis`, a change on any worker or
+replica reaches every listen stream through the `mcpgw:cache:invalidate`
+channel. Without Redis, delivery is best effort: only streams on the worker
+that made the change get the event. A single-worker deployment still gets
+every event.
+
+**`ttlMs` fallback.** Delivery is best effort in the spec too, and there is no
+replay. Every list result carries `ttlMs`, so a client that misses an event
+still refetches when its cached list expires. A client that reconnects should
+refetch its lists once.
+
+**Shutdown.** Listen streams close abruptly when a worker stops, as legacy GET
+streams do. The client treats the close as a signal to reconnect.
+
+**No `resources.subscribe` on the modern era.** The gateway emits no per-URI
+`notifications/resources/updated`. For `2026-07-28` callers, the capabilities
+(also in `server/discover`) omit `resources.subscribe`, and the ack never
+echoes `resourceSubscriptions`. Legacy capabilities are unchanged.
+
+`tests/live_gateway/mcp/test_subscriptions_listen.py` proves these paths
+against running gateways.
+
 ## Common gotchas
 
 - **No upstream MCP server registered = no notifications to fan out.** The
