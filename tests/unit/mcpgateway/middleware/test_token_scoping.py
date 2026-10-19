@@ -672,6 +672,16 @@ class TestTokenScopingMiddleware:
         """Wrong scopes are denied, including a2a.* guesses and tools update/delete catch-alls."""
         assert middleware._check_permission_restrictions(path, method, [permission]) is False
 
+    @pytest.mark.parametrize("path", ["/protocol/completion/complete", "/protocol/completion/complete/", "/v1/protocol/completion/complete"])
+    def test_completion_route_allows_tools_read_scope(self, middleware, path):
+        """A token scoped to tools.read reaches the completion endpoint (#6760)."""
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.TOOLS_READ]) is True
+
+    @pytest.mark.parametrize("permission", [Permissions.TOOLS_EXECUTE, Permissions.RESOURCES_READ, Permissions.PROMPTS_READ, Permissions.TOOLS_CREATE])
+    def test_completion_route_rejects_scope_without_tools_read(self, middleware, permission):
+        """A token without tools.read is denied on the completion endpoint (#6760)."""
+        assert middleware._check_permission_restrictions("/protocol/completion/complete", "POST", [permission]) is False
+
     @pytest.mark.parametrize(
         "token_scopes",
         [
