@@ -592,6 +592,12 @@ class Settings(BaseSettings):
             "set true to require a valid Bearer token for all /mcp requests."
         ),
     )
+    mcp_listen_max_lifetime_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Maximum lifetime of a subscriptions/listen stream in seconds; a token expiry earlier than this ends the stream sooner",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",

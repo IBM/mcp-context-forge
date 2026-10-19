@@ -16,6 +16,8 @@
 
 ### Added
 
+- **`subscriptions/listen` server support** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - 2026-07-28 clients on streamable HTTP can open a `subscriptions/listen` stream and receive `tools`, `prompts`, and `resources` list-changed events. Each requested kind passes the same token-scope gate as its `*/list` call. Streams end at the token expiry or after `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default `3600`). Events cross workers only with `CACHE_TYPE=redis`. `POST /rpc` returns `-32601` for `subscriptions/listen`.
+
 - **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
 
 - **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
@@ -36,6 +38,10 @@
 
 - **Modern MCP protocol negotiation is on by default** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto` instead of `legacy`. Outbound upstream connections probe `server/discover` and negotiate the 2026-07-28 revision, with transparent fallback to the legacy `initialize` handshake. Inbound clients may send `mcp-protocol-version: 2026-07-28` instead of receiving a 400. Set either variable to `legacy` to restore the previous behaviour.
 - **`mcp-servers/` directory removed** - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
+
+### Changed
+
+- **2026-07-28 capabilities no longer advertise `resources.subscribe`** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - The gateway serves catalog change notifications through `subscriptions/listen` and does not honor `resourceSubscriptions`. 2026-07-28 clients use `subscriptions/listen` to track list changes. Handshake-era capabilities and `resources/subscribe` behavior stay unchanged.
 
 ### Security
 

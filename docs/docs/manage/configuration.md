@@ -496,6 +496,7 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
 | `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `MCP_LISTEN_MAX_LIFETIME_SECONDS` | Maximum lifetime of a `subscriptions/listen` stream (2026-07-28 clients). A token expiry earlier than this ends the stream sooner | `3600` | int (60-86400) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -1263,6 +1264,10 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+!!! note "`subscriptions/listen` across workers"
+    `subscriptions/listen` events (2026-07-28 clients) reach listeners on other workers only with `CACHE_TYPE=redis`.
+    With any other `CACHE_TYPE`, delivery is best effort and limited to listeners on the same worker as the change.
 
 !!! warning "Redis Server Capacity"
     `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
