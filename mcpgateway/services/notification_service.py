@@ -212,6 +212,9 @@ class NotificationService:
         # When a notification arrives during debounce window, we merge flags instead of dropping
         self._pending_refresh_flags: Dict[str, PendingRefresh] = {}
 
+        # Deferred refreshes for events that arrive in the debounce window after the earlier refresh ran
+        self._trailing_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
+
         # Pending refresh queue
         self._refresh_queue: asyncio.Queue[PendingRefresh] = asyncio.Queue(maxsize=max_queue_size)
 
@@ -347,6 +350,12 @@ class NotificationService:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+
+        trailing = list(self._trailing_refresh_tasks.values())
+        for task in trailing:
+            task.cancel()
+        await asyncio.gather(*trailing, return_exceptions=True)
+        self._trailing_refresh_tasks.clear()
 
         # Cancel and drain holder tasks. Snapshot the set first because each
         # task's done-callback mutates `_pending_holder_tasks` on completion.
@@ -1067,12 +1076,17 @@ class NotificationService:
         that if tools/list_changed arrives after resources/list_changed within
         the debounce window, tools will still be refreshed.
 
+        If the earlier refresh already ran, an event inside the window schedules
+        one trailing refresh at the end of the window. Later events merge into
+        that trailing refresh until it is queued.
+
         Args:
             gateway_id: The gateway to refresh.
             notification_type: The type of notification that triggered this.
         """
         now = time.time()
         last_enqueued = self._last_refresh_enqueued.get(gateway_id, 0)
+        within_window = now - last_enqueued < self.debounce_seconds
 
         # Determine what to include based on notification type
         include_resources = notification_type == NotificationType.RESOURCES_LIST_CHANGED
@@ -1083,35 +1097,22 @@ class NotificationService:
             include_resources = True
             include_prompts = True
 
-        # Debounce: if within window, merge flags into pending refresh instead of dropping
-        if now - last_enqueued < self.debounce_seconds:
-            existing = self._pending_refresh_flags.get(gateway_id)
-            if existing:
-                # Merge flags - use OR to include all requested types
-                existing.include_resources = existing.include_resources or include_resources
-                existing.include_prompts = existing.include_prompts or include_prompts
-                existing.triggered_by.add(notification_type)
-                self._notifications_debounced += 1
-                logger.debug(
-                    "Merged %s into pending refresh for gateway %s (resources=%s, prompts=%s)",
-                    notification_type.value,
-                    gateway_id,
-                    existing.include_resources,
-                    existing.include_prompts,
-                )
-                return
-
-            # No pending refresh found but within debounce - this shouldn't happen normally
-            # but can occur if the refresh was already processed. Count as debounced.
+        existing = self._pending_refresh_flags.get(gateway_id)
+        if existing and (within_window or gateway_id in self._trailing_refresh_tasks):
+            # Merge flags - use OR to include all requested types
+            existing.include_resources = existing.include_resources or include_resources
+            existing.include_prompts = existing.include_prompts or include_prompts
+            existing.triggered_by.add(notification_type)
             self._notifications_debounced += 1
             logger.debug(
-                "Debounced refresh for gateway %s (last enqueued %.1fs ago, no pending)",
+                "Merged %s into pending refresh for gateway %s (resources=%s, prompts=%s)",
+                notification_type.value,
                 gateway_id,
-                now - last_enqueued,
+                existing.include_resources,
+                existing.include_prompts,
             )
             return
 
-        # Create new pending refresh
         pending = PendingRefresh(
             gateway_id=gateway_id,
             include_resources=include_resources,
@@ -1119,20 +1120,52 @@ class NotificationService:
             triggered_by={notification_type},
         )
 
+        if within_window:
+            delay = last_enqueued + self.debounce_seconds - now
+            self._notifications_debounced += 1
+            self._pending_refresh_flags[gateway_id] = pending
+            self._trailing_refresh_tasks[gateway_id] = asyncio.create_task(self._queue_trailing_refresh(pending, delay), name=f"trailing-refresh-{gateway_id}")
+            logger.debug("Scheduled trailing refresh for gateway %s in %.1fs", gateway_id, delay)
+            return
+
+        self._queue_refresh(pending)
+
+    def _queue_refresh(self, pending: PendingRefresh) -> None:
+        """Put a refresh on the worker queue and start its debounce window.
+
+        Args:
+            pending: The refresh to queue.
+        """
+        gateway_id = pending.gateway_id
         try:
             self._refresh_queue.put_nowait(pending)
-            self._last_refresh_enqueued[gateway_id] = now
+            self._last_refresh_enqueued[gateway_id] = time.time()
             self._pending_refresh_flags[gateway_id] = pending  # Track for flag merging
             logger.info(
                 "Enqueued refresh for gateway %s (triggered by %s)",
                 gateway_id,
-                notification_type.value,
+                ", ".join(sorted(kind.value for kind in pending.triggered_by)),
             )
         except asyncio.QueueFull:
+            if self._pending_refresh_flags.get(gateway_id) is pending:
+                del self._pending_refresh_flags[gateway_id]
             logger.warning(
                 "Refresh queue full, dropping refresh request for gateway %s",
                 gateway_id,
             )
+
+    async def _queue_trailing_refresh(self, pending: PendingRefresh, delay: float) -> None:
+        """Queue a deferred refresh once the debounce window closes.
+
+        Args:
+            pending: The refresh to queue; events merge into it until then.
+            delay: Seconds until the window closes.
+        """
+        try:
+            await asyncio.sleep(delay)
+            self._queue_refresh(pending)
+        finally:
+            self._trailing_refresh_tasks.pop(pending.gateway_id, None)
 
     async def _process_refresh_queue(self) -> None:
         """Background worker that processes pending refresh operations.
