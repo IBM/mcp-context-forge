@@ -64,6 +64,7 @@ from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.cache.catalog_change_bus import get_listen_handler
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
@@ -473,10 +474,16 @@ class ContextForgeMCPServer(Server[Any]):
         Modern protocol versions omit the logging capability. MCP 2026-07-28
         deprecates it (SEP-2577), and ContextForge sends no request-scoped logs.
         The SDK derives it from the legacy ``logging/setLevel`` handler only.
+
+        Modern protocol versions also omit ``resources.subscribe``: the
+        ``subscriptions/listen`` adapter drops ``resourceSubscriptions``, so
+        per-resource update notifications are never delivered.
         """
         capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
         if protocol_version in MODERN_PROTOCOL_VERSIONS:
             capabilities.logging = None
+            if capabilities.resources is not None:
+                capabilities.resources.subscribe = None
         user_context = user_context_var.get()
         extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
         if extra_extensions:
@@ -3631,6 +3638,50 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
         _v2_request_ctx.reset(token)
 
 
+LIST_PERMISSIONS: dict[str, str] = {
+    "tools/list": "tools.read",
+    "prompts/list": "prompts.read",
+    "resources/list": "resources.read",
+    "resources/templates/list": "resources.read",
+}
+
+
+async def _resolve_catalog_scope() -> tuple[Optional[str], dict[str, Any], dict[str, Any]]:
+    """Resolve the caller's catalog scope and enforce per-server OAuth once.
+
+    Returns:
+        ``(server_id, request_headers, user_context)`` for the current request.
+
+    Raises:
+        OAuthRequiredError: If ``MCP_REQUIRE_AUTH=false`` and an unauthenticated caller targets an ``oauth_enabled`` server.
+    """
+    server_id, headers, user_context = await _get_request_context_or_default()
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+    return server_id, headers, user_context
+
+
+def _token_allows_catalog_read(user_context: dict[str, Any], permission: str) -> bool:
+    """Apply the token-scope ceiling that gates a catalog list; an empty scope defers to RBAC.
+
+    Args:
+        user_context: Request user context.
+        permission: The list permission, a value of ``LIST_PERMISSIONS``.
+
+    Returns:
+        bool: True when the token scope permits the read.
+
+    Examples:
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": ["tools.read"]}, "prompts.read")
+        False
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": []}, "prompts.read")
+        True
+        >>> _token_allows_catalog_read({}, "tools.read")
+        True
+    """
+    return not _should_enforce_streamable_rbac(user_context) or _check_scoped_permission(user_context, permission)
+
+
 async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     """Authorize and serve one MCP catalog page.
 
@@ -3648,12 +3699,9 @@ async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    server_id, headers, user_context = await _get_request_context_or_default()
-    permission = {"tools/list": "tools.read", "prompts/list": "prompts.read"}.get(method, "resources.read")
-    if _should_enforce_streamable_rbac(user_context) and not _check_scoped_permission(user_context, permission):
+    server_id, headers, user_context = await _resolve_catalog_scope()
+    if not _token_allows_catalog_read(user_context, LIST_PERMISSIONS[method]):
         raise PermissionError(_ACCESS_DENIED_MSG)
-    if not settings.mcp_require_auth:
-        await _check_server_oauth_enforcement(server_id, user_context)
     user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
     meta = getattr(params, "meta", None) if params is not None else None
     try:
@@ -3792,6 +3840,45 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
         _v2_request_ctx.reset(token)
 
 
+_LISTEN_FLAG_PERMISSIONS: dict[str, str] = {
+    "tools_list_changed": LIST_PERMISSIONS["tools/list"],
+    "prompts_list_changed": LIST_PERMISSIONS["prompts/list"],
+    "resources_list_changed": LIST_PERMISSIONS["resources/list"],
+}
+
+
+async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListenRequestParams) -> types.SubscriptionsListenResult:
+    """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
+
+    Each requested list kind passes the same token-scope gate as its ``*/list`` call.
+    ``resourceSubscriptions`` and unknown filter keys are always dropped.
+
+    Args:
+        ctx: SDK request context.
+        params: The listen request params.
+
+    Returns:
+        types.SubscriptionsListenResult: The shared handler's completion result.
+
+    Raises:
+        MCPError: ``METHOD_NOT_FOUND`` for a handshake-era caller.
+        PermissionError: If list kinds were requested and the token scope denies every one, as ``tools/list`` would.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        if not _caller_is_modern():
+            raise MCPError(code=types.METHOD_NOT_FOUND, message="Method not found", data="subscriptions/listen")
+        _, _, user_context = await _resolve_catalog_scope()
+        requested = [flag for flag in _LISTEN_FLAG_PERMISSIONS if getattr(params.notifications, flag)]
+        granted = {flag: True for flag in requested if _token_allows_catalog_read(user_context, _LISTEN_FLAG_PERMISSIONS[flag])}
+        if requested and not granted:
+            raise PermissionError(_ACCESS_DENIED_MSG)
+        narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted)})
+        return await get_listen_handler()(ctx, narrowed)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
 # Register all handlers via the v2 add_request_handler API. set_logging_level
 # was already migrated to (_ctx, params) form so it registers directly.
 mcp_app.add_request_handler("server/discover", types.RequestParams, _adapt_discover_with_ttl_cache_scope)
@@ -3804,6 +3891,7 @@ mcp_app.add_request_handler("resources/read", types.ReadResourceRequestParams, _
 mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestParams, _adapt_list_resource_templates)
 mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
 mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
+mcp_app.add_request_handler("subscriptions/listen", types.SubscriptionsListenRequestParams, _adapt_subscriptions_listen)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------
