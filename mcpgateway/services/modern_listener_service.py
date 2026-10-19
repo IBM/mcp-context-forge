@@ -24,6 +24,12 @@ registered with the SSE transport are skipped outright (SSE is a legacy-only
 transport). OAuth-authenticated servers are currently skipped — their
 token refresh lifecycle does not fit a single long-lived stream yet.
 
+Only one process runs listeners: the holder of a dedicated lock. With
+``CACHE_TYPE=redis`` that is a heartbeat-renewed Redis key (one holder per
+cluster); otherwise a non-blocking ``FileLock`` (one holder per host).
+Non-holders retry acquisition on every reconcile pass, so a crashed holder
+fails over.
+
 Naming note: registered upstream MCP servers live in the ``gateways`` DB
 table (the ``Gateway`` model) for historical federation reasons, so
 identifiers here say ``gateway`` to match the rest of the codebase.
@@ -34,20 +40,36 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import logging
-import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+import logging
+import os
+import random
+import tempfile
+import time
+from typing import Callable, Dict, List, Optional
+import uuid
 
 # Third-Party
+from filelock import FileLock, Timeout
 from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ResourcesListChanged, ResourceUpdated, ToolsListChanged
 from sqlalchemy import select
 
+try:
+    # Third-Party
+    import redis.asyncio as _aioredis  # noqa: F401  # pylint: disable=unused-import
+
+    REDIS_AVAILABLE = True
+    del _aioredis  # Only needed for availability check
+except ImportError:
+    REDIS_AVAILABLE = False
+
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.notification_service import NotificationService, NotificationType
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.services_auth import decode_auth
 
 logger = logging.getLogger(__name__)
@@ -61,6 +83,8 @@ BACKOFF_INITIAL_SECONDS = 5.0
 BACKOFF_MAX_SECONDS = 300.0
 # How long to leave a server alone after it negotiated a pre-2026 protocol.
 UNSUPPORTED_REPROBE_SECONDS = 3600.0
+# Appended to REDIS_LEADER_KEY to form the listener holder key.
+HOLDER_KEY_SUFFIX = ":modern_listener"
 
 
 @dataclass
@@ -96,6 +120,11 @@ class ModernListenerService:
         self._unsupported_until: Dict[str, float] = {}
         self._reconcile_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
+        self._instance_id = str(uuid.uuid4())
+        self._holder_key = settings.redis_leader_key + HOLDER_KEY_SUFFIX
+        self._redis_client = None
+        self._file_lock: Optional[FileLock] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
     async def initialize(self) -> None:
         """Start the reconcile loop."""
@@ -108,7 +137,7 @@ class ModernListenerService:
         )
 
     async def shutdown(self) -> None:
-        """Stop the reconcile loop and cancel all listener tasks."""
+        """Stop the reconcile loop, cancel all listener tasks, then release the holder lock."""
         self._shutdown_event.set()
         tasks = list(self._listener_tasks.values())
         if self._reconcile_task is not None:
@@ -121,6 +150,7 @@ class ModernListenerService:
             except (asyncio.CancelledError, Exception):  # pylint: disable=broad-except
                 pass
         self._listener_tasks.clear()
+        await self._release_holder()
         logger.info("ModernListenerService shut down")
 
     async def _reconcile_loop(self) -> None:
@@ -135,8 +165,88 @@ class ModernListenerService:
             except asyncio.TimeoutError:
                 continue
 
+    async def _try_acquire_holder(self) -> bool:
+        """Take or confirm the single-holder lock without blocking.
+
+        The backend is chosen once: Redis when ``CACHE_TYPE=redis`` and a
+        client is obtainable, otherwise a ``FileLock`` kept until shutdown.
+
+        Returns:
+            True if this instance holds the lock.
+        """
+        if self._redis_client is None and self._file_lock is None:
+            if settings.cache_type == "redis" and REDIS_AVAILABLE:
+                self._redis_client = await get_redis_client()
+            if self._redis_client is None:
+                self._file_lock = FileLock(os.path.join(tempfile.gettempdir(), settings.filelock_name + ".modern_listener"))
+
+        if self._redis_client is not None:
+            if await self._redis_client.get(self._holder_key) == self._instance_id:
+                return True
+            return bool(await self._redis_client.set(self._holder_key, self._instance_id, nx=True, ex=settings.redis_leader_ttl))
+
+        if self._file_lock.is_locked:
+            return True
+        try:
+            self._file_lock.acquire(timeout=0)
+        except Timeout:
+            return False
+        return True
+
+    async def _holder_heartbeat(self) -> None:
+        """Renew the Redis holder key; on loss, cancel all listeners and stop.
+
+        Renewal runs on its own interval because the reconcile interval is
+        longer than the key TTL.
+        """
+        while True:
+            await asyncio.sleep(settings.redis_leader_heartbeat_interval)
+            try:
+                if await self._redis_client.get(self._holder_key) != self._instance_id:
+                    logger.warning("Lost the modern listener holder key; stopping all listeners")
+                    self._cancel_listeners()
+                    return
+                await self._redis_client.expire(self._holder_key, settings.redis_leader_ttl)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Modern listener holder heartbeat failed: %s", exc)
+
+    async def _release_holder(self) -> None:
+        """Stop the heartbeat and release the holder lock if this instance owns it."""
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except (asyncio.CancelledError, Exception):  # pylint: disable=broad-except
+                pass
+            self._heartbeat_task = None
+        if self._redis_client is not None:
+            try:
+                if await self._redis_client.get(self._holder_key) == self._instance_id:
+                    await self._redis_client.delete(self._holder_key)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Failed to release the modern listener holder key: %s", exc)
+        if self._file_lock is not None:
+            self._file_lock.release(force=True)
+
+    def _cancel_listeners(self) -> None:
+        """Cancel every running listener task."""
+        for task in self._listener_tasks.values():
+            task.cancel()
+        self._listener_tasks.clear()
+
     async def _reconcile(self) -> None:
-        """Start missing listeners, drop listeners for gone servers."""
+        """Start missing listeners, drop listeners for gone servers.
+
+        Runs listeners only while this instance holds the holder lock.
+        """
+        if not await self._try_acquire_holder():
+            if self._listener_tasks:
+                logger.info("Not the modern listener holder; stopping %d listener(s)", len(self._listener_tasks))
+                self._cancel_listeners()
+            return
+        if self._redis_client is not None and (self._heartbeat_task is None or self._heartbeat_task.done()):
+            self._heartbeat_task = asyncio.create_task(self._holder_heartbeat(), name="modern-listener-holder-heartbeat")
+
         snapshots = {gw.id: gw for gw in self._load_eligible_gateways()}
 
         # Cancel listeners whose server disappeared or became ineligible.
@@ -184,18 +294,26 @@ class ModernListenerService:
         return snapshots
 
     async def _listen_forever(self, gw: _GatewaySnapshot) -> None:
-        """Hold a listen stream to one server, reconnecting with backoff."""
+        """Hold a listen stream to one server, reconnecting with jittered backoff.
+
+        The spec defines no event replay, so each re-listen after a drop or a
+        graceful close triggers one refresh of every list kind.
+        """
         backoff = BACKOFF_INITIAL_SECONDS
+        relisten = False
         while not self._shutdown_event.is_set():
             try:
                 async with mcp_proxy_client(url=gw.url, headers=gw.headers) as client:
                     async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True) as subscription:
                         logger.info("Listening for change events on modern server %s (%s)", gw.name, gw.url)
                         backoff = BACKOFF_INITIAL_SECONDS
+                        if relisten:
+                            for kind in (NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED):
+                                await self._notification_service.notify_list_changed(gw.id, kind)
                         async for event in subscription:
                             await self._dispatch(gw, event)
-                # Graceful close by the server: fall through and reconnect.
-                logger.info("Listen stream to server %s closed by the server; reconnecting", gw.name)
+                delay = self._backoff_with_jitter(backoff)
+                logger.info("Listen stream to server %s closed by the server; reconnecting in %.0fs", gw.name, delay)
             except ListenNotSupportedError:
                 self._unsupported_until[gw.id] = time.monotonic() + UNSUPPORTED_REPROBE_SECONDS
                 logger.info(
@@ -207,12 +325,33 @@ class ModernListenerService:
             except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception as exc:  # pylint: disable=broad-except  # SubscriptionLost, MCPError, transport errors
-                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(exc).__name__, exc, backoff)
-                try:
-                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=backoff)
-                except asyncio.TimeoutError:
-                    pass
-                backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
+                delay = self._backoff_with_jitter(backoff)
+                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(exc).__name__, exc, delay)
+            relisten = True
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
+
+    @staticmethod
+    def _backoff_with_jitter(backoff: float, rand: Callable[[], float] = random.random) -> float:
+        """Spread a reconnect delay over 0.5x-1.5x so listeners do not reconnect in lockstep.
+
+        Args:
+            backoff: Base exponential backoff in seconds.
+            rand: Source of uniform values in [0, 1).
+
+        Returns:
+            The jittered delay in seconds, capped at ``BACKOFF_MAX_SECONDS``.
+
+        Examples:
+            >>> ModernListenerService._backoff_with_jitter(10.0, rand=lambda: 0.0)
+            5.0
+            >>> ModernListenerService._backoff_with_jitter(1000.0, rand=lambda: 0.9) == BACKOFF_MAX_SECONDS
+            True
+        """
+        return min(BACKOFF_MAX_SECONDS, backoff * (0.5 + rand()))
 
     async def _dispatch(self, gw: _GatewaySnapshot, event: object) -> None:
         """Map a typed listen event onto the debounced refresh pipeline."""
