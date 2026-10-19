@@ -1,6 +1,7 @@
 import {
   getAuthHeaders,
   loadAuthHeaders,
+  toggleActorClientFields,
   toggleDiscoveryFields,
   toggleTokenExchangeFields,
   updateAuthHeadersJSON,
@@ -286,6 +287,10 @@ export function populateTokenExchangeEditFields(config) {
   });
   toggleTokenExchangeFields("gw-edit", config.grant_type || "");
   populateDiscoveryEditFields(isTokenExchange ? config.discovery : null);
+  populateActorEditFields(
+    isTokenExchange ? config.actor : null,
+    isTokenExchange ? config.actor_token_source || "none" : "none",
+  );
 }
 
 /**
@@ -337,6 +342,34 @@ export function populateDiscoveryEditFields(discovery) {
     secret.value = enabled && discovery.client_secret ? MASKED_AUTH_VALUE : "";
   }
   toggleDiscoveryFields("gw-edit", enabled);
+}
+
+const ACTOR_EDIT_FIELDS = {
+  "oauth-actor-client-id-gw-edit": "client_id",
+  "oauth-actor-token-url-gw-edit": "token_url",
+  "oauth-actor-token-endpoint-auth-method-gw-edit":
+    "token_endpoint_auth_method",
+};
+
+/**
+ * Fill the edit form's actor client fields from a stored actor object.
+ * A stored secret shows the masked placeholder, so a save keeps it.
+ * @param {object|null} actor - Masked oauth_config.actor, or null
+ * @param {string} source - Stored actor token source
+ */
+export function populateActorEditFields(actor, source) {
+  const present = Boolean(actor && typeof actor === "object");
+  Object.entries(ACTOR_EDIT_FIELDS).forEach(([id, key]) => {
+    const field = safeGetElement(id, true);
+    if (field) {
+      field.value = present ? actor[key] || "" : "";
+    }
+  });
+  const secret = safeGetElement("oauth-actor-client-secret-gw-edit", true);
+  if (secret) {
+    secret.value = present && actor.client_secret ? MASKED_AUTH_VALUE : "";
+  }
+  toggleActorClientFields("gw-edit", source);
 }
 
 /**

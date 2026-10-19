@@ -59,3 +59,17 @@ def test_token_exchange_field_group(fragments, name, suffix):
     assert f'id="oauth-token-exchange-fields-{suffix}"' in admin_html
     assert re.search(r'<option value="private_key_jwt" hidden disabled>', admin_html)
     assert "oauth_target_audience" not in _render(fragments[name], is_admin=False)
+
+
+@pytest.mark.parametrize(("name", "suffix"), [("add_group", "gw"), ("edit_group", "gw-edit")])
+def test_actor_client_field_group(fragments, name, suffix):
+    admin_html = _render(fragments[name], is_admin=True)
+    group = admin_html.index(f'id="oauth-actor-client-fields-{suffix}"')
+    assert admin_html.index(f'id="oauth-actor-token-section-{suffix}"') < group < admin_html.index(f'id="oauth-discovery-section-{suffix}"')
+    group_html = admin_html[admin_html.rindex("<", 0, group) : admin_html.index(f'id="oauth-discovery-section-{suffix}"')]
+    assert 'style="display: none"' in group_html[: group_html.index(">")]
+    assert '<input type="hidden" name="oauth_actor_present" value="1" />' in group_html
+    for field in ("oauth_actor_client_id", "oauth_actor_client_secret", "oauth_actor_token_url", "oauth_actor_token_endpoint_auth_method"):
+        assert f'name="{field}"' in group_html
+    assert re.search(r'<input type="password" name="oauth_actor_client_secret"', group_html)
+    assert "oauth_actor_client_id" not in _render(fragments[name], is_admin=False)

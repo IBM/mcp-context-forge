@@ -394,3 +394,317 @@ class TestAuditMode:
         custom_fields = db_logger.log.call_args.kwargs["custom_fields"]
         assert custom_fields["mode"] == mode
         assert not {"subject_token", "actor_token", "access_token"} & set(custom_fields)
+
+
+# ---------- Actor credential override ----------
+
+ACTOR_SECRET = "actor-secret-value"  # pragma: allowlist secret
+_ACTOR = {"client_id": "contextforge", "client_secret": ACTOR_SECRET}
+
+
+def _actor_config(**overrides) -> dict:
+    """Build a delegation config whose exchange client is ``mcp1`` and whose actor is ``contextforge``.
+
+    Args:
+        **overrides: Fields to override on the base config.
+
+    Returns:
+        dict: oauth_config dict.
+    """
+    base = {"client_id": "mcp1", "token_endpoint_auth_method": "client_secret_post", "actor_token_source": "client_credentials", "actor": dict(_ACTOR)}
+    base.update(overrides)
+    return _te_config(**base)
+
+
+class _FakeTokenEndpoint:
+    """Record token endpoint requests and answer by grant type."""
+
+    EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
+
+    def __init__(self, fail_actor: bool = False):
+        self.requests: list = []
+        self.fail_actor = fail_actor
+        self._issued = 0
+
+    async def __call__(self, url, data, ca_certificate=None, client_cert=None, client_key=None, headers=None):
+        # Third-Party
+        import httpx
+
+        self.requests.append({"url": url, "data": dict(data), "headers": dict(headers or {})})
+        request = httpx.Request("POST", url)
+        if data["grant_type"] == "client_credentials":
+            if self.fail_actor:
+                return httpx.Response(401, json={"error": "invalid_client"}, request=request)
+            self._issued += 1
+            return httpx.Response(200, json={"access_token": f"actor-tok-{data['client_id']}-{self._issued}", "token_type": "Bearer", "expires_in": 600}, request=request)
+        return httpx.Response(200, json={"access_token": f"exchanged-for-{data['client_id']}", "token_type": "Bearer", "expires_in": 600}, request=request)
+
+    def by_grant(self, grant_type: str) -> list:
+        return [r for r in self.requests if r["data"]["grant_type"] == grant_type]
+
+
+def _wired_manager(endpoint: _FakeTokenEndpoint) -> OAuthManager:
+    manager = OAuthManager(max_retries=1)
+    manager._post_token_request = endpoint  # type: ignore[method-assign]
+    return manager
+
+
+async def _exchange(manager: OAuthManager, oauth_config: dict, gateway_id: str = "gw") -> dict:
+    """Run the resolver and the exchange the way every call site does.
+
+    Args:
+        manager: OAuth manager under test.
+        oauth_config: Stored gateway oauth_config.
+        gateway_id: Gateway id for the actor token cache.
+
+    Returns:
+        dict: Exchange response.
+    """
+    actor_token, actor_token_type = await resolve_actor_token(manager, oauth_config, gateway_id=gateway_id)
+    return await manager.token_exchange(
+        oauth_config=oauth_config, subject_token="user-subject", audience=oauth_config["target_audience"], actor_token=actor_token, actor_token_type=actor_token_type
+    )
+
+
+class TestActorOverrideSchema:
+    _BASE = {"name": "gw", "url": "https://upstream.example.com/mcp", "auth_type": "oauth"}
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    def test_actor_object_accepted(self, schema):
+        model = schema(**self._BASE, oauth_config=_actor_config())
+        assert model.oauth_config["actor"]["client_id"] == "contextforge"
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    @pytest.mark.parametrize(
+        ("actor", "message"),
+        [
+            ("contextforge", "oauth_config.actor must be an object"),
+            ({"client_secret": "s"}, "oauth_config.actor.client_id is required"),
+            ({"client_id": "  "}, "oauth_config.actor.client_id is required"),
+            ({"client_id": "cf", "token_endpoint_auth_method": "tls_client_auth"}, "oauth_config.actor.token_endpoint_auth_method is not supported"),
+            ({"client_id": "cf", "token_url": 42}, "oauth_config.actor.token_url must be a string URL"),
+        ],
+    )
+    def test_invalid_actor_rejected(self, schema, actor, message):
+        with pytest.raises(ValidationError, match=message):
+            schema(**self._BASE, oauth_config=_actor_config(actor=actor))
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    @pytest.mark.parametrize("source", ["none", "client_assertion", None])
+    def test_actor_rejected_without_client_credentials_source(self, schema, source):
+        with pytest.raises(ValidationError, match="oauth_config.actor is only supported with actor_token_source client_credentials"):
+            schema(**self._BASE, oauth_config=_actor_config(actor_token_source=source))
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    def test_actor_rejected_on_other_grants(self, schema, grant_type):
+        oauth_config = {"grant_type": grant_type, "client_id": "c", "token_url": "https://as.example.com/token", "actor": dict(_ACTOR)}
+        with pytest.raises(ValidationError, match="oauth_config.actor"):
+            schema(**self._BASE, oauth_config=oauth_config)
+
+
+class TestActorOverrideServiceValidation:
+    def test_valid_actor_accepted(self):
+        out = GatewayService._validate_token_exchange_config(_actor_config(actor={**_ACTOR, "token_url": "https://actor-as.example.com/token"}))
+        assert out["actor"]["client_id"] == "contextforge"
+        assert out["actor_token_type"] == ACCESS_TOKEN_TYPE
+
+    def test_absent_source_with_actor_rejected(self):
+        cfg = _actor_config()
+        cfg.pop("actor_token_source")
+        with pytest.raises(ValueError, match="actor is only supported with actor_token_source client_credentials"):
+            GatewayService._validate_token_exchange_config(cfg)
+
+    @pytest.mark.parametrize("source", ["none", "client_assertion"])
+    def test_other_sources_with_actor_rejected(self, source):
+        with pytest.raises(ValueError, match="actor is only supported"):
+            GatewayService._validate_token_exchange_config(_actor_config(actor_token_source=source, private_key=_rsa_pem()))
+
+    @pytest.mark.parametrize(("actor", "message"), [("cf", "actor must be an object"), ({"client_secret": "s"}, "actor.client_id is required")])
+    def test_malformed_actor_rejected(self, actor, message):
+        with pytest.raises(ValueError, match=message):
+            GatewayService._validate_token_exchange_config(_actor_config(actor=actor))
+
+    def test_blocked_actor_token_url_rejected_with_warning(self, caplog, monkeypatch):
+        # Standard
+        import logging
+
+        # First-Party
+        from mcpgateway.common.validators import SecurityValidator
+
+        def _reject(url, _name):
+            if "internal" in url:
+                raise ValueError("OAuth token URL resolves to a blocked network")
+            return url
+
+        monkeypatch.setattr(SecurityValidator, "validate_url", staticmethod(_reject))
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.gateway_service"):
+            with pytest.raises(ValueError, match="blocked network"):
+                GatewayService._validate_token_exchange_config(_actor_config(actor={**_ACTOR, "token_url": "https://internal.example/token"}))
+        assert any("Rejected token-exchange actor.token_url" in r.getMessage() for r in caplog.records)
+
+
+class TestBuildActorOAuthConfig:
+    def test_no_actor_keeps_parent_client(self):
+        parent = _te_config(actor_token_source="client_credentials")
+        assert build_actor_oauth_config(parent) == {
+            "token_url": "https://as.example.com/token",
+            "client_id": "cf",
+            "client_secret": "parent-secret",  # pragma: allowlist secret
+            "token_endpoint_auth_method": "client_secret_basic",
+            "grant_type": "client_credentials",
+        }
+
+    def test_actor_client_id_and_secret_override(self):
+        cfg = build_actor_oauth_config(_actor_config())
+        assert (cfg["client_id"], cfg["client_secret"]) == ("contextforge", ACTOR_SECRET)
+        assert cfg["token_url"] == "https://as.example.com/token"
+
+    def test_actor_token_url_overrides_only_actor_config(self):
+        parent = _actor_config(actor={**_ACTOR, "token_url": "https://actor-as.example.com/token"})
+        assert build_actor_oauth_config(parent)["token_url"] == "https://actor-as.example.com/token"
+        assert parent["token_url"] == "https://as.example.com/token"
+
+    def test_actor_config_carries_no_exchange_keys(self):
+        cfg = build_actor_oauth_config(_actor_config(discovery={"grant_type": "client_credentials", "client_id": "svc"}))
+        for key in ("scopes", "subject_token", "audience", "target_audience", "actor", "discovery", "actor_token_source"):
+            assert key not in cfg
+
+    def test_method_override_drops_parent_key_material(self):
+        parent = _actor_config(token_endpoint_auth_method="private_key_jwt", private_key="pk", private_key_jwt_kid="kid", token_endpoint_auth_signing_alg="RS256")  # pragma: allowlist secret
+        cfg = build_actor_oauth_config({**parent, "actor": {**_ACTOR, "token_endpoint_auth_method": "client_secret_basic"}})
+        assert cfg["token_endpoint_auth_method"] == "client_secret_basic"
+        for key in ("private_key", "private_key_jwt_kid", "token_endpoint_auth_signing_alg"):
+            assert key not in cfg
+
+    @pytest.mark.parametrize("actor_method", [None, "private_key_jwt"])
+    def test_same_or_private_key_jwt_method_keeps_key_material(self, actor_method):
+        parent = _actor_config(token_endpoint_auth_method="private_key_jwt", private_key="pk")  # pragma: allowlist secret
+        actor = {"client_id": "contextforge"} if actor_method is None else {"client_id": "contextforge", "token_endpoint_auth_method": actor_method}
+        assert build_actor_oauth_config({**parent, "actor": actor})["private_key"] == "pk"
+
+    def test_parent_config_not_mutated(self):
+        parent = _actor_config()
+        snapshot = {**parent, "actor": dict(parent["actor"])}
+        build_actor_oauth_config(parent)
+        assert parent == snapshot
+
+
+@pytest.mark.asyncio
+class TestActorOverrideResolver:
+    async def test_actor_request_as_actor_client_and_exchange_as_parent(self, service_cache):
+        endpoint = _FakeTokenEndpoint()
+
+        response = await _exchange(_wired_manager(endpoint), _actor_config())
+
+        [actor_request] = endpoint.by_grant("client_credentials")
+        [exchange_request] = endpoint.by_grant(_FakeTokenEndpoint.EXCHANGE_GRANT)
+        assert actor_request["data"]["client_id"] == "contextforge"
+        assert actor_request["data"]["client_secret"] == ACTOR_SECRET
+        for key in ("subject_token", "audience", "scope"):
+            assert key not in actor_request["data"]
+        assert exchange_request["data"]["client_id"] == "mcp1"
+        assert exchange_request["data"]["client_secret"] == "parent-secret"  # pragma: allowlist secret
+        assert exchange_request["data"]["actor_token"] == "actor-tok-contextforge-1"
+        assert response["access_token"] == "exchanged-for-mcp1"
+
+    async def test_actor_token_url_override_routes_only_actor_request(self, service_cache):
+        endpoint = _FakeTokenEndpoint()
+
+        await _exchange(_wired_manager(endpoint), _actor_config(actor={**_ACTOR, "token_url": "https://actor-as.example.com/token"}))
+
+        assert endpoint.by_grant("client_credentials")[0]["url"] == "https://actor-as.example.com/token"
+        assert endpoint.by_grant(_FakeTokenEndpoint.EXCHANGE_GRANT)[0]["url"] == "https://as.example.com/token"
+
+    async def test_no_actor_authenticates_actor_request_as_parent(self, service_cache):
+        endpoint = _FakeTokenEndpoint()
+        cfg = _actor_config()
+        cfg.pop("actor")
+
+        await _exchange(_wired_manager(endpoint), cfg)
+
+        assert endpoint.by_grant("client_credentials")[0]["data"]["client_id"] == "mcp1"
+
+    async def test_actor_change_misses_cached_actor_token(self, service_cache):
+        endpoint = _FakeTokenEndpoint()
+        manager = _wired_manager(endpoint)
+
+        await _exchange(manager, _actor_config(actor={"client_id": "cf-old", "client_secret": ACTOR_SECRET}))
+        await _exchange(manager, _actor_config(actor={"client_id": "cf-old", "client_secret": ACTOR_SECRET}))
+        await _exchange(manager, _actor_config(actor={"client_id": "cf-new", "client_secret": ACTOR_SECRET}))
+
+        assert [r["data"]["client_id"] for r in endpoint.by_grant("client_credentials")] == ["cf-old", "cf-new"]
+        assert endpoint.by_grant(_FakeTokenEndpoint.EXCHANGE_GRANT)[-1]["data"]["actor_token"] == "actor-tok-cf-new-2"
+
+    async def test_failed_actor_request_sends_no_exchange(self, service_cache):
+        endpoint = _FakeTokenEndpoint(fail_actor=True)
+
+        with pytest.raises(OAuthError, match="Actor token request failed"):
+            await _exchange(_wired_manager(endpoint), _actor_config())
+
+        assert endpoint.by_grant(_FakeTokenEndpoint.EXCHANGE_GRANT) == []
+        assert service_cache._mem == {}
+
+    async def test_failed_actor_request_logs_no_secret_or_token(self, service_cache, caplog):
+        # Standard
+        import logging
+
+        endpoint = _FakeTokenEndpoint()
+        manager = _wired_manager(endpoint)
+        await _exchange(manager, _actor_config(actor={"client_id": "cf-old", "client_secret": ACTOR_SECRET}))
+        endpoint.fail_actor = True
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(OAuthError) as exc_info:
+                await _exchange(manager, _actor_config(actor={"client_id": "cf-new", "client_secret": ACTOR_SECRET}))
+
+        captured = " ".join(r.getMessage() for r in caplog.records) + repr([r.__dict__ for r in caplog.records]) + str(exc_info.value)
+        for secret in (ACTOR_SECRET, "actor-tok-cf-old-1"):
+            assert secret not in captured
+
+
+@pytest.mark.asyncio
+class TestActorSecretStorage:
+    async def test_actor_secret_encrypted_and_decrypted_for_actor_request(self, service_cache):
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        stored = await protect_oauth_config_for_storage(_actor_config())
+        assert stored["actor"]["client_secret"] != ACTOR_SECRET
+        assert encryption.is_encrypted(stored["actor"]["client_secret"])
+
+        endpoint = _FakeTokenEndpoint()
+        await _exchange(_wired_manager(endpoint), stored)
+        assert endpoint.by_grant("client_credentials")[0]["data"]["client_secret"] == ACTOR_SECRET
+
+    async def test_prepare_for_storage_encrypts_actor_secret(self):
+        svc = GatewayService()
+        svc._enforce_token_exchange_admin_only = AsyncMock()
+        svc._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
+
+        stored = await svc.prepare_oauth_config_for_storage(MagicMock(), _actor_config(), "admin@example.com")
+
+        assert stored["actor"]["client_id"] == "contextforge"
+        assert get_encryption_service(settings.auth_encryption_secret).is_encrypted(stored["actor"]["client_secret"])
+
+    async def test_masked_actor_secret_keeps_stored_ciphertext(self, service_cache):
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        stored = await protect_oauth_config_for_storage(_actor_config())
+        updated = await protect_oauth_config_for_storage(_actor_config(actor={"client_id": "contextforge", "client_secret": settings.masked_auth_value}), existing_oauth_config=stored)
+        assert updated["actor"]["client_secret"] == stored["actor"]["client_secret"]
+
+        endpoint = _FakeTokenEndpoint()
+        await _exchange(_wired_manager(endpoint), updated)
+        assert endpoint.by_grant("client_credentials")[0]["data"]["client_secret"] == ACTOR_SECRET
+
+    async def test_gateway_read_masks_actor_secret(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayRead
+
+        masked = GatewayRead(name="te-gw", url="http://example.com", oauth_config=_actor_config()).masked()
+        assert masked.oauth_config["actor"]["client_secret"] == settings.masked_auth_value
+        assert masked.oauth_config["actor"]["client_id"] == "contextforge"
+        assert ACTOR_SECRET not in masked.model_dump_json()

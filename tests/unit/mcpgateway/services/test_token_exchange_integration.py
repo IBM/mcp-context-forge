@@ -1607,3 +1607,76 @@ class TestGatewayPathDelegation:
         await svc._service_token_cache.invalidate("gw")
 
         assert shared_service_cache._mem == {}
+
+
+# ---------- Actor client override on the tool and gateway exchange paths ----------
+
+_ACTOR_OVERRIDE = {"client_id": "contextforge", "client_secret": "actor-secret"}  # pragma: allowlist secret
+
+
+def _actor_cfg(client_id: str = "mcp1") -> dict:
+    """Return a delegation config that authenticates the exchange as ``client_id`` and the actor as ``contextforge``.
+
+    Args:
+        client_id: Exchange client id.
+
+    Returns:
+        dict: oauth_config dict.
+    """
+    return {**_DELEGATION_CFG, "client_id": client_id, "actor": dict(_ACTOR_OVERRIDE)}
+
+
+def _actor_aware_tool_service() -> ToolService:
+    """Build a ToolService whose mocked actor token names the requesting client.
+
+    Returns:
+        ToolService: Service under test.
+    """
+    svc = _delegation_tool_service()
+
+    async def issue(actor_config, **_kwargs):
+        return {"access_token": f"actor-tok-{actor_config['client_id']}", "expires_in": 600}
+
+    svc.oauth_manager.get_client_credentials_token_response = AsyncMock(side_effect=issue)
+    return svc
+
+
+@pytest.mark.asyncio
+class TestActorOverrideExchangePaths:
+    async def test_tool_call_sends_actor_client_token(self, shared_service_cache):
+        svc = _actor_aware_tool_service()
+
+        await svc._resolve_token_exchange_header(_actor_cfg(), "gw", "gw", "d@example.test", {"authorization": f"Bearer {_subject()}"})
+
+        actor_config = svc.oauth_manager.get_client_credentials_token_response.await_args.args[0]
+        assert actor_config["client_id"] == "contextforge"
+        exchange = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert exchange["oauth_config"]["client_id"] == "mcp1"
+        assert exchange["actor_token"] == "actor-tok-contextforge"
+
+    async def test_manual_refresh_sends_actor_client_token(self, shared_service_cache):
+        svc = TestGatewayPathDelegation._service()
+
+        async def issue(actor_config, **_kwargs):
+            return {"access_token": f"actor-tok-{actor_config['client_id']}", "expires_in": 600}
+
+        svc.oauth_manager.get_client_credentials_token_response = AsyncMock(side_effect=issue)
+
+        await svc._resolve_token_exchange_header(_actor_cfg(), "gw", "gw", "d@example.test", {"authorization": f"Bearer {_subject()}"})
+
+        exchange = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert exchange["oauth_config"]["client_id"] == "mcp1"
+        assert exchange["actor_token"] == "actor-tok-contextforge"
+
+    async def test_two_gateways_share_one_actor(self, shared_service_cache):
+        svc = _actor_aware_tool_service()
+        headers = {"authorization": f"Bearer {_subject()}"}
+
+        await svc._resolve_token_exchange_header(_actor_cfg("mcp1"), "gw-a", "gw-a", "d@example.test", headers)
+        await svc._resolve_token_exchange_header(_actor_cfg("mcp2"), "gw-b", "gw-b", "d@example.test", headers)
+
+        exchanges = [call.kwargs for call in svc.oauth_manager.token_exchange.await_args_list]
+        assert [e["oauth_config"]["client_id"] for e in exchanges] == ["mcp1", "mcp2"]
+        assert {e["actor_token"] for e in exchanges} == {"actor-tok-contextforge"}
+        actor_clients = [call.args[0]["client_id"] for call in svc.oauth_manager.get_client_credentials_token_response.await_args_list]
+        assert actor_clients == ["contextforge", "contextforge"]
