@@ -1881,6 +1881,7 @@ def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
 
 
 _PROGRESS_DRAIN_TIMEOUT_SECONDS = 5.0
+_PROGRESS_SEND_TIMEOUT_SECONDS = 5.0
 
 
 class _ProgressRelay:
@@ -1889,6 +1890,10 @@ class _ProgressRelay:
     The SDK client runs each upstream progress callback as a spawned task and resolves
     the result at once, and the downstream SSE sink is a rendezvous stream. A handler
     must ``drain()`` before it returns, or the SDK closes the sink and drops pending sends.
+
+    Each send is shielded, because closing a per-call upstream ``Client`` cancels its task
+    group and would abort sends still blocked on the sink. A send that hits
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS`` marks the relay stalled, and later updates are dropped.
 
     Examples:
         >>> relay = _ProgressRelay(session=None)
@@ -1905,6 +1910,7 @@ class _ProgressRelay:
         self._session = session
         self._inflight = 0
         self._idle: anyio.Event | None = None
+        self._stalled = False
 
     async def __call__(self, progress: float, total: float | None = None, message: str | None = None) -> None:
         """Forward one progress update to the downstream session.
@@ -1914,12 +1920,18 @@ class _ProgressRelay:
             total: Optional total value.
             message: Optional human-readable status message.
         """
+        if self._stalled:
+            return
         idle = self._idle
         if idle is None or self._inflight == 0:
             idle = self._idle = anyio.Event()
         self._inflight += 1
         try:
-            await self._session.report_progress(progress, total, message)
+            with anyio.move_on_after(_PROGRESS_SEND_TIMEOUT_SECONDS, shield=True) as scope:
+                await self._session.report_progress(progress, total, message)
+            if scope.cancelled_caught:
+                self._stalled = True
+                logger.debug("Progress relay send timed out; dropping further progress for this request")
         except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
             logger.debug("Progress relay failed: %s", exc)
         finally:
@@ -1933,6 +1945,7 @@ class _ProgressRelay:
         Args:
             timeout: Upper bound on the wait, so a stalled downstream reader never hangs the call.
         """
+        # Let spawned progress callbacks that are queued but not yet started register as in flight.
         await anyio.sleep(0)
         with anyio.move_on_after(timeout) as scope:
             while self._inflight and self._idle is not None:
