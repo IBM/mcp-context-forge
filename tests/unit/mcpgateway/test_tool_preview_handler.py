@@ -15,6 +15,7 @@ import pytest
 
 # First-Party
 import mcpgateway.main as main_mod
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import ToolAnnotations, ToolPreviewRequest, ToolPreviewResponse, ToolPreviewTarget
 from mcpgateway.services.server_service import ServerNotFoundError
 
@@ -48,24 +49,30 @@ async def test_preview_handler_rejects_cross_server_token(preview_context):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("header_name", ["authorization", "x-test-auth", "jwt_token", "access_token"])
-async def test_preview_handler_rejects_token_without_verified_payload(preview_context, monkeypatch, header_name):
-    """Header and cookie JWTs must have readable verified claims before server lookup."""
+async def test_preview_handler_preserves_trusted_proxy_auth(preview_context, monkeypatch):
+    """An authenticated proxy user may carry an opaque bearer token without JWT claims."""
     request, db, ensure_access, preview = preview_context
     request.state._jwt_verified_payload = None
-    if header_name in ("jwt_token", "access_token"):
-        request.scope["headers"] = [(b"cookie", f"{header_name}=test-token".encode())]
-    else:
-        monkeypatch.setattr(main_mod.settings, "auth_header_name", header_name)
-        request.scope["headers"] = [(header_name.encode(), b"Bearer test-token")]
+    monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "trust_proxy_auth", True)
+    monkeypatch.setattr(main_mod.settings, "trust_proxy_auth_dangerously", True)
+    monkeypatch.setattr(main_mod.settings, "proxy_user_header", "X-Authenticated-User")
+    request.scope["headers"] = [
+        (b"x-authenticated-user", main_mod.settings.platform_admin_email.encode()),
+        (b"authorization", b"Bearer opaque-idp-token"),
+    ]
 
-    with pytest.raises(HTTPException) as exc_info:
-        await main_mod.preview_tool.__wrapped__("echo", request, body=ToolPreviewRequest(server_id="server-allowed"), db=db, user={"email": "user@example.com"})
+    user = await get_current_user_with_permissions(request, credentials=None, jwt_token=None)
+    assert user["auth_method"] == "proxy"
+    assert request.state._jwt_verified_payload is None
 
-    assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == "Unable to read verified token scopes"
-    ensure_access.assert_not_awaited()
-    preview.assert_not_awaited()
+    response = await main_mod.preview_tool.__wrapped__("echo", request, body=ToolPreviewRequest(server_id="server-allowed"), db=db, user=user)
+
+    assert response.validated is True
+    ensure_access.assert_awaited_once()
+    assert ensure_access.await_args.kwargs["server_id"] == "server-allowed"
+    assert ensure_access.await_args.kwargs["user_email"] == user["email"]
+    assert preview.await_args.kwargs["server_id"] == "server-allowed"
 
 
 @pytest.mark.asyncio
