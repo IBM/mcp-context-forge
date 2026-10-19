@@ -4493,7 +4493,7 @@ async def test_get_prompt_passes_modern_progress_relay(monkeypatch):
     async def fake_get_db():
         yield MagicMock()
 
-    relay = object()
+    relay = MagicMock(drain=AsyncMock())
     relay_calls = []
 
     def fake_relay(**kwargs):
@@ -4509,6 +4509,7 @@ async def test_get_prompt_passes_modern_progress_relay(monkeypatch):
 
     assert tr.prompt_service.get_prompt.await_args.kwargs["progress_callback"] is relay
     assert relay_calls == [{}]
+    relay.drain.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -6854,7 +6855,7 @@ async def test_read_resource_passes_modern_progress_relay(monkeypatch):
         captured_kwargs.update(kwargs)
         return mock_result
 
-    relay = object()
+    relay = MagicMock(drain=AsyncMock())
     relay_calls = []
 
     def fake_relay(**kwargs):
@@ -6873,6 +6874,7 @@ async def test_read_resource_passes_modern_progress_relay(monkeypatch):
 
     assert captured_kwargs["progress_callback"] is relay
     assert relay_calls == [{}]
+    relay.drain.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -19529,6 +19531,32 @@ class TestProgressStreamRouting:
         assert frames[-1]["result"]["content"][0]["text"] == "done"
 
     @pytest.mark.asyncio
+    async def test_spawned_progress_frames_all_arrive_before_result(self, monkeypatch):
+        """Progress callbacks spawned as tasks, as the SDK client does, all reach the client before the result."""
+        count = 50
+
+        async def invoke(**kwargs):
+            loop = asyncio.get_running_loop()
+            for i in range(1, count + 1):
+                loop.create_task(kwargs["progress_callback"](i, count, f"step {i}"))
+            return types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        frames = _sse_frames(messages)
+        progress = [f["params"]["progress"] for f in frames if f.get("method") == "notifications/progress"]
+        assert progress == list(range(1, count + 1))
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
     async def test_progress_sse_hangup_cancels_handler(self, monkeypatch):
         cancelled = asyncio.Event()
         progress_sent = asyncio.Event()
@@ -19937,7 +19965,7 @@ class TestProgressRelay:
         async def fake_get_db():
             yield MagicMock()
 
-        relay = object()
+        relay = MagicMock(drain=AsyncMock())
         relay_calls = []
 
         def fake_relay(**kwargs):
@@ -19952,6 +19980,157 @@ class TestProgressRelay:
 
         assert mock_cs.handle_completion.await_args.kwargs["progress_callback"] is relay
         assert relay_calls == [{}]
+        relay.drain.assert_awaited_once_with()
+
+    @staticmethod
+    def _blocking_relay():
+        """Build a relay whose downstream send blocks until the returned event is set."""
+        release = asyncio.Event()
+        session = MagicMock()
+
+        async def blocked_send(*_args):
+            await release.wait()
+
+        session.report_progress = AsyncMock(side_effect=blocked_send)
+        return tr._ProgressRelay(session), session, release
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_waits_for_inflight_sends(self):
+        """drain returns only after every in-flight send has finished."""
+        relay, session, release = self._blocking_relay()
+        send = asyncio.create_task(relay(1.0, 2.0, "a"))
+        await asyncio.sleep(0)
+        drain = asyncio.create_task(relay.drain())
+        await asyncio.sleep(0.05)
+        assert not drain.done()
+
+        release.set()
+        async with asyncio.timeout(1):
+            await drain
+        await send
+        session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_caps_wait(self):
+        """A stalled downstream reader never hangs the call past the drain cap."""
+        relay, _session, _release = self._blocking_relay()
+        send = asyncio.create_task(relay(1.0, None, None))
+        async with asyncio.timeout(1):
+            await relay.drain(timeout=0.05)
+        assert not send.done()
+        send.cancel()
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_idle_returns_immediately(self):
+        """drain with no sends in flight returns at once."""
+        relay = tr._ProgressRelay(MagicMock())
+        async with asyncio.timeout(0.5):
+            await relay.drain()
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_counts_failed_sends(self):
+        """A failed send still leaves the relay idle."""
+        session = MagicMock()
+        session.report_progress = AsyncMock(side_effect=RuntimeError("closed"))
+        relay = tr._ProgressRelay(session)
+        await relay(1.0, None, None)
+        async with asyncio.timeout(0.5):
+            await relay.drain()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_waits_for_spawned_progress(self, monkeypatch):
+        """call_tool returns only after a progress send spawned by the upstream client finishes."""
+        self._patch_db(monkeypatch)
+        release = asyncio.Event()
+        ctx = self._ctx()
+
+        async def blocked_send(*_args):
+            await release.wait()
+
+        ctx.session.report_progress = AsyncMock(side_effect=blocked_send)
+
+        async def invoke(**kwargs):
+            asyncio.get_running_loop().create_task(kwargs["progress_callback"](1.0, 2.0, "a"))
+            return MagicMock(content=[])
+
+        monkeypatch.setattr(tool_service, "invoke_tool", invoke)
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            call = asyncio.create_task(call_tool("any_tool", {}))
+            await asyncio.sleep(0.05)
+            assert not call.done()
+            release.set()
+            async with asyncio.timeout(1):
+                assert await call == []
+        ctx.session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fails", [False, True], ids=["success", "error"])
+    async def test_direct_proxy_drains_relay(self, monkeypatch, fails):
+        """The direct-proxy branch drains its relay on success and on error."""
+        gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=gateway)))
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield db
+
+        drain = AsyncMock()
+        monkeypatch.setattr(tr._ProgressRelay, "drain", drain)
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "extract_gateway_id_from_headers", lambda _headers: "gw-direct")
+        monkeypatch.setattr(tr, "check_gateway_access", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr, "_check_scoped_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr.settings, "mcpgateway_direct_proxy_enabled", True)
+        monkeypatch.setattr(tr.tool_service, "invoke_tool_direct", AsyncMock(side_effect=RuntimeError("boom") if fails else None))
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False, "is_authenticated": True})
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx()):
+            await call_tool("any_tool", {})
+
+        drain.assert_awaited_once_with()
+
+    @staticmethod
+    def _spy_relay(monkeypatch):
+        """Replace the relay factory with one that returns a drain spy."""
+        relay = MagicMock(drain=AsyncMock())
+        monkeypatch.setattr(tr, "_downstream_progress_relay", lambda **_kwargs: relay)
+        return relay
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_drains_relay_on_error(self, monkeypatch):
+        """get_prompt drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=("server-1", {}, {})))
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptNotFoundError("missing")))
+
+        with pytest.raises(MCPError):
+            await get_prompt("missing", {})
+        relay.drain.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_drains_relay_on_error(self, monkeypatch):
+        """read_resource drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ResourceNotFoundError("missing")))
+
+        with pytest.raises(MCPError):
+            await read_resource("missing://resource")
+        relay.drain.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_complete_drains_relay_on_error(self, monkeypatch):
+        """complete drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        with patch.object(tr, "completion_service") as mock_cs:
+            mock_cs.handle_completion = AsyncMock(side_effect=RuntimeError("boom"))
+            await tr.complete(types.PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": "v"})
+        relay.drain.assert_awaited_once_with()
 
 
 class TestMrtrElicitation:
