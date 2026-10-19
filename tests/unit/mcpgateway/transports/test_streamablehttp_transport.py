@@ -6837,6 +6837,50 @@ async def test_read_resource_with_meta_from_request_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_resource_passes_modern_progress_relay(monkeypatch):
+    """The read_resource handler hands the modern-only progress relay to the service."""
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as tr
+
+    mock_result = MagicMock()
+    mock_result.text = "resource content"
+    mock_result.blob = None
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    captured_kwargs = {}
+
+    async def mock_read_resource(db, resource_uri, **kwargs):
+        captured_kwargs.update(kwargs)
+        return mock_result
+
+    relay = object()
+    relay_calls = []
+
+    def fake_relay(**kwargs):
+        relay_calls.append(kwargs)
+        return relay
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    monkeypatch.setattr(tr.resource_service, "read_resource", mock_read_resource)
+    monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+
+    user_token = tr.user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    try:
+        await tr.read_resource(AnyUrl("file:///test.txt"))
+    finally:
+        tr.user_context_var.reset(user_token)
+
+    assert captured_kwargs["progress_callback"] is relay
+    assert relay_calls == [{}]
+
+
+@pytest.mark.asyncio
 async def test_read_resource_with_request_context_no_meta(monkeypatch):
     """Test read_resource handles an active request context without meta (line 1030->1036)."""
     # Third-Party
