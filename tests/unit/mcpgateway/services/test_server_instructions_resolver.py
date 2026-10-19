@@ -7,8 +7,9 @@ Tests for the choice of ``instructions`` text for a virtual server.
 """
 
 # Standard
+from types import SimpleNamespace
 from typing import Any, List, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -77,7 +78,7 @@ def seed(session_factory):
         db.commit()
         return row.id
 
-    def resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+    def resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = ()) -> Optional[str]:
         with patch("mcpgateway.services.server_service.SessionLocal", session_factory):
             return ServerService._resolve_instructions_sync(server_id, user_email=user_email, token_teams=token_teams)  # pylint: disable=protected-access
 
@@ -136,8 +137,8 @@ def test_upstream_without_text_sends_default(seed):
     assert seed.resolve(sid) == DEFAULT_SERVER_INSTRUCTIONS
 
 
-def test_upstream_with_empty_text_sends_nothing(seed):
-    """An upstream server with an empty string stored as text: None (empty string is falsy)."""
+def test_upstream_with_empty_text_sends_default(seed):
+    """A single-upstream server whose upstream stored an empty string sends the default text."""
     sid = seed.server(seed.tool("now", seed.gateway("clock", "")))
     assert seed.resolve(sid) == DEFAULT_SERVER_INSTRUCTIONS
 
@@ -189,7 +190,8 @@ def vis_seed(session_factory):
     db.flush()
 
     def _server(visibility: str = "public", owner_email: Optional[str] = None, team_id: Optional[str] = None) -> str:
-        t = Tool(original_name="t", custom_name="t", custom_name_slug="t", input_schema={"type": "object"}, gateway_id=up.id)
+        name = f"t{len(db.query(Tool).all())}"
+        t = Tool(original_name=name, custom_name=name, custom_name_slug=name, input_schema={"type": "object"}, gateway_id=up.id)
         db.add(t)
         db.flush()
         row = Server(name="vs", visibility=visibility, owner_email=owner_email, team_id=team_id)
@@ -198,7 +200,7 @@ def vis_seed(session_factory):
         db.commit()
         return row.id
 
-    def _resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+    def _resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = ()) -> Optional[str]:
         with patch("mcpgateway.services.server_service.SessionLocal", session_factory):
             return ServerService._resolve_instructions_sync(server_id, user_email=user_email, token_teams=token_teams)  # pylint: disable=protected-access
 
@@ -219,9 +221,9 @@ def test_private_server_not_visible_to_public_only_token(vis_seed):
 
 
 def test_private_server_visible_to_owner(vis_seed):
-    """A private server is visible to its owner."""
+    """A private server is visible to its owner under a team-scoped token."""
     sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
-    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=[]) == UPSTREAM_TEXT
+    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-1"]) == UPSTREAM_TEXT
 
 
 def test_private_server_not_visible_to_wrong_user(vis_seed):
@@ -242,13 +244,115 @@ def test_team_server_not_visible_to_wrong_team(vis_seed):
     assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-2"]) == DEFAULT_SERVER_INSTRUCTIONS
 
 
-def test_admin_bypass_sees_private_server(vis_seed):
-    """token_teams=None is the admin-bypass shape and sees all servers regardless of visibility."""
+def test_admin_bypass_does_not_see_another_users_private_server(vis_seed):
+    """Admin bypass (token_teams=None) never reads another user's private server."""
     sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email="admin@example.com", token_teams=None) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_admin_bypass_sees_own_private_server(vis_seed):
+    """Admin bypass reads the admin's own private server."""
+    sid = vis_seed.server(visibility="private", owner_email="admin@example.com")
     assert vis_seed.resolve(sid, user_email="admin@example.com", token_teams=None) == UPSTREAM_TEXT
+
+
+def test_admin_bypass_sees_team_server(vis_seed):
+    """Admin bypass reads a team server of any team."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert vis_seed.resolve(sid, user_email="admin@example.com", token_teams=None) == UPSTREAM_TEXT
+
+
+def test_missing_scope_is_public_only(vis_seed):
+    """A caller that passes no scope gets the public-only rule, never admin bypass."""
+    private_sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    team_sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert vis_seed.resolve(private_sid, user_email="alice@example.com") == DEFAULT_SERVER_INSTRUCTIONS
+    assert vis_seed.resolve(team_sid, user_email="alice@example.com") == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_public_only_token_does_not_see_own_private_server(vis_seed):
+    """A public-only token sees public servers only, even for the owner."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_unknown_server_sends_default_text(vis_seed):
+    """An unknown server id never raises and sends the default text."""
+    assert vis_seed.resolve("missing", user_email="alice@example.com", token_teams=["team-1"]) == DEFAULT_SERVER_INSTRUCTIONS
 
 
 def test_no_auth_context_sees_only_public(vis_seed):
     """token_teams=[] with no user_email (public-only token, no owner match) sees only public servers."""
     sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
     assert vis_seed.resolve(sid, user_email=None, token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+# ---------------------------------------------------------------------------
+# /rpc initialize deny-path tests (CWE-639 / CWE-200)
+# ---------------------------------------------------------------------------
+
+
+class _RpcRequest:
+    """Request double that carries a verified JWT payload."""
+
+    def __init__(self, teams: Optional[List[str]], is_admin: bool = False) -> None:
+        self.headers = {}
+        self.query_params = {}
+        self.state = SimpleNamespace(_jwt_verified_payload=("token", {"teams": teams, "is_admin": is_admin}))
+
+
+async def _rpc_initialize_instructions(vis_seed, session_factory, server_id: str, user_email: str, teams: Optional[List[str]], is_admin: bool = False) -> Optional[str]:
+    """Run the ``/rpc`` initialize path against the in-memory catalog and return the instructions text."""
+    # First-Party
+    from mcpgateway import main as main_mod  # pylint: disable=import-outside-toplevel
+
+    request = _RpcRequest(teams, is_admin)
+    with (
+        patch("mcpgateway.services.server_service.SessionLocal", session_factory),
+        patch.object(main_mod.session_registry, "_get_oauth_experimental_config", return_value=None),
+        patch.object(main_mod.server_service, "get_server", AsyncMock(return_value=SimpleNamespace(id=server_id))),
+    ):
+        result = await main_mod._execute_rpc_initialize(  # pylint: disable=protected-access
+            request,
+            MagicMock(),
+            {"email": user_email, "is_admin": is_admin},
+            params={"protocolVersion": "2025-06-18"},
+            server_id=server_id,
+            mcp_session_id=None,
+        )
+    return result.get("instructions")
+
+
+@pytest.mark.asyncio
+async def test_rpc_initialize_wrong_team_token_gets_default_text(vis_seed, session_factory):
+    """A team-scoped token for another team never reads the server's upstream text."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert await _rpc_initialize_instructions(vis_seed, session_factory, sid, "bob@example.com", ["team-2"]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_rpc_initialize_other_users_private_server_gets_default_text(vis_seed, session_factory):
+    """A user never reads another user's private server text."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert await _rpc_initialize_instructions(vis_seed, session_factory, sid, "bob@example.com", ["team-2"]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_rpc_initialize_public_only_token_gets_default_text(vis_seed, session_factory):
+    """A public-only token never reads a team server's text."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert await _rpc_initialize_instructions(vis_seed, session_factory, sid, "alice@example.com", []) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_rpc_initialize_admin_bypass_does_not_read_other_users_private_server(vis_seed, session_factory):
+    """An admin with an unrestricted token never reads another user's private server text."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert await _rpc_initialize_instructions(vis_seed, session_factory, sid, "admin@example.com", None, is_admin=True) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_rpc_initialize_team_member_reads_team_server_text(vis_seed, session_factory):
+    """A token for the server's team reads the upstream text."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert await _rpc_initialize_instructions(vis_seed, session_factory, sid, "alice@example.com", ["team-1"]) == UPSTREAM_TEXT
