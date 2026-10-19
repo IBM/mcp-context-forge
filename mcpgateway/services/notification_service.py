@@ -1165,7 +1165,8 @@ class NotificationService:
             await asyncio.sleep(delay)
             self._queue_refresh(pending)
         finally:
-            self._trailing_refresh_tasks.pop(pending.gateway_id, None)
+            if self._trailing_refresh_tasks.get(pending.gateway_id) is asyncio.current_task():
+                del self._trailing_refresh_tasks[pending.gateway_id]
 
     async def _process_refresh_queue(self) -> None:
         """Background worker that processes pending refresh operations.
@@ -1212,8 +1213,9 @@ class NotificationService:
         # pylint: disable=protected-access
         gateway_id = pending.gateway_id
 
-        # Clear pending flag tracking now that we're processing this refresh
-        self._pending_refresh_flags.pop(gateway_id, None)
+        # Clear pending flag tracking now that we're processing this refresh; a newer entry belongs to a later refresh
+        if self._pending_refresh_flags.get(gateway_id) is pending:
+            del self._pending_refresh_flags[gateway_id]
 
         if not self._gateway_service:
             logger.warning(
