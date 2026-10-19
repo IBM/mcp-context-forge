@@ -38,6 +38,7 @@ import uuid
 # Third-Party
 import httpx2
 from mcp import ClientSession
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
@@ -49,7 +50,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, without_progress_token
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
@@ -134,10 +135,19 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadResourceRequest":
-    """Build a ReadResourceRequest that carries _meta."""
+def _build_read_resource_request(uri: Any, meta_data: Optional[Dict[str, Any]] = None) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta when metadata is given.
+
+    Args:
+        uri: The resource URI to read.
+        meta_data: Optional metadata to place in the request ``_meta``.
+
+    Returns:
+        The request to send upstream.
+    """
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
-    _rp_dict["_meta"] = meta_data
+    if meta_data:
+        _rp_dict["_meta"] = meta_data
     return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
@@ -162,12 +172,26 @@ def set_upstream_cache_directive(result: Any) -> None:
     upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
-async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
-    """Dispatch read_resource and inject _meta when metadata is provided."""
-    if meta_data:
+async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]], progress_callback: ProgressFnT | None = None) -> Any:
+    """Dispatch read_resource, injecting _meta and relaying upstream progress when requested.
+
+    The client's progress token never goes upstream. When a callback is set, the SDK stamps its own token.
+
+    Args:
+        session: The upstream client session.
+        uri: The resource URI to read.
+        meta_data: Optional metadata to place in the request ``_meta``.
+        progress_callback: Optional callback that receives upstream progress notifications.
+
+    Returns:
+        The upstream ``ReadResourceResult``.
+    """
+    meta_data = without_progress_token(meta_data)
+    if meta_data or progress_callback:
         return await session.send_request(
             _build_read_resource_request(uri, meta_data),
             types.ReadResourceResult,
+            progress_callback=progress_callback,
         )
     return await session.read_resource(uri=uri)
 
@@ -1767,6 +1791,7 @@ class ResourceService(BaseService):
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1810,6 +1835,8 @@ class ResourceService(BaseService):
             request_headers (Optional[Dict[str, str]]):
                 Inbound request headers. Required for token-exchange gateways to resolve
                 the RFC 8693 subject_token from the caller's Authorization bearer.
+            progress_callback (ProgressFnT | None):
+                Optional callback that receives upstream progress notifications for the read.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` when
@@ -2154,7 +2181,7 @@ class ResourceService(BaseService):
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
-                                    resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback)
                                     set_upstream_cache_directive(resource_response)
                                     return getattr(getattr(resource_response, "contents")[0], "text")
                                 except Exception as exc:
@@ -2330,7 +2357,7 @@ class ResourceService(BaseService):
                                         timeout=settings.health_check_timeout,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as client:
-                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
                                         set_upstream_cache_directive(resource_response)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
@@ -2392,6 +2419,7 @@ class ResourceService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
@@ -2410,6 +2438,7 @@ class ResourceService(BaseService):
             meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
             request_headers: Optional inbound request headers, forwarded to invoke_resource()
                 so token-exchange gateways can resolve the RFC 8693 subject_token.
+            progress_callback: Optional callback that receives upstream progress notifications, forwarded to invoke_resource().
 
         Returns:
             Resource content object
@@ -2666,7 +2695,7 @@ class ResourceService(BaseService):
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
-                                result = await _read_resource_with_meta(client.session, uri, meta_data)
+                                result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
                                 set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
@@ -2876,6 +2905,7 @@ class ResourceService(BaseService):
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
                             request_headers=request_headers,
+                            progress_callback=progress_callback,
                         )
                     except ResourceError:
                         if has_valid_cached_fallback:
