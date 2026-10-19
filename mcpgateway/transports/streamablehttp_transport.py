@@ -50,6 +50,7 @@ import jwt
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import JSONRPCMessage
@@ -1876,6 +1877,50 @@ def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
         raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
 
 
+def _downstream_progress_relay(*, include_legacy: bool = False) -> ProgressFnT | None:
+    """Build a callback that forwards upstream progress to the downstream caller.
+
+    The downstream session is captured when the relay is built, because upstream
+    callbacks can run in the context of another request.
+
+    Args:
+        include_legacy: Also build the relay for handshake-era peers.
+
+    Returns:
+        The relay coroutine, or ``None`` without a request context or session, or for a legacy peer when ``include_legacy`` is false.
+
+    Examples:
+        >>> _downstream_progress_relay() is None
+        True
+    """
+    try:
+        ctx = mcp_app.request_context  # pylint: disable=no-member
+    except LookupError:
+        return None
+    session = getattr(ctx, "session", None) if ctx else None
+    if session is None:
+        return None
+    protocol_version = getattr(ctx, "protocol_version", None)
+    modern = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+    if not (modern or include_legacy):
+        return None
+
+    async def relay(progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Forward one progress update to the downstream session.
+
+        Args:
+            progress: Current progress value.
+            total: Optional total value.
+            message: Optional human-readable status message.
+        """
+        try:
+            await session.report_progress(progress, total, message)
+        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
+            logger.debug("Progress relay failed: %s", exc)
+
+    return relay
+
+
 def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
     """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
 
@@ -1981,7 +2026,6 @@ async def call_tool(
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
-    downstream_session = None
     mrtr_allowed = False
     inbound_input_responses = None
     inbound_request_state = None
@@ -1993,7 +2037,6 @@ async def call_tool(
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
         if ctx:
-            downstream_session = getattr(ctx, "session", None)
             # MRTR elicitation pass-through is modern-era only (scoping decision:
             # legacy clients keep today's no-elicitation behavior).
             protocol_version = getattr(ctx, "protocol_version", None)
@@ -2016,20 +2059,7 @@ async def call_tool(
 
     _reject_invalid_meta(meta_data)
 
-    async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
-        """Forward an upstream progress update to the downstream caller.
-
-        Args:
-            progress: Current progress value.
-            total: Optional total value.
-            message: Optional human-readable status message.
-        """
-        if downstream_session is None:
-            return
-        try:
-            await downstream_session.report_progress(progress, total, message)
-        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
-            logger.debug("Progress relay failed: %s", exc)
+    progress_relay = _downstream_progress_relay(include_legacy=True)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2231,7 +2261,7 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
-                progress_callback=_relay_progress,
+                progress_callback=progress_relay,
                 allow_input_required=mrtr_allowed,
                 input_responses=inbound_input_responses,
                 request_state=inbound_request_state,
