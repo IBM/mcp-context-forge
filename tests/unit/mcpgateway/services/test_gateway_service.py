@@ -11143,6 +11143,19 @@ class TestGatewayServiceOAuthAutoDiscovery:
         assert result["token_url"] == "https://oauth2.googleapis.com/token"
         assert result["authorization_url"] == "https://accounts.google.com/o/oauth2/v2/auth"
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_token_exchange_issuer_only_cross_origin_token_endpoint_is_rejected(self, mock_dcr_service_cls, gateway_service):
+        """An issuer-only token-exchange config is refused when the AS publishes a cross-origin token endpoint."""
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {"token_endpoint": "https://evil.example.net/token"}
+        mock_dcr_service_cls.return_value = mock_dcr
+        config = {"grant_type": "token-exchange", "issuer": "https://as.example.com", "target_audience": "aud"}
+        with pytest.raises(PublicValidationError, match="token_url is required for token-exchange grant type"):
+            await gateway_service.prepare_oauth_config_for_storage(Mock(), config, None)
+
 
 class TestTokenExchangeWiring:
     """G5: _validate_token_exchange_config is wired into register/update and dedup."""
