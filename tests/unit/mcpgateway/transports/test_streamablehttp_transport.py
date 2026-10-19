@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 # Third-Party
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
+import anyio
 from fastapi import HTTPException
 import httpx
 import httpx2
@@ -19636,6 +19637,35 @@ class TestProgressStreamRouting:
         assert frames[-1]["result"]["content"][0]["text"] == "done"
 
     @pytest.mark.asyncio
+    async def test_progress_frames_survive_upstream_client_teardown(self, monkeypatch):
+        """Progress sends blocked when the upstream client cancels its task group still reach the client before the result."""
+        count = 50
+
+        async def invoke(**kwargs):
+            async with anyio.create_task_group() as upstream:
+                for i in range(1, count + 1):
+                    upstream.start_soon(kwargs["progress_callback"], i, count, f"step {i}")
+                await anyio.sleep(0)
+                result = types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+                upstream.cancel_scope.cancel()
+            return result
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        frames = _sse_frames(messages)
+        progress = [f["params"]["progress"] for f in frames if f.get("method") == "notifications/progress"]
+        assert progress == list(range(1, count + 1))
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
     async def test_progress_sse_hangup_cancels_handler(self, monkeypatch):
         cancelled = asyncio.Event()
         progress_sent = asyncio.Event()
@@ -20098,6 +20128,41 @@ class TestProgressRelay:
             await relay.drain(timeout=0.05)
         assert not send.done()
         send.cancel()
+        await asyncio.gather(send, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_relay_send_survives_upstream_cancel(self):
+        """Cancelling the upstream task group never aborts a progress send already in flight."""
+        release = asyncio.Event()
+        completed = []
+        session = MagicMock()
+
+        async def blocked_send(*args):
+            await release.wait()
+            completed.append(args)
+
+        session.report_progress = blocked_send
+        relay = tr._ProgressRelay(session)
+        async with asyncio.timeout(1):
+            async with anyio.create_task_group() as upstream:
+                upstream.start_soon(relay, 1.0, 2.0, "a")
+                await anyio.sleep(0)
+                upstream.cancel_scope.cancel()
+                asyncio.get_running_loop().call_later(0.05, release.set)
+        assert completed == [(1.0, 2.0, "a")]
+        assert relay._inflight == 0
+
+    @pytest.mark.asyncio
+    async def test_relay_send_cap_marks_stalled(self, monkeypatch):
+        """A send that hits the cap marks the relay stalled, and later updates return at once without sending."""
+        monkeypatch.setattr(tr, "_PROGRESS_SEND_TIMEOUT_SECONDS", 0.05)
+        relay, session, _release = self._blocking_relay()
+        async with asyncio.timeout(1):
+            await relay(1.0, 2.0, "a")
+        async with asyncio.timeout(0.01):
+            await relay(2.0, 2.0, "b")
+        session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+        assert relay._inflight == 0
 
     @pytest.mark.asyncio
     async def test_relay_drain_idle_returns_immediately(self):
