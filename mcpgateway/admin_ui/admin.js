@@ -455,6 +455,7 @@ import {
   rejectJoinRequest,
   requestToJoinTeam,
   serverSideTeamSearch,
+  toggleUseDefaultMaxMembers,
   updateDefaultVisibility,
   validatePasswordMatch,
   validatePasswordRequirements,
@@ -466,6 +467,7 @@ Admin.displayPublicTeams = displayPublicTeams;
 Admin.filterByRelationship = filterByRelationship;
 Admin.filterTeams = filterTeams;
 Admin.hideTeamEditModal = hideTeamEditModal;
+Admin.toggleUseDefaultMaxMembers = toggleUseDefaultMaxMembers;
 Admin.leaveTeam = leaveTeam;
 Admin.loadTeamSelectorDropdown = loadTeamSelectorDropdown;
 Admin.rejectJoinRequest = rejectJoinRequest;
