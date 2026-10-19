@@ -19424,6 +19424,259 @@ class TestDualEra:
         assert tr._is_known_mcp_request_method("server/discover")
 
 
+_PROGRESS_TOOL = "slow"
+_PROGRESS_BODY = orjson.dumps(
+    {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": _PROGRESS_TOOL,
+            "arguments": {},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "progressToken": "tok-1",
+            },
+        },
+    }
+)
+_PROGRESS_HEADERS = [
+    (b"mcp-protocol-version", b"2026-07-28"),
+    (b"mcp-method", b"tools/call"),
+    (b"mcp-name", _PROGRESS_TOOL.encode()),
+    (b"accept", b"application/json, text/event-stream"),
+    (b"content-type", b"application/json"),
+]
+
+
+class _RecordingSessionManager:
+    """Session manager double that records each body the SDK would read."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.bodies: list[bytes] = []
+
+    @asynccontextmanager
+    async def run(self):
+        yield self
+
+    async def handle_request(self, scope, receive, send_func):
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+        self.bodies.append(body)
+        await send_func({"type": "http.response.start", "status": 200, "headers": []})
+        await send_func({"type": "http.response.body", "body": b"ok"})
+
+
+def _body_then_disconnect_on(body: bytes, hang_up):
+    """Yield ``body`` once, then report ``http.disconnect`` only after ``hang_up`` is set, like a live ASGI server."""
+    body_sent = False
+
+    async def receive():
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await hang_up.wait()
+        return {"type": "http.disconnect"}
+
+    return receive
+
+
+def _sse_frames(messages) -> list[dict]:
+    """Decode the JSON payload of every SSE ``data:`` line the gateway sent."""
+    stream = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body").decode()
+    return [json.loads(line[len("data:") :]) for line in stream.splitlines() if line.startswith("data:") and line[len("data:") :].strip()]
+
+
+class TestProgressStreamRouting:
+    """JSON mode answers modern requests that carry a progress token on the SSE manager (#6647)."""
+
+    @staticmethod
+    async def _route(monkeypatch, body, headers, *, json_mode=True):
+        """Send one POST /mcp through a wrapper whose managers are recording doubles."""
+        monkeypatch.setattr(tr.settings, "json_response_enabled", json_mode)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", _RecordingSessionManager)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, _messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=headers), _make_receive(body), send)
+        finally:
+            await wrapper.shutdown()
+        return wrapper
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":"a"}}}', True, id="string_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":5}}}', True, id="int_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":true}}}', False, id="bool_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"progressToken":"a"}}', False, id="no_meta"),
+            pytest.param(b'[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":"a"}}}]', False, id="array"),
+            pytest.param(b'{"progressToken": ', False, id="invalid_json"),
+            pytest.param(None, False, id="none"),
+        ],
+    )
+    def test_requests_progress_stream(self, body, expected):
+        assert tr._requests_progress_stream(body) is expected
+
+    @pytest.mark.asyncio
+    async def test_modern_progress_request_uses_sse_manager(self, monkeypatch):
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, _PROGRESS_HEADERS)
+
+        assert wrapper.progress_session_manager.kwargs == {"app": tr.mcp_app, "event_store": None, "json_response": False, "stateless": True}
+        assert wrapper.progress_session_manager.bodies == [_PROGRESS_BODY]
+        assert wrapper.session_manager.bodies == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("headers", "body", "json_mode", "peek_cap"),
+        [
+            pytest.param([(b"mcp-protocol-version", b"2025-11-25"), (b"accept", b"application/json, text/event-stream")], _PROGRESS_BODY, True, None, id="legacy_header"),
+            pytest.param([(b"mcp-protocol-version", b"2026-07-28"), (b"accept", b"application/json")], _PROGRESS_BODY, True, None, id="json_only_accept"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY.replace(b'"progressToken":"tok-1"', b'"other":"x"'), True, None, id="no_token"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY, True, 16, id="body_over_peek_cap"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY, False, None, id="json_mode_off"),
+        ],
+    )
+    async def test_progress_routing_falls_back(self, monkeypatch, headers, body, json_mode, peek_cap):
+        if peek_cap is not None:
+            monkeypatch.setattr(tr.settings, "mcp_body_peek_max_bytes", peek_cap)
+        wrapper = await self._route(monkeypatch, body, headers, json_mode=json_mode)
+
+        assert wrapper.session_manager.bodies == [body]
+        if json_mode:
+            assert wrapper.progress_session_manager.bodies == []
+        else:
+            assert wrapper.progress_session_manager is None
+
+    @pytest.mark.asyncio
+    async def test_progress_routing_skips_repeated_version_header(self, monkeypatch):
+        headers = [(b"mcp-protocol-version", b"2025-11-25"), (b"mcp-protocol-version", b"2026-07-28"), (b"accept", b"application/json, text/event-stream")]
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, headers)
+
+        assert wrapper.session_manager.bodies == [_PROGRESS_BODY]
+        assert wrapper.progress_session_manager.bodies == []
+
+    @staticmethod
+    def _serve_progress_tool(monkeypatch, invoke):
+        """Run the real gateway wrapper in JSON mode with ``invoke`` behind tools/call."""
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield MagicMock()
+
+        monkeypatch.setattr(tr.settings, "json_response_enabled", True)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        # Earlier tests in this module leave a LookupError-raising request_context; restore the v2 shim.
+        monkeypatch.setattr(type(tr.mcp_app), "request_context", property(lambda _self: tr._get_v2_ctx()))
+        monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
+        monkeypatch.setattr(tr, "_list_catalog_page", AsyncMock(return_value={"tools": [{"name": _PROGRESS_TOOL, "inputSchema": {"type": "object"}}]}))
+        monkeypatch.setattr(tool_service, "invoke_tool", invoke)
+
+    @pytest.mark.asyncio
+    async def test_progress_frames_through_gateway(self, monkeypatch):
+        async def invoke(**kwargs):
+            await kwargs["progress_callback"](1, 2, "a")
+            await kwargs["progress_callback"](2, 2, "b")
+            return types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        assert dict(start["headers"])[b"content-type"].startswith(b"text/event-stream")
+        frames = _sse_frames(messages)
+        progress = [f for f in frames if f.get("method") == "notifications/progress"]
+        assert [(p["params"]["progressToken"], p["params"]["progress"], p["params"]["message"]) for p in progress] == [("tok-1", 1, "a"), ("tok-1", 2, "b")]
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_progress_sse_hangup_cancels_handler(self, monkeypatch):
+        # Third-Party
+        import anyio
+
+        cancelled = anyio.Event()
+        progress_sent = anyio.Event()
+
+        async def invoke(**kwargs):
+            await kwargs["progress_callback"](1, 2, "a")
+            try:
+                await anyio.Event().wait()
+            except anyio.get_cancelled_exc_class():
+                cancelled.set()
+                raise
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        messages: list[dict] = []
+
+        async def send(message):
+            messages.append(message)
+            if b"notifications/progress" in message.get("body", b""):
+                progress_sent.set()
+
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        try:
+            with anyio.fail_after(5):
+                await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, progress_sent), send)
+        finally:
+            await wrapper.shutdown()
+
+        assert cancelled.is_set()
+        assert [f.get("method") for f in _sse_frames(messages)] == ["notifications/progress"]
+
+    @pytest.mark.asyncio
+    async def test_progress_switch_requires_auth(self, monkeypatch):
+        """Unauthenticated (401) and server-denied (403) progress requests never reach the SSE manager."""
+        # First-Party
+        from mcpgateway.main import MCPPathRewriteMiddleware
+
+        monkeypatch.setattr(tr.settings, "json_response_enabled", True)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", _RecordingSessionManager)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        try:
+            monkeypatch.setattr(tr.settings, "mcp_require_auth", True)
+            send, messages = _make_send_collector()
+            scope = _make_scope("/mcp", headers=_PROGRESS_HEADERS)
+            scope["path"] = "/mcp"
+            await MCPPathRewriteMiddleware(wrapper.handle_streamable_http)(scope, _make_receive(_PROGRESS_BODY), send)
+            assert messages[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+            token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+            try:
+                monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=False))
+                send, messages = _make_send_collector()
+                await wrapper.handle_streamable_http(_make_scope("/servers/abc-123-def/mcp", headers=_PROGRESS_HEADERS), _make_receive(_PROGRESS_BODY), send)
+                assert messages[0]["status"] == tr.HTTP_403_FORBIDDEN
+            finally:
+                user_context_var.reset(token)
+        finally:
+            await wrapper.shutdown()
+
+        assert wrapper.progress_session_manager.bodies == []
+        assert wrapper.session_manager.bodies == []
+
+
 _X_MCP_HEADER_SCHEMA = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
 
 
