@@ -10,6 +10,8 @@
 
 ### Breaking Changes
 
+- **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+
 - **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
 
 - **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
@@ -44,6 +46,16 @@
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
 
 ### Fixed
+
+- **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
+
+- **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
+
+- **Admin UI A2A edit keeps stored credentials** - The Admin UI form resubmits the mask for an unchanged credential. `update_agent` no longer stores the mask in place of the real credential, for basic, bearer, and multi-header auth.
+
+- **Masked password with a new username** - An update that changes `auth_username` and keeps the masked `auth_password` now pairs the new username with the stored password, for A2A agents and gateways.
+
+- **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
 - **A2A plugin header trust** - A2A pre-invoke plugins can supply credentials and custom headers without the agent caller-header allowlist. Plugin output now overrides configured agent authentication, and an empty `Authorization` value suppresses all fallback authorization. The gateway retains inbound caller filtering, sanitizes plugin input, resolves output case-insensitively, and strips `X-Vault-Tokens` before egress.
 
