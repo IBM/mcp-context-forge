@@ -60,11 +60,12 @@ import uuid
 # Third-Party
 import httpx
 import httpx2
-from mcp import ClientSession, MCPError as McpError
+from mcp import ClientSession
+from mcp import MCPError as McpError
 from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
-from mcp.server.mcpserver import MCPServer
-from mcp.types import PaginatedRequestParams
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import CallToolResult, ElicitRequest, ElicitRequestFormParams, ElicitRequestURLParams, ElicitResult, InputRequiredResult, PaginatedRequestParams, TextContent
 from mcp_types import LoggingMessageNotificationParams
 import pytest
 import uvicorn
@@ -75,6 +76,7 @@ from playwright.sync_api import APIRequestContext, APIResponse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect, Playwright
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -399,7 +401,6 @@ def tool_error_upstream() -> Generator[str, None, None]:
         listener.close()
 
 
-
 @pytest.fixture
 def prompt_error_upstream() -> Generator[str, None, None]:
     """Start an in-process upstream whose prompts answer JSON-RPC errors (issue #6618).
@@ -438,7 +439,6 @@ def prompt_error_upstream() -> Generator[str, None, None]:
         listener.close()
 
 
-
 @pytest.fixture
 def array_upstream() -> Generator[str, None, None]:
     """Serve a plain HTTP endpoint whose JSON body is an array, for a REST tool with an array outputSchema (issue #6575).
@@ -468,7 +468,6 @@ def array_upstream() -> Generator[str, None, None]:
         server.should_exit = True
         thread.join(timeout=10)
         listener.close()
-
 
 
 class TestConnectivity:
@@ -804,6 +803,159 @@ class TestToolCalls:
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
 
 
+@pytest.fixture
+def elicitation_upstream() -> Generator[dict[str, Any], None, None]:
+    """Serve an MCP peer that records elicitation retries and URL access.
+
+    Set MCP_ELICITATION_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_ELICITATION_UPSTREAM_HOST", "host.docker.internal")
+    bind_host = "127.0.0.1" if host in {"127.0.0.1", "localhost"} else "0.0.0.0"
+    listener = socket.socket()
+    listener.bind((bind_host, 0))
+    port = listener.getsockname()[1]
+    target_url = f"http://{host}:{port}/elicitation-target?next=%2Fprivate%3Fkey%3Da%2Bb#Keep%2FCase"
+    peer: dict[str, Any] = {"url": f"http://{host}:{port}/mcp", "calls": [], "url_requests": [], "requests": {}}
+    app = MCPServer("elicitation-relay")
+    question_id = "user-decision"
+    request_state = f"opaque-state-{uuid.uuid4().hex}"
+
+    @app.tool(structured_output=False)
+    def ask(mode: str, ctx: Context) -> CallToolResult | InputRequiredResult:
+        """Request user input and report the upstream's handling of the answer.
+
+        Args:
+            mode: Elicitation mode, either url or form.
+            ctx: MCP request context.
+        """
+        assert ctx.protocol_version == "2026-07-28", "The upstream call must use the modern protocol"
+        if not ctx.input_responses:
+            params = (
+                ElicitRequestURLParams(message="Open the URL to continue.", url=target_url)
+                if mode == "url"
+                else ElicitRequestFormParams(message="Choose a color.", requested_schema={"type": "object", "properties": {"color": {"type": "string"}}, "required": ["color"]})
+            )
+            request = ElicitRequest(params=params)
+            peer["requests"][question_id] = request.model_dump(by_alias=True, exclude_none=True)
+            return InputRequiredResult(input_requests={question_id: request}, request_state=request_state)
+        assert ctx.request_state == request_state, "The retry must preserve upstream state"
+        assert set(ctx.input_responses) == {question_id}
+        answer = ctx.input_responses[question_id]
+        assert isinstance(answer, ElicitResult)
+        if mode == "url" or answer.action != "accept":
+            assert answer.content is None, "URL and declined/cancelled responses carry no form data"
+        else:
+            assert answer.content == {"color": "blue"}
+        outcomes = {"accept": "completed", "decline": "user-declined", "cancel": "user-cancelled"}
+        return CallToolResult(content=[TextContent(type="text", text=f"upstream:{outcomes[answer.action]}")])
+
+    http_app = app.streamable_http_app(host=bind_host, stateless_http=True, json_response=True)
+
+    async def record_requests(request: Request, call_next: Callable) -> Any:
+        """Record tool calls and count all requests to the elicitation URL.
+
+        Args:
+            request: Incoming HTTP request.
+            call_next: Next HTTP handler.
+        """
+        if request.url.path == "/elicitation-target":
+            peer["url_requests"].append(request.method)
+            return JSONResponse({"unexpected": "The gateway fetched the elicitation URL"}, status_code=418)
+        if request.method == "POST":
+            payload = await request.json()
+            if payload.get("method") == "tools/call":
+                peer["calls"].append(payload["params"])
+        return await call_next(request)
+
+    http_app.add_middleware(BaseHTTPMiddleware, dispatch=record_requests)
+    server = uvicorn.Server(uvicorn.Config(http_app, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Elicitation upstream failed to start"
+        probe = httpx.get(f"http://127.0.0.1:{port}/elicitation-target", timeout=5)
+        assert probe.status_code == 418
+        assert peer["url_requests"] == ["GET"], "The URL request recorder must be active"
+        peer["url_requests"].clear()
+        yield peer
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+        assert not thread.is_alive(), "Elicitation upstream failed to stop"
+
+
+@skip_no_modern_inbound
+class TestElicitationRelay:
+    """Verify modern elicitation round trips through the live gateway (#6643)."""
+
+    @pytest.mark.parametrize("mode", ["url", "form"])
+    @pytest.mark.parametrize("action", ["accept", "decline", "cancel"])
+    async def test_elicitation_relay(self, jwt_token: str, elicitation_upstream: dict[str, Any], mode: str, action: str) -> None:
+        """Relay input requests unchanged and return the upstream's action-specific result."""
+        peer = elicitation_upstream
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        gateway_id = None
+        server_id = None
+        received = []
+        answer = ElicitResult(action=action, content={"color": "blue"} if mode == "form" and action == "accept" else None)
+
+        async def respond(_ctx: Any, params: ElicitRequestURLParams | ElicitRequestFormParams) -> ElicitResult:
+            """Record the relayed request and supply the selected user action.
+
+            Args:
+                _ctx: Client request context.
+                params: Elicitation parameters relayed by the gateway.
+            """
+            received.append(params.model_dump(by_alias=True, exclude_none=True))
+            assert peer["url_requests"] == [], "The gateway fetched the URL before requesting user input"
+            return answer
+
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": f"elicitation{uuid.uuid4().hex[:8]}", "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 1:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 1, f"Gateway did not discover the elicitation tool: {rows}"
+                response = await http.post("/servers", json={"server": {"name": f"elicitation-vs-{uuid.uuid4().hex[:8]}", "associated_tools": [rows[0]["id"]], "visibility": "public"}})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp"
+                async with create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(30)) as http_client:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None, elicitation_callback=respond) as client:
+                        result = await client.call_tool(rows[0]["name"], {"mode": mode})
+
+                assert received == [peer["requests"]["user-decision"]["params"]], "Elicitation parameters changed during relay"
+                assert result.is_error is False, result
+                outcomes = {"accept": "completed", "decline": "user-declined", "cancel": "user-cancelled"}
+                assert len(result.content) == 1
+                assert result.content[0].text == f"upstream:{outcomes[action]}"
+                assert len(peer["calls"]) == 2, peer["calls"]
+                initial, retry = peer["calls"]
+                assert initial["arguments"] == retry["arguments"] == {"mode": mode}
+                assert "inputResponses" not in initial
+                assert retry["inputResponses"] == {"user-decision": answer.model_dump(by_alias=True, exclude_none=True)}
+                assert retry["requestState"], "The retry must carry upstream state"
+                assert peer["url_requests"] == [], f"The gateway fetched the elicitation URL: {peer['url_requests']}"
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
+
 class TestToolErrorTranslation:
     """Every tool failure through the gateway is an isError result; its JSON-RPC error code rides in _meta (issue #6576)."""
 
@@ -876,7 +1028,6 @@ class TestToolErrorTranslation:
                     await http.delete(f"/servers/{server_id}")
                 if gateway_id:
                     await http.delete(f"/gateways/{gateway_id}")
-
 
 
 class TestPromptErrorTranslation:
@@ -1067,7 +1218,6 @@ class TestStructuredContentShapes:
                     await http.delete(f"/servers/{server_id}")
                 if tool_id:
                     await http.delete(f"/tools/{tool_id}")
-
 
 
 # ---------------------------------------------------------------------------
@@ -5238,6 +5388,7 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
     """
     if os.getenv("MCPGATEWAY_DIRECT_PROXY_ENABLED", "false").lower() != "true" or os.getenv("CACHE_TYPE") != "redis":
         pytest.skip("Requires direct proxy and Redis in both gateway and test process")
+    # Third-Party
     from mcp import types as mcp_types
 
     page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
