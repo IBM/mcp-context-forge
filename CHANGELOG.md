@@ -63,38 +63,38 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 
 - **New Web UI v0.2.4** ([release notes](https://github.com/contextforge-org/contextforge-web-ui/releases/tag/v0.2.4)) - Introduces a redesigned, more user-friendly interface for ContextForge, separate from the built-in Admin UI. The Web UI runs as a separate application and targets ContextForge API v1.1.0.
 
-**Run with Docker Compose:** From a configured gateway checkout, start the `ui` profile:
+- **Docker Compose startup** - From a configured gateway checkout, start the `ui` profile:
 
-```bash
-make compose-pull PROFILE="--profile ui"
-make compose-up PROFILE="--profile ui"
-```
+  ```bash
+  make compose-pull PROFILE="--profile ui"
+  make compose-up PROFILE="--profile ui"
+  ```
 
-Open [http://localhost:3001](http://localhost:3001), or the port configured through `WEB_UI_PORT`. Compose starts the gateway, Web UI v0.2.4, and dedicated UI Redis session store. The UI connects to `http://gateway:4444` inside the Compose network.
+  Open [http://localhost:3001](http://localhost:3001), or the port configured through `WEB_UI_PORT`. Compose starts the gateway, Web UI v0.2.4, and dedicated UI Redis session store. The UI connects to `http://gateway:4444` inside the Compose network.
 
-**Run separately with npm:** Install Node.js 22.22.1 or later and npm. Start the configured gateway in one terminal:
+- **Separate npm startup** - Install Node.js 22.22.1 or later and npm. Start the configured gateway in one terminal:
 
-```bash
-make dev
-```
+  ```bash
+  make dev
+  ```
 
-In another terminal, clone the UI release and install both frontend and BFF dependencies:
+  In another terminal, clone the UI release and install both frontend and BFF dependencies:
 
-```bash
-git clone --branch v0.2.4 --depth 1 https://github.com/contextforge-org/contextforge-web-ui.git
-cd contextforge-web-ui
-cp .env.example .env
-npm install
-npm install --prefix server
-```
+  ```bash
+  git clone --branch v0.2.4 --depth 1 https://github.com/contextforge-org/contextforge-web-ui.git
+  cd contextforge-web-ui
+  cp .env.example .env
+  npm install
+  npm install --prefix server
+  ```
 
-Set `CONTEXTFORGE_URL=http://localhost:8000`, `COOKIE_SECURE=false`, and `PORT=3000` in the UI's `.env` for local HTTP. Adjust `CONTEXTFORGE_URL` to the gateway's actual address and port. Leave `REDIS_URL` unset to use the in-process development session store; sessions reset when the BFF restarts.
+  Set `CONTEXTFORGE_URL=http://localhost:8000`, `COOKIE_SECURE=false`, and `PORT=3000` in the UI's `.env` for local HTTP. Adjust `CONTEXTFORGE_URL` to the gateway's actual address and port. Leave `REDIS_URL` unset to use the in-process development session store; sessions reset when the BFF restarts.
 
-```bash
-npm run dev:all
-```
+  ```bash
+  npm run dev:all
+  ```
 
-Open [http://localhost:3000](http://localhost:3000). This command starts the BFF and Vite frontend together. Access the UI through the BFF on port 3000, which proxies frontend requests to Vite on port 5173. See the [v0.2.4 setup guide](https://github.com/contextforge-org/contextforge-web-ui/blob/v0.2.4/README.md#getting-started) for configuration details.
+  Open [http://localhost:3000](http://localhost:3000). This command starts the BFF and Vite frontend together. Access the UI through the BFF on port 3000, which proxies frontend requests to Vite on port 5173. See the [v0.2.4 setup guide](https://github.com/contextforge-org/contextforge-web-ui/blob/v0.2.4/README.md#getting-started) for configuration details.
 
 ### Breaking Changes
 
