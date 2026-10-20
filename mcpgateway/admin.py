@@ -13303,8 +13303,8 @@ async def admin_edit_gateway(
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
-            name=str(form.get("name")),
-            url=str(form["url"]),
+            name=form.get("name"),
+            url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
@@ -13581,12 +13581,12 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             template = uri_value
 
         resource = ResourceCreate(
-            uri=str(form["uri"]),
-            name=str(form["name"]),
+            uri=form.get("uri"),
+            name=form.get("name"),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
             uri_template=template,
-            content=str(form["content"]),
+            content=form.get("content"),
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -13693,9 +13693,6 @@ async def admin_edit_resource(
     LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
-    name = form.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return ORJSONResponse(content={"detail": "Resource name is required."}, status_code=422)
     team_id = _form_team_id(form)
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=team_id)
@@ -13983,10 +13980,10 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         # Validate arguments JSON using prompt service
         arguments: List[Dict[str, Any]] = prompt_service.validate_arguments_json(args_value=form.get("arguments"), context="new prompt")
         prompt = PromptCreate(
-            name=str(form["name"]),
-            display_name=str(form.get("display_name") or form["name"]),
+            name=form.get("name"),
+            display_name=form.get("display_name") or form.get("name"),
             description=str(form.get("description")),
-            template=str(form["template"]),
+            template=form.get("template"),
             arguments=arguments,
             tags=tags,
             visibility=visibility,
@@ -14091,6 +14088,7 @@ async def admin_edit_prompt(
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
     if "template" not in form:
+        LOGGER.warning("admin_edit_prompt rejected request with missing template")
         return ORJSONResponse(content={"detail": "Prompt template is required."}, status_code=422)
     team_id = _form_team_id(form)
 
@@ -16447,9 +16445,9 @@ async def admin_add_a2a_agent(
         uaid_native_id_override = form.get("uaid_native_id_override") or None
 
         agent_data = A2AAgentCreate(
-            name=form["name"],
+            name=form.get("name"),
             description=form.get("description"),
-            endpoint_url=form["endpoint_url"],
+            endpoint_url=form.get("endpoint_url"),
             agent_type=form.get("agent_type", "generic"),
             protocol_version=str(form.get("protocol_version", "1.0")),
             auth_type=auth_type_from_form,

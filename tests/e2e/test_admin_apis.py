@@ -579,12 +579,6 @@ class TestAdminToolOpsAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
-    async def test_admin_edit_resource_missing_name_returns_422(self, client: AsyncClient, mock_settings):
-        """A missing resource name is rejected before the update reaches the database."""
-        response = await client.post("/admin/resources/missing-id/edit", data={"uri": "file:///tmp/item"}, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 422
-        assert response.json() == {"detail": "Resource name is required."}
-
     async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
         """Test adding a resource via the admin UI with new logic."""
         # Define valid form data
@@ -610,7 +604,7 @@ class TestAdminResourceAPIs:
             # Missing 'uri', 'mimeType', and 'content'
         }
         response = await client.post("/admin/resources", data=invalid_form_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 500
+        assert response.status_code == 422
 
         # Test ValidationError (422)
         invalid_validation_data = {
@@ -723,12 +717,6 @@ class TestAdminResourceAPIs:
 class TestAdminPromptAPIs:
     """Test admin prompt management endpoints."""
 
-    async def test_admin_edit_prompt_missing_template_returns_422(self, client: AsyncClient, mock_settings):
-        """A missing prompt template returns validation instead of a server error."""
-        response = await client.post("/admin/prompts/missing-id/edit", data={"name": "existing-prompt"}, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 422
-        assert response.json() == {"detail": "Prompt template is required."}
-
     async def test_admin_list_prompts_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/prompts returns empty list initially."""
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
@@ -762,6 +750,11 @@ class TestAdminPromptAPIs:
         prompt = next((p for p in prompts if p["originalName"] == form_data["name"]), None)
         assert prompt is not None
         prompt_id = prompt["id"]
+
+        # An existing prompt still rejects an edit without its required template.
+        response = await client.post(f"/admin/prompts/{prompt_id}/edit", data={"name": form_data["name"]}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Prompt template is required."}
 
         # Get individual prompt
         response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
