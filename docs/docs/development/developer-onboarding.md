@@ -109,7 +109,6 @@ If not using Dev Containers, set up manually:
 ???+ check "Packaging"
 
     - [ ] `make dist verify` builds packages
-    - [ ] `make devpi-install devpi-init devpi-start devpi-setup-user devpi-upload devpi-test`
     - [ ] Install and test `mcpgateway` CLI locally
 
 ???+ check "Minikube & Helm"
