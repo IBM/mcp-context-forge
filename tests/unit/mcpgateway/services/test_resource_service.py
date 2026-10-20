@@ -25,9 +25,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound
+from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import Base, EmailUser
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -3575,12 +3578,14 @@ class TestResourceBulkRegistration:
             )
         ]
 
-        result = await resource_service.register_resources_bulk(
-            db=mock_db,
-            resources=resources,
-            created_by="tester",
-            conflict_strategy="update",
-        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by="tester",
+                conflict_strategy="update",
+                user_email="owner@example.com",
+            )
 
         assert result["updated"] == 1
         assert result["created"] == 0
@@ -3590,6 +3595,82 @@ class TestResourceBulkRegistration:
         assert existing.tags[0]["label"] == "updated"
         assert existing.version == 2
         mock_db.add_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
+    async def test_register_resources_bulk_update_denied_for_non_owner(self, resource_service, mock_db, caller, owns):
+        """Bulk update never modifies a resource the caller does not own, and fails closed without a caller."""
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///victim.txt"
+        existing.gateway_id = None
+        existing.name = "Victim"
+        existing.description = "Victim desc"
+        existing.version = 1
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        mock_db.add_all = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+        resources = [ResourceCreate(name="Hijacked", uri="file:///victim.txt", description="Attacker desc", mime_type="text/plain", content="x")]
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=owns)):
+            result = await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by=caller or "importer",
+                conflict_strategy="update",
+                user_email=caller,
+            )
+
+        assert result["updated"] == 0
+        assert result["failed"] == 1
+        assert "Permission denied" in result["errors"][0]
+        assert existing.name == "Victim"
+        assert existing.description == "Victim desc"
+        assert existing.version == 1
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_update_database_backed_ownership(self, resource_service, tmp_path):
+        """Real rows and real ownership decisions: a non-owner is denied, the owner and an admin are allowed."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'ownership.db'}")
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as seed:
+            seed.add_all(
+                [
+                    EmailUser(email="victim@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="attacker@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="admin@example.com", password_hash="x", is_admin=True),
+                ]
+            )
+            seed.add(DbResource(uri="file:///shared.txt", name="shared", description="victim", visibility="public", owner_email="victim@example.com", team_id="victim-team"))
+            seed.commit()
+
+        payload = ResourceCreate(name="shared", uri="file:///shared.txt", description="attacker", mime_type="text/plain", content="x")
+        resource_service._notify_resource_added = AsyncMock()
+
+        async def run(caller):
+            with Session(engine) as session, patch("mcpgateway.services.resource_service.audit_trail"):
+                return await resource_service.register_resources_bulk(db=session, resources=[payload], created_by=caller or "importer", conflict_strategy="update", user_email=caller)
+
+        def persisted():
+            with Session(engine) as check:
+                row = check.query(DbResource).filter_by(uri="file:///shared.txt").one()
+                return row.description, row.owner_email, row.team_id
+
+        for caller in ("attacker@example.com", None):
+            denied = await run(caller)
+            assert (denied["updated"], denied["failed"]) == (0, 1)
+            assert persisted() == ("victim", "victim@example.com", "victim-team")
+
+        assert (await run("victim@example.com"))["updated"] == 1
+        assert persisted() == ("attacker", "victim@example.com", "victim-team")
+
+        with Session(engine) as reset:
+            reset.query(DbResource).filter_by(uri="file:///shared.txt").one().description = "victim"
+            reset.commit()
+        assert (await run("admin@example.com"))["updated"] == 1
+        assert persisted()[1:] == ("victim@example.com", "victim-team")
+        engine.dispose()
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_rename_conflict_creates_new(self, resource_service, mock_db):
@@ -8055,7 +8136,6 @@ class TestInvokeResourceCoverageEdges:
             ):
                 mock_trace.get = MagicMock(return_value=None)
                 # mcp_proxy_client yields a client which has .session property
-                session_mock = cs_session
                 cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-fallback-ok", blob=None)])
                 mock_http.return_value.__aenter__ = AsyncMock(return_value=cs_session)
                 mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -8945,6 +9025,80 @@ class TestValidateMetaData:
 
         with pytest.raises(ValueError, match="not serializable"):
             _validate_meta_data({"bad": _Unserializable()})
+
+    def test_envelope_keys_do_not_count_and_may_nest(self):
+        """The mandatory modern keys are exempt from the key-count and depth limits (issue #6568)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        meta = {f"k{i}": i for i in range(16)}
+        meta["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"
+        meta["io.modelcontextprotocol/clientInfo"] = {"name": "c", "version": "1"}
+        meta["io.modelcontextprotocol/clientCapabilities"] = {"elicitation": {"form": {}}}
+        _validate_meta_data(meta)
+
+    def test_envelope_keys_do_not_exempt_other_keys(self):
+        """One key over the limit is still rejected when the envelope keys are present."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        meta = {f"k{i}": i for i in range(17)}
+        meta["io.modelcontextprotocol/clientCapabilities"] = {}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(meta)
+
+    def test_envelope_keys_have_a_depth_cap_and_count_toward_bytes(self):
+        """An envelope key nested past its own cap, or one that is oversize, is rejected."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deep = {"a": {"b": {"c": {"d": {"e": 1}}}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data({"io.modelcontextprotocol/clientCapabilities": deep})
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"io.modelcontextprotocol/clientInfo": {"name": "x" * 5000}})
+
+
+class TestRaiseUnresolvedGatewayResource:
+    """An upstream JSON-RPC error keeps its code; every other failure stays generic (issue #6568)."""
+
+    def test_mcp_error_becomes_resource_upstream_error(self):
+        """The upstream code, message and data survive, wrapped in a task-group error."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError
+
+        group = BaseExceptionGroup("tg", [MCPError(code=-32002, message="Resource not found", data={"uri": "x://y"})])
+        with pytest.raises(ResourceUpstreamError) as exc_info:
+            _raise_unresolved_gateway_resource(group, None)
+        assert exc_info.value.code == -32002
+        assert exc_info.value.data == {"uri": "x://y"}
+        assert "Resource not found" in str(exc_info.value)
+
+    def test_upstream_text_is_sanitized(self):
+        """Auth query parameters never reach the relayed message or data."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError
+
+        err = MCPError(code=-32603, message="failed https://up.example/mcp?api_key=SECRETVALUE", data="https://up.example/mcp?api_key=SECRETVALUE")  # pragma: allowlist secret
+        with pytest.raises(ResourceUpstreamError) as exc_info:
+            _raise_unresolved_gateway_resource(err, {"api_key": "SECRETVALUE"})  # pragma: allowlist secret
+        assert "SECRETVALUE" not in str(exc_info.value)
+        assert "SECRETVALUE" not in exc_info.value.data
+
+    def test_transport_failure_stays_generic(self):
+        """A non-JSON-RPC failure raises the generic error with the fixed message."""
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError, UNRESOLVED_GATEWAY_RESOURCE_MESSAGE
+
+        with pytest.raises(ResourceError, match=UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) as exc_info:
+            _raise_unresolved_gateway_resource(ConnectionError("boom"), None)
+        assert not isinstance(exc_info.value, ResourceUpstreamError)
 
 
 class TestBuildReadResourceRequest:

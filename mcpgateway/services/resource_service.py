@@ -38,6 +38,7 @@ import uuid
 # Third-Party
 import httpx2
 from mcp import ClientSession
+from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
 import parse
@@ -73,6 +74,7 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
@@ -172,6 +174,40 @@ async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data
 
 class ResourceError(Exception):
     """Base class for resource-related errors."""
+
+
+class ResourceUpstreamError(ResourceError):
+    """Raised when the upstream server answered a resource read with a JSON-RPC error."""
+
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
+        """Keep the upstream's code and data so the caller can relay them.
+
+        Args:
+            code: The upstream's JSON-RPC error code.
+            message: The upstream's message, already sanitized.
+            data: The upstream's error data, already sanitized.
+        """
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+
+def _raise_unresolved_gateway_resource(exc: BaseException, auth_query_params: Optional[Dict[str, str]]) -> None:
+    """Raise the error that explains a failed upstream resource read.
+
+    Args:
+        exc: The exception caught around the upstream call.
+        auth_query_params: The gateway's auth query parameters, redacted from relayed text.
+
+    Raises:
+        ResourceUpstreamError: When the upstream answered with a JSON-RPC error.
+        ResourceError: For every other failure.
+    """
+    root_cause = _upstream_root_cause(exc)
+    if isinstance(root_cause, MCPError):
+        message = sanitize_exception_message(str(root_cause), auth_query_params)
+        raise ResourceUpstreamError(root_cause.error.code, message, _sanitize_error_data(root_cause.error.data, auth_query_params)) from exc
+    raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) from exc
 
 
 UNRESOLVED_GATEWAY_RESOURCE_MESSAGE = "Gateway resource content could not be resolved"
@@ -845,6 +881,7 @@ class ResourceService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple resources in bulk with a single commit.
 
@@ -868,6 +905,9 @@ class ResourceService(BaseService):
             owner_email: Email of the user who owns these resources
             visibility: Resource visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing resource only when this caller owns it. Without it, no existing
+                resource is modified.
 
         Returns:
             Dict with statistics:
@@ -926,6 +966,19 @@ class ResourceService(BaseService):
                 # Use (uri, gateway_id) tuple as key for proper conflict detection with gateway_id scoping
                 existing_resources_map = {(r.uri, r.gateway_id): r for r in existing_resources}
 
+                unowned_keys: set = set()
+                if conflict_strategy == "update":
+                    if user_email:
+                        # First-Party
+                        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                        permission_service = PermissionService(db)
+                        for key, existing in existing_resources_map.items():
+                            if not await permission_service.check_resource_ownership(user_email, existing):
+                                unowned_keys.add(key)
+                    else:
+                        unowned_keys = set(existing_resources_map)
+
                 resources_to_add = []
                 resources_to_update = []
 
@@ -977,6 +1030,10 @@ class ResourceService(BaseService):
                                 stats["skipped"] += 1
                                 continue
                             if conflict_strategy == "update":
+                                if (resource.uri, resource_gateway_id) in unowned_keys:
+                                    stats["failed"] += 1
+                                    stats["errors"].append(f"Permission denied: cannot update resource {resource.uri}")
+                                    continue
                                 # Update existing resource
                                 # Bulk import supplies operator intent, not a new upstream identity.
                                 if existing_resource.gateway_id:
@@ -2199,7 +2256,7 @@ class ResourceService(BaseService):
                                     logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
-                                raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) from e
+                                _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
                             return resource_text
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
@@ -2283,7 +2340,7 @@ class ResourceService(BaseService):
                                     logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
-                                raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) from e
+                                _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
                             return resource_text
 
                         if span:

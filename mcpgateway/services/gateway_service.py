@@ -102,6 +102,7 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.schemas import (
     GATEWAY_SUPPORTED_TRANSPORTS,
     GatewayCreate,
@@ -1225,7 +1226,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
     ) -> Dict[str, str]:
-        """Return an Authorization header carrying the exchanged token (cached or fresh).
+        """Return the exchanged token cached for this subject JWT, or resolve a fresh token.
 
         Used for an explicitly authenticated manual gateway refresh, where the HTTP
         caller's inbound JWT is available to use as the RFC 8693 subject token. Never
@@ -1249,12 +1250,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             GatewayConnectionError: If no usable subject token exists or the exchange fails.
         """
         audience = oauth_config.get("target_audience")
-        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # Fail closed: cache key is (gateway_id, user, audience, subject JWT). Without a user
         # identity there is no "behalf" to act on, and an empty key component
         # would let unrelated principals share one delegated token.
         if not app_user_email:
             raise GatewayConnectionError(f"Token exchange requires an authenticated user identity for gateway '{gateway_name}'. Contact your administrator.")
         user_key = app_user_email
+        # Resolve the authenticated subject before any cache access so an
+        # opaque bearer cannot receive a token cached for a cookie credential.
+        subject_token = extract_subject_jwt(request_headers or {})
+        if not subject_token:
+            raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
         sec_logger = get_structured_logger("gateway_service")
 
         def _coerce_ttl(raw):
@@ -1271,27 +1277,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id})
             raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
-
-        # Subject token: Authorization bearer first, then the HttpOnly jwt_token
-        # cookie (Admin UI sessions cannot attach a bearer header). Both routes
-        # sit behind CSRF enforcement at the endpoint/middleware layer.
-        subject_token = extract_subject_jwt(request_headers or {})
-        if not subject_token:
-            raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
 
         rh = request_headers or {}
         correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
         request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
 
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
@@ -1312,7 +1311,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -1330,16 +1329,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     message=f"Token exchange failed for gateway {gateway_name}",
                     event_type="token_exchange_failed",
                     user_email=app_user_email,
-                    custom_fields={"gateway_id": gateway_id, "target_audience": audience, "latency_ms": latency_ms, "error": safe_reason},
+                    custom_fields={
+                        "gateway_id": gateway_id,
+                        "target_audience": audience,
+                        "latency_ms": latency_ms,
+                        "error": safe_reason,
+                        "correlation_id": correlation_id,
+                        "request_id": request_id,
+                    },
                     is_security_event=True,
                 )
-                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id})
+                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
                 raise GatewayConnectionError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
 
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -1357,7 +1363,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 message=f"Token exchange succeeded for gateway {gateway_name}",
                 event_type="token_exchange_succeeded",
                 user_email=app_user_email,
-                custom_fields={"gateway_id": gateway_id, "target_audience": audience, "expires_in": expires_in, "latency_ms": latency_ms},
+                custom_fields={
+                    "gateway_id": gateway_id,
+                    "target_audience": audience,
+                    "expires_in": expires_in,
+                    "latency_ms": latency_ms,
+                    "correlation_id": correlation_id,
+                    "request_id": request_id,
+                },
                 is_security_event=True,
             )
             return {"Authorization": f"Bearer {exchanged}"}
@@ -5052,20 +5065,30 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 Any exceptions raised during the health check will be propagated to the caller.
             """
             async with semaphore:
+                check_started = time.monotonic()
+                outcome = "completed"
                 try:
                     await asyncio.wait_for(
                         self._check_single_gateway_health(gateway, user_email, cycle_started_at=cycle_started_at),
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
+                    outcome = "timeout"
                     logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
                     await self._handle_gateway_failure(gateway, error=asyncio.TimeoutError(f"health check timed out after {settings.gateway_health_check_timeout}s"))
+                except Exception:
+                    outcome = "error"
+                    raise
+                finally:
+                    gateway_health_checks_total.labels(outcome=outcome).inc()
+                    gateway_health_check_duration_seconds.labels(outcome=outcome).observe(time.monotonic() - check_started)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
             # Chunk processing to avoid overload
             if not gateways:
+                gateway_health_check_batch_duration_seconds.observe(time.monotonic() - start_time)
                 return True
             chunk_size = concurrency_limit
             for i in range(0, len(gateways), chunk_size):
@@ -5080,6 +5103,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 await asyncio.sleep(0.05)  # small pause prevents network saturation
 
             elapsed = time.monotonic() - start_time
+            gateway_health_check_batch_duration_seconds.observe(elapsed)
 
             if batch_span:
                 set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))

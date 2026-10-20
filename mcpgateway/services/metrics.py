@@ -209,6 +209,23 @@ gateway_lifecycle_pending_registration_attempts_gauge = Gauge(
     "Current sum of registration attempts across pending gateways",
 )
 
+gateway_health_checks_total = Counter(
+    "gateway_health_checks_total",
+    "Gateway health-check executions by completion outcome",
+    ["outcome"],
+)
+
+gateway_health_check_duration_seconds = Histogram(
+    "gateway_health_check_duration_seconds",
+    "Gateway health-check duration by completion outcome",
+    ["outcome"],
+)
+
+gateway_health_check_batch_duration_seconds = Histogram(
+    "gateway_health_check_batch_duration_seconds",
+    "Gateway health-check batch duration",
+)
+
 
 def _get_gateway_lifecycle_status_gauge():
     """Return registered lifecycle gauge, recreating it if registry was reset."""

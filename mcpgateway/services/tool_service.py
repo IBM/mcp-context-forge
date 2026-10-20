@@ -51,6 +51,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
 import orjson
@@ -192,16 +193,15 @@ def _apply_tool_payload_to_global_context(
     app_user_email: Optional[str],
     payload_tenant_id: Optional[str],
 ) -> None:
-    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+    """Set upstream catalog identity and fill absent user and tenant values.
 
-    Populates server_id, user, and tenant_id on a GlobalContext that was
-    supplied by the plugin manager / middleware — filling gaps the upstream
-    propagation did not cover while never overwriting a value that was
-    already set there. Shared by the two tool-invocation call sites so they
-    stay in lockstep.
+    Args:
+        global_context: Context reused from middleware or an earlier invocation.
+        tool_gateway_id: Upstream MCP catalog UUID, when the tool has a gateway.
+        app_user_email: Authenticated caller email.
+        payload_tenant_id: Team identity from the resolved tool payload.
     """
-    if tool_gateway_id and isinstance(tool_gateway_id, str):
-        global_context.server_id = tool_gateway_id
+    global_context.server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
     if not global_context.user and app_user_email and isinstance(app_user_email, str):
         global_context.user = app_user_email
     if not global_context.tenant_id and payload_tenant_id:
@@ -976,6 +976,13 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
             structured_logger.log(level="DEBUG", message=f"apply_mapping_into_target: unmapped keys excluded: {sorted(dropped)}", component="tool_service")
 
     return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
+
+
+# Result ``_meta`` key under which the gateway reports the JSON-RPC error code of the
+# failure its upstream call raised: the code the upstream answered with, or the one the
+# SDK client made up for a transport fault (the result text says which). The failure
+# itself is still an ``isError`` result (one shape for every tool failure, in both eras).
+TOOL_ERROR_CODE = "io.contextforge/errorCode"
 
 
 class ToolError(Exception):
@@ -1932,10 +1939,9 @@ class ToolService(BaseService):
              ContextForge #4202 fix. Without this early return the gateway
              would clobber the upstream's original error message with a
              schema-mismatch dict.
-           - Require ``structured_content`` to be a JSON object when
-             explicitly set; reject lists, scalars and other shapes with a
-             structured ``invalid_structured_content_type`` error (per MCP
-             2025-11-25 "Output Schema").
+           - Accept any JSON value as ``structured_content`` (the 2026 spec
+             lifted the 2025 object-only rule); the schema alone decides
+             validity, and the transport drops non-objects for 2025-era callers.
            - Otherwise best-effort promote the first parseable
              ``TextContent`` item to ``structured_content`` (tolerates
              both dict and Pydantic shapes, which matters because
@@ -2083,22 +2089,11 @@ class ToolService(BaseService):
             if structured is None:
                 structured = getattr(tool_result, "structuredContent", None)
 
-            if structured is not None and not isinstance(structured, dict):
-                details = {
-                    "code": "invalid_structured_content_type",
-                    "expected": "object",
-                    "received": type(structured).__name__.lower(),
-                    "path": [],
-                    "message": "structured_content must be a JSON object",
-                }
-                try:
-                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
-                except Exception:
-                    tool_result.content = [TextContent(type="text", text=str(details))]
-                tool_result.is_error = True
-                return False
-
-            if structured is None:
+            # Any JSON value is allowed here (the 2026 spec lifted the object-only rule): the
+            # schema decides what is valid, and the transport drops non-objects for 2025-era callers.
+            # An explicit null is a value the schema must accept; an absent field is nothing to validate.
+            explicit_null = structured is None and "structured_content" in getattr(tool_result, "model_fields_set", ())
+            if structured is None and not explicit_null:
                 # Try to parse first TextContent text payload as JSON. Content
                 # items may be raw dicts (MCP wire shape) or pydantic objects
                 # (e.g. TextContent synthesized by _coerce_to_tool_result
@@ -2115,7 +2110,7 @@ class ToolService(BaseService):
                         continue
 
             # If no structured data found, treat as valid (nothing to validate)
-            if structured is None:
+            if structured is None and not explicit_null:
                 return True
 
             # Attach structured content. A frozen or slotted ``tool_result``
@@ -2223,7 +2218,11 @@ class ToolService(BaseService):
         # straight into ``model_validate`` without a bespoke mapper.
         if isinstance(payload, BaseModel) and hasattr(payload, "content"):
             try:
-                return ToolResult.model_validate(payload.model_dump(by_alias=True, mode="json"))
+                dump = payload.model_dump(by_alias=True, mode="json")
+                if "structured_content" not in payload.model_fields_set:
+                    # an absent structuredContent stays absent; only a value the upstream set (null included) is one
+                    dump.pop("structuredContent", None)
+                return ToolResult.model_validate(dump)
             except ValidationError:
                 # User-visible reshape: an MCP-looking Pydantic upstream
                 # result is about to be downgraded to an opaque text blob.
@@ -2580,6 +2579,7 @@ class ToolService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2603,6 +2603,9 @@ class ToolService(BaseService):
             owner_email: Email of the user who owns these tools
             visibility: Tool visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing tool only when this caller owns it. Without it, no existing
+                tool is modified.
 
         Returns:
             Dict with statistics:
@@ -2637,6 +2640,7 @@ class ToolService(BaseService):
 
         for chunk_start in range(0, len(tools), chunk_size):
             chunk = tools[chunk_start : chunk_start + chunk_size]
+            existing_tools_map, unowned_names = await self._load_authorized_tool_conflicts(db, chunk, conflict_strategy, visibility, team_id, owner_email, created_by, user_email)
             chunk_stats = self._process_tool_chunk(
                 db,
                 chunk=chunk,
@@ -2650,6 +2654,8 @@ class ToolService(BaseService):
                 created_user_agent=created_user_agent,
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
+                unowned_names=unowned_names,
+                existing_tools_map=existing_tools_map,
             )
 
             # Aggregate stats
@@ -2681,6 +2687,71 @@ class ToolService(BaseService):
 
         return stats
 
+    @staticmethod
+    def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
+        """Build the conflict lookup for bulk registration within the requested scope.
+
+        Args:
+            tool_names: Tool names to look up.
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+
+        Returns:
+            Select statement matching existing tools by name within the scope.
+        """
+        if visibility.lower() == "public":
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
+        if visibility.lower() == "team" and team_id:
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
+        # Private tools - check by owner
+        return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
+
+    async def _load_authorized_tool_conflicts(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        conflict_strategy: str,
+        visibility: str,
+        team_id: Optional[str],
+        owner_email: Optional[str],
+        created_by: Optional[str],
+        user_email: Optional[str],
+    ) -> tuple:
+        """Load the existing tools for a chunk once and decide which the caller may not modify.
+
+        The chunk processor mutates exactly the rows returned here. A tool that appears after
+        this query is not in the map, so it can never be updated without an ownership decision.
+
+        Args:
+            db: The SQLAlchemy database session.
+            chunk: List of ToolCreate objects to process.
+            conflict_strategy: Strategy for handling conflicts ("skip", "update", "rename", or "fail").
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+            user_email: Email of the authenticated caller. When empty, every existing tool is unowned.
+
+        Returns:
+            Tuple of the existing tools map keyed by name and the frozen set of names the caller must not modify.
+        """
+        tool_names = [name for name in (getattr(tool, "name", None) for tool in chunk) if name]
+        existing_tools = db.execute(self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)).scalars().all()
+        existing_tools_map = {tool.name: tool for tool in existing_tools}
+        if conflict_strategy != "update":
+            return existing_tools_map, frozenset()
+        if not user_email:
+            return existing_tools_map, frozenset(existing_tools_map)
+
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        permission_service = PermissionService(db)
+        unowned = [name for name, tool in existing_tools_map.items() if not await permission_service.check_resource_ownership(user_email, tool)]
+        return existing_tools_map, frozenset(unowned)
+
     def _process_tool_chunk(
         self,
         db: Session,
@@ -2695,6 +2766,8 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
+        existing_tools_map: Optional[dict] = None,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2711,6 +2784,9 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
+            existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
+                given, no second conflict query runs, so only checked rows can be modified.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2718,19 +2794,12 @@ class ToolService(BaseService):
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
         try:
-            # Batch check for existing tools to detect conflicts
-            tool_names = [tool.name for tool in chunk]
-
-            if visibility.lower() == "public":
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
-            elif visibility.lower() == "team" and team_id:
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
-            else:
-                # Private tools - check by owner
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
-
-            existing_tools = db.execute(existing_tools_query).scalars().all()
-            existing_tools_map = {tool.name: tool for tool in existing_tools}
+            if existing_tools_map is None:
+                tool_names = [tool.name for tool in chunk]
+                existing_tools_query = self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)
+                existing_tools = db.execute(existing_tools_query).scalars().all()
+                existing_tools_map = {tool.name: tool for tool in existing_tools}
+                unowned_names = frozenset(existing_tools_map)
 
             tools_to_add = []
             tools_to_update = []
@@ -2749,6 +2818,7 @@ class ToolService(BaseService):
                     created_user_agent=created_user_agent,
                     import_batch_id=import_batch_id,
                     federation_source=federation_source,
+                    unowned_names=unowned_names,
                 )
 
                 if result["status"] == "add":
@@ -2762,6 +2832,17 @@ class ToolService(BaseService):
                 elif result["status"] == "fail":
                     stats["failed"] += 1
                     stats["errors"].append(result["error"])
+
+            if conflict_strategy == "update" and tools_to_add:
+                # A tool committed after the authorized load is a new collision. Reject it; never modify it.
+                added_names = [db_tool.name for db_tool in tools_to_add]
+                late_names = {row.name for row in db.execute(self._existing_tools_query(added_names, visibility, team_id, owner_email, created_by)).scalars().all()}
+                rejected = [db_tool for db_tool in tools_to_add if db_tool.name in late_names]
+                if rejected:
+                    tools_to_add = [db_tool for db_tool in tools_to_add if db_tool.name not in late_names]
+                    stats["created"] -= len(rejected)
+                    stats["failed"] += len(rejected)
+                    stats["errors"].extend(f"Tool name conflict: {db_tool.name}" for db_tool in rejected)
 
             # Bulk add new tools
             if tools_to_add:
@@ -2807,6 +2888,7 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
     ) -> dict:
         """Process a single tool for bulk import.
 
@@ -2823,6 +2905,7 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2880,6 +2963,8 @@ class ToolService(BaseService):
                 if conflict_strategy == "skip":
                     return {"status": "skip"}
                 if conflict_strategy == "update":
+                    if tool.name in unowned_names:
+                        return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title
@@ -3390,12 +3475,10 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Return server-scoped MCP tool definitions without building full ToolRead models.
+        """Return complete server-scoped MCP tool definitions for compatibility callers.
 
-        This helper serves the trusted internal Python RPC dispatcher. It keeps
-        auth and visibility semantics aligned with ``list_server_tools`` while
-        avoiding the heavier ``ToolRead`` conversion that is only needed for the
-        admin/API surfaces.
+        Registered MCP adapters use ``list_catalog_page()``.
+        This helper preserves the complete-list contract for existing imports.
 
         Args:
             db: Active database session.
@@ -4026,6 +4109,7 @@ class ToolService(BaseService):
     def _make_mcp_tool_error(
         sanitized_message: str,
         structured_content: Optional[Dict[str, Any]] = None,
+        error_code: Optional[int] = None,
     ) -> "types.CallToolResult":
         """Build a CallToolResult with isError=True.
 
@@ -4033,6 +4117,9 @@ class ToolService(BaseService):
             sanitized_message: Pre-sanitized error text to include in the result.
             structured_content: Optional dict attached to the result (e.g. ``{"status_code": 429}``
                 for retry-plugin status matching).
+            error_code: JSON-RPC error code of the failure the upstream call raised, if it was a
+                JSON-RPC error. Reported under ``TOOL_ERROR_CODE`` in the result's ``_meta``; the
+                text next to it says whether the upstream sent it or the SDK client made it up.
 
         Returns:
             A ``CallToolResult`` that conforms to the MCP protocol error shape.
@@ -4042,6 +4129,7 @@ class ToolService(BaseService):
             content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
             isError=True,
             structuredContent=structured_content,
+            _meta={TOOL_ERROR_CODE: {"code": error_code}} if error_code is not None else None,
         )
 
     async def invoke_tool_direct(
@@ -4242,10 +4330,16 @@ class ToolService(BaseService):
                     return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
+            # The SDK's task group wraps the failure; report the root cause, as the catalog path does.
+            root_cause: BaseException = e
+            if isinstance(e, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
             # Sanitize before returning — exception text may contain auth tokens embedded in
             # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
-            sanitized = sanitize_exception_message(str(e), _gw_auth_query_params)
-            return self._make_mcp_tool_error(sanitized)
+            sanitized = sanitize_exception_message(str(root_cause), _gw_auth_query_params)
+            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+            return self._make_mcp_tool_error(sanitized, error_code=error_code)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -4263,7 +4357,7 @@ class ToolService(BaseService):
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
     ) -> dict:
-        """Return an Authorization header carrying the exchanged token (cached or fresh).
+        """Return the exchanged token cached for this subject JWT, or resolve a fresh token.
 
         Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
         so the real ``expires_in`` drives the cache TTL (B1).
@@ -4286,12 +4380,19 @@ class ToolService(BaseService):
             ToolInvocationError: If no usable subject token exists or the exchange fails.
         """
         audience = oauth_config.get("target_audience")
-        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # Fail closed: cache key is (gateway_id, user, audience, subject JWT). Without a user
         # identity there is no "behalf" to act on, and an empty key component
         # would let unrelated principals share one delegated token.
         if not app_user_email:
             raise ToolInvocationError("Token exchange requires an authenticated user identity. Contact your administrator.")
         user_key = app_user_email
+        # Resolve and validate the inbound JWT before any cache access. Opaque
+        # credentials must neither receive nor influence a cached exchange.
+        subject_token = extract_inbound_bearer(request_headers)
+        if subject_token and not looks_like_jwt(subject_token):
+            subject_token = None
+        if not subject_token:
+            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
         # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
         rh = request_headers or {}
         correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
@@ -4314,32 +4415,20 @@ class ToolService(BaseService):
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
         # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
             # L6: record the degraded-mode denial so an outage burst is observable.
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
             raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
-        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
-        # an opaque CF session/API token is never forwarded to the external AS.
-        # GatewayService._VALID_SUBJECT_TOKEN_SOURCES only ever persists "inbound_user_jwt"
-        # (config-time validation rejects any other value), so inbound_user_jwt is the only
-        # supported subject_token_source here.
-        subject_token = extract_inbound_bearer(request_headers)
-        if subject_token and not looks_like_jwt(subject_token):
-            subject_token = None
-
-        if not subject_token:
-            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
-
-        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
+        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud,subject}; the rest
         # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
@@ -4361,7 +4450,7 @@ class ToolService(BaseService):
                 latency_ms = int((time.monotonic() - started) * 1000)
                 # H1: caller gets a generic message; AS detail never echoed out.
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)  # P4
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -4398,7 +4487,7 @@ class ToolService(BaseService):
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -4451,7 +4540,7 @@ class ToolService(BaseService):
             return passthrough_allowed
         return [h for h in passthrough_allowed if h.lower() != "authorization"]
 
-    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
+    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str], request_headers: Optional[dict]) -> None:
         """Evict the cached exchanged token on an upstream 401 (B2).
 
         A 401 from the upstream means the cached exchanged token is no longer
@@ -4464,6 +4553,7 @@ class ToolService(BaseService):
                 ``grant_type == "token-exchange"``.
             gateway_id: Gateway identifier used as a cache key component.
             app_user_email: Authenticated end-user email, used as a cache key component.
+            request_headers: Incoming headers used to identify the cached subject JWT.
         """
         if status_code != 401:
             return
@@ -4473,7 +4563,10 @@ class ToolService(BaseService):
             # No identity to invalidate under -- _resolve_token_exchange_header never
             # caches anonymous callers, so there is nothing to evict here either.
             return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"))
+        subject_token = extract_inbound_bearer(request_headers)
+        if not looks_like_jwt(subject_token):
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token)
 
     async def _send_with_token_exchange_retry(
         self,
@@ -4524,7 +4617,7 @@ class ToolService(BaseService):
             return resp
         if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
             return resp
-        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
+        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email, request_headers)
         fresh = await self._resolve_token_exchange_header(
             oauth_config, gateway_id, gateway_name, app_user_email, request_headers, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
         )
@@ -4717,6 +4810,7 @@ class ToolService(BaseService):
         """
 
         async def accessible_tools(candidates: List[DbTool]) -> List[DbTool]:
+            """Return candidates visible to the caller."""
             accessible: List[DbTool] = []
             for candidate in candidates:
                 tool_dict = {
@@ -6468,7 +6562,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6703,7 +6799,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
@@ -7002,8 +7100,10 @@ class ToolService(BaseService):
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
                                 is_error = modified_result.get("isError") if "isError" in modified_result else modified_result.get("is_error", tool_result.is_error)
+                                # Keep the result's _meta (e.g. the preserved upstream error code) unless the plugin set its own.
+                                meta = modified_result.get("_meta") if "_meta" in modified_result else modified_result.get("meta", getattr(tool_result, "meta", None))
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error, meta=meta)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:

@@ -2945,7 +2945,7 @@ async def test_execute_forwarded_http_request_preserves_custom_auth_header():
         "response_channel": "mcpgw:pool_http_response:req-customauth",
         "method": "POST",
         "path": "/mcp",
-        "headers": {"x-mcp-gateway-auth": "Bearer custom-tok"},
+        "headers": {"x-mcp-gateway-auth": "Bearer custom-tok", "X-Context-Forge-Gateway-Id": "selected-gateway"},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-custom",
         "auth_context": "encoded-ctx",
@@ -2964,6 +2964,7 @@ async def test_execute_forwarded_http_request_preserves_custom_auth_header():
     headers = client.last_post_kwargs["headers"]
     # Configured header preserved (lowercased); hardcoded "authorization" is NOT used.
     assert headers["x-mcp-gateway-auth"] == "Bearer custom-tok"
+    assert headers["x-context-forge-gateway-id"] == "selected-gateway"
     assert "authorization" not in headers
 
 

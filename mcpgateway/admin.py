@@ -6594,7 +6594,7 @@ async def admin_get_team_edit(
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
                     <div class="flex items-center mt-1 mb-2">
                         <input type="checkbox" name="use_default_max_members" id="use-default-max-members" {use_default_checked}
-                               onchange="var mi = this.closest('div').parentElement.querySelector('input[name=max_members]'); mi.disabled = this.checked; if(this.checked) mi.value = '';"
+                               data-action-change="toggleUseDefaultMaxMembers"
                                class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
                         <label for="use-default-max-members" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Use global default ({max_members_limit})</label>
                     </div>
@@ -6603,7 +6603,7 @@ async def admin_get_team_edit(
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
                 </div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="Admin.hideTeamEditModal()"
+                    <button type="button" data-action-click="hideTeamEditModal"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -8433,7 +8433,7 @@ async def admin_get_user_edit(
                     data-require-special="{"true" if settings.password_require_special else "false"}"
                 ></div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="Admin.hideUserEditModal()"
+                    <button type="button" data-action-click="hideUserEditModal"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -8522,7 +8522,7 @@ async def admin_update_user(
         success_html = """
         <div class="text-green-500 text-center p-4">
             <p>User updated successfully</p>
-            <button type="button" onclick="Admin.hideUserEditModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button type="button" data-action-click="hideUserEditModal" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                 Close
             </button>
         </div>
@@ -16154,12 +16154,9 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
             allowed = [s.value for s in ConflictStrategy.__members__.values()]
             raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {allowed}")
 
-        # Extract username from user (which could be string or dict with token)
-        username = user if isinstance(user, str) else user.get("username", "unknown")
-
         # Perform import
         status = await import_service.import_configuration(
-            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=get_user_email(user), selected_entities=selected_entities
         )
 
         return ORJSONResponse(content=status.to_dict())

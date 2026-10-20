@@ -256,64 +256,6 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
-    experimental_rust_mcp_runtime_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_url: str = Field(
-        default="http://127.0.0.1:8787",
-        description="Deprecated. Base URL for the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
-        default=None,
-        description="Deprecated. Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        le=300,
-        description="Deprecated. Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
-    )
-    experimental_rust_mcp_session_core_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
-    )
-    experimental_rust_mcp_event_store_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
-    )
-    experimental_rust_mcp_resume_core_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
-    )
-    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
-    )
-    experimental_rust_mcp_affinity_core_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
-    )
-    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
-    )
-    mcp_rust_ingress: Literal["internal", "public"] = Field(
-        default="internal",
-        description=(
-            "Deprecated. Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
-            "edge or full and no shadow override is in effect. 'internal' (default) uses "
-            "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
-            "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
-            "proxy to the Rust public listener at MCP_RUST_PUBLIC_LISTEN_HTTP — useful "
-            "for single-process deployments without nginx in front. Pydantic rejects "
-            "any other value at config load."
-        ),
-    )
-    mcp_rust_public_proxy_upstream: str = Field(
-        default="http://127.0.0.1:8787",
-        description=("Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the loopback address that matches docker-entrypoint.sh's MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."),
-    )
 
     # Authentication
     auth_header_name: str = Field(
@@ -476,7 +418,6 @@ class Settings(BaseSettings):
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
-    sso_user_provisioning_api_enabled: bool = Field(default=False, description="Enable the admin SSO user provisioning API; requires SSO and admin API enabled. Changes require restart.")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
     sso_github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     sso_github_client_secret: Optional[SecretStr] = Field(default=None, description="GitHub OAuth client secret")
@@ -3259,6 +3200,7 @@ class Settings(BaseSettings):
     otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
+    otel_system_traces_enabled: bool = Field(default=False, description="Permit background and platform OpenTelemetry trace roots")
     otel_httpx_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
     otel_sqlalchemy_instrumentation_enabled: bool = Field(default=False, description="Emit OTel spans for SQLAlchemy queries (high span volume; enable for debugging)")
     otel_redis_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument redis/redis.asyncio clients (per-command CLIENT spans)")
@@ -3438,32 +3380,6 @@ Disallow: /
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
-
-    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
-    @classmethod
-    def _validate_experimental_rust_runtime_uds(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
-        """Validate the optional UDS path used for a Rust sidecar runtime.
-
-        Args:
-            value: Candidate UDS path from configuration.
-            info: Pydantic field metadata for the current field.
-
-        Returns:
-            The normalized absolute UDS path, or ``None`` when unset.
-
-        Raises:
-            ValueError: If the path is not absolute or its parent directory is missing.
-        """
-        if value in (None, ""):
-            return None
-
-        field_name = info.field_name or "experimental_rust_runtime_uds"
-        uds_path = Path(value).expanduser()
-        if not uds_path.is_absolute():
-            raise ValueError(f"{field_name} must be an absolute path")
-        if not uds_path.parent.exists():
-            raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
-        return str(uds_path)
 
     # -------------------------------
     # Flexible list parsing for envs
@@ -3992,6 +3908,13 @@ Disallow: /
     # ===================================
 
     # Default number of items per page for paginated endpoints
+    mcp_list_page_size: int = Field(default=100, ge=1, le=1000, description="Maximum items per downstream MCP list page")
+    mcp_list_cursor_ttl_seconds: int = Field(default=900, ge=1, description="Lifetime of an MCP catalog traversal in seconds")
+    mcp_proxy_list_max_snapshot_bytes: int = Field(default=67108864, ge=1, description="Maximum serialized bytes per direct-proxy MCP catalog snapshot")
+    mcp_proxy_list_max_total_bytes: int = Field(default=134217728, ge=1, description="Maximum retained bytes for all direct-proxy MCP catalog snapshots")
+    mcp_proxy_list_max_collectors: int = Field(default=32, ge=1, le=128, description="Maximum concurrent direct-proxy MCP catalog collectors")
+    mcp_proxy_list_max_snapshots: int = Field(default=64, ge=1, le=1024, description="Maximum retained and reserved direct-proxy MCP catalog snapshots")
+
     pagination_default_page_size: int = Field(default=50, ge=1, le=1000, description="Default number of items per page")
 
     # Maximum allowed items per page (prevents abuse)

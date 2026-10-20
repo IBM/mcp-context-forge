@@ -1378,6 +1378,7 @@ class SessionAffinity:
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
             # First-Party
+            from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
@@ -1401,6 +1402,8 @@ class SessionAffinity:
                 rpc_headers[auth_header_name] = original_auth
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+            if gateway_id := extract_gateway_id_from_headers(headers):
+                rpc_headers[GATEWAY_ID_HEADER.lower()] = gateway_id
 
             # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
             # Attach the envelope's trace context so the dispatch nests in the caller's trace.

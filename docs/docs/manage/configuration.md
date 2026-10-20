@@ -532,6 +532,15 @@ When a client negotiates the `2026-07-28` protocol, the gateway marks its cachea
 
 A client that honours these hints will not see a catalog change (a new, removed or renamed tool) until its cached copy expires, so the refresh interval you configure is also the longest delay before such clients notice the change.
 
+#### Structured Content Shapes
+
+The 2025 protocol requires a tool result's `structuredContent` to be a JSON object; the `2026-07-28` protocol allows any JSON value. The gateway follows the caller's era:
+
+- A `2026-07-28` client receives whatever the tool produced: an object, an array, a string, a number, a boolean or null, validated against the tool's `outputSchema` when one is declared. A tool may declare a non-object `outputSchema`, such as `{"type": "array"}`.
+- A handshake-era client, and `/rpc`, only ever receive an object. A non-object value is dropped from `structuredContent` for them; the same data is still in the result's text content block.
+- A handshake-era client also never sees a non-object `outputSchema` in `tools/list`, because its wire rejects one; the tool is listed without it.
+- An explicit `null` is validated against the `outputSchema` like any other value, but it is not sent on the wire: the SDK omits every null field when it serialises a result, as every server built on it does, so a client sees the field absent.
+
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 
 `MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
@@ -980,6 +989,19 @@ Content size limits prevent DoS attacks and resource exhaustion from oversized c
       }
     }
     ```
+
+### Metadata Size & Depth Limits
+
+Metadata limits prevent resource exhaustion and denial of service attacks (CWE-400) from excessively nested or oversized JSON-RPC request structures.
+
+| Setting | Description | Default | Range / Options |
+| --- | --- | --- | --- |
+| `META_MAX_KEYS` | Maximum number of keys in user-supplied meta_data | `16` | int > 0 |
+| `META_MAX_DEPTH` | Maximum nesting depth for user-supplied meta_data | `2` | int > 0 |
+| `META_MAX_BYTES` | Maximum JSON-encoded byte size for user-supplied meta_data | `4096` (4KB) | 1B – 1MB |
+
+!!! warning "Behavior Change"
+    The metadata limit validations (keys, depth, and bytes) now apply strictly to **every** incoming `/mcp` protocol request (including `tools/call`, `resources/read`, and `prompts/get`), whereas previously they were only checked during direct-proxy resource reads. Any request carrying custom `_meta` structures that exceed these configured limits is rejected before reaching any service layer. Note that the mandatory envelope keys (`protocolVersion`, `clientInfo`, and `clientCapabilities`) are exempted from user depth and key limits (using a fixed depth cap of 4).
 
 ### Ed25519 Certificate Signing
 
@@ -1473,6 +1495,82 @@ the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
 | `SSE_RAPID_YIELD_MAX`      | Max yields per window before assuming client dead       | `50`    | int         |
 
 ---
+
+### MCP catalog pagination
+
+MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/list` return bounded pages.
+Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
+Python handles pagination for global and virtual-server catalogs.
+This change covers Python MCP endpoints. Rust runtime pagination remains outside this change.
+`MCP_LIST_PAGE_SIZE` controls protocol catalog pages. `PAGINATION_DEFAULT_PAGE_SIZE` controls REST and Admin pages.
+The separate defaults prevent REST configuration changes from altering MCP traversal behavior.
+The Rust tools bridge sends no request body. Python returns the complete authorized tools catalog for that bridge.
+Rust cursor support remains a separate part of [#6990](https://github.com/IBM/mcp-context-forge/issues/6990).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_LIST_PAGE_SIZE` | `100` | Items per MCP page, from 1 to 1000 |
+| `MCP_LIST_CURSOR_TTL_SECONDS` | `900` | Fixed traversal lifetime in seconds |
+| `MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES` | `67108864` | Maximum charged snapshot bytes, including page overhead |
+| `MCP_PROXY_LIST_MAX_TOTAL_BYTES` | `134217728` | Maximum aggregate retained snapshot bytes |
+| `MCP_PROXY_LIST_MAX_COLLECTORS` | `32` | Concurrent collectors across Redis workers; per worker without Redis |
+| `MCP_PROXY_LIST_MAX_SNAPSHOTS` | `64` | Maximum retained snapshots and active reservations |
+
+Database ordering changes from `created_at DESC` to `id ASC`.
+Database catalogs check current visibility on every page.
+Unrestricted administrators see public rows, team rows, and their own private rows.
+Server-scoped lists no longer include other users' private rows for administrators.
+Catalog changes can affect later pages. Restart traversal to obtain a current catalog.
+Cursors bind the method, virtual server, identity, teams, and MCP session.
+Keep the session alive until traversal completes. Reconnecting changes the session and invalidates existing cursors.
+Start again without a cursor after a reconnect.
+Invalid, expired, or mismatched cursors return JSON-RPC error `-32602`.
+All workers must share `AUTH_ENCRYPTION_SECRET`; rotating it invalidates existing cursors.
+
+Direct proxy collects upstream pages within one session and stores immutable snapshot pages in Redis.
+Multi-page proxy catalogs require `CACHE_TYPE=redis` and a reachable `REDIS_URL`.
+Single-page proxy catalogs do not require Redis.
+Snapshots bind the gateway configuration and upstream authorization headers.
+Repeated first-page requests reuse a live snapshot for the same scope without extending its expiration.
+Concurrent requests for the same scope wait for the active collector and reuse its result.
+Reading the final page preserves the snapshot for overlapping traversals and retries until its fixed expiration.
+Completed and abandoned snapshots retain their byte and count reservations until expiration.
+Page reads and repeated first-page requests do not extend the snapshot lifetime.
+Any gateway update invalidates existing proxy cursors, including description, tags, and state updates.
+Restart the traversal after a gateway update.
+Repeated upstream cursors, duplicate identifiers, timeouts, and collection limits return errors without partial catalogs.
+
+Immutable snapshots preserve upstream session consistency when catalogs span several upstream pages.
+Shared Redis storage lets continuations move between workers without retaining upstream connections.
+Redis is a trusted storage boundary: catalog descriptors remain in plaintext and can contain sensitive metadata.
+Restrict Redis access to gateway operators. Use authenticated TLS connections and protect Redis backups.
+Stored scope fingerprints use HMAC with a key derived separately from the cursor encryption key.
+
+Snapshot admission reserves a collector slot before contacting the upstream server.
+Collector slots do not reserve snapshot bytes. Publication atomically enforces the aggregate retained-byte limit.
+Publication charges serialized pages, the manifest, and 512 bytes of overhead per page and manifest.
+Reservations and pages share one Redis hash, so eviction removes their accounting together.
+Expired snapshots are reclaimed on the next snapshot operation or when the hash expires.
+When `INFO memory` is available, admission checks usage below 80% of `maxmemory`.
+Publication also checks headroom for twice the charged snapshot bytes.
+Redis ACLs must permit `EVAL`. Denied `INFO memory` skips headroom checks; snapshot byte and count limits remain enforced.
+Use a dedicated Redis instance or configure sufficient headroom when `INFO memory` is unavailable.
+Quota exhaustion returns JSON-RPC error `-32000` before upstream collection.
+Internal HTTP handlers map `-32000` to 503, `-32603` to 500, `-32602` to 400, and `-32003` to 403.
+Single-page requests release their reservation without retaining a snapshot.
+Without Redis, collection concurrency is bounded per worker and multi-page catalogs return an error.
+Keep snapshot limits below the memory available after session and cache usage.
+Collector memory is bounded separately by collector count and the per-catalog byte limit.
+Tune the collector count for worker memory and upstream capacity.
+These limits cannot reserve Redis memory against unrelated applications writing to the same instance.
+
+Clients must follow `nextCursor`; clients that make one list call receive only the first page.
+See [#6990](https://github.com/IBM/mcp-context-forge/issues/6990) and the release changelog.
+During deployment, keep each traversal on workers running the same version.
+Old workers ignore new cursors and can return an unbounded catalog during an overlapping rollout.
+Drain old workers before routing new traversals, or use a coordinated deployment.
+Restart traversals after encryption-secret rotation or rollback; never reuse earlier cursors.
+
 
 ## 🐳 Container Configuration
 

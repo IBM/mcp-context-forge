@@ -42,6 +42,7 @@ from starlette.websockets import WebSocketDisconnect
 
 # First-Party
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -2091,7 +2092,7 @@ class TestPromptEndpoints:
         mock_get.assert_called_once_with(
             ANY,
             "test",
-            {},
+            None,
             user="test_user@example.com",  # Preserved for owner matching (PR #4877)
             server_id=None,
             token_teams=None,  # None = admin bypass
@@ -2127,7 +2128,7 @@ class TestPromptEndpoints:
 
         assert result == {"name": "test", "template": "Hello"}
         # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
-        mock_get.assert_called_once_with(mock_db, "test", {}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        mock_get.assert_called_once_with(mock_db, "test", None, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -2158,6 +2159,26 @@ class TestPromptEndpoints:
         assert result == {"name": "test", "template": "Hello {{name}}"}
         # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
         mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    async def test_post_prompt_with_an_empty_body_asks_for_the_template(self, mock_get):
+        """POST /prompts/{id} with no arguments keeps returning the template: the service gets None, not an empty dict."""
+        # First-Party
+        from mcpgateway.main import get_prompt
+
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.plugin_context_table = None
+        mock_request.state.plugin_global_context = None
+        mock_request.headers.get.return_value = None
+        mock_db = MagicMock()
+        mock_get.return_value = {"name": "test", "template": "Hello {{name}}"}
+
+        result = await get_prompt(request=mock_request, prompt_id="test", args={}, db=mock_db, user={"email": "admin@example.com", "is_admin": True})
+
+        assert result == {"name": "test", "template": "Hello {{name}}"}
+        assert mock_get.call_args.args[2] is None
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.resource_service.read_resource")
@@ -2396,6 +2417,26 @@ class TestPromptEndpoints:
         body = response.json()
         assert body["messages"][0]["content"]["text"] == "Rendered prompt"
         mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_post_prompt_upstream_error_answers_422_with_the_upstream_message(self, mock_get, test_client, auth_headers):
+        """POST /prompts/{id}: an upstream JSON-RPC error stays inside the REST contract (422 + message), whatever its code."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.post("/prompts/test_prompt", json={"name": "x"}, headers=auth_headers)
+
+        assert response.status_code == 422
+        assert response.json()["message"] == "Custom upstream failure"
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_get_prompt_upstream_error_answers_422_with_the_upstream_message(self, mock_get, test_client, auth_headers):
+        """GET /prompts/{id}: an upstream JSON-RPC error stays inside the REST contract (422 + message), whatever its code."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.get("/prompts/test_prompt", headers=auth_headers)
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Custom upstream failure"
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
@@ -3224,6 +3265,33 @@ class TestRPCEndpoints:
     """Tests for JSON-RPC functionality and utility endpoints."""
 
     @patch("mcpgateway.main.tool_service.invoke_tool")
+    @pytest.mark.parametrize("structured, kept", [pytest.param({"a": 1}, True, id="object_kept"), pytest.param([1, 2, 3], False, id="list_dropped"), pytest.param("text", False, id="string_dropped")])
+    def test_rpc_tool_invocation_keeps_only_object_structured_content(self, mock_invoke_tool, test_client, auth_headers, structured, kept):
+        """/rpc is a 2025-era wire: a non-object structuredContent is dropped and the data stays in the text block (issue #6575)."""
+        mock_invoke_tool.return_value = {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": structured, "isError": False}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert ("structuredContent" in result) is kept
+        if kept:
+            assert result["structuredContent"] == structured
+        assert result["content"][0]["text"] == "[1, 2, 3]"
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_tool_invocation_keeps_a_structured_only_result_as_text(self, mock_invoke_tool, test_client, auth_headers):
+        """/rpc: when the only copy of the data is a non-object structuredContent, it is kept as a JSON text block."""
+        mock_invoke_tool.return_value = {"content": [], "structuredContent": [1, 2, 3], "isError": False}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert "structuredContent" not in result
+        assert [json.loads(block["text"]) for block in result["content"] if block["type"] == "text"] == [[1, 2, 3]]
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
     def test_rpc_tool_invocation(self, mock_invoke_tool, test_client, auth_headers):
         """Test tool invocation via JSON-RPC."""
         mock_invoke_tool.return_value = {"content": [{"type": "text", "text": "Tool response"}], "is_error": False}
@@ -3331,13 +3399,13 @@ class TestRPCEndpoints:
             _meta_data=None,
         )
 
-    @patch("mcpgateway.main.tool_service.list_tools")
+    @patch("mcpgateway.main.list_catalog_page")
     # @patch("mcpgateway.main.validate_request")
     def test_rpc_list_tools(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools via JSON-RPC."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
-        mock_list_tools.return_value = ([mock_tool], None)
+        mock_list_tools.return_value = {"tools": [item.model_dump() for item in [mock_tool]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3352,12 +3420,12 @@ class TestRPCEndpoints:
         assert isinstance(body["result"]["tools"], list)
         mock_list_tools.assert_called_once()
 
-    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_list_tools_with_server_id(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools via JSON-RPC for a specific server."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
-        mock_list_tools.return_value = [mock_tool]
+        mock_list_tools.return_value = {"tools": [item.model_dump() for item in [mock_tool]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3392,12 +3460,12 @@ class TestRPCEndpoints:
         assert body["nextCursor"] == "next-cursor"
         assert body["tools"][0]["name"] == "test_tool"
 
-    @patch("mcpgateway.main.resource_service.list_server_resources", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resources_list_with_server_id(self, mock_list_resources, test_client, auth_headers):
         """Test listing resources via JSON-RPC for a specific server."""
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"uri": "res://1"}
-        mock_list_resources.return_value = [mock_resource]
+        mock_list_resources.return_value = {"resources": [item.model_dump() for item in [mock_resource]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3467,6 +3535,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32000 when ResourceError is raised."""
@@ -3507,7 +3576,6 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
 
-
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.unsubscribe_resource", new_callable=AsyncMock)
@@ -3537,12 +3605,12 @@ class TestRPCEndpoints:
         mock_subscribe.assert_called_once()
         mock_unsubscribe.assert_called_once()
 
-    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list(self, mock_list_templates, test_client, auth_headers):
         """Test resources/templates/list JSON-RPC method."""
         mock_template = MagicMock()
         mock_template.model_dump.return_value = {"uri": "tpl://1"}
-        mock_list_templates.return_value = [mock_template]
+        mock_list_templates.return_value = {"resourceTemplates": [item.model_dump() for item in [mock_template]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3556,7 +3624,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["resourceTemplates"][0]["uri"] == "tpl://1"
 
-    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list_admin_bypass_nulls_user_email(self, mock_list_templates, test_client, auth_headers):
         """SECURITY: admin bypass via JSON-RPC must pass (user_email=email, token_teams=None).
 
@@ -3564,7 +3632,7 @@ class TestRPCEndpoints:
         on private resources. This allows admins to view/edit their OWN private resources while
         maintaining proper access control (token_teams=None grants admin bypass).
         """
-        mock_list_templates.return_value = []
+        mock_list_templates.return_value = {"resourceTemplates": [item.model_dump() for item in []]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3579,12 +3647,12 @@ class TestRPCEndpoints:
         assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
         assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
-    @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):
         """Test prompts/list JSON-RPC method with nextCursor."""
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"name": "prompt-1"}
-        mock_list_prompts.return_value = ([mock_prompt], "next-cursor")
+        mock_list_prompts.return_value = {"prompts": [item.model_dump() for item in [mock_prompt]], "nextCursor": "next-cursor"}
 
         req = {
             "jsonrpc": "2.0",
@@ -3598,6 +3666,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
@@ -3641,6 +3710,41 @@ class TestRPCEndpoints:
         assert "Prompt retrieval failed" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_relays_an_upstream_error_with_its_own_code(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get: an upstream JSON-RPC error is relayed with the upstream's code, message and data."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "remote"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        error = response.json()["error"]
+        assert error["code"] == -32001
+        assert error["message"] == "Custom upstream failure"
+        assert error["data"] == {"hint": "retry later"}
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_missing_argument_answers_invalid_params(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get: a missing required argument is -32602 with the message naming it."""
+        mock_get.side_effect = PromptValidationError("Missing required arguments: name")
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "greeting"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        error = response.json()["error"]
+        assert error["code"] == -32602
+        assert error["message"] == "Missing required arguments: name"
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_without_arguments_asks_for_a_rendered_prompt(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get without an arguments field is a render request: the service gets an empty dict, so required arguments are checked."""
+        mock_get.return_value = {"messages": [], "description": None}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "greeting"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_get.call_args.args[2] == {}
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_generic_exception(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32603 when generic Exception is raised."""
         mock_get.side_effect = RuntimeError("Unexpected database error")
@@ -3658,7 +3762,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):

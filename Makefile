@@ -27,8 +27,6 @@ SHELL := /bin/bash
 ENABLE_RUST_BUILD ?= 0
 ENABLE_RUST_MCP_RMCP_BUILD ?=
 RUST_MCP_BUILD ?= 0
-RUST_MCP_MODE ?= off
-RUST_MCP_LOG ?= warn
 
 # Project variables
 PROJECT_NAME      = mcpgateway
@@ -944,7 +942,7 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
-	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto (with RUST_MCP_MODE=off) for both testing-up and this target; select with K=modern_logging"
+	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto for both testing-up and this target; select with K=modern_logging"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
@@ -1818,39 +1816,6 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
-
-.PHONY: testing-up-rust
-testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
-	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-up-rust-shadow
-testing-up-rust-shadow:                    ## Start testing stack with RUST_MCP_MODE=shadow
-	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-up-rust-full
-testing-up-rust-full:                      ## Start testing stack with RUST_MCP_MODE=full
-	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust
-testing-rebuild-rust:                      ## Rebuild Rust image with no cache, then start testing stack in edge mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust-shadow
-testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, then start testing stack in shadow mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust-full
-testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
@@ -4603,7 +4568,7 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
-# help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: lint-web             - Run HTMLHint, Biome (CSS), ESLint, Retire.js, nodejsscan and npm audit
 # help: eslint               - Run ESLint for JavaScript standard style and prettifying
 # help: jshint               - Run JSHint for additional JavaScript analysis
 # help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
@@ -4624,7 +4589,7 @@ lint-web: eslint nodejsscan
 	@echo "🔍 Linting HTML files..."
 	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
-	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
+	@npx biome lint mcpgateway/static || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \

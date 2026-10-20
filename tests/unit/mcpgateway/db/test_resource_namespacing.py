@@ -313,8 +313,11 @@ async def test_bulk_resource_rename_preserves_identity(naming_db, gateway_name, 
     name = old_name if submitted == "unchanged" else submitted
     upstream = ResourceCreate(uri=resource.uri, name=name, gateway_id=resource.gateway_id, content="")
     service = ResourceService()
-    with patch("mcpgateway.services.resource_service.audit_trail.log_action"):
-        result = await service.register_resources_bulk(naming_db, [upstream], conflict_strategy="update")
+    with (
+        patch("mcpgateway.services.resource_service.audit_trail.log_action"),
+        patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+    ):
+        result = await service.register_resources_bulk(naming_db, [upstream], conflict_strategy="update", user_email="owner@example.com")
     assert result["updated"] == 1
     assert result["failed"] == 0
     naming_db.expire(resource)

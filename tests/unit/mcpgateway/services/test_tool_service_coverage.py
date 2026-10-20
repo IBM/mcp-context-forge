@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 import jsonschema
 import orjson
 import pytest
+from mcp.shared.exceptions import MCPError
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 # First-Party
@@ -35,6 +36,7 @@ from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.transports.context import request_headers_var
 
 from mcpgateway.services.tool_service import (
+    TOOL_ERROR_CODE,
     _canonicalize_schema,
     _get_registry_cache,
     _get_tool_lookup_cache,
@@ -1939,27 +1941,70 @@ class TestStructuredContentAdditional:
     loop tolerates malformed items gracefully.
     """
 
-    def test_invalid_structured_content_type_marks_error(self, tool_service):
-        """Non-dict ``structured_content`` fast-fails with a structured error.
-
-        The MCP 2025-11-25 "Output Schema" section requires that
-        ``structuredContent`` be a JSON object. When the gateway receives a
-        list or scalar there it must refuse to validate (since there is no
-        way the payload can conform to the standard
-        ``{"type": "object", ...}`` shape of an outputSchema) and surface a
-        deterministic error describing the type mismatch, so callers can
-        distinguish this from genuine schema-validation failures.
-
-        MCP spec reference: 2025-11-25 "Output Schema".
-        """
+    def test_non_object_structured_content_is_validated_by_the_schema(self, tool_service):
+        """A list under an object schema is no longer refused up front: it goes to the schema, which rejects it as a type mismatch."""
         tool = SimpleNamespace(output_schema={"type": "object"})
         result = SimpleNamespace(content=[], structured_content=[{"a": 5}], is_error=False)
         ok = tool_service._extract_and_validate_structured_content(tool, result)
         assert ok is False
         assert result.is_error is True
         details = orjson.loads(result.content[0].text)
-        assert details["code"] == "invalid_structured_content_type"
+        assert details["code"] == "type"
         assert details["expected"] == "object"
+        assert details["received"] == "list"
+
+    @pytest.mark.parametrize(
+        "schema, value",
+        [
+            pytest.param({"type": "array", "items": {"type": "integer"}}, [1, 2, 3], id="array"),
+            pytest.param({"type": "string"}, "plain text", id="string"),
+            pytest.param({"type": "integer"}, 42, id="integer"),
+            pytest.param({"type": "boolean"}, True, id="boolean"),
+            pytest.param({"type": "array", "items": {"type": "object"}}, [{"x": 1}], id="array_of_objects"),
+        ],
+    )
+    def test_non_object_structured_content_passes_its_own_schema(self, tool_service, schema, value):
+        """The 2026 spec allows any JSON value as structuredContent; a non-object schema validates it like any other."""
+        tool = SimpleNamespace(output_schema=schema)
+        result = SimpleNamespace(content=[], structured_content=value, is_error=False)
+        assert tool_service._extract_and_validate_structured_content(tool, result) is True
+        assert result.is_error is False
+        assert result.structured_content == value
+
+    def test_non_object_structured_content_failing_its_schema_is_an_error(self, tool_service):
+        """A list that does not match its array schema is reported as a schema failure, not a type refusal."""
+        tool = SimpleNamespace(output_schema={"type": "array", "items": {"type": "integer"}})
+        result = SimpleNamespace(content=[], structured_content=[1, "two"], is_error=False)
+        assert tool_service._extract_and_validate_structured_content(tool, result) is False
+        assert result.is_error is True
+        details = orjson.loads(result.content[0].text)
+        assert details["code"] == "type"
+        assert details["path"] == [1]
+
+    def test_explicit_null_structured_content_is_validated(self, tool_service):
+        """An explicit null is a value: an integer schema rejects it, a nullable schema accepts it; an absent field is skipped."""
+        rejected = ToolResult.model_validate({"content": [], "structuredContent": None})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": "integer"}), rejected) is False
+        assert rejected.is_error is True
+        assert orjson.loads(rejected.content[0].text)["code"] == "type"
+
+        accepted = ToolResult.model_validate({"content": [], "structuredContent": None})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": ["integer", "null"]}), accepted) is True
+        assert accepted.is_error is False
+
+        absent = ToolResult.model_validate({"content": []})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": "integer"}), absent) is True
+
+    def test_coerce_keeps_structured_content_presence(self, tool_service):
+        """Coercing an SDK result keeps 'absent' absent and 'explicitly null' set, so the validator can tell them apart."""
+        # Third-Party
+        from mcp_types import CallToolResult as SdkCallToolResult
+
+        absent = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}]))
+        assert "structured_content" not in absent.model_fields_set
+
+        explicit = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}], structuredContent=None))
+        assert "structured_content" in explicit.model_fields_set and explicit.structured_content is None
 
     def test_content_with_null_text_parses_to_none(self, tool_service):
         """Content with text=None should parse to null and be treated as no structured data."""
@@ -2025,40 +2070,18 @@ class TestStructuredContentAdditional:
         # Verifies the loop skipped the bad item and picked up the good one.
         assert result.structured_content == {"x": 42}
 
-    def test_single_element_list_structured_content_fast_fails(self, tool_service):
-        """Pin the deliberate removal of the old single-element-list unwrap heuristic.
-
-        Before the #4202 refactor, ``_extract_and_validate_structured_content``
-        accepted ``structured_content=[{...}]`` (a one-element list) and
-        silently unwrapped it to ``{...}`` when the declared schema was
-        ``{"type": "object"}``. That heuristic was removed in favour of
-        the stricter MCP 2025-11-25 "Output Schema" rule that
-        ``structuredContent`` must be a JSON *object* — not a list
-        containing one. The new canonical behaviour is the
-        ``invalid_structured_content_type`` fast-fail at
-        ``tool_service.py`` (the same branch ``test_invalid_structured_content_type_marks_error``
-        covers for generic lists).
-
-        This test pins the specific single-element-list shape because
-        that was the one the removed heuristic quietly rescued. Without
-        this guard, a future "help the user" change that reintroduces
-        unwrapping would silently reopen the quirk the refactor closed.
-        """
+    def test_single_element_list_structured_content_is_not_unwrapped(self, tool_service):
+        """A one-element list is never unwrapped into the object it holds: it is validated as the list it is and fails an object schema."""
         tool = SimpleNamespace(output_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]})
-        # Exactly one element — the shape the old heuristic used to unwrap.
         result = SimpleNamespace(content=[], structured_content=[{"x": 42}], is_error=False)
-
         ok = tool_service._extract_and_validate_structured_content(tool, result)
-
-        # Current canonical behaviour: reject with structured error, not unwrap.
         assert ok is False
         assert result.is_error is True
         details = orjson.loads(result.content[0].text)
-        assert details["code"] == "invalid_structured_content_type"
+        assert details["code"] == "type"
         assert details["expected"] == "object"
         assert details["received"] == "list"
-        # The inner dict is NOT silently promoted — that was the old heuristic.
-        assert getattr(result, "structured_content", [{"x": 42}]) == [{"x": 42}]
+        assert result.structured_content == [{"x": 42}]
 
     def test_single_element_list_in_textcontent_text_does_not_unwrap(self, tool_service):
         """Complementary guard — unwrap is also removed from the text-parse fallback.
@@ -2131,7 +2154,7 @@ class TestStructuredContentAdditional:
         def flaky_dumps(obj, *args, **kwargs):
             # Force the non-dict-structured-content details dict to fail so the
             # except branch runs; leave other callers untouched.
-            if isinstance(obj, dict) and obj.get("code") == "invalid_structured_content_type":
+            if isinstance(obj, dict) and obj.get("code") == "type" and obj.get("received") == "list":
                 raise TypeError("simulated orjson failure")
             return real_dumps(obj, *args, **kwargs)
 
@@ -2141,7 +2164,7 @@ class TestStructuredContentAdditional:
         assert ok is False
         assert result.is_error is True
         # Content was stringified via str(details) rather than serialized as JSON
-        assert "invalid_structured_content_type" in result.content[0].text
+        assert "'code': 'type'" in result.content[0].text
         with pytest.raises(orjson.JSONDecodeError):
             orjson.loads(result.content[0].text)
 
@@ -7651,8 +7674,8 @@ class TestInvokeToolPluginContext:
         assert gc.user == "user@test.com"
 
     @pytest.mark.asyncio
-    async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
-        """Covers the false branches for global_context.server_id/user propagation."""
+    async def test_global_context_resets_missing_gateway_identity_and_preserves_user(self, tool_service):
+        """Reset stale server identity for gateway-less tools and preserve the authenticated user."""
         # Third-Party
         from cpex.framework.models import GlobalContext
 
@@ -7697,8 +7720,7 @@ class TestInvokeToolPluginContext:
             )
 
         assert result is not None
-        # gateway_id is missing -> should not overwrite server_id
-        assert gc.server_id == "old-server"
+        assert gc.server_id == "unknown"
         # user already set -> should not overwrite
         assert gc.user == "already@test.com"
 
@@ -11282,3 +11304,81 @@ class TestXMcpHeaderMirroring:
         call_upstream.assert_not_awaited()
         proxy_client.assert_not_called()
         registry.acquire.assert_not_called()
+
+
+class TestUpstreamErrorRelay:
+    """A JSON-RPC error answered by the upstream stays today's isError result; its code is preserved in _meta."""
+
+    @staticmethod
+    async def _invoke(tool_service, failure, plugin_manager=None):
+        """Run invoke_tool against a mocked upstream session whose call_tool raises ``failure``."""
+        tool_payload = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gateway_payload = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+        session = AsyncMock()
+        session.call_tool = AsyncMock(side_effect=failure)
+        connected = MagicMock()
+        connected.__aenter__.return_value = SimpleNamespace(session=session)
+        headers_token = request_headers_var.set({})  # no downstream Mcp-Session-Id: per-call session via mcp_proxy_client
+        try:
+            with (
+                _setup_cache_for_invoke(tool_payload, gateway_payload),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=connected),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=MagicMock()),
+            ):
+                return await tool_service.invoke_tool(MagicMock(), "test_tool", {"region": "eu"})
+        finally:
+            request_headers_var.reset(headers_token)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            pytest.param(MCPError(code=-32602, message="Unknown tool: routed"), id="bare"),
+            pytest.param(ExceptionGroup("task group", [MCPError(code=-32602, message="Unknown tool: routed")]), id="task-group-wrapped"),
+        ],
+    )
+    async def test_upstream_json_rpc_error_keeps_text_and_preserves_code_in_meta(self, tool_service, failure):
+        """-32602 from upstream: today's isError result, with the code under the gateway's _meta key."""
+        result = await self._invoke(tool_service, failure)
+
+        assert result.is_error is True
+        assert result.content[0].text == "MCP server error: Unknown tool: routed"
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
+
+    @pytest.mark.asyncio
+    async def test_other_upstream_failures_keep_todays_result_without_meta(self, tool_service):
+        """A non-protocol failure is still the gateway's own 'MCP server error' result, with no _meta entry."""
+        result = await self._invoke(tool_service, RuntimeError("connection dropped"))
+
+        assert result.is_error is True
+        assert result.content[0].text == "MCP server error: connection dropped"
+        assert not (result.meta or {}).get(TOOL_ERROR_CODE)
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_plugin_rewrites_the_text_and_the_code_survives(self, tool_service):
+        """A post-invoke plugin (e.g. a PII filter) rewrites the result text; the preserved code stays in _meta."""
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (
+                    SimpleNamespace(
+                        modified_payload=SimpleNamespace(result={"content": [{"type": "text", "text": "Unknown tool: [REDACTED]"}], "isError": True}),
+                        retry_delay_ms=0,
+                        metadata=None,
+                        executions=[],
+                    ),
+                    {},
+                ),  # post-invoke
+            ]
+        )
+
+        result = await self._invoke(tool_service, MCPError(code=-32602, message="Unknown tool: routed"), plugin_manager=plugin_manager)
+
+        assert result.is_error is True
+        assert result.content[0].text == "Unknown tool: [REDACTED]"
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}

@@ -54,7 +54,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 
     -   Install from [nodejs.org](https://nodejs.org/).
     -   Verify: `node --version` and `npm --version`.
-    -   Install linters: `npm install -g eslint stylelint`.
+    -   Install linters: `npm install -g eslint`.
 
 -   **(Optional)Visual Studio Code and useful plugins**
 

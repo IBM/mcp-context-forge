@@ -53,7 +53,7 @@ Expose a local stdio MCP server via the streamable HTTP protocol.
 ```bash
 # Stateful mode with SSE streaming
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp-server-filesystem" \
+  --stdio "uvx mcp-server-fetch" \
   --expose-streamable-http \
   --port 9000
 
@@ -328,7 +328,7 @@ Expose a local MCP server for browser access:
 ```bash
 # Start the bridge
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp-server-filesystem --directory ./docs" \
+  --stdio "uvx mcp-server-fetch" \
   --expose-sse \
   --port 9000 \
   --cors "http://localhost:3000" "https://myapp.com"
@@ -340,7 +340,7 @@ const response = await fetch('http://localhost:9000/message', {
   body: JSON.stringify({
     jsonrpc: '2.0',
     id: 1,
-    method: 'resources/list'
+    method: 'tools/list'
   })
 });
 ```

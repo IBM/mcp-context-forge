@@ -126,9 +126,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
-      args:
-        ENABLE_RUST: ${ENABLE_RUST_BUILD:-${RUST_MCP_BUILD:-false}}
-        ENABLE_RUST_MCP_RMCP: ${ENABLE_RUST_MCP_RMCP_BUILD:-${RUST_MCP_BUILD:-false}}
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:
@@ -148,70 +145,6 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
-      # High-level Rust MCP UX:
-      # Deprecated as of 2026-06-11; sunsets on 2026-07-07. Prefer RUST_MCP_MODE=off and the Python MCP transport.
-      #   RUST_MCP_MODE=off    -> Python MCP transport
-      #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
-      #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
-      #   RUST_MCP_MODE=full   -> edge + Rust session/event-store/resume/live-stream/affinity cores
-      # When the boot mode is edge an authorized admin can flip the public
-      # /mcp ingress between shadow and edge at runtime via
-      # PATCH /admin/runtime/mcp-mode (and /admin/runtime/a2a-mode for A2A).
-      # (off, shadow, and full boot modes are NOT flippable at runtime —
-      # off has no Rust sidecar; shadow did not opt into session-auth-reuse
-      # so an edge override cannot safely route public traffic; full would
-      # require live migration of Rust-owned cores.)
-      # The override is in-memory only; restarts re-read RUST_MCP_MODE/RUST_A2A_MODE.
-      # If REDIS_URL is set the override propagates to all pods; otherwise it is
-      # local to the pod that received the PATCH.
-      # Advanced EXPERIMENTAL_/MCP_RUST_* env vars below still work as explicit overrides.
-      - RUST_MCP_MODE=${RUST_MCP_MODE:-off}
-      - RUST_MCP_LOG=${RUST_MCP_LOG:-warn}
-      # Advanced override: force the session-auth-reuse fast path on/off
-      # independently of RUST_MCP_MODE. Prefer the mode presets above.
-      - RUST_MCP_SESSION_AUTH_REUSE=${RUST_MCP_SESSION_AUTH_REUSE:-}
-      # Experimental Rust MCP runtime internals. Leave unset for the simple
-      # RUST_MCP_MODE=shadow/edge/full paths; set explicitly only to override.
-      - EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}
-      - EXPERIMENTAL_RUST_MCP_RUNTIME_URL=${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}
-      - EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}
-      - EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=${EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS:-30}
-      - EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}
-      - EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED=${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED:-}
-      # Sidecar-level knobs. These default from the mode-derived experimental settings above.
-      - MCP_RUST_LISTEN_HTTP=${MCP_RUST_LISTEN_HTTP:-}
-      - MCP_RUST_LISTEN_UDS=${MCP_RUST_LISTEN_UDS:-}
-      - MCP_RUST_PUBLIC_LISTEN_HTTP=${MCP_RUST_PUBLIC_LISTEN_HTTP:-}
-      - MCP_RUST_BACKEND_RPC_URL=${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:4444/_internal/mcp/rpc}
-      - MCP_RUST_REDIS_URL=${MCP_RUST_REDIS_URL:-}
-      - MCP_RUST_CACHE_PREFIX=${MCP_RUST_CACHE_PREFIX:-mcpgw:}
-      - MCP_RUST_DATABASE_URL=${MCP_RUST_DATABASE_URL:-}
-      - MCP_RUST_DB_POOL_MAX_SIZE=${MCP_RUST_DB_POOL_MAX_SIZE:-20}
-      - MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES=${MCP_RUST_MAX_REQUEST_BODY_SIZE_BYTES:-10485760}
-      - MCP_RUST_SESSION_CORE_ENABLED=${MCP_RUST_SESSION_CORE_ENABLED:-}
-      - MCP_RUST_SESSION_TTL_SECONDS=${MCP_RUST_SESSION_TTL_SECONDS:-3600}
-      - MCP_RUST_EVENT_STORE_ENABLED=${MCP_RUST_EVENT_STORE_ENABLED:-}
-      - MCP_RUST_RESUME_CORE_ENABLED=${MCP_RUST_RESUME_CORE_ENABLED:-}
-      - MCP_RUST_LIVE_STREAM_CORE_ENABLED=${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}
-      - MCP_RUST_AFFINITY_CORE_ENABLED=${MCP_RUST_AFFINITY_CORE_ENABLED:-}
-      - MCP_RUST_SESSION_AUTH_REUSE_ENABLED=${MCP_RUST_SESSION_AUTH_REUSE_ENABLED:-}
-      - MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS:-30}
-      - MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM=${MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM:-100}
-      - MCP_RUST_EVENT_STORE_TTL_SECONDS=${MCP_RUST_EVENT_STORE_TTL_SECONDS:-3600}
-      - MCP_RUST_EVENT_STORE_POLL_INTERVAL_MS=${MCP_RUST_EVENT_STORE_POLL_INTERVAL_MS:-250}
-      - MCP_RUST_LOG=${MCP_RUST_LOG:-}
-      - MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS=${MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS:-5000}
-      - MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS=${MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS:-90}
-      - MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST=${MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST:-1024}
-      - MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS=${MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS:-30}
-      - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
-      - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
-      - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
       - A2A_RUST_LISTEN_HTTP=${A2A_RUST_LISTEN_HTTP:-}
       - A2A_RUST_LISTEN_UDS=${A2A_RUST_LISTEN_UDS:-}
       - A2A_RUST_LOG=${A2A_RUST_LOG:-}
@@ -234,8 +167,8 @@ services:
       - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
       # MCP Apps UI support (disabled by default; opt-in only)
       - MCPGATEWAY_MCP_APPS_ENABLED=${MCPGATEWAY_MCP_APPS_ENABLED:-false}
-      # Inbound MCP protocol mode (legacy by default; set auto to accept 2026-07-28 clients)
-      - MCP_INBOUND_PROTOCOL_MODE=${MCP_INBOUND_PROTOCOL_MODE:-legacy}
+      # Inbound MCP protocol mode (auto by default, accepts 2026-07-28 clients; set legacy to accept only handshake-era versions)
+      - MCP_INBOUND_PROTOCOL_MODE=${MCP_INBOUND_PROTOCOL_MODE:-auto}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -249,9 +182,9 @@ services:
       - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
-      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}  # pragma: allowlist secret
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
-      # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp  # pragma: allowlist secret
       # Migration already ran via the migration init container; gateway pods skip alembic upgrade head
       - MCPGATEWAY_SKIP_MIGRATIONS=${MCPGATEWAY_SKIP_MIGRATIONS:-true}
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
@@ -348,9 +281,15 @@ services:
       # Only set these if you explicitly enable Basic auth for backwards compatibility
       # - API_ALLOW_BASIC_AUTH=true
       # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}  # pragma: allowlist secret
       # Auth encryption secret + default user password
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
@@ -389,7 +328,6 @@ services:
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════
       - SSO_ENABLED=${SSO_ENABLED:-false}
-      - SSO_USER_PROVISIONING_API_ENABLED=${SSO_USER_PROVISIONING_API_ENABLED:-false}
       - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
       - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
       - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
@@ -699,12 +637,14 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+      # Permit tenantless background trace roots only when explicitly enabled
+      - OTEL_SYSTEM_TRACES_ENABLED=${OTEL_SYSTEM_TRACES_ENABLED:-false}
       # Auto-instrumentation: outbound httpx client spans (incl. internal affinity hop)
       - OTEL_HTTPX_INSTRUMENTATION_ENABLED=${OTEL_HTTPX_INSTRUMENTATION_ENABLED:-true}
-      # SQL query spans (high volume under load; enabled here for the observability stack)
-      - OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED=${OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED:-true}
+      # SQL query spans are high volume. Enable only when needed.
+      - OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED=${OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED:-false}
       # Redis command spans (owner lookups, envelope publishes; pub/sub listeners not instrumented)
-      - OTEL_REDIS_INSTRUMENTATION_ENABLED=${OTEL_REDIS_INSTRUMENTATION_ENABLED:-true}
+      - OTEL_REDIS_INSTRUMENTATION_ENABLED=${OTEL_REDIS_INSTRUMENTATION_ENABLED:-false}
 
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets
@@ -822,7 +762,7 @@ services:
       - "8180:8080"
     environment:
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-changeme}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-changeme}  # pragma: allowlist secret
       - KC_HOSTNAME=${KC_HOSTNAME:-localhost}
       - KC_HOSTNAME_PORT=${KC_HOSTNAME_PORT:-8180}
       - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT:-false}
@@ -966,7 +906,7 @@ services:
       # - "idle_in_transaction_session_timeout=60s"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_PASSWORD=mysecretpassword  # pragma: allowlist secret
       - POSTGRES_DB=mcp
     volumes:
       # - pgdata:/var/lib/postgresql/data
@@ -1007,7 +947,7 @@ services:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
       # Connection to upstream PostgreSQL
-      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp  # pragma: allowlist secret
       # PgBouncer listen port (default would be 5432, using 6432 to distinguish from PostgreSQL)
       - LISTEN_PORT=6432
       # Pool mode: transaction (recommended), session, or statement
@@ -1069,18 +1009,24 @@ services:
       context: .
       dockerfile: Containerfile
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp  # pragma: allowlist secret
       - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH unset here)
       # Only set these if you explicitly enable Basic auth for this container
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}  # pragma: allowlist secret
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["python", "-m", "mcpgateway.bootstrap_db"]
     depends_on:
@@ -1205,7 +1151,7 @@ services:
     # service holds user sessions/auth, so an unexpected code swap matters.
     # Bump both together on release (see release-management.md #6.4); get the
     # digest with: docker buildx imagetools inspect <image>:<tag>
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1@sha256:e2063ab012e7fe78815c5f840d517e1cc1fd484ed25c7b8e37cd78210cc3ab98}
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.4@sha256:60587b6dd81be22c8d7ce76b1595b8b67c209674f67b9fedf387d8aa1d6ada6f}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads
@@ -1245,7 +1191,7 @@ services:
     ports:
       - "${POSTGRES_EXPORTER_PORT:-9187}:9187"    # http://localhost:${POSTGRES_EXPORTER_PORT:-9187}/metrics
     environment:
-      - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable
+      - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable  # pragma: allowlist secret
       - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
     depends_on:
       postgres:
@@ -1280,7 +1226,7 @@ services:
     ports:
       - "${PGBOUNCER_EXPORTER_PORT:-9127}:9127"    # http://localhost:${PGBOUNCER_EXPORTER_PORT:-9127}/metrics
     environment:
-      - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
+      - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable  # pragma: allowlist secret
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -1339,6 +1285,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -1457,7 +1409,7 @@ services:
     ports:
       - "${GRAFANA_PORT:-3000}:3000"    # http://localhost:${GRAFANA_PORT:-3000}
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=changeme
+      - GF_SECURITY_ADMIN_PASSWORD=changeme  # pragma: allowlist secret
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafanadata:/var/lib/grafana
@@ -1476,7 +1428,7 @@ services:
     image: dpage/pgadmin4:9.11.0
     environment:
       - PGADMIN_DEFAULT_EMAIL=admin@example.com
-      - PGADMIN_DEFAULT_PASSWORD=changeme
+      - PGADMIN_DEFAULT_PASSWORD=changeme  # pragma: allowlist secret
     ports:
       - "${PGADMIN_PORT:-5050}:80"      # http://localhost:${PGADMIN_PORT:-5050}
     volumes:
@@ -1502,7 +1454,7 @@ services:
     environment:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
-      - HTTP_PASSWORD=changeme
+      - HTTP_PASSWORD=changeme  # pragma: allowlist secret
     profiles: ["monitoring"]
 
   # # ──────────────────────────────────────────────────────────────────────
@@ -1535,7 +1487,7 @@ services:
   #     - RI_REDIS_HOST=redis         # <- your Redis hostname
   #     - RI_REDIS_PORT=6379          # <- your Redis port
   #     - RI_REDIS_USERNAME=default   # <- ACL/username (Redis 6+)
-  #     #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password
+  #     #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password  # pragma: allowlist secret
   #     #- RI_REDIS_TLS=true           # <- enable TLS
 
   #     # Optional: validate self-signed CA instead of trusting all:
@@ -1595,6 +1547,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -1969,6 +1927,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2094,6 +2058,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2170,6 +2140,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2345,6 +2321,12 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
+      - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
+      - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2439,7 +2421,7 @@ services:
 #    mkdir -p certs
 #    cp /path/to/your/certificate.pem certs/cert.pem
 #    cp /path/to/your/encrypted-key.pem certs/key-encrypted.pem
-#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env  # pragma: allowlist secret
 #    make compose-tls
 #
 #  The cert_init service will automatically decrypt key-encrypted.pem to
@@ -2448,7 +2430,7 @@ services:
 #  Option 3: Generate Self-Signed with Passphrase
 #  ───────────────────────────────────────────────────────────────────────────
 #    make certs-passphrase                         # Generates cert + key-encrypted.pem
-#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env  # pragma: allowlist secret
 #    make compose-tls                              # Auto-decrypts for nginx
 ###############################################################################
 

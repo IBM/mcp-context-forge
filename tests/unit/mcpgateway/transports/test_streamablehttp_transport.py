@@ -36,23 +36,25 @@ import httpx
 import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
-from mcp_types import PromptArgument
-import mcp_types as types
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+import mcp_types as types
+from mcp_types import PromptArgument
+import orjson
 import pytest
 from starlette.types import Scope
 
 # First-Party
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
 # ---------------------------------------------------------------------------
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
-from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
-from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
-from mcpgateway.services.prompt_service import PromptNotFoundError
-from mcpgateway.services.resource_service import ResourceNotFoundError
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptUpstreamError, PromptValidationError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceUpstreamError
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
+from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
     call_tool,
@@ -150,6 +152,32 @@ async def test_streamable_server_discover_omits_logging_key_for_modern_protocol(
 
     assert "tools" in raw_result["capabilities"]
     assert "logging" not in raw_result["capabilities"]
+
+
+def test_streamable_server_app_info():
+    """Verify that mcp_app is constructed with settings.app_name and __version__."""
+    from mcpgateway import __version__
+    from mcpgateway.config import settings
+
+    assert tr.mcp_app.name == settings.app_name
+    assert tr.mcp_app.version == __version__
+
+
+async def test_streamable_server_stamps_server_info_on_modern_requests(monkeypatch):
+    """Verify that modern requests receive stamped serverInfo in result._meta."""
+    from mcpgateway import __version__
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(tr, "list_catalog_page", AsyncMock(return_value={"tools": [], "nextCursor": "next-page"}))
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        res = await modern_client.list_tools()
+        assert res.next_cursor == "next-page"
+        meta = getattr(res, "meta", None)
+        assert meta is not None
+        assert "io.modelcontextprotocol/serverInfo" in meta
+        server_info = meta["io.modelcontextprotocol/serverInfo"]
+        assert server_info["name"] == settings.app_name
+        assert server_info["version"] == __version__
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +419,273 @@ async def test_call_tool_success(monkeypatch):
     assert result[0].text == "hello"
 
 
+@pytest.mark.parametrize(
+    "value, era, kept",
+    [
+        pytest.param([1, 2, 3], "2026-07-28", True, id="modern_list"),
+        pytest.param("plain text", "2026-07-28", True, id="modern_string"),
+        pytest.param(3, "2026-07-28", True, id="modern_number"),
+        pytest.param(True, "2026-07-28", True, id="modern_boolean"),
+        pytest.param({"a": 1}, "2026-07-28", True, id="modern_object"),
+        pytest.param({"a": 1}, "2025-03-26", True, id="legacy_object"),
+        pytest.param([1, 2, 3], "2025-03-26", False, id="legacy_list_dropped"),
+        pytest.param("plain text", "2025-03-26", False, id="legacy_string_dropped"),
+        pytest.param(0, "2025-03-26", False, id="legacy_number_dropped"),
+    ],
+)
+def test_structured_for_caller_follows_the_callers_era(value, era, kept):
+    """A 2026-era caller may receive any JSON value as structuredContent; a 2025-era caller only an object, with the data kept as JSON text (issue #6575)."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+    try:
+        content: list = []
+        assert tr._structured_for_caller(content, value) == (value if kept else None)
+        assert tr._structured_for_caller([], None) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+    if kept:
+        assert content == []
+    else:
+        assert len(content) == 1 and json.loads(content[0].text) == value
+
+
+@pytest.mark.parametrize(
+    "content, value, appended",
+    [
+        pytest.param([], [1, 2, 3], True, id="no_text_at_all"),
+        pytest.param([types.TextContent(type="text", text="[1, 2, 3]")], [1, 2, 3], False, id="already_carried"),
+        pytest.param([types.TextContent(type="text", text="done")], [1, 2, 3], True, id="other_text_only"),
+        pytest.param([{"type": "text", "text": "[1,2,3]"}], [1, 2, 3], False, id="dict_block_already_carried"),
+    ],
+)
+def test_legacy_drop_keeps_a_json_text_copy_only_when_missing(content, value, appended):
+    """When a non-object is dropped for a legacy caller, its JSON is appended as text unless a text block already holds it."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    try:
+        before = len(content)
+        assert tr._structured_for_caller(content, value) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+    assert (len(content) == before + 1) is appended
+    if appended:
+        assert json.loads(content[-1].text) == value
+
+
+@pytest.mark.parametrize(
+    "text, value, carried",
+    [
+        pytest.param("1", True, False, id="number_text_is_not_true"),
+        pytest.param("true", 1, False, id="boolean_text_is_not_one"),
+        pytest.param("0", False, False, id="zero_is_not_false"),
+        pytest.param("true", True, True, id="boolean_matches"),
+        pytest.param("[1]", [True], False, id="nested_list_number_vs_boolean"),
+        pytest.param('{"a": 1}', {"a": True}, False, id="nested_object_number_vs_boolean"),
+        pytest.param('{"a": [1, true]}', {"a": [1, True]}, True, id="nested_exact_match"),
+        pytest.param("1.0", 1, True, id="float_and_int_compare_as_numbers"),
+        pytest.param("[1, 2]", [1], False, id="different_length"),
+        pytest.param("not json", 1, False, id="unparseable_text"),
+    ],
+)
+def test_text_content_carries_keeps_json_booleans_apart_from_numbers(text, value, carried):
+    """The "already carried" check must not let Python's 1 == True make a boolean payload look present as text."""
+    assert tr.text_content_carries([types.TextContent(type="text", text=text)], value) is carried
+
+
+@pytest.mark.parametrize("value", [pytest.param(True, id="true"), pytest.param([True], id="list_of_true"), pytest.param([{"ok": False}], id="list_with_object_with_false")])
+def test_legacy_drop_appends_a_boolean_payload_next_to_numeric_text(value):
+    """A boolean payload is appended as JSON text even when a numeric text block looks equal under Python equality."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    content = [types.TextContent(type="text", text=orjson.dumps(value).decode().replace("true", "1").replace("false", "0"))]
+    try:
+        assert tr._structured_for_caller(content, value) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+    assert len(content) == 2
+    assert json.loads(content[1].text) == value and type(json.loads(content[1].text)) is type(value)
+
+
+def test_wire_omits_a_null_structured_content_like_every_sdk_server():
+    """The SDK's result serializer drops null fields, so an explicit null structuredContent is absent on the wire (documented in #6575)."""
+    # Third-Party
+    from mcp.server.runner import _dump_result
+
+    dumped = _dump_result(types.CallToolResult(content=[types.TextContent(type="text", text="null")], structured_content=None))
+    assert "structuredContent" not in dumped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_call_tool_relays_a_list_structured_content_by_era(monkeypatch, era, kept):
+    """Local path: a list in structuredContent reaches a modern caller and is dropped for a legacy caller, whose text block keeps the data."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "[1, 2, 3]"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result = MagicMock()
+    mock_result.content = [mock_content]
+    mock_result.structured_content = [1, 2, 3]
+    mock_result.is_error = False
+    mock_result.meta = None
+    mock_result.model_dump = lambda by_alias=True: {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": [1, 2, 3]}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+    try:
+        result = await call_tool("mytool", {})
+    finally:
+        tr._v2_request_ctx.reset(token)
+
+    if kept:
+        assert isinstance(result, tuple)
+        unstructured, structured = result
+        assert structured == [1, 2, 3]
+    else:
+        assert isinstance(result, list)
+        unstructured = result
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_structured_only_result_keeps_the_data_for_a_legacy_caller(monkeypatch):
+    """Local path: a result with no content and a list in structuredContent reaches a legacy caller as a text block with the JSON."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_result = MagicMock()
+    mock_result.content = []
+    mock_result.structured_content = [1, 2, 3]
+    mock_result.is_error = False
+    mock_result.meta = None
+    mock_result.model_dump = lambda by_alias=True: {"content": [], "structuredContent": [1, 2, 3]}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    try:
+        result = await call_tool("mytool", {})
+    finally:
+        tr._v2_request_ctx.reset(token)
+
+    assert isinstance(result, list) and len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert json.loads(result[0].text) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_structured_only_result_keeps_the_data_for_a_legacy_caller(monkeypatch):
+    """Forwarded path: the owning worker's structured-only result still reaches a legacy caller as JSON text."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    era_token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [], "structuredContent": [1, 2, 3]}})
+    mock_pool.register_session_mapping = AsyncMock()
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+    finally:
+        tr._v2_request_ctx.reset(era_token)
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+    assert isinstance(result, list) and len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert json.loads(result[0].text) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_call_tool_session_affinity_forwarded_list_structured_content_by_era(monkeypatch, era, kept):
+    """Worker-forwarded path: the same era rule applies to a result another worker produced."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    era_token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": [1, 2, 3]}})
+    mock_pool.register_session_mapping = AsyncMock()
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+    finally:
+        tr._v2_request_ctx.reset(era_token)
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+    if kept:
+        assert isinstance(result, tuple)
+        unstructured, structured = result
+        assert structured == [1, 2, 3]
+    else:
+        assert isinstance(result, list)
+        unstructured = result
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, array_schema_kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_list_tools_adapter_hides_non_object_output_schemas_from_legacy_callers(monkeypatch, era, array_schema_kept):
+    """The 2025 wire rejects a non-object outputSchema in tools/list, so it is omitted for legacy callers and kept for modern ones (issue #6575)."""
+    tools = [
+        types.Tool(name="numbers", inputSchema={"type": "object"}, outputSchema={"type": "array", "items": {"type": "integer"}}),
+        types.Tool(name="record", inputSchema={"type": "object"}, outputSchema={"type": "object", "properties": {"x": {"type": "integer"}}}),
+        types.Tool(name="plain", inputSchema={"type": "object"}),
+    ]
+    monkeypatch.setattr(tr, "_list_catalog_page", AsyncMock(return_value={"tools": tools}))
+    monkeypatch.setattr(tr, "_catalog_ttl_ms", AsyncMock(return_value=300_000))
+
+    result = await tr._adapt_list_tools(SimpleNamespace(protocol_version=era, meta=None, request=None))
+
+    by_name = {tool.name: tool for tool in result.tools}
+    assert set(by_name) == {"numbers", "record", "plain"}
+    assert (by_name["numbers"].output_schema is not None) is array_schema_kept
+    assert by_name["record"].output_schema == {"type": "object", "properties": {"x": {"type": "integer"}}}
+    assert by_name["plain"].output_schema is None
+
+
 @pytest.mark.asyncio
 async def test_call_tool_with_structured_content(monkeypatch):
     """Test call_tool returns tuple with both unstructured and structured content."""
@@ -518,6 +813,44 @@ async def test_call_tool_session_affinity_forwarded_empty_dict_snake_case_fallba
         assert isinstance(unstructured[0], types.TextContent)
         assert unstructured[0].text == "ok"
         assert structured == {}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_error_keeps_the_result_meta(monkeypatch):
+    """A worker-forwarded isError result keeps the error code the owning worker put in _meta."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={"result": {"content": [{"type": "text", "text": "MCP server error: Invalid params"}], "isError": True, "_meta": {"io.contextforge/errorCode": {"code": -32602}}}}
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.meta == {"io.contextforge/errorCode": {"code": -32602}}
     finally:
         request_headers_var.reset(h_token)
         user_context_var.reset(u_token)
@@ -7784,8 +8117,6 @@ async def test_handle_streamable_http_unknown_method_without_session_returns_326
     assert payload["id"] == 1
 
 
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("header_name", [b"mcp-session-id", b"x-mcp-session-id"])
 async def test_handle_streamable_http_get_returns_sse_with_session(monkeypatch, header_name):
@@ -10195,8 +10526,6 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
     assert messages[0]["status"] == 200
 
 
-
-
 @pytest.mark.asyncio
 async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(monkeypatch):
     """``[HTTP_AFFINITY_FORWARDED]`` re-entry also goes through ``post_rpc_in_process`` (PR #4987).
@@ -10236,6 +10565,7 @@ async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(m
             (b"mcp-session-id", b"sess-fwd"),
             (b"x-forwarded-internally", b"true"),
             (b"authorization", b"Bearer original-jwt"),
+            (b"x-context-forge-gateway-id", b"gateway-selected"),
         ],
     )
 
@@ -10254,6 +10584,7 @@ async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(m
     assert sent_headers["x-forwarded-internally"] == "true"
     assert sent_headers["x-mcp-session-id"] == "sess-fwd"
     assert sent_headers["authorization"] == "Bearer original-jwt"
+    assert sent_headers["x-context-forge-gateway-id"] == "gateway-selected"
 
 
 @pytest.mark.asyncio
@@ -11877,7 +12208,6 @@ class TestProxyFunctions:
         mock_session.read_resource = AsyncMock(return_value=mock_result)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
-
 
         # Set request headers with gateway ID
         tr.request_headers_var.set({"x-context-forge-gateway-id": "original-gw-id"})
@@ -18725,11 +19055,11 @@ class TestV2HandlerAdapters:
         tool = types.Tool(name="t", inputSchema={"type": "object"})
         seen = {}
 
-        async def fake_list_tools():
+        async def fake_list_tools(method, params):
             seen["ctx"] = tr._v2_request_ctx.get()
-            return [tool]
+            return {"tools": [tool]}
 
-        monkeypatch.setattr(tr, "list_tools", fake_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_tools)
         result = await tr._adapt_list_tools(sentinel_ctx)
 
         assert isinstance(result, types.ListToolsResult)
@@ -18787,10 +19117,10 @@ class TestV2HandlerAdapters:
     async def test_adapt_list_prompts_wraps(self, monkeypatch):
         prompt = types.Prompt(name="p")
 
-        async def fake_list_prompts():
-            return [prompt]
+        async def fake_list_prompts(method, params):
+            return {"prompts": [prompt]}
 
-        monkeypatch.setattr(tr, "list_prompts", fake_list_prompts)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_prompts)
         result = await tr._adapt_list_prompts(object())
 
         assert isinstance(result, types.ListPromptsResult)
@@ -18813,10 +19143,10 @@ class TestV2HandlerAdapters:
     async def test_adapt_list_resources_wraps(self, monkeypatch):
         resource = types.Resource(uri="file:///x", name="x")
 
-        async def fake_list_resources():
-            return [resource]
+        async def fake_list_resources(method, params):
+            return {"resources": [resource]}
 
-        monkeypatch.setattr(tr, "list_resources", fake_list_resources)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_resources)
         result = await tr._adapt_list_resources(object())
 
         assert isinstance(result, types.ListResourcesResult)
@@ -18862,10 +19192,10 @@ class TestV2HandlerAdapters:
 
     @pytest.mark.asyncio
     async def test_adapt_list_resource_templates_dict_coercion(self, monkeypatch):
-        async def fake_list_resource_templates():
-            return [{"uriTemplate": "x://{id}", "name": "t"}]
+        async def fake_list_resource_templates(method, params):
+            return {"resourceTemplates": [{"uriTemplate": "x://{id}", "name": "t"}]}
 
-        monkeypatch.setattr(tr, "list_resource_templates", fake_list_resource_templates)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_resource_templates)
         result = await tr._adapt_list_resource_templates(object())
 
         assert isinstance(result, types.ListResourceTemplatesResult)
@@ -18964,7 +19294,11 @@ class TestXMcpHeaderServing:
         # mcp 2.2 attaches the HTTP request to the handler context, so the catalog handlers would
         # authenticate it; supply the default (no server, no headers, anonymous) context instead.
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
-        monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+        monkeypatch.setattr(
+            tr,
+            "_list_catalog_page",
+            AsyncMock(return_value={"tools": [{"name": tool.name, "description": tool.description, "inputSchema": tool.input_schema}]}),
+        )
         invoke = AsyncMock(return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")], is_error=False))
         monkeypatch.setattr(tool_service, "invoke_tool", invoke)
         return invoke
@@ -18985,12 +19319,15 @@ class TestXMcpHeaderServing:
 
     @pytest.mark.asyncio
     async def test_mcp_param_header_disagreeing_with_the_body_is_rejected_before_dispatch(self, monkeypatch):
+        # mcp 2.3.0: Client.call_tool() transparently retries on HEADER_MISMATCH after a tools/list.
+        # Use client.session.call_tool() (ClientSession) which has no retry logic, so the server
+        # rejection surfaces directly as MCPError.
         invoke = self._serve_annotated_tool(monkeypatch)
         async with self._modern_client({"Mcp-Param-Region": "us"}) as client:
             with pytest.raises(MCPError) as mismatch:
-                await client.call_tool("routed", {"region": "eu"})
+                await client.session.call_tool("routed", {"region": "eu"})
             with pytest.raises(MCPError) as absent:
-                await client.call_tool("routed", {})
+                await client.session.call_tool("routed", {})
         assert mismatch.value.error.code == -32020
         assert mismatch.value.error.message == "Mcp-Param-Region header does not match the request body's 'region' argument"
         assert absent.value.error.code == -32020
@@ -19032,6 +19369,24 @@ class TestUnknownEntityErrors:
         assert result.content[0].text == "Unknown tool: missing_tool"
 
     @pytest.mark.asyncio
+    async def test_error_code_in_meta_reaches_the_client(self, monkeypatch):
+        """The upstream error code the service preserved in the result's _meta is carried through the egress."""
+        # First-Party
+        from mcpgateway.common.models import TextContent, ToolResult
+        from mcpgateway.services.tool_service import TOOL_ERROR_CODE
+
+        self._fake_db(monkeypatch)
+        relayed = ToolResult(content=[TextContent(type="text", text="Unknown tool: routed")], is_error=True, meta={TOOL_ERROR_CODE: {"code": -32602}})
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=relayed))
+
+        result = await call_tool("routed", {})
+
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.content[0].text == "Unknown tool: routed"
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
+
+    @pytest.mark.asyncio
     async def test_invocation_failure_returns_iserror_result(self, monkeypatch):
         """ToolInvocationError (eg: timeouts) becomes an isError result carrying the reason."""
         self._fake_db(monkeypatch)
@@ -19065,6 +19420,40 @@ class TestUnknownEntityErrors:
             await get_prompt("missing_prompt")
         assert exc_info.value.error.code == types.INVALID_PARAMS
         assert exc_info.value.error.message == "Unknown prompt: missing_prompt"
+
+    @pytest.mark.asyncio
+    async def test_prompt_validation_error_raises_invalid_params(self, monkeypatch):
+        """A missing required argument becomes MCPError(-32602) carrying the service's message, which names the argument."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptValidationError("Missing required arguments: name")))
+
+        with pytest.raises(MCPError) as exc_info:
+            await get_prompt("greeting", {})
+        assert exc_info.value.error.code == types.INVALID_PARAMS
+        assert exc_info.value.error.message == "Missing required arguments: name"
+
+    @pytest.mark.asyncio
+    async def test_upstream_prompt_error_is_relayed_as_the_upstream_json_rpc_error(self, monkeypatch):
+        """PromptUpstreamError becomes an MCPError carrying the upstream's code, message and data."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptUpstreamError(-32602, "Invalid params from the strict upstream", {"argument": "name"})))
+
+        with pytest.raises(MCPError) as exc_info:
+            await get_prompt("remote_prompt", {"name": "x"})
+        assert exc_info.value.error.code == -32602
+        assert exc_info.value.error.message == "Invalid params from the strict upstream"
+        assert exc_info.value.error.data == {"argument": "name"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sent, forwarded", [pytest.param(None, {}, id="omitted"), pytest.param({"name": "x"}, {"name": "x"}, id="given")])
+    async def test_get_prompt_adapter_always_asks_for_a_rendered_prompt(self, monkeypatch, sent, forwarded):
+        """Over MCP an omitted arguments field becomes an empty dict (a render request); given arguments are forwarded unchanged."""
+        handler = AsyncMock(return_value=types.GetPromptResult(messages=[]))
+        monkeypatch.setattr(tr, "get_prompt", handler)
+
+        await tr._adapt_get_prompt(object(), SimpleNamespace(name="greeting", arguments=sent))
+
+        handler.assert_awaited_once_with("greeting", forwarded)
 
     @pytest.mark.asyncio
     async def test_unknown_resource_raises_invalid_params(self, monkeypatch):
@@ -19465,6 +19854,7 @@ async def test_normalize_jwt_payload_rejects_missing_membership_on_cache_miss(mo
 
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("former-member@example.com", ["team-removed"], False)
 
+
 @pytest.mark.asyncio
 async def test_get_request_context_propagates_normalization_http_exception(monkeypatch):
     """Authentication failures from fallback normalization must reach the caller."""
@@ -19491,6 +19881,7 @@ async def test_get_request_context_propagates_normalization_http_exception(monke
                 await tr._get_request_context_or_default()
     finally:
         tr.server_id_var.reset(token)
+
 
 @pytest.mark.asyncio
 async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeypatch):
@@ -19519,6 +19910,7 @@ async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeyp
 
     db_lookup.assert_called_once_with("deleted@example.com")
 
+
 def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
     """The shared membership helper validates all claimed teams and caches the result."""
     from mcpgateway.auth import validate_token_team_membership
@@ -19530,6 +19922,7 @@ def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
 
     assert validate_token_team_membership("member@example.com", ["team-a"]) is True
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)
+
 
 # ---------------------------------------------------------------------------
 # Affinity check span attribute paths (streamablehttp_transport.py lines 4312-4314)
@@ -19603,9 +19996,13 @@ async def test_affinity_span_attributes_owner_is_local_worker(monkeypatch):
 @pytest.mark.asyncio
 async def test_affinity_span_attributes_owner_is_different_worker(monkeypatch):
     """Span attributes report decision='forward' when the session is owned by another worker."""
-    import orjson
+    # Standard
     from contextlib import asynccontextmanager, contextmanager
 
+    # Third-Party
+    import orjson
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
 
     class DummySessionManager:
@@ -19731,22 +20128,22 @@ class TestListCacheDirectives:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "adapter, handler, payload, result_type",
+        "adapter, result_key, payload, result_type",
         [
-            ("_adapt_list_tools", "list_tools", [types.Tool(name="t", inputSchema={"type": "object"})], types.ListToolsResult),
-            ("_adapt_list_prompts", "list_prompts", [types.Prompt(name="p")], types.ListPromptsResult),
-            ("_adapt_list_resources", "list_resources", [types.Resource(name="r", uri="test://r")], types.ListResourcesResult),
-            ("_adapt_list_resource_templates", "list_resource_templates", [], types.ListResourceTemplatesResult),
+            ("_adapt_list_tools", "tools", [types.Tool(name="t", inputSchema={"type": "object"})], types.ListToolsResult),
+            ("_adapt_list_prompts", "prompts", [types.Prompt(name="p")], types.ListPromptsResult),
+            ("_adapt_list_resources", "resources", [types.Resource(name="r", uri="test://r")], types.ListResourcesResult),
+            ("_adapt_list_resource_templates", "resourceTemplates", [], types.ListResourceTemplatesResult),
         ],
     )
-    async def test_list_adapter_sets_ttl_and_private_scope(self, monkeypatch, adapter, handler, payload, result_type):
+    async def test_list_adapter_sets_ttl_and_private_scope(self, monkeypatch, adapter, result_key, payload, result_type):
         """Each list result carries the catalog TTL for the request's server scope and cacheScope=private."""
 
-        async def fake_handler():
-            return payload
+        async def fake_handler(_method, _params):
+            return {result_key: payload, "nextCursor": "continuation"}
 
         ttl = AsyncMock(return_value=123_000)
-        monkeypatch.setattr(tr, handler, fake_handler)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_handler)
         monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
         token = tr._request_server_id_var.set("srv-1")
         try:
@@ -19757,6 +20154,7 @@ class TestListCacheDirectives:
         assert isinstance(result, result_type)
         assert result.ttl_ms == 123_000
         assert result.cache_scope == "private"
+        assert result.next_cursor == "continuation"
         ttl.assert_awaited_once_with("srv-1")
 
     @pytest.mark.asyncio
@@ -19788,9 +20186,9 @@ class TestListCacheDirectives:
     async def test_list_adapter_sizes_ttl_from_the_resolved_scope_through_the_real_helper(self, monkeypatch):
         """No prepopulated scope and no mocked TTL: the handler resolves the request, the real helper queries the upstreams' intervals."""
 
-        async def fake_list_tools():
+        async def fake_list_tools(_method, _params):
             await tr._get_request_context_or_default()  # what the real handler does first
-            return []
+            return {"tools": []}
 
         mock_db = MagicMock()
         mock_db.execute.return_value.scalars.return_value.all.return_value = [900]
@@ -19799,7 +20197,7 @@ class TestListCacheDirectives:
         async def fake_get_db():
             yield mock_db
 
-        monkeypatch.setattr(tr, "list_tools", fake_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_tools)
         monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=("srv-1", {}, {})))
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
         with patch("mcpgateway.transports.streamablehttp_transport.settings", SimpleNamespace(health_check_interval=60, gateway_auto_refresh_interval=300)):
@@ -19815,11 +20213,11 @@ class TestListCacheDirectives:
         # Third-Party
         from fastapi import HTTPException
 
-        async def refusing_list_tools():
+        async def refusing_list_tools(_method, _params):
             raise HTTPException(status_code=401, detail="Not authenticated")
 
         ttl = AsyncMock(return_value=300_000)
-        monkeypatch.setattr(tr, "list_tools", refusing_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", refusing_list_tools)
         monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
 
         with pytest.raises(HTTPException):
@@ -19998,3 +20396,95 @@ class TestCatalogTtl:
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings), caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
             assert await tr._catalog_ttl_ms("srv-1") == 0
         assert any("Could not derive the catalog TTL" in r.getMessage() for r in caplog.records)
+
+
+class TestRequestMetaLimitsAndUpstreamResourceErrors:
+    """Issue #6568: oversize ``_meta`` is -32602 on every method; an upstream resource error keeps its code."""
+
+    ENVELOPE = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "c", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {"form": {}}},
+    }
+
+    @staticmethod
+    def _with_meta(monkeypatch, meta, era="2026-07-28"):
+        TestUnknownEntityErrors._fake_db(monkeypatch)
+        ctx = SimpleNamespace(meta=meta, session=None, protocol_version=era, params={})
+        return patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "meta, fragment",
+        [
+            pytest.param({"k": "x" * 5000}, "maximum size", id="too_many_bytes"),
+            pytest.param({f"k{i}": 1 for i in range(17)}, "maximum key count", id="too_many_keys"),
+            pytest.param({"too": {"deep": {"by": 1}}}, "maximum nesting depth", id="too_deep"),
+        ],
+    )
+    async def test_oversize_meta_is_invalid_params_on_every_method(self, monkeypatch, meta, fragment):
+        """tools/call, prompts/get and resources/read reject bad ``_meta`` with -32602 before any service call."""
+        tool_invoke = AsyncMock()
+        prompt_get = AsyncMock()
+        resource_read = AsyncMock()
+        monkeypatch.setattr(tool_service, "invoke_tool", tool_invoke)
+        monkeypatch.setattr(prompt_service, "get_prompt", prompt_get)
+        monkeypatch.setattr(resource_service, "read_resource", resource_read)
+
+        for call in (lambda: call_tool("t", {}), lambda: get_prompt("p", {}), lambda: read_resource("file:///r")):
+            with self._with_meta(monkeypatch, meta):
+                with pytest.raises(MCPError) as exc_info:
+                    await call()
+            assert exc_info.value.error.code == types.INVALID_PARAMS
+            assert fragment in exc_info.value.error.message
+        tool_invoke.assert_not_awaited()
+        prompt_get.assert_not_awaited()
+        resource_read.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_modern_envelope_meta_is_accepted(self, monkeypatch):
+        """The mandatory modern keys, with nested client capabilities, pass the limits."""
+        resource_read = AsyncMock(side_effect=ResourceNotFoundError("nope"))
+        monkeypatch.setattr(resource_service, "read_resource", resource_read)
+        with self._with_meta(monkeypatch, dict(self.ENVELOPE)):
+            with pytest.raises(MCPError) as exc_info:
+                await read_resource("file:///r")
+        assert exc_info.value.error.message == "Unknown resource: file:///r"
+        resource_read.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "era, upstream_code, relayed",
+        [
+            pytest.param("2026-07-28", -32002, types.INVALID_PARAMS, id="modern_not_found_becomes_invalid_params"),
+            pytest.param("2026-07-28", -32601, -32601, id="modern_other_code_unchanged"),
+            pytest.param("2025-03-26", -32002, -32002, id="legacy_code_unchanged"),
+        ],
+    )
+    async def test_upstream_resource_error_keeps_its_code(self, monkeypatch, era, upstream_code, relayed):
+        """ResourceUpstreamError becomes an MCPError with the upstream's code, message and data."""
+        err = ResourceUpstreamError(upstream_code, "upstream says no", {"uri": "x://y"})
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=err))
+        token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+        try:
+            with self._with_meta(monkeypatch, None, era):
+                with pytest.raises(MCPError) as exc_info:
+                    await read_resource("x://y")
+        finally:
+            tr._v2_request_ctx.reset(token)
+        assert exc_info.value.error.code == relayed
+        assert exc_info.value.error.message == "upstream says no"
+        assert exc_info.value.error.data == {"uri": "x://y"}
+
+    @pytest.mark.asyncio
+    async def test_modern_prompt_not_found_from_upstream_becomes_invalid_params(self, monkeypatch):
+        """A modern caller never sees the retired -32002 on prompts/get."""
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptUpstreamError(-32002, "gone")))
+        token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2026-07-28", meta=None, request=None))
+        try:
+            with self._with_meta(monkeypatch, None):
+                with pytest.raises(MCPError) as exc_info:
+                    await get_prompt("p", {})
+        finally:
+            tr._v2_request_ctx.reset(token)
+        assert exc_info.value.error.code == types.INVALID_PARAMS

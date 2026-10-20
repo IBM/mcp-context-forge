@@ -2140,9 +2140,10 @@ class ToolResult(BaseModelWithConfigDict):
     """
 
     content: List[Union[TextContent, ImageContent]]
-    structured_content: Optional[Dict[str, Any]] = None
+    structured_content: Optional[Any] = Field(default=None, description="Machine-readable result; any JSON value on the 2026 wire, an object only on the 2025 wire")
     is_error: bool = False
     error_message: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta", description="MCP result metadata, e.g. the JSON-RPC error code of a failed call under io.contextforge/errorCode")
 
 
 class ToolPreviewRequest(BaseModelWithConfigDict):
@@ -6306,6 +6307,65 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         """
         SecurityValidator.validate_json_depth(v)
         return v
+
+
+class A2AInvocationResponse(BaseModel):
+    """Schema for the body returned by the A2A invocation routes.
+
+    Contains:
+    - The JSON-RPC fields the target agent echoed back (result or error, plus the id)
+    - Any extra keys the agent returned, which extra="allow" keeps in the response
+
+    Field values are deliberately untyped. These routes forward the JSON document the
+    agent produced, so a stricter type would convert unexpected agent behavior into a
+    gateway 500 instead of the agent's own response. Payloads the repository itself
+    documents already push against the spec: the A2A user guide shows ``status.message``
+    as a plain string, and the passthrough tests carry ``status`` as a bare state name.
+
+    A2A 0.3 and 1.0 differ inside ``result`` rather than at this level: 0.3 discriminates
+    with a ``kind`` field and uses lowercase task states (``input-required``) with
+    ``user``/``agent`` roles, while 1.0 discriminates by field presence and uses
+    ``TASK_STATE_*`` states with ``ROLE_USER``/``ROLE_AGENT`` roles.
+
+    Extra agent fields remain on the wire; generated clients may not expose them,
+    so the named schema is a lower bound rather than an exhaustive field list.
+    Related JSON-RPC envelopes are :class:`RPCResponse` and
+    :class:`mcpgateway.common.models.JSONRPCResponse`.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    jsonrpc: Any = Field(default=None, description="JSON-RPC protocol version echoed by the agent")
+    result: Any = Field(default=None, description="Result payload forwarded from the agent")
+    error: Any = Field(default=None, description="Error forwarded from the agent")
+    id: Any = Field(default=None, description="Request id this response correlates to, omitted for notifications")
+
+
+class A2AInvokeResponse(A2AInvocationResponse):
+    """Schema for ``POST /v1/a2a/{agent_name}/invoke`` and ``POST /v1/a2a/invoke``.
+
+    Both routes hand the agent's document to the caller after ContextForge governance
+    (auth, RBAC, rate limiting, metrics) without reshaping it. When the gateway has
+    nothing to forward, ``error`` carries a plain message string rather than a JSON-RPC
+    error object and the remaining keys are absent.
+
+    Its fields deliberately match :class:`A2AJsonRpcResponse`, while the two class
+    names provide distinct OpenAPI components for the corresponding routes.
+    """
+
+
+class A2AJsonRpcResponse(A2AInvocationResponse):
+    """Schema for ``POST /v1/a2a/{agent_name}/jsonrpc``.
+
+    This passthrough always answers with a JSON-RPC envelope: an agent document that
+    already carries ``jsonrpc`` is returned unchanged, otherwise the agent's response is
+    wrapped as ``{"jsonrpc": "2.0", "result": ...}``. ``id`` is only present when the
+    request had one. The gateway's own JSON-RPC error replies are returned as explicit
+    responses with a non-2xx status, so they bypass this model.
+
+    Its fields deliberately match :class:`A2AInvokeResponse`; the separate class
+    name provides a distinct OpenAPI component for this route.
+    """
 
 
 # ---------------------------------------------------------------------------

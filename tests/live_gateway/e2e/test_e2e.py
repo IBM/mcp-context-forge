@@ -43,6 +43,7 @@ from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+import functools
 from importlib.metadata import version
 import json
 import logging
@@ -73,6 +74,10 @@ pw = pytest.importorskip("playwright", reason="playwright is not installed – p
 from playwright.sync_api import APIRequestContext, APIResponse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect, Playwright
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 # First-Party
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -247,7 +252,6 @@ def resource_namespacing_upstreams():
             listener.close()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "require_expansion",
     [
@@ -354,6 +358,117 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                 await http.delete(f"/servers/{server_id}")
             for gateway_id in gateway_ids:
                 await http.delete(f"/gateways/{gateway_id}")
+
+
+@pytest.fixture
+def tool_error_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream whose tools fail the two ways a gateway must relay (issue #6576).
+
+    ``strict`` answers a formal JSON-RPC error, as a spec-strict server does for bad input;
+    ``boom`` fails during execution. The gateway must reach this process: set
+    MCP_TOOL_ERROR_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_TOOL_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    app = MCPServer("tool-error")
+
+    @app.tool()
+    def strict() -> str:
+        """Answer a JSON-RPC -32602 error."""
+        raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    @app.tool()
+    def boom() -> str:
+        """Fail while running."""
+        raise RuntimeError("upstream exploded")
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Tool error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
+@pytest.fixture
+def prompt_error_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream whose prompts answer JSON-RPC errors (issue #6618).
+
+    The gateway must reach this process: set MCP_PROMPT_ERROR_UPSTREAM_HOST=127.0.0.1
+    for a gateway running on the host.
+    """
+    host = os.getenv("MCP_PROMPT_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    app = MCPServer("prompt-error")
+
+    @app.prompt()
+    def strict() -> str:
+        """Answer a JSON-RPC -32602 error."""
+        raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    @app.prompt()
+    def custom() -> str:
+        """Answer a JSON-RPC error with a server-defined code and data."""
+        raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later"})
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Prompt error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
+@pytest.fixture
+def array_upstream() -> Generator[str, None, None]:
+    """Serve a plain HTTP endpoint whose JSON body is an array, for a REST tool with an array outputSchema (issue #6575).
+
+    The gateway must reach this process: set MCP_STRUCTURED_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_STRUCTURED_UPSTREAM_HOST", "host.docker.internal")
+
+    async def numbers(_request: Request) -> JSONResponse:
+        """Answer a JSON array."""
+        return JSONResponse([1, 2, 3])
+
+    app = Starlette(routes=[Route("/numbers", numbers)])
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Array upstream failed to start"
+        yield f"http://{host}:{port}/numbers"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
 
 
 class TestConnectivity:
@@ -687,6 +802,272 @@ class TestToolCalls:
             return
         assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
+
+
+class TestToolErrorTranslation:
+    """Every tool failure through the gateway is an isError result; its JSON-RPC error code rides in _meta (issue #6576)."""
+
+    @staticmethod
+    async def _assert_tool_errors(call: Callable[[str], Any], tools: dict[str, str]) -> None:
+        """Check the three failure shapes through ``call(tool_name)``."""
+        strict = await call(tools["strict"])
+        assert strict.is_error is True, f"strict upstream error was not an isError result: {strict}"
+        assert "Invalid params from the strict upstream" in strict.content[0].text, strict.content
+        assert (strict.meta or {}).get("io.contextforge/errorCode") == {"code": -32602}, f"error code not reported: {strict.meta}"
+
+        boom = await call(tools["boom"])
+        assert boom.is_error is True, f"execution failure was not an isError result: {boom}"
+        # The SDK upstream hides the exception text; its own message passes through the gateway unchanged.
+        assert boom.content[0].text == "Error executing tool boom", boom.content
+        assert not (boom.meta or {}).get("io.contextforge/errorCode"), f"execution failure must carry no error code: {boom.meta}"
+
+        # The SDK path answers an isError result; the stateful-session /rpc path answers a JSON-RPC -32601.
+        try:
+            unknown = await call(f"{tools['strict']}-missing")
+        except BaseException as exc:  # noqa: B036 - the leaf is asserted below
+            leaves = [leaf for leaf in _unwrap_exception_group(exc) if isinstance(leaf, McpError)]
+            assert leaves, f"unknown tool raised a non-JSON-RPC error: {exc!r}"
+            assert leaves[0].error.code == -32601 and leaves[0].error.message.startswith("Tool not found:"), leaves[0].error
+        else:
+            assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
+            assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_tool_failures_answer_is_error_with_the_error_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see the same isError shape for an upstream JSON-RPC error, an execution failure and an unknown tool."""
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        name = f"toolerror{uuid.uuid4().hex[:8]}"
+        gateway_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": tool_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream tools: {rows}; check MCP_TOOL_ERROR_UPSTREAM_HOST"
+                tools = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row["name"] for row in rows}
+                assert set(tools) == {"strict", "boom"}, tools
+                response = await http.post("/servers", json={"server": {"name": name, "associated_tools": [row["id"] for row in rows]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            await self._assert_tool_errors(lambda tool: session.call_tool(tool, {}), tools)
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        await self._assert_tool_errors(lambda tool: modern_client.call_tool(tool, {}), tools)
+                print(f"    -> {era}: strict/boom/unknown all isError; JSON-RPC error code reported")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
+
+
+class TestPromptErrorTranslation:
+    """Every prompts/get failure through the gateway is a JSON-RPC error: -32602 when the gateway refuses the request, the upstream's own code when the upstream answered one (issue #6618)."""
+
+    @staticmethod
+    @asynccontextmanager
+    async def _prompt_getter(era: str, url: str, token: str) -> AsyncIterator[Callable[..., Any]]:
+        """Open a legacy or modern client on ``url`` and yield its ``get_prompt(name, arguments=None)``."""
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        if era == "legacy":
+            async with streamable_http_client(url, http_client=http_client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session.get_prompt
+        else:
+            async with Client(streamable_http_client(url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                yield modern_client.get_prompt
+
+    @staticmethod
+    async def _json_rpc_error(call: Callable[[], Any]) -> Any:
+        """Run ``call`` and return the JSON-RPC error it raised."""
+        with pytest.raises(BaseException) as exc_info:  # noqa: B017 - the leaf is asserted below
+            await call()
+        leaves = [exc for exc in _unwrap_exception_group(exc_info.value) if isinstance(exc, McpError)]
+        assert leaves, f"expected a JSON-RPC error, got {exc_info.value!r}"
+        return leaves[0].error
+
+    async def _expect_invalid_params(self, call: Callable[[], Any], message_part: str) -> None:
+        """Require a -32602 whose message contains ``message_part``."""
+        error = await self._json_rpc_error(call)
+        assert error.code == -32602, error
+        assert message_part in error.message, error
+
+    async def _expect_unknown_prompt(self, call: Callable[[], Any], name: str) -> None:
+        """Require the unknown-prompt error of either path: SDK -32602 "Unknown prompt:" or /rpc -32002 "Prompt not found:"."""
+        error = await self._json_rpc_error(call)
+        assert (error.code, name in error.message) in ((-32602, True), (-32002, True)), error
+        assert error.message.startswith(("Unknown prompt:", "Prompt not found:")), error
+
+    async def _assert_prompt_errors(self, get_prompt: Callable[..., Any], prompts: dict[str, str]) -> None:
+        """Check the failure shapes an authorized caller sees through ``get_prompt(name, arguments)``."""
+        await self._expect_invalid_params(lambda: get_prompt(prompts["strict"], {}), "Invalid params from the strict upstream")
+        custom = await self._json_rpc_error(lambda: get_prompt(prompts["custom"], {}))
+        assert (custom.code, custom.message, custom.data) == (-32001, "Custom upstream failure", {"hint": "retry later"}), custom
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"]), "Missing required arguments: name")
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {}), "Missing required arguments: name")
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"other": "x"}), "Missing required arguments: name")
+        await self._expect_unknown_prompt(lambda: get_prompt(f"{prompts['local']}-missing", {}), f"{prompts['local']}-missing")
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_prompt_failures_answer_invalid_params(self, prompt_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see -32602 for an upstream JSON-RPC error, a missing required argument and an unknown or invisible prompt; a scope-capped token keeps its permission error."""
+        # An un-narrowed admin token: the module fixture's token is public-only and may not create a private prompt.
+        admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        name = f"prompterror{uuid.uuid4().hex[:8]}"
+        outsider_email = f"{name}@example.com"
+        gateway_id = None
+        prompt_id = None
+        server_id = None
+        outsider_created = False
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": prompt_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/prompts", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream prompts: {rows}; check MCP_PROMPT_ERROR_UPSTREAM_HOST"
+                upstream_prompts = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row for row in rows}
+                assert set(upstream_prompts) == {"strict", "custom"}, upstream_prompts
+                # The gateway-stored prompt is private to the admin, so another user must not be able to tell it exists.
+                response = await http.post(
+                    "/prompts",
+                    json={"prompt": {"name": f"{name}-local", "template": "Hello, {{ name }}!", "arguments": [{"name": "name", "description": "who to greet", "required": True}]}, "visibility": "private"},
+                )
+                assert response.status_code in (200, 201), response.text
+                prompt_id = response.json()["id"]
+                prompts = {"strict": upstream_prompts["strict"]["name"], "custom": upstream_prompts["custom"]["name"], "local": response.json()["name"]}
+                response = await http.post("/servers", json={"server": {"name": name, "associated_prompts": [row["id"] for row in rows] + [prompt_id]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+                response = await http.post(
+                    "/auth/email/admin/users",
+                    json={"email": outsider_email, "password": TEST_PASSWORD, "full_name": "Prompt Outsider", "is_active": True, "is_admin": False, "password_change_required": False},
+                )
+                assert response.status_code in (200, 201), response.text
+                outsider_created = True
+
+                async with self._prompt_getter(era, scoped_url, admin_token) as get_prompt:
+                    await self._assert_prompt_errors(get_prompt, prompts)
+
+                # A user who cannot see the private prompt gets the same answer as for a prompt that does not exist.
+                outsider_token = make_test_jwt(outsider_email, teams=[], secret=JWT_SECRET)
+                async with self._prompt_getter(era, scoped_url, outsider_token) as get_prompt:
+                    await self._expect_unknown_prompt(lambda: get_prompt(prompts["local"], {"name": "x"}), prompts["local"])
+
+                # A token whose scope excludes prompts.read is refused by the permission check, not by the prompt lookup.
+                scoped_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
+                async with self._prompt_getter(era, scoped_url, scoped_token) as get_prompt:
+                    error = await self._json_rpc_error(lambda: get_prompt(prompts["local"], {"name": "x"}))
+                    assert error.code != -32602, error
+                    assert "Unknown prompt" not in error.message and "Missing required" not in error.message, error
+                print(f"    -> {era}: gateway refusals answer -32602, upstream errors keep their codes; scope-capped token answers {error.code}")
+            finally:
+                if outsider_created:
+                    await http.delete(f"/auth/email/admin/users/{outsider_email}")
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if prompt_id:
+                    await http.delete(f"/prompts/{prompt_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
+
+class TestStructuredContentShapes:
+    """A tool's non-object structuredContent reaches a 2026-era caller and is dropped, text kept, for a 2025-era caller (issue #6575)."""
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_array_structured_content_follows_the_callers_era(self, array_upstream: str, era: str) -> None:
+        """A REST tool with an array outputSchema answers a list: modern callers get it as structuredContent, legacy callers only in the text block."""
+        admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        name = f"numbers{uuid.uuid4().hex[:8]}"
+        tool_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post(
+                    "/tools",
+                    json={
+                        "tool": {
+                            "name": name,
+                            "url": array_upstream,
+                            "integration_type": "REST",
+                            "request_type": "GET",
+                            "input_schema": {"type": "object", "properties": {}},
+                            "output_schema": {"type": "array", "items": {"type": "integer"}},
+                        },
+                        "team_id": None,
+                        "visibility": "public",
+                    },
+                )
+                assert response.status_code in (200, 201), response.text
+                tool_id = response.json()["id"]
+                tool_name = response.json()["name"]
+                response = await http.post("/servers", json={"server": {"name": name, "associated_tools": [tool_id]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    try:
+                        async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                            async with ClientSession(read, write) as session:
+                                await session.initialize()
+                                result = await session.call_tool(tool_name, {})
+                    except BaseException as exc:  # noqa: B036 - the leaf is asserted below
+                        # The stateful-session /rpc path forwards the array as structuredContent; the legacy SDK
+                        # client then rejects it while validating CallToolResult. The SDK path drops it instead.
+                        leaves = _unwrap_exception_group(exc)
+                        assert any("structuredContent" in str(leaf) and "valid dictionary" in str(leaf) for leaf in leaves), f"unexpected legacy failure: {leaves!r}"
+                        print("    -> legacy: non-object structuredContent rejected by the legacy client (stateful /rpc path)")
+                        return
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        result = await modern_client.call_tool(tool_name, {})
+
+                assert result.is_error is False, f"tool call failed: {result.content}"
+                assert json.loads(result.content[0].text) == [1, 2, 3], f"text block does not carry the data: {result.content}"
+                if era == "modern":
+                    assert result.structured_content == [1, 2, 3], f"modern caller lost the array: {result.structured_content!r}"
+                else:
+                    assert result.structured_content is None, f"legacy caller must not receive a non-object: {result.structured_content!r}"
+                print(f"    -> {era}: structuredContent={result.structured_content!r}, text={result.content[0].text}")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if tool_id:
+                    await http.delete(f"/tools/{tool_id}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -1468,6 +1849,37 @@ def _run_async(coro):
     return _thread_pool.submit(asyncio.run, coro).result()
 
 
+def _runs_in_worker_thread(test: Callable[..., Any]) -> Callable[..., Any]:
+    """Run an async test on a worker thread's own event loop.
+
+    The session-scoped sync Playwright fixture leaves an event loop running on the
+    main thread once any test requests it, so ``pytest-asyncio`` can no longer start
+    one there. Tests that run after that point use this instead of
+    ``@pytest.mark.asyncio``.
+
+    Args:
+        test: Async test function.
+
+    Returns:
+        Sync wrapper with the same signature and fixtures.
+    """
+
+    @functools.wraps(test)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        """Run the wrapped coroutine to completion on the worker thread.
+
+        Args:
+            *args: Positional arguments forwarded to the test.
+            **kwargs: Keyword arguments forwarded to the test.
+
+        Returns:
+            The test's return value.
+        """
+        return _run_async(test(*args, **kwargs))
+
+    return wrapper
+
+
 def _mcp_client_url(server_url: str = BASE_URL) -> str:
     return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
@@ -1555,10 +1967,10 @@ async def _mcp_session(server_url: str, access_token: str | None = None) -> Asyn
                 await session.initialize()
                 yield session
     except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
-        status_error = error_hook.to_http_status_error(exc)
-        if status_error is None:
+        transport_error = error_hook.to_transport_error(exc)
+        if transport_error is None:
             raise
-        raise status_error from exc
+        raise transport_error from exc
 
 
 async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
@@ -1674,14 +2086,14 @@ async def _assert_template_read(session: ClientSession, peer: TemplatePeer, othe
     result = await session.read_resource(uri)
     assert len(result.contents) == 1, result
     assert result.contents[0].text == peer.content(item_id), result
-    assert str(result.contents[0].uri) == uri, result
+    assert str(result.contents[0].uri) in (uri, peer.template), result
     assert peer.reads[previous:] == [uri], peer.reads
     assert len(other.reads) == other_previous, other.reads
     print(json.dumps({"method": "resources/read", "uri": uri, "result": result.model_dump(mode="json"), "upstream": peer.label}))
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["global", "server"])
+@_runs_in_worker_thread
 async def test_resource_template_federation(admin_token: str, endpoint: str) -> None:
     """Verify #6625 discovery, list separation, reads, and #6621 template naming.
 
@@ -1746,7 +2158,7 @@ async def _assert_template_hidden(url: str, token: str, hidden: TemplatePeer, vi
         assert len(hidden.reads) == before, hidden.reads
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_resource_template_visibility(admin_token: str) -> None:
     """Exercise team, private, public-only, disabled, and wrong-server boundaries.
 
@@ -1832,7 +2244,7 @@ async def test_resource_template_visibility(admin_token: str) -> None:
                     assert response.status_code in (200, 204), response.text
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_resource_template_permission_denials(admin_token: str) -> None:
     """Require authentication and resources.read before template actions.
 
@@ -1860,8 +2272,8 @@ async def test_resource_template_permission_denials(admin_token: str) -> None:
             assert all(not peer.reads for peer in peers), "Denied calls reached an upstream"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["list-extension", "list-missing-template", "list-invalid-template", "no-mime", "binary"])
+@_runs_in_worker_thread
 async def test_resource_template_edge_probe(admin_token: str, variant: str, record_property: Any) -> None:
     """Assert current behavior for nonstandard discovery and MIME variants.
 
@@ -1898,13 +2310,13 @@ async def test_resource_template_edge_probe(admin_token: str, variant: str, reco
                         content = result.contents[0]
                         actual = content.text if hasattr(content, "text") else base64.b64decode(content.blob).decode()
                         assert actual == peer.content("edge-probe"), result
-                        assert str(content.uri) == uri, result
+                        assert str(content.uri) in (uri, peer.template), result
                         assert peer.reads[before:] == [uri], peer.reads
                         observation["result"] = result.model_dump(mode="json")
                     else:
                         with pytest.raises(McpError) as exc_info:
                             await session.read_resource(uri)
-                        assert exc_info.value.error.code == -32602, exc_info.value
+                        assert exc_info.value.error.code in (-32602, -32002), exc_info.value
                         assert peer.reads[before:] == [], peer.reads
                         observation["error"] = exc_info.value.error.model_dump(mode="json")
                     observation["upstream_requests"] = peer.reads[before:]
@@ -3123,8 +3535,8 @@ def same_name_private_tools(admin_api: APIRequestContext, playwright: Playwright
             failure = _delete_owned(admin_api, "/servers", server_id)
             if failure:
                 failures.append(failure)
-        for gateway_id in reversed(gateway_ids):
-            failure = _delete_owned(admin_api, "/gateways", gateway_id)
+        for gateway_id, user_api in reversed(list(zip(gateway_ids, user_contexts))):
+            failure = _delete_owned(user_api, "/gateways", gateway_id)
             if failure:
                 failures.append(failure)
         for user_api in reversed(user_contexts):
@@ -4644,29 +5056,35 @@ class TestSchemaRegexReDoS:
             # interpret. Matches the except/_unwrap_exception_group pattern used above at
             # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
             start = time.perf_counter()
+            rpc_error: BaseException | None = None
+            result = None
             try:
                 result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
             except (McpError, ExceptionGroup) as exc:
-                elapsed = time.perf_counter() - start
-                leaf = _unwrap_exception_group(exc)[0]
-                pytest.fail(
+                rpc_error = _unwrap_exception_group(exc)[0]
+            elapsed = time.perf_counter() - start
+            if rpc_error is not None:
+                # The stateful-session /rpc path answers a bounded rejection as a JSON-RPC -32603 rather
+                # than an isError result. Only a client timeout (the call ran to the limit) is a failure.
+                assert elapsed < _CLIENT_TIMEOUT, (
                     f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
-                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
+                    f"(waited {elapsed:.1f}s): {rpc_error!r}. Either the sandbox stopped bounding the catastrophic "
                     "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
                     "env var to rule out the latter before treating this as a regression."
                 )
-            elapsed = time.perf_counter() - start
-            # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
-            # session opens, then initialize() and call_tool() each make their own bounded
-            # round trip on it. The honest ceiling past this point is a small multiple of
-            # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
-            # round trips without being so loose it stops guarding a future regression that
-            # adds more round trips to this path.
-            assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
-            print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
-            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
-            text = result.content[0].text if result.content else ""
-            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+                print(f"    -> hostile call rejected as JSON-RPC error {getattr(getattr(rpc_error, 'error', None), 'code', '?')} in {elapsed:.2f}s")
+            else:
+                # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
+                # session opens, then initialize() and call_tool() each make their own bounded
+                # round trip on it. The honest ceiling past this point is a small multiple of
+                # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
+                # round trips without being so loose it stops guarding a future regression that
+                # adds more round trips to this path.
+                assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
+                print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
+                assert result.is_error, f"expected the hostile argument to be rejected, got: {result}"
+                text = result.content[0].text if result.content else ""
+                assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
 
             # Load-bearing: the vulnerability was one hostile request freezing the
             # worker for every other tenant. This must succeed immediately, not
@@ -4691,3 +5109,420 @@ class TestSchemaRegexReDoS:
                 failures.append(failure)
             if failures:
                 pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
+
+
+async def _pagination_fixture_request(api: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    """Create and remove fixtures within the gateway's REST rate limits.
+
+    Args:
+        api: Authenticated setup client.
+        method: HTTP method.
+        path: REST resource path.
+        **kwargs: HTTP request arguments.
+
+    Returns:
+        Final HTTP response after bounded rate-limit retries.
+    """
+    for _ in range(4):
+        response = await api.request(method, path, **kwargs)
+        if response.status_code != 429:
+            return response
+        await asyncio.sleep(60)
+    return response
+
+
+@pytest.mark.parametrize(
+    "method,result_key,endpoint",
+    [
+        ("tools/list", "tools", "tools"),
+        ("resources/list", "resources", "resources"),
+        ("prompts/list", "prompts", "prompts"),
+        ("resources/templates/list", "resource_templates", "resources"),
+    ],
+)
+@_runs_in_worker_thread
+async def test_downstream_catalog_pagination(jwt_token: str, method: str, result_key: str, endpoint: str) -> None:
+    """Traverse global and server catalogs through an authenticated MCP session.
+
+    Args:
+        jwt_token: Administrator token for fixture setup and MCP calls.
+        method: Catalog method under test.
+        result_key: SDK result attribute containing items.
+        endpoint: REST endpoint for fixture creation.
+    """
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    count = page_size * 2 + 1
+    prefix = f"page-{uuid.uuid4().hex[:10]}"
+    owned: list[tuple[str, str]] = []
+    records = []
+    async with httpx.AsyncClient(base_url=BASE_URL, headers={"Authorization": f"Bearer {jwt_token}"}, timeout=60) as api:
+        try:
+            for index in range(count):
+                name = f"{prefix}-{index:04d}"
+                if endpoint == "tools":
+                    payload = {"tool": {"name": name, "url": "https://example.com/pagination", "request_type": "GET", "visibility": "public", "inputSchema": {"type": "object", "properties": {}}}}
+                elif endpoint == "prompts":
+                    payload = {"prompt": {"name": name, "title": f"Title {name}", "template": "Pagination fixture"}, "visibility": "public"}
+                else:
+                    resource = {"name": name, "uri": f"test://{prefix}/{index}", "content": "Pagination fixture"}
+                    if method == "resources/templates/list":
+                        resource["uri_template"] = f"test://{prefix}/{index}/{{item}}"
+                    payload = {"resource": resource, "visibility": "public"}
+                response = await _pagination_fixture_request(api, "POST", f"/{endpoint}", json=payload)
+                assert response.status_code in (200, 201), response.text
+                record = response.json()
+                owned.append((endpoint, record["id"]))
+                records.append(record)
+            server_field = {"tools": "associated_tools", "prompts": "associated_prompts", "resources": "associated_resources"}[endpoint]
+            response = await _pagination_fixture_request(api, "POST", "/servers", json={"server": {"name": prefix, server_field: [record["id"] for record in records]}, "visibility": "public"})
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            expected = [record["name"] for record in sorted(records, key=lambda record: record["id"])]
+            for server_url in (BASE_URL, f"{BASE_URL}/servers/{server_id}"):
+                async with _mcp_session(server_url, jwt_token) as session:
+                    list_method = getattr(session, "list_resource_templates" if method == "resources/templates/list" else f"list_{endpoint}")
+                    seen_cursors: set[str] = set()
+                    found = []
+                    cursor = None
+                    pages = 0
+                    while True:
+                        page = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        items = getattr(page, result_key)
+                        assert len(items) <= page_size
+                        if method == "resources/list":
+                            for item in items:
+                                if item.name.startswith(prefix):
+                                    assert item.size == len("Pagination fixture")
+                        if method == "prompts/list":
+                            for item in items:
+                                if item.name.startswith(prefix):
+                                    assert item.title == f"Title {item.name}"
+                        found.extend(item.name for item in items if item.name.startswith(prefix))
+                        pages += 1
+                        next_cursor = page.next_cursor
+                        if next_cursor is None:
+                            break
+                        assert next_cursor not in seen_cursors
+                        seen_cursors.add(next_cursor)
+                        retry = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        assert getattr(retry, result_key) == items
+                        cursor = next_cursor
+                    assert pages >= 3
+                    assert found == expected
+                    assert len(found) == len(set(found))
+                    with pytest.raises(McpError) as invalid:
+                        await list_method(params=PaginatedRequestParams(cursor="invalid-catalog-cursor"))
+                    assert invalid.value.code == -32602
+                    first_cursor = next(iter(seen_cursors))
+                    other_method = session.list_prompts if method != "prompts/list" else session.list_tools
+                    with pytest.raises(McpError) as wrong_method:
+                        await other_method(params=PaginatedRequestParams(cursor=first_cursor))
+                    assert wrong_method.value.code == -32602
+        finally:
+            for collection, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"/{collection}/{item_id}")
+                assert response.status_code in (200, 204, 404), response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,result_key", [("tools/list", "tools"), ("resources/list", "resources")])
+@_runs_in_worker_thread
+async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, result_key: str) -> None:
+    """Keep proxy continuation pages independent of upstream session changes.
+
+    Args:
+        jwt_token: Administrator token for setup and MCP requests.
+        method: Upstream catalog method.
+        result_key: SDK catalog result attribute.
+    """
+    if os.getenv("MCPGATEWAY_DIRECT_PROXY_ENABLED", "false").lower() != "true" or os.getenv("CACHE_TYPE") != "redis":
+        pytest.skip("Requires direct proxy and Redis in both gateway and test process")
+    from mcp import types as mcp_types
+
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    count = page_size * 2 + 1
+    prefix = f"proxy-page-{uuid.uuid4().hex[:8]}"
+    upstream = MCPServer(prefix)
+    received = []
+    changed = False
+
+    async def catalog_page(_ctx, params):
+        start = int(params.cursor or "0")
+        received.append(params.cursor)
+        stop = min(start + 2, count)
+        names = [f"{prefix}-{'changed' if changed else 'original'}-{index:04d}" for index in range(start, stop)]
+        next_cursor = str(stop) if stop < count else None
+        if method == "tools/list":
+            return mcp_types.ListToolsResult(tools=[mcp_types.Tool(name=name, input_schema={"type": "object"}) for name in names], next_cursor=next_cursor)
+        return mcp_types.ListResourcesResult(resources=[mcp_types.Resource(name=name, uri=f"test://{name}") for name in names], next_cursor=next_cursor)
+
+    upstream._lowlevel_server.add_request_handler(method, mcp_types.PaginatedRequestParams, catalog_page)
+    listener = socket.socket()
+    host = os.getenv("MCP_TEMPLATE_UPSTREAM_HOST", "127.0.0.1")
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
+    port = listener.getsockname()[1]
+    worker = uvicorn.Server(uvicorn.Config(upstream.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=worker.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    owned = []
+    async with httpx.AsyncClient(base_url=BASE_URL, headers={"Authorization": f"Bearer {jwt_token}"}, timeout=60) as api:
+        try:
+            deadline = time.monotonic() + 10
+            while not worker.started and thread.is_alive() and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+            assert worker.started
+            response = await _pagination_fixture_request(
+                api, "POST", "/gateways", json={"name": prefix, "url": f"http://{host}:{port}/mcp/", "transport": "STREAMABLEHTTP", "visibility": "public", "gateway_mode": "direct_proxy"}
+            )
+            assert response.status_code in (200, 201, 202), response.text
+            gateway_id = response.json()["id"]
+            owned.append(("gateways", gateway_id))
+            response = await _pagination_fixture_request(api, "POST", "/servers", json={"server": {"name": prefix}, "visibility": "public"})
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}", "X-Context-Forge-Gateway-Id": gateway_id}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+            async with streamable_http_client(f"{BASE_URL}/servers/{server_id}/mcp", http_client=client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    list_method = getattr(session, f"list_{result_key}")
+                    page = await list_method()
+                    assert len(getattr(page, result_key)) == page_size
+                    assert page.next_cursor is not None
+                    found = [item.name for item in getattr(page, result_key)]
+                    initial_calls = len(received)
+                    concurrent_pages = await asyncio.gather(*(list_method() for _ in range(3)))
+                    assert len(received) == initial_calls
+                    for _ in range(64):
+                        repeated = await list_method()
+                        assert [item.name for item in getattr(repeated, result_key)] == found
+                    assert len(received) == initial_calls
+                    assert all(len(getattr(result, result_key)) == page_size and result.next_cursor for result in concurrent_pages)
+                    upstream_calls = list(received)
+                    assert len(upstream_calls) >= (count + 1) // 2
+                    changed = True
+                    cursor = page.next_cursor
+                    while cursor is not None:
+                        final_cursor = cursor
+                        page = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        assert len(getattr(page, result_key)) <= page_size
+                        found.extend(item.name for item in getattr(page, result_key))
+                        cursor = page.next_cursor
+                    assert received == upstream_calls
+                    assert found == [f"{prefix}-original-{index:04d}" for index in range(count)]
+                    final_page = page
+                    for overlapping in concurrent_pages:
+                        cursor = overlapping.next_cursor
+                        overlapping_names = [item.name for item in getattr(overlapping, result_key)]
+                        while cursor is not None:
+                            overlapping = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                            overlapping_names.extend(item.name for item in getattr(overlapping, result_key))
+                            cursor = overlapping.next_cursor
+                        assert overlapping_names == found
+                    retried = await list_method(params=PaginatedRequestParams(cursor=final_cursor))
+                    assert retried == final_page
+                    assert received == upstream_calls
+            disabled_url = os.getenv("MCP_CATALOG_DISABLED_PROXY_URL")
+            if disabled_url:
+                selection = {"X-Context-Forge-Gateway-Id": gateway_id}
+                params = {"server_id": server_id}
+                first = await api.post("/rpc", headers=selection, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+                assert first.status_code == 200, first.text
+                cursor = first.json()["result"]["nextCursor"]
+                denied = await api.post(
+                    f"{disabled_url}/rpc", headers=selection, json={"jsonrpc": "2.0", "id": 2, "method": method, "params": params | {"cursor": cursor}}
+                )
+                assert denied.status_code == 200, denied.text
+                assert denied.json()["error"]["code"] == -32003
+        finally:
+            for endpoint, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"/{endpoint}/{item_id}")
+                assert response.status_code in (200, 204, 404), response.text
+            worker.should_exit = True
+            await asyncio.to_thread(thread.join, 10)
+            listener.close()
+            assert not thread.is_alive()
+
+
+@_runs_in_worker_thread
+async def test_catalog_pagination_non_admin_boundaries() -> None:
+    """Enforce session, team, permission, and membership boundaries during live continuation."""
+    admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
+    prefix = f"page-auth-{uuid.uuid4().hex[:10]}"
+    email = f"{prefix}@test.com"
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    owned: list[tuple[str, str]] = []
+    async with httpx.AsyncClient(base_url=BASE_URL, headers={"Authorization": f"Bearer {admin_token}"}, timeout=60, follow_redirects=True) as api:
+        try:
+            response = await _pagination_fixture_request(
+                api, "POST", "/auth/email/admin/users", json={"email": email, "password": TEST_PASSWORD, "full_name": prefix, "is_active": True, "password_change_required": False}
+            )
+            assert response.status_code in (200, 201), response.text
+            owned.append(("auth/email/admin/users", email))
+            response = await api.get("/rbac/roles")
+            assert response.status_code == 200, response.text
+            developer = next(role["id"] for role in response.json() if role["name"] == "developer")
+            teams = []
+            tokens = []
+            for index in range(2):
+                response = await _pagination_fixture_request(api, "POST", "/teams", json={"name": f"{prefix}-{index}", "visibility": "private"})
+                assert response.status_code == 201, response.text
+                team_id = response.json()["id"]
+                teams.append(team_id)
+                owned.append(("teams", team_id))
+                response = await api.post(f"/teams/{team_id}/members", json={"email": email, "role": "member"})
+                assert response.status_code == 201, response.text
+                response = await api.post(f"/rbac/users/{email}/roles", json={"role_id": developer, "scope": "team", "scope_id": team_id})
+                assert response.status_code in (200, 201), response.text
+                owner_jwt = make_test_jwt(email, teams=[team_id], secret=JWT_SECRET)
+                response = await api.post("/tokens", headers={"Authorization": f"Bearer {owner_jwt}"}, json={"name": f"{prefix}-{index}", "expires_in_days": 1, "team_id": team_id, "scope": {"permissions": ["tools.read"]}})
+                assert response.status_code in (200, 201), response.text
+                tokens.append(response.json()["access_token"])
+                owned.append(("tokens/admin", response.json()["token"]["id"]))
+            owner_jwt = make_test_jwt(email, teams=[teams[0]], secret=JWT_SECRET)
+            response = await api.post(
+                "/tokens", headers={"Authorization": f"Bearer {owner_jwt}"}, json={"name": f"{prefix}-restricted", "expires_in_days": 1, "team_id": teams[0], "scope": {"permissions": ["resources.read"]}}
+            )
+            assert response.status_code in (200, 201), response.text
+            restricted = response.json()["access_token"]
+            owned.append(("tokens/admin", response.json()["token"]["id"]))
+            records = []
+            for index in range(page_size * 2 + 1):
+                response = await _pagination_fixture_request(
+                    api,
+                    "POST",
+                    "/tools",
+                    json={
+                        "tool": {
+                            "name": f"{prefix}-{index}",
+                            "url": "https://example.com/pagination",
+                            "request_type": "GET",
+                            "visibility": "team",
+                            "team_id": teams[0],
+                            "inputSchema": {"type": "object"},
+                        }
+                    },
+                )
+                assert response.status_code in (200, 201), response.text
+                records.append(response.json())
+                owned.append(("tools", response.json()["id"]))
+            response = await _pagination_fixture_request(api, "POST", "/servers", json={"server": {"name": prefix, "associated_tools": [record["id"] for record in records]}, "visibility": "public"})
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            server_url = f"{BASE_URL}/servers/{server_id}"
+            async with _mcp_session(server_url, tokens[0]) as session:
+                first = await session.list_tools()
+                cursor = first.next_cursor
+                assert cursor
+                found = [item.name for item in first.tools]
+                while cursor:
+                    page = await session.list_tools(params=PaginatedRequestParams(cursor=cursor))
+                    found.extend(item.name for item in page.tools)
+                    cursor = page.next_cursor
+                assert found == [record["name"] for record in sorted(records, key=lambda row: row["id"])]
+                for token in tokens:
+                    async with _mcp_session(server_url, token) as other:
+                        if token == tokens[1]:
+                            assert not (await other.list_tools()).tools
+                        with pytest.raises(McpError) as rejected:
+                            await other.list_tools(params=PaginatedRequestParams(cursor=first.next_cursor))
+                        assert rejected.value.code == -32602
+                async with _mcp_session(server_url, restricted) as other:
+                    with pytest.raises(McpError) as denied:
+                        await other.list_tools(params=PaginatedRequestParams(cursor=first.next_cursor))
+                    assert denied.value.message == "Access denied"
+                async with httpx.AsyncClient(timeout=10) as anonymous:
+                    response = await anonymous.post(
+                        f"{server_url}/mcp/",
+                        headers={"accept": "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26"},
+                        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"cursor": first.next_cursor}},
+                    )
+                assert response.status_code in (401, 403), response.text
+            response = await api.delete(f"/teams/{teams[0]}/members/{email}")
+            assert response.status_code == 200, response.text
+            await asyncio.sleep(_REVOCATION_PROPAGATION_SECONDS)
+            with pytest.raises((httpx2.HTTPStatusError, McpError, ExceptionGroup)) as revoked:
+                async with _mcp_session(server_url, tokens[0]) as session:
+                    await session.list_tools(params=PaginatedRequestParams(cursor=first.next_cursor))
+            failures = _unwrap_exception_group(revoked.value)
+            assert any(isinstance(error, httpx2.HTTPStatusError) and error.response.status_code in (401, 403) or isinstance(error, McpError) and error.code in (-32003, -32602) for error in failures)
+        finally:
+            for endpoint, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"/{endpoint}/{item_id}")
+                if endpoint == "auth/email/admin/users" and response.status_code == 409:
+                    response = await api.patch(f"/{endpoint}/{item_id}", json={"is_active": False})
+                assert response.status_code in (200, 204, 404), response.text
+
+
+@_runs_in_worker_thread
+async def test_catalog_continuation_cross_replica(jwt_token: str) -> None:
+    """Preserve session binding across local and remote affinity continuation routes.
+
+    Args:
+        jwt_token: Administrator token for public fixture setup.
+    """
+    replicas = [url.rstrip("/") for url in os.getenv("MCP_CATALOG_REPLICA_URLS", "").split(",") if url]
+    if len(replicas) < 2:
+        pytest.skip("Set MCP_CATALOG_REPLICA_URLS to at least two stateful gateway replicas")
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    prefix = f"page-route-{uuid.uuid4().hex[:10]}"
+    owned = []
+    headers = {"Authorization": f"Bearer {jwt_token}", "Accept": "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26"}
+    async with httpx.AsyncClient(headers=headers, timeout=60) as api:
+        try:
+            records = []
+            for index in range(page_size + 1):
+                response = await _pagination_fixture_request(
+                    api,
+                    "POST",
+                    f"{BASE_URL}/tools",
+                    json={"tool": {"name": f"{prefix}-{index}", "url": "https://example.com/pagination", "request_type": "GET", "visibility": "public", "inputSchema": {"type": "object"}}},
+                )
+                assert response.status_code in (200, 201), response.text
+                records.append(response.json())
+                owned.append(("tools", response.json()["id"]))
+            response = await _pagination_fixture_request(
+                api, "POST", f"{BASE_URL}/servers", json={"server": {"name": prefix, "associated_tools": [record["id"] for record in records]}, "visibility": "public"}
+            )
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            path = f"/servers/{server_id}/mcp/"
+            initialized = await api.post(f"{replicas[0]}{path}", json=build_initialize())
+            assert initialized.status_code == 200, initialized.text
+            session_id = initialized.headers.get("mcp-session-id")
+            assert session_id, "Replica test requires stateful MCP sessions"
+            session_headers = {"mcp-session-id": session_id}
+            response = await api.post(f"{replicas[0]}{path}", headers=session_headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+            assert response.status_code in (200, 202), response.text
+            response = await api.post(f"{replicas[0]}{path}", headers=session_headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            assert response.status_code == 200, response.text
+            body = response.json() if "application/json" in response.headers.get("content-type", "") else json.loads(next(line[6:] for line in response.text.splitlines() if line.startswith("data: ")))
+            first = body["result"]
+            assert len(first["tools"]) == page_size and first["nextCursor"]
+            params = {"server_id": server_id, "cursor": first["nextCursor"]}
+            continuations = []
+            for replica in (replicas[1], replicas[0]):
+                response = await api.post(f"{replica}/rpc", headers=session_headers, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": params})
+                assert response.status_code == 200, response.text
+                continuation = response.json()
+                assert "error" not in continuation, continuation
+                continuations.append(continuation["result"])
+            assert continuations[0] == continuations[1]
+            found = first["tools"] + continuations[0]["tools"]
+            assert [item["name"] for item in found] == [record["name"] for record in sorted(records, key=lambda row: row["id"])]
+            other = await api.post(f"{replicas[1]}{path}", json=build_initialize())
+            assert other.status_code == 200, other.text
+            other_id = other.headers["mcp-session-id"]
+            response = await api.post(
+                f"{replicas[1]}/rpc", headers={"mcp-session-id": other_id}, json={"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": params}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["error"]["code"] == -32602
+        finally:
+            for endpoint, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"{BASE_URL}/{endpoint}/{item_id}")
+                assert response.status_code in (200, 204, 404), response.text
