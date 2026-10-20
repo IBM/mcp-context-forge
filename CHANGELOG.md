@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-19 - Modern MCP Protocol, Federated Completions, and Catalog Pagination
+## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
 
@@ -58,6 +58,45 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 - **`make testing-up` web UI URL** ([#6415](https://github.com/IBM/mcp-context-forge/pull/6415)) - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 - **Pinned-resource load test** ([#6984](https://github.com/IBM/mcp-context-forge/pull/6984)) - Added a pinned-resource performance benchmark stack and run history to the load test suite.
 - **`mcp-servers/` directory removed** ([#7078](https://github.com/IBM/mcp-context-forge/pull/7078)) - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
+
+#### **ContextForge Web UI**
+
+- **New Web UI v0.2.4** ([release notes](https://github.com/contextforge-org/contextforge-web-ui/releases/tag/v0.2.4)) - Introduces a redesigned, more user-friendly interface for ContextForge, separate from the built-in Admin UI. The Web UI runs as a separate application and targets ContextForge API v1.1.0.
+
+- **Docker Compose startup** - From a configured gateway checkout, start the `ui` profile:
+
+  ```bash
+  make compose-pull PROFILE="--profile ui"
+  make compose-up PROFILE="--profile ui"
+  ```
+
+  `PROFILE` replaces the Makefile's default profiles. On `linux/amd64`, use `PROFILE="--profile with-fast-time --profile ui"` in both commands to retain the default fast-time service.
+
+  Open [http://localhost:3001](http://localhost:3001), or the port configured through `WEB_UI_PORT`. Compose starts the gateway, Web UI v0.2.4, and dedicated UI Redis session store. The UI connects to `http://gateway:4444` inside the Compose network.
+
+- **Separate npm startup** - Install Node.js 22.22.1 or later and npm. Configure the gateway's `.env` and generate required secrets with `make setup` before the first run. For an existing `.env`, use `make init-secrets-patch-env` to replace weak or placeholder secrets. Start the configured gateway in one terminal:
+
+  ```bash
+  make dev
+  ```
+
+  In another terminal, clone the UI release and install both frontend and BFF dependencies:
+
+  ```bash
+  git clone --branch v0.2.4 --depth 1 https://github.com/contextforge-org/contextforge-web-ui.git
+  cd contextforge-web-ui
+  cp .env.example .env
+  npm install
+  npm install --prefix server
+  ```
+
+  Set `CONTEXTFORGE_URL=http://localhost:8000`, `COOKIE_SECURE=false`, and `PORT=3000` in the UI's `.env` for local HTTP. Adjust `CONTEXTFORGE_URL` to the gateway's actual address and port. Leave `REDIS_URL` unset to use the in-process development session store; sessions reset when the BFF restarts.
+
+  ```bash
+  npm run dev:all
+  ```
+
+  Open [http://localhost:3000](http://localhost:3000). This command starts the BFF and Vite frontend together. Access the UI through the BFF on port 3000, which proxies frontend requests to Vite on port 5173. See the [v0.2.4 setup guide](https://github.com/contextforge-org/contextforge-web-ui/blob/v0.2.4/README.md#getting-started) for configuration details.
 
 ### Breaking Changes
 
