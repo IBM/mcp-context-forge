@@ -27,7 +27,7 @@
 
 It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
-![ContextForge](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
+![ContextForge Web UI](docs/docs/images/mcpgateway.gif)
 ---
 
 <!-- vscode-markdown-toc -->
