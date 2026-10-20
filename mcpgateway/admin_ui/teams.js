@@ -691,6 +691,16 @@ export const hideTeamEditModal = function () {
   if (content) content.innerHTML = "";
 };
 
+// Enable/disable the max_members input from the "Use global default" checkbox
+// (data-action-change; replaces an inline onchange blocked by CSP/innerHTML guard).
+export const toggleUseDefaultMaxMembers = function (checked, event) {
+  const form = event?.target?.closest("form");
+  const input = form?.querySelector('input[name="max_members"]');
+  if (!input) return;
+  input.disabled = checked;
+  if (checked) input.value = "";
+};
+
 // Team member management functions
 export const showAddMemberForm = function (teamId) {
   const form = safeGetElement("add-member-form-" + teamId);

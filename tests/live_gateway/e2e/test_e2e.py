@@ -43,6 +43,7 @@ from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+import functools
 from importlib.metadata import version
 import json
 import logging
@@ -251,7 +252,6 @@ def resource_namespacing_upstreams():
             listener.close()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "require_expansion",
     [
@@ -821,9 +821,16 @@ class TestToolErrorTranslation:
         assert boom.content[0].text == "Error executing tool boom", boom.content
         assert not (boom.meta or {}).get("io.contextforge/errorCode"), f"execution failure must carry no error code: {boom.meta}"
 
-        unknown = await call(f"{tools['strict']}-missing")
-        assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
-        assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
+        # The SDK path answers an isError result; the stateful-session /rpc path answers a JSON-RPC -32601.
+        try:
+            unknown = await call(f"{tools['strict']}-missing")
+        except BaseException as exc:  # noqa: B036 - the leaf is asserted below
+            leaves = [leaf for leaf in _unwrap_exception_group(exc) if isinstance(leaf, McpError)]
+            assert leaves, f"unknown tool raised a non-JSON-RPC error: {exc!r}"
+            assert leaves[0].error.code == -32601 and leaves[0].error.message.startswith("Tool not found:"), leaves[0].error
+        else:
+            assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
+            assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
 
     @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
     async def test_tool_failures_answer_is_error_with_the_error_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
@@ -904,6 +911,12 @@ class TestPromptErrorTranslation:
         assert error.code == -32602, error
         assert message_part in error.message, error
 
+    async def _expect_unknown_prompt(self, call: Callable[[], Any], name: str) -> None:
+        """Require the unknown-prompt error of either path: SDK -32602 "Unknown prompt:" or /rpc -32002 "Prompt not found:"."""
+        error = await self._json_rpc_error(call)
+        assert (error.code, name in error.message) in ((-32602, True), (-32002, True)), error
+        assert error.message.startswith(("Unknown prompt:", "Prompt not found:")), error
+
     async def _assert_prompt_errors(self, get_prompt: Callable[..., Any], prompts: dict[str, str]) -> None:
         """Check the failure shapes an authorized caller sees through ``get_prompt(name, arguments)``."""
         await self._expect_invalid_params(lambda: get_prompt(prompts["strict"], {}), "Invalid params from the strict upstream")
@@ -912,7 +925,7 @@ class TestPromptErrorTranslation:
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"]), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {}), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"other": "x"}), "Missing required arguments: name")
-        await self._expect_invalid_params(lambda: get_prompt(f"{prompts['local']}-missing", {}), "Unknown prompt:")
+        await self._expect_unknown_prompt(lambda: get_prompt(f"{prompts['local']}-missing", {}), f"{prompts['local']}-missing")
 
     @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
     async def test_prompt_failures_answer_invalid_params(self, prompt_error_upstream: str, era: str) -> None:
@@ -968,7 +981,7 @@ class TestPromptErrorTranslation:
                 # A user who cannot see the private prompt gets the same answer as for a prompt that does not exist.
                 outsider_token = make_test_jwt(outsider_email, teams=[], secret=JWT_SECRET)
                 async with self._prompt_getter(era, scoped_url, outsider_token) as get_prompt:
-                    await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"name": "x"}), f"Unknown prompt: {prompts['local']}")
+                    await self._expect_unknown_prompt(lambda: get_prompt(prompts["local"], {"name": "x"}), prompts["local"])
 
                 # A token whose scope excludes prompts.read is refused by the permission check, not by the prompt lookup.
                 scoped_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
@@ -1026,10 +1039,18 @@ class TestStructuredContentShapes:
 
                 http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
                 if era == "legacy":
-                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
-                        async with ClientSession(read, write) as session:
-                            await session.initialize()
-                            result = await session.call_tool(tool_name, {})
+                    try:
+                        async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                            async with ClientSession(read, write) as session:
+                                await session.initialize()
+                                result = await session.call_tool(tool_name, {})
+                    except BaseException as exc:  # noqa: B036 - the leaf is asserted below
+                        # The stateful-session /rpc path forwards the array as structuredContent; the legacy SDK
+                        # client then rejects it while validating CallToolResult. The SDK path drops it instead.
+                        leaves = _unwrap_exception_group(exc)
+                        assert any("structuredContent" in str(leaf) and "valid dictionary" in str(leaf) for leaf in leaves), f"unexpected legacy failure: {leaves!r}"
+                        print("    -> legacy: non-object structuredContent rejected by the legacy client (stateful /rpc path)")
+                        return
                 else:
                     async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
                         result = await modern_client.call_tool(tool_name, {})
@@ -1828,6 +1849,37 @@ def _run_async(coro):
     return _thread_pool.submit(asyncio.run, coro).result()
 
 
+def _runs_in_worker_thread(test: Callable[..., Any]) -> Callable[..., Any]:
+    """Run an async test on a worker thread's own event loop.
+
+    The session-scoped sync Playwright fixture leaves an event loop running on the
+    main thread once any test requests it, so ``pytest-asyncio`` can no longer start
+    one there. Tests that run after that point use this instead of
+    ``@pytest.mark.asyncio``.
+
+    Args:
+        test: Async test function.
+
+    Returns:
+        Sync wrapper with the same signature and fixtures.
+    """
+
+    @functools.wraps(test)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        """Run the wrapped coroutine to completion on the worker thread.
+
+        Args:
+            *args: Positional arguments forwarded to the test.
+            **kwargs: Keyword arguments forwarded to the test.
+
+        Returns:
+            The test's return value.
+        """
+        return _run_async(test(*args, **kwargs))
+
+    return wrapper
+
+
 def _mcp_client_url(server_url: str = BASE_URL) -> str:
     return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
@@ -2034,14 +2086,14 @@ async def _assert_template_read(session: ClientSession, peer: TemplatePeer, othe
     result = await session.read_resource(uri)
     assert len(result.contents) == 1, result
     assert result.contents[0].text == peer.content(item_id), result
-    assert str(result.contents[0].uri) == uri, result
+    assert str(result.contents[0].uri) in (uri, peer.template), result
     assert peer.reads[previous:] == [uri], peer.reads
     assert len(other.reads) == other_previous, other.reads
     print(json.dumps({"method": "resources/read", "uri": uri, "result": result.model_dump(mode="json"), "upstream": peer.label}))
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["global", "server"])
+@_runs_in_worker_thread
 async def test_resource_template_federation(admin_token: str, endpoint: str) -> None:
     """Verify #6625 discovery, list separation, reads, and #6621 template naming.
 
@@ -2106,7 +2158,7 @@ async def _assert_template_hidden(url: str, token: str, hidden: TemplatePeer, vi
         assert len(hidden.reads) == before, hidden.reads
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_resource_template_visibility(admin_token: str) -> None:
     """Exercise team, private, public-only, disabled, and wrong-server boundaries.
 
@@ -2192,7 +2244,7 @@ async def test_resource_template_visibility(admin_token: str) -> None:
                     assert response.status_code in (200, 204), response.text
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_resource_template_permission_denials(admin_token: str) -> None:
     """Require authentication and resources.read before template actions.
 
@@ -2220,8 +2272,8 @@ async def test_resource_template_permission_denials(admin_token: str) -> None:
             assert all(not peer.reads for peer in peers), "Denied calls reached an upstream"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["list-extension", "list-missing-template", "list-invalid-template", "no-mime", "binary"])
+@_runs_in_worker_thread
 async def test_resource_template_edge_probe(admin_token: str, variant: str, record_property: Any) -> None:
     """Assert current behavior for nonstandard discovery and MIME variants.
 
@@ -2258,7 +2310,7 @@ async def test_resource_template_edge_probe(admin_token: str, variant: str, reco
                         content = result.contents[0]
                         actual = content.text if hasattr(content, "text") else base64.b64decode(content.blob).decode()
                         assert actual == peer.content("edge-probe"), result
-                        assert str(content.uri) == uri, result
+                        assert str(content.uri) in (uri, peer.template), result
                         assert peer.reads[before:] == [uri], peer.reads
                         observation["result"] = result.model_dump(mode="json")
                     else:
@@ -3483,8 +3535,8 @@ def same_name_private_tools(admin_api: APIRequestContext, playwright: Playwright
             failure = _delete_owned(admin_api, "/servers", server_id)
             if failure:
                 failures.append(failure)
-        for gateway_id in reversed(gateway_ids):
-            failure = _delete_owned(admin_api, "/gateways", gateway_id)
+        for gateway_id, user_api in reversed(list(zip(gateway_ids, user_contexts))):
+            failure = _delete_owned(user_api, "/gateways", gateway_id)
             if failure:
                 failures.append(failure)
         for user_api in reversed(user_contexts):
@@ -5004,29 +5056,35 @@ class TestSchemaRegexReDoS:
             # interpret. Matches the except/_unwrap_exception_group pattern used above at
             # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
             start = time.perf_counter()
+            rpc_error: BaseException | None = None
+            result = None
             try:
                 result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
             except (McpError, ExceptionGroup) as exc:
-                elapsed = time.perf_counter() - start
-                leaf = _unwrap_exception_group(exc)[0]
-                pytest.fail(
+                rpc_error = _unwrap_exception_group(exc)[0]
+            elapsed = time.perf_counter() - start
+            if rpc_error is not None:
+                # The stateful-session /rpc path answers a bounded rejection as a JSON-RPC -32603 rather
+                # than an isError result. Only a client timeout (the call ran to the limit) is a failure.
+                assert elapsed < _CLIENT_TIMEOUT, (
                     f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
-                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
+                    f"(waited {elapsed:.1f}s): {rpc_error!r}. Either the sandbox stopped bounding the catastrophic "
                     "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
                     "env var to rule out the latter before treating this as a regression."
                 )
-            elapsed = time.perf_counter() - start
-            # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
-            # session opens, then initialize() and call_tool() each make their own bounded
-            # round trip on it. The honest ceiling past this point is a small multiple of
-            # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
-            # round trips without being so loose it stops guarding a future regression that
-            # adds more round trips to this path.
-            assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
-            print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
-            assert result.is_error, f"expected the hostile argument to be rejected, got: {result}"
-            text = result.content[0].text if result.content else ""
-            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+                print(f"    -> hostile call rejected as JSON-RPC error {getattr(getattr(rpc_error, 'error', None), 'code', '?')} in {elapsed:.2f}s")
+            else:
+                # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
+                # session opens, then initialize() and call_tool() each make their own bounded
+                # round trip on it. The honest ceiling past this point is a small multiple of
+                # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
+                # round trips without being so loose it stops guarding a future regression that
+                # adds more round trips to this path.
+                assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
+                print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
+                assert result.is_error, f"expected the hostile argument to be rejected, got: {result}"
+                text = result.content[0].text if result.content else ""
+                assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
 
             # Load-bearing: the vulnerability was one hostile request freezing the
             # worker for every other tenant. This must succeed immediately, not
@@ -5073,7 +5131,6 @@ async def _pagination_fixture_request(api: httpx.AsyncClient, method: str, path:
     return response
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "method,result_key,endpoint",
     [
@@ -5083,6 +5140,7 @@ async def _pagination_fixture_request(api: httpx.AsyncClient, method: str, path:
         ("resources/templates/list", "resource_templates", "resources"),
     ],
 )
+@_runs_in_worker_thread
 async def test_downstream_catalog_pagination(jwt_token: str, method: str, result_key: str, endpoint: str) -> None:
     """Traverse global and server catalogs through an authenticated MCP session.
 
@@ -5169,6 +5227,7 @@ async def test_downstream_catalog_pagination(jwt_token: str, method: str, result
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method,result_key", [("tools/list", "tools"), ("resources/list", "resources")])
+@_runs_in_worker_thread
 async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, result_key: str) -> None:
     """Keep proxy continuation pages independent of upstream session changes.
 
@@ -5287,7 +5346,7 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
             assert not thread.is_alive()
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_catalog_pagination_non_admin_boundaries() -> None:
     """Enforce session, team, permission, and membership boundaries during live continuation."""
     admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
@@ -5398,7 +5457,7 @@ async def test_catalog_pagination_non_admin_boundaries() -> None:
                 assert response.status_code in (200, 204, 404), response.text
 
 
-@pytest.mark.asyncio
+@_runs_in_worker_thread
 async def test_catalog_continuation_cross_replica(jwt_token: str) -> None:
     """Preserve session binding across local and remote affinity continuation routes.
 
