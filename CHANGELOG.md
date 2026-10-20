@@ -12,7 +12,7 @@
 
 ### Overview
 
-Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **federated completions**, **MCP catalog pagination**, **MCP Origin/Host transport security enforcement**, **federated gateway tool-name collision detection**, and **configuration import ownership enforcement**. It also removes deprecated anyio monkey-patch settings and the in-tree `mcp-servers/` directory. This release consolidates **61 PRs** across:
+Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **federated completions**, **MCP catalog pagination**, **MCP Origin/Host transport security enforcement**, **federated gateway tool-name collision detection**, and **configuration import ownership enforcement**. It also removes deprecated anyio monkey-patch settings and the in-tree `mcp-servers/` directory. This release consolidates **69 PRs** across:
 
 - **Protocol & Transport** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto`, inbound MCP era negotiation is complete, `completion/complete` is forwarded to the owning upstream, downstream MCP catalog lists are paginated, and federated resource names carry the gateway name as a prefix.
 - **Security & Auth** - Added `private_key_jwt` token endpoint client authentication, MCP Origin/Host enforcement, configuration import ownership enforcement, call-time URL scheme allowlisting, DCR outbound request pinning, and external IdP token fallback on all auth paths.
@@ -70,16 +70,19 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 ### Security
 
 - **Configuration import ownership enforcement** ([#7243](https://github.com/IBM/mcp-context-forge/pull/7243)) - `POST /v1/import` with `conflict_strategy=update` no longer overwrites tools, resources, prompts, or gateways that the importer does not own. Bulk registration now runs `check_resource_ownership()` before it modifies an existing row and reports `Permission denied` for rows the caller does not own. Bulk update without a caller identity changes nothing. The import call to `update_gateway()` now passes the importer identity. The `admin.import` routes use `global_only=True`, so a team-scoped role no longer satisfies them. The Admin UI import now passes the authenticated email as `imported_by`. Deployments that grant `admin.import` through a team-scoped role must move that grant to a global role.
-- **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
+- **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering the Python ingress path.
 - **A2A plugin header trust** ([#7157](https://github.com/IBM/mcp-context-forge/pull/7157)) - A2A pre-invoke plugins can supply credentials and custom headers without the agent caller-header allowlist. Plugin output now overrides configured agent authentication, and an empty `Authorization` value suppresses all fallback authorization. The gateway retains inbound caller filtering, sanitizes plugin input, resolves output case-insensitively, and strips `X-Vault-Tokens` before egress.
 - **Outbound request validation in the DCR path** ([#6961](https://github.com/IBM/mcp-context-forge/pull/6961)) - Dynamic client registration validates and pins outbound requests.
 - **Rate limit tier matching for `/v1` paths** ([#6879](https://github.com/IBM/mcp-context-forge/pull/6879)) - Rate limit tier matching normalizes `/v1` paths.
 - **URL scheme allowlist at call time** ([#6881](https://github.com/IBM/mcp-context-forge/pull/6881)) - The gateway enforces the URL scheme allowlist at call time and scans the database on startup.
 - **JSON Schema pattern evaluation** ([#6957](https://github.com/IBM/mcp-context-forge/pull/6957)) - The gateway bounds JSON Schema pattern evaluation in a worker process.
-- **Outbound HTTP connection handling** ([#6965](https://github.com/IBM/mcp-context-forge/pull/6965)) - Hardened outbound HTTP connection handling.
+- **Outbound HTTP connection handling** ([#6965](https://github.com/IBM/mcp-context-forge/pull/6965)) - Hardened outbound HTTP connection handling. Outbound URL validation runs even when `SSRF_PROTECTION_ENABLED=false`. Dangerous-protocol, control-character, embedded-credential, and XSS checks apply unconditionally. A deployment that relied on the old side effect to reach a non-HTTP(S) URL will see it rejected. Pooled upstream MCP sessions no longer follow HTTP redirects. An upstream that answers `/sse` with a 307 redirect to `/sse/` fails instead of following it; register the redirected URL directly. Connection setup fails closed when a caller-supplied HTTP client's TLS context cannot be read. Some outbound requests connect to a single validated address; a dual-stack upstream whose first-sorted address is unreachable can fail. Requests to a validated address use a dedicated connection pool. Behavior is unchanged when an environment proxy (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) applies to the target.
 - **Candidate credential handshakes** ([#6877](https://github.com/IBM/mcp-context-forge/pull/6877)) - Candidate credential handshakes are isolated.
 - **Virtual-server scoped tool invocation** ([#6672](https://github.com/IBM/mcp-context-forge/pull/6672)) - Hardened virtual-server scoped tool invocation.
 - **Token scoping for plugin-binding and completion routes** ([#6709](https://github.com/IBM/mcp-context-forge/pull/6709)) - Token scoping maps plugin-binding routes. Token scoping maps the completion route to `tools.read`.
+- **Input validation and output escaping tightening** ([#7076](https://github.com/IBM/mcp-context-forge/pull/7076)) - Tightened input validation and output escaping across gateway paths. ADR-056 CSP hardening applies.
+- **Result body HTML escaping** ([#7239](https://github.com/IBM/mcp-context-forge/pull/7239)) - `escapeHtml` is applied to the tool result body before rendering, preventing stored XSS in result output.
+- **DCR outbound request pinning** ([#7081](https://github.com/IBM/mcp-context-forge/pull/7081)) - Dynamic client registration pins outbound requests to the validated endpoint address.
 
 ### Fixed
 
@@ -144,6 +147,11 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 | [#6769](https://github.com/IBM/mcp-context-forge/pull/6769) | validate the Code Engine registry secret and clarify env logging |
 | [#7213](https://github.com/IBM/mcp-context-forge/pull/7213) | rate limit middleware updates |
 | [#7250](https://github.com/IBM/mcp-context-forge/pull/7250) | replace `mcp-server-filesystem` examples with `mcp-server-fetch` |
+| [#7257](https://github.com/IBM/mcp-context-forge/pull/7257) | routine dependency update |
+| [#7267](https://github.com/IBM/mcp-context-forge/pull/7267) | `docker-compose.yml` dual-era test configuration |
+| [#7199](https://github.com/IBM/mcp-context-forge/pull/7199) | follow-up to #6877 |
+| [#7201](https://github.com/IBM/mcp-context-forge/pull/7201) | follow-up to #7157; ADR-057 |
+| [#7200](https://github.com/IBM/mcp-context-forge/pull/7200) | follow-up to #6996 |
 
 Release preparation bumped every version reference to 1.1.0, refreshed npm dependencies (12 packages updated, 0 vulnerabilities), bumped the `NODEJS_IMAGE` pin to 10.2-1792386062, updated `uv.lock` and `Cargo.lock`, normalised `.bumpversion.cfg` indentation, and removed Rust MCP leftovers from the Makefile, docs, and comments.
 
