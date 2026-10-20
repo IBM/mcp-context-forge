@@ -95,6 +95,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # Completion endpoint (protocol_router) is guarded by @require_permission("tools.read") (#6760).
+    ("POST", re.compile(r"^/protocol/completion/complete(?:$|/)"), Permissions.TOOLS_READ),
     # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
     # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
     # the middleware only gates transport-level access via servers.use.

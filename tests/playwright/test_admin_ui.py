@@ -15,6 +15,7 @@ import pytest
 
 # Local
 from .pages.admin_page import AdminPage
+from .pages.admin_utils import wait_for_js_condition
 
 
 @pytest.mark.ui
@@ -170,7 +171,8 @@ class TestAdminUI:
                 const container = document.querySelector('[data-scroll-container]');
                 if (container) { container.scrollTop = 500; }
             }""")
-        admin_page.page.wait_for_function(
+        wait_for_js_condition(
+            admin_page.page,
             "document.querySelector('[data-scroll-container]').scrollTop > 0",
             timeout=5000,
         )
@@ -180,7 +182,8 @@ class TestAdminUI:
         admin_page.page.wait_for_selector("#tools-panel", state="visible", timeout=10000)
 
         # Wait for the RAF-driven scroll reset rather than a fixed sleep
-        admin_page.page.wait_for_function(
+        wait_for_js_condition(
+            admin_page.page,
             "document.querySelector('[data-scroll-container]').scrollTop === 0",
             timeout=5000,
         )
@@ -190,7 +193,8 @@ class TestAdminUI:
                 const container = document.querySelector('[data-scroll-container]');
                 if (container) { container.scrollTop = 300; }
             }""")
-        admin_page.page.wait_for_function(
+        wait_for_js_condition(
+            admin_page.page,
             "document.querySelector('[data-scroll-container]').scrollTop > 0",
             timeout=5000,
         )
@@ -198,7 +202,8 @@ class TestAdminUI:
         admin_page.click_gateways_tab()
         admin_page.page.wait_for_selector("#gateways-panel", state="visible", timeout=10000)
 
-        admin_page.page.wait_for_function(
+        wait_for_js_condition(
+            admin_page.page,
             "document.querySelector('[data-scroll-container]').scrollTop === 0",
             timeout=5000,
         )
