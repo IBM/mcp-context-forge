@@ -46,7 +46,7 @@ ARG ENABLE_PROFILING=false
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
 ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1791893534
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1791943587
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1792386062
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1791891203
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
@@ -395,7 +395,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.11"
+    org.opencontainers.image.version="1.1.0"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

@@ -39,4 +39,32 @@ describe("installInnerHtmlGuard", () => {
     div.innerHTML = '<span data-action="go">x</span>';
     expect(div.innerHTML).toBe('<span data-action="go">x</span>');
   });
+
+  test("keeps <tr>/<td> rows written to a tbody and still strips handlers", () => {
+    const tbody = document.createElement("tbody");
+    tbody.innerHTML =
+      '<tr data-action="show-log"><td>a</td><td><button onclick="window.__guardSink=1" data-action="x">b</button></td></tr>';
+    const row = tbody.querySelector('tr[data-action="show-log"]');
+    expect(row).not.toBeNull();
+    expect(tbody.querySelectorAll("td")).toHaveLength(2);
+    expect(tbody.querySelector("button").hasAttribute("onclick")).toBe(false);
+    expect(tbody.querySelector("button").getAttribute("data-action")).toBe("x");
+  });
+
+  test("keeps <td> cells written to a tr and <th> cells written to a thead row", () => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>1</td><td>2</td>";
+    expect(tr.querySelectorAll("td")).toHaveLength(2);
+
+    const thead = document.createElement("thead");
+    thead.innerHTML = "<tr><th>h</th></tr>";
+    expect(thead.querySelector("th").textContent).toBe("h");
+  });
+
+  test("clears a tbody when assigned an empty string", () => {
+    const tbody = document.createElement("tbody");
+    tbody.innerHTML = "<tr><td>x</td></tr>";
+    tbody.innerHTML = "";
+    expect(tbody.childElementCount).toBe(0);
+  });
 });
