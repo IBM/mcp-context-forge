@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-19 - Modern MCP Protocol, Federated Completions, and Catalog Pagination
+## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
 
@@ -70,9 +70,11 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
   make compose-up PROFILE="--profile ui"
   ```
 
+  `PROFILE` replaces the Makefile's default profiles. On `linux/amd64`, use `PROFILE="--profile with-fast-time --profile ui"` in both commands to retain the default fast-time service.
+
   Open [http://localhost:3001](http://localhost:3001), or the port configured through `WEB_UI_PORT`. Compose starts the gateway, Web UI v0.2.4, and dedicated UI Redis session store. The UI connects to `http://gateway:4444` inside the Compose network.
 
-- **Separate npm startup** - Install Node.js 22.22.1 or later and npm. Start the configured gateway in one terminal:
+- **Separate npm startup** - Install Node.js 22.22.1 or later and npm. Configure the gateway's `.env` and generate required secrets with `make setup` before the first run. For an existing `.env`, use `make init-secrets-patch-env` to replace weak or placeholder secrets. Start the configured gateway in one terminal:
 
   ```bash
   make dev
