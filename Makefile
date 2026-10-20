@@ -1476,12 +1476,13 @@ populate-report:                           ## Show latest population report
 # help: monitoring-lite-up    - Start lite monitoring (excludes pgAdmin, Redis CLI)
 # help: monitoring-lite-down  - Stop lite monitoring stack
 
-# Compose command for monitoring (requires --profile support)
-# podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose
+# Compose command for monitoring (requires --profile support).
+# podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose.
+# Use --help (never contacts the daemon) to confirm the compose plugin is present.
 COMPOSE_CMD_MONITOR := $(shell \
-	if command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then \
+	if command -v docker >/dev/null 2>&1 && docker compose --help >/dev/null 2>&1; then \
 		echo "docker compose"; \
-	elif command -v podman &>/dev/null && podman compose version &>/dev/null 2>&1; then \
+	elif command -v podman >/dev/null 2>&1 && podman compose --help >/dev/null 2>&1; then \
 		echo "podman compose"; \
 	else \
 		echo "docker-compose"; \
@@ -5715,18 +5716,21 @@ docker-shell:
 # Define the compose file location
 COMPOSE_FILE ?= docker-compose.yml
 
-# Fixed compose command detection
+# Compose command detection.
+# Step 1: pick a runtime with command -v (no daemon contact).
+# Step 2: confirm the compose plugin/subcommand is present with --help (also no daemon contact).
+# Fall back to podman-compose, then default to "docker compose" as a last resort.
 COMPOSE_CMD ?=
 ifeq ($(strip $(COMPOSE_CMD)),)
-  # Check for docker compose (v2) first
-  COMPOSE_CMD := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || true)
-  # If not found, check for podman compose
+  # Prefer docker if available and its compose plugin responds to --help
+  COMPOSE_CMD := $(shell command -v docker >/dev/null 2>&1 && docker compose --help >/dev/null 2>&1 && echo "docker compose" || true)
+  # Try podman + compose plugin next
   ifeq ($(strip $(COMPOSE_CMD)),)
-	COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
+    COMPOSE_CMD := $(shell command -v podman >/dev/null 2>&1 && podman compose --help >/dev/null 2>&1 && echo "podman compose" || true)
   endif
-  # If still not found, check for podman-compose
+  # Fall back to standalone podman-compose, then docker compose as last resort
   ifeq ($(strip $(COMPOSE_CMD)),)
-	COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
+    COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
   endif
 endif
 
@@ -6918,15 +6922,13 @@ local-pypi-debug:
 # ──────────────────────────
 # Which shell files to scan
 # ──────────────────────────
-SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
-	-not -path './node_modules/*' \
-	-not -path './.venv/*' \
-	-not -path './venv/*' \
-	-not -path './$(VENV_DIR)/*' \
-	-not -path './.git/*' \
-	-not -path './dist/*' \
-	-not -path './build/*' \
-	-not -path './.tox/*')
+# Use -prune (not -not -path) so find never descends into excluded dirs.
+# This avoids traversing .venv, .worktrees, node_modules, etc. at parse time.
+SHELL_SCRIPTS := $(shell find . \
+	\( -name '.venv' -o -name 'venv' -o -name 'node_modules' \
+	   -o -name '.git' -o -name 'dist' -o -name 'build' \
+	   -o -name '.tox' -o -name '.worktrees' \) -prune \
+	-o -type f -name '*.sh' -print)
 
 # Define shfmt binary location
 SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
