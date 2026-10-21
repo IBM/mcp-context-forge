@@ -3106,10 +3106,18 @@ class TestAdminPromptRoutes:
         assert response.status_code == 422
         mock_register_prompt.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "form_data",
+        [
+            {"name": "Existing prompt"},
+            {"name": "Existing prompt", "template": ""},
+            {"name": "Existing prompt", "template": "   "},
+        ],
+    )
     @patch.object(PromptService, "update_prompt")
-    async def test_admin_edit_prompt_missing_template_returns_422(self, mock_update_prompt, mock_request, mock_db):
-        """Editing an existing prompt without its required template returns validation."""
-        mock_request.form = AsyncMock(return_value=FakeForm({"name": "Existing prompt"}))
+    async def test_admin_edit_prompt_missing_template_returns_422(self, mock_update_prompt, mock_request, mock_db, form_data):
+        """Editing an existing prompt without a non-empty template returns validation."""
+        mock_request.form = AsyncMock(return_value=FakeForm(form_data))
 
         response = await admin_edit_prompt("existing-prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 

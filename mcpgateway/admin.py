@@ -14087,7 +14087,8 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
-    if "template" not in form:
+    template = form.get("template")
+    if not isinstance(template, str) or not template.strip():
         LOGGER.warning("admin_edit_prompt rejected request with missing template")
         return ORJSONResponse(content={"detail": "Prompt template is required."}, status_code=422)
     team_id = _form_team_id(form)
@@ -14120,7 +14121,7 @@ async def admin_edit_prompt(
             custom_name=str(form.get("customName") or form.get("name")),
             display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
             description=str(form.get("description")),
-            template=str(form["template"]),
+            template=template,
             arguments=arguments,
             tags=tags,
             visibility=visibility,
