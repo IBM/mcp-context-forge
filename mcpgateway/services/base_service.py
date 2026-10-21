@@ -11,6 +11,7 @@ Abstract base class for services with visibility-filtered listing.
 
 # Standard
 from abc import ABC
+import time
 from typing import Any, List, Optional, Type
 
 # Third-Party
@@ -22,8 +23,89 @@ from sqlalchemy.sql import Select
 
 # First-Party
 from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.services.metrics import record_plugin_hook
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
+
+
+def _hook_identifier(hook_type: Any) -> str:
+    """Return a stable string for a hook type enum or literal.
+
+    Args:
+        hook_type (Any): Hook type passed to ``invoke_hook``.
+
+    Returns:
+        str: The enum value when available (e.g. ``tool_pre_invoke``), else ``str()``.
+    """
+    value = getattr(hook_type, "value", None)
+    return value if isinstance(value, str) and value else str(hook_type)
+
+
+class TimedPluginManagerProxy:
+    """Delegate that times plugin hook invocations for Prometheus.
+
+    Wraps the plugin manager returned by ``get_plugin_manager`` so every
+    service-layer hook call is timed without touching each call site.
+    Aggregate ``invoke_hook`` runs all matching plugins in one call and is
+    recorded under the synthetic plugin name ``(all)``; per-plugin timing is
+    recorded when ``invoke_hook_for_plugin`` is used. Everything else is
+    delegated unchanged, including private attributes such as ``_registry``.
+    """
+
+    def __init__(self, manager: Any) -> None:
+        """Store the wrapped manager.
+
+        Args:
+            manager (Any): Plugin manager instance to delegate to.
+        """
+        object.__setattr__(self, "_timed_manager", manager)
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate attribute access to the wrapped manager.
+
+        Args:
+            name (str): Attribute name.
+
+        Returns:
+            Any: Attribute value from the wrapped manager.
+        """
+        return getattr(self._timed_manager, name)
+
+    async def invoke_hook(self, hook_type: Any, *args: Any, **kwargs: Any) -> Any:
+        """Time an aggregate hook invocation across all matching plugins.
+
+        Args:
+            hook_type (Any): Hook type to invoke.
+            args: Positional arguments for the wrapped call.
+            kwargs: Keyword arguments for the wrapped call.
+
+        Returns:
+            Any: ``(PluginResult, PluginContextTable|None)`` from the manager.
+        """
+        start = time.perf_counter()
+        try:
+            return await self._timed_manager.invoke_hook(hook_type, *args, **kwargs)
+        finally:
+            record_plugin_hook(_hook_identifier(hook_type), time.perf_counter() - start)
+
+    async def invoke_hook_for_plugin(self, *args: Any, **kwargs: Any) -> Any:
+        """Time a single-plugin hook invocation.
+
+        Args:
+            args: Positional arguments for the wrapped call; the first is the
+                plugin name when ``name`` is not passed as a keyword.
+            kwargs: Keyword arguments for the wrapped call (``name``, ``hook_type``).
+
+        Returns:
+            Any: Result from the manager.
+        """
+        start = time.perf_counter()
+        try:
+            return await self._timed_manager.invoke_hook_for_plugin(*args, **kwargs)
+        finally:
+            plugin_name = kwargs.get("name") or (args[0] if args else "")
+            hook_type = kwargs.get("hook_type") or (args[1] if len(args) > 1 else "")
+            record_plugin_hook(_hook_identifier(hook_type), time.perf_counter() - start, plugin_name=str(plugin_name))
 
 
 class BaseService(ABC):
@@ -288,6 +370,8 @@ class BaseService(ABC):
             server_id: Context identifier used to resolve a specific plugin manager.
 
         Returns:
-            Plugin manager instance when plugins are enabled, otherwise ``None``.
+            Plugin manager wrapped in ``TimedPluginManagerProxy`` for hook
+            timing when plugins are enabled, otherwise ``None``.
         """
-        return await get_plugin_manager(server_id)
+        manager = await get_plugin_manager(server_id)
+        return TimedPluginManagerProxy(manager) if manager is not None else None

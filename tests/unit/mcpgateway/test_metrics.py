@@ -443,3 +443,134 @@ def _sum_metric_values(text: str, metric_name: str) -> float:
                 except ValueError:
                     pass
     return total
+
+
+# ----------------------------------------------------------------------
+# Operator KPI metrics (issue #6880)
+# ----------------------------------------------------------------------
+
+
+def test_route_group_for_path_mapping():
+    """Paths map to operator route groups, including /v1 aliases."""
+    from mcpgateway.services.metrics import route_group_for_path
+
+    assert route_group_for_path("/tools") == "tools"
+    assert route_group_for_path("/tools/{tool_id}/invoke") == "tools"
+    assert route_group_for_path("/v1/tools/{tool_id}") == "tools"
+    assert route_group_for_path("/resources/1") == "resources"
+    assert route_group_for_path("/v1/resources") == "resources"
+    assert route_group_for_path("/prompts/1") == "prompts"
+    assert route_group_for_path("/mcp") == "mcp"
+    assert route_group_for_path("/a2a/{agent_id}") == "a2a"
+    assert route_group_for_path("/v1/a2a/invoke") == "a2a"
+    assert route_group_for_path("/admin/tools") == "admin"
+    # /v1/mcp-servers is the gateways management alias, not MCP traffic.
+    assert route_group_for_path("/v1/mcp-servers") == "other"
+    assert route_group_for_path("/health") == "other"
+    assert route_group_for_path("/") == "other"
+
+
+def test_kpi_request_metrics_recorded(monkeypatch):
+    """Requests produce e2e duration and request count samples."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+
+    from mcpgateway.services.metrics import setup_metrics
+    from mcpgateway.utils.verify_credentials import require_auth
+
+    app = FastAPI()
+
+    @app.get("/kpi-probe/{item_id}")
+    async def kpi_probe(item_id: int):
+        """Templated route so the instrumentator records it."""
+        return {"ok": True}
+
+    setup_metrics(app)
+    app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
+    client = TestClient(app)
+
+    from mcpgateway.services.metrics import e2e_request_duration_seconds, requests_total
+
+    before = requests_total.labels(route_group="other", method="get", status="200")._value.get()
+    assert client.get("/kpi-probe/1").status_code == 200
+    after = requests_total.labels(route_group="other", method="get", status="200")._value.get()
+
+    assert after == before + 1
+    # The histogram observed the same request.
+    assert e2e_request_duration_seconds.labels(route_group="other", method="get", status="200")._sum.get() > 0
+
+
+def test_kpi_request_handler_counts_4xx_errors():
+    """The KPI handler records 4xx responses under the error counter."""
+    from types import SimpleNamespace
+
+    from mcpgateway.services.metrics import _record_request_kpis, request_errors_total, requests_total
+
+    errors_before = request_errors_total.labels(route_group="tools", status_class="4xx", server_id="", server_name="")._value.get()
+    delete_before = requests_total.labels(route_group="tools", method="delete", status="404")._value.get()
+
+    _record_request_kpis(SimpleNamespace(modified_handler="/tools/{tool_id}", handler="/tools/123", method="DELETE", status="404", modified_status="404", modified_duration=0.02))
+    _record_request_kpis(SimpleNamespace(modified_handler="/mcp", handler="/mcp", method="POST", status="200", modified_status="200", modified_duration=0.05))
+
+    errors_after = request_errors_total.labels(route_group="tools", status_class="4xx", server_id="", server_name="")._value.get()
+    delete_after = requests_total.labels(route_group="tools", method="delete", status="404")._value.get()
+    post_after = requests_total.labels(route_group="mcp", method="post", status="200")._value.get()
+
+    assert errors_after == errors_before + 1
+    assert delete_after == delete_before + 1
+    assert post_after >= 1
+
+
+def test_record_upstream_call_observes_duration_and_error():
+    """Upstream calls observe the histogram and count failures."""
+    from mcpgateway.services.metrics import record_upstream_call, request_errors_total, virtual_server_upstream_duration_seconds
+
+    count_before = virtual_server_upstream_duration_seconds.labels(server_id="srv-1", server_name="Production MCP", call_type="tools/call")._sum.get()
+    server_errors_before = request_errors_total.labels(route_group="tools", status_class="upstream", server_id="srv-1", server_name="Production MCP")._value.get()
+    unscoped_errors_before = request_errors_total.labels(route_group="tools", status_class="upstream", server_id="", server_name="")._value.get()
+
+    record_upstream_call("srv-1", "Production MCP", "tools/call", 0.25)
+    record_upstream_call("srv-1", "Production MCP", "tools/call", 0.5, error=True)
+    record_upstream_call(None, None, "tools/call", 0.1, error=True)
+
+    assert virtual_server_upstream_duration_seconds.labels(server_id="srv-1", server_name="Production MCP", call_type="tools/call")._sum.get() == count_before + 0.75
+    assert request_errors_total.labels(route_group="tools", status_class="upstream", server_id="srv-1", server_name="Production MCP")._value.get() == server_errors_before + 1
+    assert request_errors_total.labels(route_group="tools", status_class="upstream", server_id="", server_name="")._value.get() == unscoped_errors_before + 1
+
+
+def test_record_plugin_hook_derives_phase():
+    """Hook phase is derived from the hook identifier."""
+    from mcpgateway.services.metrics import plugin_hook_duration_seconds, record_plugin_hook
+
+    aggregate_before = plugin_hook_duration_seconds.labels(plugin_name="(all)", hook="tool_pre_invoke", hook_phase="pre")._sum.get()
+    named_before = plugin_hook_duration_seconds.labels(plugin_name="toon_encoder", hook="tool_post_invoke", hook_phase="post")._sum.get()
+
+    record_plugin_hook("tool_pre_invoke", 0.005)
+    record_plugin_hook("tool_post_invoke", 0.01, plugin_name="toon_encoder")
+
+    assert plugin_hook_duration_seconds.labels(plugin_name="(all)", hook="tool_pre_invoke", hook_phase="pre")._sum.get() == aggregate_before + 0.005
+    assert plugin_hook_duration_seconds.labels(plugin_name="toon_encoder", hook="tool_post_invoke", hook_phase="post")._sum.get() == named_before + 0.01
+
+
+@pytest.mark.asyncio
+async def test_timed_plugin_manager_proxy_times_and_delegates():
+    """The proxy delegates attributes and times hook invocations."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from mcpgateway.services.base_service import TimedPluginManagerProxy
+
+    manager = MagicMock()
+    manager.invoke_hook = AsyncMock(return_value=("result", None))
+    manager.some_other_method = MagicMock(return_value="delegated")
+
+    proxy = TimedPluginManagerProxy(manager)
+
+    assert proxy.some_other_method() == "delegated"
+
+    result = await proxy.invoke_hook("tool_pre_invoke", payload=None)
+    assert result[0] == "result"
+    manager.invoke_hook.assert_called_once_with("tool_pre_invoke", payload=None)

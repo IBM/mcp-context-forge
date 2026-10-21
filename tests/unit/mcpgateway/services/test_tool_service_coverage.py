@@ -461,12 +461,15 @@ class TestInitializeShutdown:
 
     @pytest.mark.asyncio
     async def test_init_delegates_to_get_plugin_manager(self):
-        """_get_plugin_manager should return the manager from the framework factory."""
+        """_get_plugin_manager should wrap the factory manager for hook timing."""
+        from mcpgateway.services.base_service import TimedPluginManagerProxy
+
         mock_pm = MagicMock()
         service = ToolService()
         with patch("mcpgateway.services.base_service.get_plugin_manager", AsyncMock(return_value=mock_pm)):
             result = await service._get_plugin_manager("server-1")
-        assert result is mock_pm
+        assert isinstance(result, TimedPluginManagerProxy)
+        assert result._timed_manager is mock_pm
 
     @pytest.mark.asyncio
     async def test_init_plugin_manager_none_when_disabled(self):

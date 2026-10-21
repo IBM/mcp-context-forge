@@ -74,6 +74,7 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
@@ -90,6 +91,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.metrics import record_upstream_call
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
@@ -5373,6 +5375,13 @@ class ToolService(BaseService):
         tool_name_computed = tool_payload.get("name") or name
         tool_url = tool_payload.get("url")
         tool_integration_type = tool_payload.get("integration_type")
+        # Resolve the virtual-server name once for KPI labels (#6880); primary-key
+        # lookup, skipped entirely for direct tool invocations without a server scope.
+        server_name = ""
+        if server_id:
+            server_row = db.get(DbServer, server_id)
+            if server_row is not None:
+                server_name = server_row.name or ""
         tool_request_type = tool_payload.get("request_type")
         tool_headers = _decrypt_tool_headers_for_runtime(tool_payload.get("headers") or {})
         tool_auth_type = tool_payload.get("auth_type")
@@ -5955,6 +5964,7 @@ class ToolService(BaseService):
                                     await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", rest_elapsed_ms / 1000, error=True)
                             structured_logger.log(
                                 level="WARNING",
                                 message=f"REST tool invocation timed out: {tool_name_computed}",
@@ -6074,6 +6084,7 @@ class ToolService(BaseService):
                             # ``is_error=True`` back to ``success=True`` because the
                             # validator skips (returns True) for error responses.
                             success = not getattr(tool_result, "is_error", False)
+                            record_upstream_call(server_id, server_name, "tools/call", time.time() - rest_start_time, error=not success)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
 
@@ -6476,6 +6487,7 @@ class ToolService(BaseService):
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000)
                             structured_logger.log(
                                 level="INFO",
                                 message=f"MCP tool call completed: {tool_name_original}",
@@ -6489,6 +6501,7 @@ class ToolService(BaseService):
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000, error=True)
                             structured_logger.log(
                                 level="WARNING",
                                 message=f"MCP SSE tool invocation timed out: {tool_name_original}",
@@ -6543,6 +6556,7 @@ class ToolService(BaseService):
                                 raise root_cause
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000, error=True)
                             # Sanitize error message to prevent URL secrets from leaking in logs
                             sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
@@ -6713,6 +6727,7 @@ class ToolService(BaseService):
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000)
                             structured_logger.log(
                                 level="INFO",
                                 message=f"MCP tool call completed: {tool_name_original}",
@@ -6726,6 +6741,7 @@ class ToolService(BaseService):
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000, error=True)
                             structured_logger.log(
                                 level="WARNING",
                                 message=f"MCP StreamableHTTP tool invocation timed out: {tool_name_original}",
@@ -6780,6 +6796,7 @@ class ToolService(BaseService):
                                 raise root_cause
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", mcp_duration_ms / 1000, error=True)
                             # Sanitize error message to prevent URL secrets from leaking in logs
                             sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
@@ -6997,6 +7014,7 @@ class ToolService(BaseService):
                             response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
+                            record_upstream_call(server_id, server_name, "tools/call", a2a_elapsed_ms / 1000, error=True)
                             structured_logger.log(
                                 level="WARNING",
                                 message=f"A2A tool invocation timed out: {name}",
@@ -7034,6 +7052,7 @@ class ToolService(BaseService):
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                        record_upstream_call(server_id, server_name, "tools/call", time.time() - a2a_start_time, error=not success)
                 elif tool_integration_type == "gRPC" and tool_grpc_service_id:
                     # gRPC tool invocation using the registered gRPC service
                     try:

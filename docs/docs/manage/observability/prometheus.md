@@ -179,6 +179,38 @@ rate(http_requests_total{status=~"5.."}[5m])
 sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) * 100
 ```
 
+### Operator KPI Metrics
+
+Five KPI metric families answer the operator questions "how fast is my gateway, which virtual server is slow, are plugins adding latency, what is my request rate, and how often do requests fail". Requests are grouped into a `route_group` label (`tools`, `resources`, `prompts`, `mcp`, `a2a`, `admin`, `other`) instead of raw handler paths, which keeps cardinality low.
+
+```
+# Average and P99 end-to-end response time per route group
+rate(e2e_request_duration_seconds_sum[5m]) / rate(e2e_request_duration_seconds_count[5m])
+histogram_quantile(0.99, sum(rate(e2e_request_duration_seconds_bucket[5m])) by (le, route_group))
+
+# P99 upstream latency for one virtual server (network + upstream time, gateway overhead excluded)
+histogram_quantile(0.99, sum(rate(virtual_server_upstream_duration_seconds_bucket{server_name="Production MCP"}[5m])) by (le))
+
+# Slowest virtual server by P99 upstream latency
+topk(1, histogram_quantile(0.99, sum(rate(virtual_server_upstream_duration_seconds_bucket[5m])) by (le, server_name)))
+
+# Plugin hook latency. plugin_name is "(all)" for aggregate hook calls that
+# run every matching plugin; per-plugin timing is recorded where the gateway
+# invokes a single plugin directly.
+histogram_quantile(0.95, sum(rate(plugin_hook_duration_seconds_bucket[5m])) by (le, plugin_name))
+
+# Requests per second by route group
+sum(rate(requests_total[1m])) by (route_group)
+
+# Error rate: HTTP 4xx/5xx responses, plus upstream failures that surface as
+# HTTP-200 MCP error results (status_class="upstream", labeled with the
+# virtual server involved)
+sum(rate(request_errors_total[5m])) by (route_group, status_class)
+rate(request_errors_total{status_class="upstream"}[5m]) / rate(virtual_server_upstream_duration_seconds_count[5m]) * 100
+```
+
+Gateway overhead per route group can be derived as `e2e - upstream - plugin` time without extra instrumentation.
+
 ### Application Info
 
 ```
