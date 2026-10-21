@@ -71,8 +71,15 @@ def _minimal_body(kind: str, name: str) -> dict[str, Any]:
 
 
 def _stored_value(row: dict[str, Any], snake: str, camel: str) -> Any:
-    """Read a field that the API may serialize in snake or camel case."""
-    return row.get(camel, row.get(snake))
+    """Read a field that the API may serialize in snake or camel case.
+
+    Raises:
+        AssertionError: If the row holds neither spelling of the field.
+    """
+    for key in (camel, snake):
+        if key in row:
+            return row[key]
+    raise AssertionError(f"row has neither {camel!r} nor {snake!r}: {sorted(row)}")
 
 
 class _Tenants:
