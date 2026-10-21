@@ -11,6 +11,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   validatePasswordRequirements,
   validatePasswordMatch,
+  validatePassword,
   resetTeamCreateForm,
   filterByRelationship,
   filterTeams,
@@ -318,6 +319,54 @@ describe("validatePasswordMatch", () => {
 
   test("does nothing when required fields are missing", () => {
     expect(() => validatePasswordMatch()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validatePassword
+// ---------------------------------------------------------------------------
+describe("validatePassword", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  test("runs both validatePasswordRequirements and validatePasswordMatch", () => {
+    const policyEl = document.createElement("div");
+    policyEl.id = "edit-password-policy-data";
+    policyEl.dataset.minLength = "8";
+    policyEl.dataset.requireUppercase = "false";
+    policyEl.dataset.requireLowercase = "false";
+    policyEl.dataset.requireNumbers = "false";
+    policyEl.dataset.requireSpecial = "false";
+    document.body.appendChild(policyEl);
+
+    const passwordField = document.createElement("input");
+    passwordField.id = "password-field";
+    passwordField.value = "secret123";
+    document.body.appendChild(passwordField);
+
+    const confirmPasswordField = document.createElement("input");
+    confirmPasswordField.id = "confirm-password-field";
+    confirmPasswordField.value = "different";
+    document.body.appendChild(confirmPasswordField);
+
+    const messageElement = document.createElement("div");
+    messageElement.id = "password-match-message";
+    document.body.appendChild(messageElement);
+
+    const form = document.createElement("div");
+    form.id = "user-edit-modal-content";
+    const submitButton = document.createElement("button");
+    submitButton.type = "submit";
+    form.appendChild(submitButton);
+    document.body.appendChild(form);
+
+    validatePassword();
+
+    // Password requirements met, but match fails
+    expect(messageElement.classList.contains("hidden")).toBe(false);
+    expect(confirmPasswordField.classList.contains("border-red-500")).toBe(true);
+    expect(submitButton.disabled).toBe(true);
   });
 });
 
