@@ -3204,14 +3204,14 @@ class TestInvokeAgentEdgeCases:
     async def test_get_agent_card_by_id_returns_none_when_agent_missing(self, service, mock_db):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        assert await service.get_agent_card_by_id(mock_db, "missing") is None
+        assert await service.get_agent_card(mock_db, agent_id="missing") is None
 
     async def test_get_agent_card_by_id_returns_none_when_visibility_denies(self, service, mock_db):
         """Mirrors ``test_get_agent_card_returns_none_when_visibility_denies`` for the by-ID lookup (#6700)."""
         agent = self._make_card_agent(visibility="private", owner_email="other@example.com")
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        result = await service.get_agent_card_by_id(mock_db, "a1", user_email=None, token_teams=None)
+        result = await service.get_agent_card(mock_db, agent_id="a1", user_email=None, token_teams=None)
 
         assert result is None
 
@@ -3219,7 +3219,7 @@ class TestInvokeAgentEdgeCases:
         agent = self._make_card_agent(capabilities={"streaming": True, "pushNotifications": True, "skills": [{"id": "s1"}]})
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        result = await service.get_agent_card_by_id(mock_db, "a1")
+        result = await service.get_agent_card(mock_db, agent_id="a1")
 
         assert result["name"] == "ag"
         assert result["capabilities"]["streaming"] is True
@@ -3230,7 +3230,7 @@ class TestInvokeAgentEdgeCases:
         agent = self._make_card_agent(protocol_version="1.0")
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        result = await service.get_agent_card_by_id(mock_db, "a1", caller_version="0.3")
+        result = await service.get_agent_card(mock_db, agent_id="a1", caller_version="0.3")
 
         assert result["url"] == "https://x.com"
         assert "supportedInterfaces" not in result

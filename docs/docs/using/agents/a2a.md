@@ -324,6 +324,37 @@ curl -X POST "http://localhost:4444/rpc" \
 - Need tool discovery via `tools/list`
 - Want unified interface for both MCP and A2A tools
 
+## Fetching an Agent Card
+
+`GET /v1/a2a/{agent_id}/card` returns the A2A AgentCard for an agent. `agent_id` is the agent's ID, the same
+identifier used by `GET /v1/a2a/{agent_id}`. If no standalone agent matches, the route falls back to a virtual
+server with that ID that exposes an A2A interface. The caller needs the `a2a.read` permission.
+
+```bash
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  http://localhost:4444/v1/a2a/$AGENT_ID/card
+```
+
+```json
+{
+  "name": "demo-agent",
+  "description": "Demo agent",
+  "url": "http://localhost:9999/",
+  "version": "1",
+  "protocolVersion": "1.0",
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "capabilities": {"streaming": false, "pushNotifications": false, "stateTransitionHistory": false},
+  "skills": [],
+  "supportsAuthenticatedExtendedCard": true
+}
+```
+
+- A missing ID, a disabled agent, and an agent the caller cannot see all return the same `404`. The response never confirms that a private agent exists.
+- A virtual server card lists only the skills of attached agents that the caller can see.
+- The response carries `Cache-Control: private, no-store` because its content depends on the caller.
+- `supportsAuthenticatedExtendedCard` is `true`, but the gateway does not serve an extended card yet.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents

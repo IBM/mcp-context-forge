@@ -16,12 +16,12 @@ from __future__ import annotations
 
 # Standard
 import logging
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Any, Dict, NamedTuple, Optional, Union
 import uuid
 
 # Third-Party
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -69,7 +69,7 @@ def _derive_protocol_binding(protocol: str) -> str:
     return _DEFAULT_PROTOCOL_BINDING
 
 
-def _check_server_access(server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
+def _check_server_access(server: Union[DbServer, DbA2AAgent], user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
     """Apply the standard scoped visibility rules to a virtual server.
 
     Admin bypass invariant (PR #4341): never reveal another user's private
@@ -121,67 +121,29 @@ class A2AServerService:
     def get_server_agent_card(
         self,
         db: Session,
-        server_name: str,
+        server_name: Optional[str] = None,
         *,
         user_email: Optional[str] = None,
         token_teams: Optional[list[str]] = None,
         caller_version: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard for a virtual server.
 
-        Looks up the server by name (enabled=True), checks for an enabled
+        Looks up the server by name, or by ID when ``server_id`` is set
+        (enabled=True), checks for an enabled
         ServerInterface whose protocol contains 'a2a' (case-insensitive), and
         builds an AgentCard dict from the server and interface metadata.
         Skills are derived from associated A2A agents.
 
         Args:
             db: Database session.
-            server_name: Name of the virtual server.
+            server_name: Name of the virtual server. Ignored when ``server_id`` is set.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
             caller_version: A2A version the caller speaks (its ``A2A-Version`` header).
                 A pre-1.0 value keeps the legacy card shape.
-
-        Returns:
-            AgentCard dict, or None if the server does not exist, is disabled,
-            or has no enabled A2A interface.
-
-        Examples:
-            >>> from unittest.mock import MagicMock
-            >>> service = A2AServerService()
-            >>> db = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_server_agent_card(db, "no-such-server") is None
-            True
-        """
-        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled.is_(True))
-        server = db.execute(server_query).scalar_one_or_none()
-        if not server:
-            return None
-        if not _check_server_access(server, user_email, token_teams):
-            return None
-
-        return self._build_server_card(db, server)
-
-    def get_server_agent_card_by_id(
-        self,
-        db: Session,
-        server_id: str,
-        *,
-        user_email: Optional[str] = None,
-        token_teams: Optional[list[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Build an A2A v1 AgentCard for the virtual server with the given ID.
-
-        Mirrors :meth:`get_server_agent_card`, looking the server up by ID
-        instead of name. Used by the public ``GET /v1/a2a/{agent_id}/card``
-        route, which shares an ID namespace with standalone A2A agents.
-
-        Args:
-            db: Database session.
-            server_id: ID of the virtual server.
-            user_email: Caller's email for visibility scoping.
-            token_teams: Caller's teams for visibility scoping.
+            server_id: ID of the virtual server to look up instead of ``server_name``.
 
         Returns:
             AgentCard dict, or None if the server does not exist, is disabled,
@@ -192,35 +154,26 @@ class A2AServerService:
             >>> service = A2AServerService()
             >>> db = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_server_agent_card_by_id(db, "no-such-server") is None
+            >>> service.get_server_agent_card(db, "no-such-server") is None
+            True
+            >>> service.get_server_agent_card(db, server_id="no-such-server") is None
             True
         """
-        server_query = select(DbServer).where(DbServer.id == server_id, DbServer.enabled.is_(True))
+        match = DbServer.id == server_id if server_id is not None else DbServer.name == server_name
+        server_query = select(DbServer).where(match, DbServer.enabled.is_(True)).options(selectinload(DbServer.a2a_agents))
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
             return None
         if not _check_server_access(server, user_email, token_teams):
             return None
 
-        return self._build_server_card(db, server)
-
-    def _build_server_card(self, db: Session, server: DbServer) -> Optional[Dict[str, Any]]:
-        """Build the AgentCard dict for an already-resolved, visible server.
-
-        Args:
-            db: Database session.
-            server: The enabled, visibility-checked server row.
-
-        Returns:
-            AgentCard dict, or None if the server has no enabled A2A interface.
-        """
         interface = self._find_a2a_interface(db, server.id)
         if not interface:
             return None
 
-        return self._build_server_card(server, interface, caller_version)
+        return self._build_server_card(server, interface, user_email, token_teams, caller_version)
 
-    def _aggregate_agent_capabilities(self, server: DbServer) -> _AggregatedCapabilities:
+    def _aggregate_agent_capabilities(self, server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> _AggregatedCapabilities:
         """Aggregate capability flags, modes, and deduplicated skills from enabled associated agents.
 
         Malformed free-form ``capabilities`` entries (a non-list ``skills`` or
@@ -229,6 +182,8 @@ class A2AServerService:
 
         Args:
             server: The virtual server whose associated A2A agents to aggregate.
+            user_email: Caller's email for per-agent visibility scoping.
+            token_teams: Caller's teams for per-agent visibility scoping.
 
         Returns:
             An :class:`_AggregatedCapabilities`. ``streaming`` and
@@ -248,7 +203,7 @@ class A2AServerService:
         input_modes: list[str] = []
         output_modes: list[str] = []
         for agent in server.a2a_agents:
-            if not agent.enabled:
+            if not agent.enabled or not _check_server_access(agent, user_email, token_teams):
                 continue
             caps = agent.capabilities if isinstance(agent.capabilities, dict) else {}
             streaming = streaming or bool(caps.get("streaming", False))
@@ -272,19 +227,23 @@ class A2AServerService:
                         modes.append(mode)
         return _AggregatedCapabilities(streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"])
 
-    def _build_server_card(self, server: DbServer, interface: DbServerInterface, caller_version: Optional[str] = None) -> Dict[str, Any]:
+    def _build_server_card(
+        self, server: DbServer, interface: DbServerInterface, user_email: Optional[str], token_teams: Optional[list[str]], caller_version: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Dispatch card construction by the interface's declared protocol version.
 
         Args:
             server: The visibility-checked virtual server row.
             interface: Its enabled A2A ``ServerInterface`` row.
+            user_email: Caller's email for per-agent visibility scoping.
+            token_teams: Caller's teams for per-agent visibility scoping.
             caller_version: A2A version the caller speaks, when it declared one.
                 A pre-1.0 value always gets the legacy shape.
 
         Returns:
             AgentCard dict, shaped per the interface's declared protocol version.
         """
-        capabilities = self._aggregate_agent_capabilities(server)
+        capabilities = self._aggregate_agent_capabilities(server, user_email, token_teams)
         if is_v1_a2a_protocol(interface.version) and (not caller_version or is_v1_a2a_protocol(caller_version)):
             return self._build_v1_server_card(server, interface, capabilities)
         return self._build_legacy_server_card(server, interface, capabilities)

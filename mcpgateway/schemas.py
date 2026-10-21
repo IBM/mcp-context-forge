@@ -6573,6 +6573,28 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         return v
 
 
+class AgentCard(BaseModel):
+    """Schema for ``GET /v1/a2a/{agent_id}/card``.
+
+    Describes an A2A v1 AgentCard built from a standalone agent or from a
+    virtual server that exposes an A2A interface. Extra keys stay on the wire
+    so the card can grow without a schema change.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(description="Agent or virtual server name")
+    description: str = Field(default="", description="Agent description")
+    url: Optional[str] = Field(default=None, description="Endpoint URL of the agent")
+    version: str = Field(description="Agent version")
+    protocolVersion: Optional[str] = Field(default=None, description="A2A protocol version")  # pylint: disable=invalid-name
+    defaultInputModes: List[str] = Field(default_factory=list, description="Default input modes")  # pylint: disable=invalid-name
+    defaultOutputModes: List[str] = Field(default_factory=list, description="Default output modes")  # pylint: disable=invalid-name
+    capabilities: Dict[str, Any] = Field(default_factory=dict, description="Declared agent capabilities")
+    skills: List[Dict[str, Any]] = Field(default_factory=list, description="Skills the agent advertises")
+    supportsAuthenticatedExtendedCard: bool = Field(default=True, description="Whether an extended card exists")  # pylint: disable=invalid-name
+
+
 class A2AInvocationResponse(BaseModel):
     """Schema for the body returned by the A2A invocation routes.
 
