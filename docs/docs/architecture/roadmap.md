@@ -23,7 +23,11 @@ First-class support for MCP 2025-11-25 and 2026-07-28 protocol capabilities:
 - **Elicitation, Pagination, Completion, and Cancellation** — tracked in
   [#5558](https://github.com/IBM/mcp-context-forge/issues/5558), with
   protocol-compliance verification in
-  [#5557](https://github.com/IBM/mcp-context-forge/issues/5557).
+  [#5557](https://github.com/IBM/mcp-context-forge/issues/5557). Catalog
+  pagination ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990))
+  and federated completions
+  ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) shipped in
+  1.1.0.
 - **Trusted Token Security Pattern** — authorize from properly signed tokens
   without local user storage. Tracked in
   [#5885](https://github.com/IBM/mcp-context-forge/issues/5885).

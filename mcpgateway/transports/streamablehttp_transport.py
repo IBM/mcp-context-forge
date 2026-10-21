@@ -207,10 +207,7 @@ def _check_mcp_host(host: Optional[str]) -> bool:
 class MCPOriginHostGate:
     """ASGI gate that enforces MCP Origin/Host allowlists at the public /mcp mount.
 
-    Runs before any ingress dispatch (Python, rust-internal, rust-public) so the
-    check is not duplicated per-transport. The ``/_internal/mcp/transport`` bridge
-    is mounted separately and intentionally bypasses this gate — requests on that
-    path arrive from the trusted Rust sidecar at 127.0.0.1 only.
+    Runs before ingress dispatch so the check is not duplicated per-transport.
 
     When session-affinity is enabled, loopback-sourced requests carrying
     ``x-forwarded-internally: true`` are also bypassed (worker-to-worker routing).
@@ -4831,9 +4828,8 @@ class SessionManagerWrapper:
 
         # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
         # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
-        # Origin/Host checks are enforced at the /mcp mount level (main.py MCPOriginHostGate) so
-        # that all ingress shapes — Python, rust-internal, and rust-public — are covered by a single
-        # gate without duplicating the logic here.
+        # Origin/Host checks are enforced at the /mcp mount level (MCPOriginHostGate),
+        # so the logic is not duplicated here.
         _client = scope.get("client")
         _client_host = _client[0] if _client else None
         is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"

@@ -24,6 +24,10 @@
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
+# Enable HTMX Admin UI and Node.js frontend build steps.
+# Set false for s390x/ppc64le where @tailwindcss/oxide and lightningcss
+# have no prebuilt native binaries; those arches run with MCPGATEWAY_UI_ENABLED=false.
+ARG MCPGATEWAY_UI_ENABLED=true
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
 # To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile .
 # Usage after enabling:
@@ -45,9 +49,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1791893534
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1791943587
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1791891203
+ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1792456870
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1792512952
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1792457157
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -163,6 +167,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 # Use official Red Hat UBI10 Node.js 24 image - published for amd64, arm64,
 # s390x and ppc64le, so this stage builds natively on every target platform.
 FROM ${NODEJS_IMAGE} AS node-builder
+ARG MCPGATEWAY_UI_ENABLED=true
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -175,22 +180,40 @@ COPY --chown=1001:1001 postcss.config.js ./
 COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
 COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
 
-# Install dependencies and build CSS
-RUN npm ci && \
-    npm run build:css && \
-    echo "✅ Tailwind CSS built successfully"
+# Install dependencies and build CSS.
+# When MCPGATEWAY_UI_ENABLED=false (s390x/ppc64le), skip npm ci and produce a zero-byte
+# stub so the COPY --from=node-builder in the builder stage always succeeds.
+RUN if [ "$MCPGATEWAY_UI_ENABLED" = "true" ]; then \
+        npm ci && \
+        npm run build:css && \
+        echo "✅ Tailwind CSS built successfully"; \
+    else \
+        mkdir -p /build/mcpgateway/static/css && \
+        touch /build/mcpgateway/static/css/tailwind.min.css && \
+        echo "⏭️  UI build skipped (MCPGATEWAY_UI_ENABLED=false)"; \
+    fi
 
 ###########################
 # Frontend builder stage
 ###########################
 FROM ${NODEJS_IMAGE} AS frontend-builder
+ARG MCPGATEWAY_UI_ENABLED=true
 WORKDIR /opt/app-root/src
 
 # Copy package.json and package-lock.json
 COPY --chown=10001:10001 package.json package-lock.json ./
 
-# Install frontend dependencies
-RUN npm ci
+# Install frontend dependencies and run Vite build.
+# When MCPGATEWAY_UI_ENABLED=false (s390x/ppc64le), skip npm ci and produce an empty
+# static directory so the COPY --from=frontend-builder in the builder stage
+# always succeeds.
+RUN if [ "$MCPGATEWAY_UI_ENABLED" = "true" ]; then \
+        npm ci && \
+        echo "✅ Frontend dependencies installed"; \
+    else \
+        mkdir -p mcpgateway/static && \
+        echo "⏭️  Frontend install skipped (MCPGATEWAY_UI_ENABLED=false)"; \
+    fi
 
 # Create directory structure with correct ownership before Vite build
 USER root
@@ -202,7 +225,12 @@ COPY --chown=10001:10001 mcpgateway/admin_ui/ mcpgateway/admin_ui/
 COPY --chown=10001:10001 vite.config.js ./
 
 # Run Vite build
-RUN npm run vite:build
+RUN if [ "$MCPGATEWAY_UI_ENABLED" = "true" ]; then \
+        npm run vite:build && \
+        echo "✅ Vite build complete"; \
+    else \
+        echo "⏭️  Vite build skipped (MCPGATEWAY_UI_ENABLED=false)"; \
+    fi
 
 
 ###########################
@@ -282,6 +310,7 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
+ARG MCPGATEWAY_UI_ENABLED=true
 
 # Step 1: Create the virtualenv and bootstrap pip/setuptools/wheel/uv.
 RUN set -euo pipefail \
@@ -345,10 +374,20 @@ RUN set -euo pipefail \
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
+# Copy frontend static assets from node-builder (Tailwind CSS) and
+# frontend-builder (Vite output).  Both builder stages always produce their
+# target paths — either real build output or empty stubs — so these COPYs
+# succeed regardless of MCPGATEWAY_UI_ENABLED.  The RUN guard below removes the stubs
+# when MCPGATEWAY_UI_ENABLED=false to keep the final image clean.
 COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
-
-# Copy pre-built Tailwind CSS from node-builder
 COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpgateway/static/css/
+
+# When UI is disabled, drop the stub CSS file so the runtime image contains
+# no misleading zero-byte asset.
+RUN if [ "$MCPGATEWAY_UI_ENABLED" != "true" ]; then \
+        rm -f /app/mcpgateway/static/css/tailwind.min.css && \
+        echo "⏭️  UI static assets removed (MCPGATEWAY_UI_ENABLED=false)"; \
+    fi
 
 
 # Optional: Copy run.sh if it's needed in production
@@ -395,7 +434,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.11"
+    org.opencontainers.image.version="1.1.0"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

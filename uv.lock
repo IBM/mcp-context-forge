@@ -15,7 +15,7 @@ cpex = "2026-10-16T23:59:59Z"
 cpex-retry-with-backoff = "2026-10-16T23:59:59Z"
 cpex-output-length-guard = "2026-10-16T23:59:59Z"
 cpex-pii-filter = "2026-10-16T23:59:59Z"
-certifi = "2026-10-21T00:00:00Z"
+certifi = "2026-10-21T23:59:59Z"
 cpex-url-reputation = "2026-10-16T23:59:59Z"
 cpex-rate-limiter = "2026-10-16T23:59:59Z"
 cpex-secrets-detection = "2026-10-16T23:59:59Z"
@@ -2648,7 +2648,7 @@ wheels = [
 
 [[package]]
 name = "mcp-contextforge-gateway"
-version = "1.0.11"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -2892,8 +2892,8 @@ requires-dist = [
     { name = "langsmith", marker = "extra == 'llmchat'", specifier = ">=0.10.10" },
     { name = "mako", specifier = ">=1.4.1" },
     { name = "mcp", specifier = ">=2.0.0" },
-    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.0.11" },
-    { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.0.11" },
+    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.1.0" },
+    { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.1.0" },
     { name = "mcp-types", specifier = ">=2.0.0" },
     { name = "memray", marker = "extra == 'profiling'", specifier = ">=1.19.3" },
     { name = "msgpack", specifier = ">=1.2.1" },

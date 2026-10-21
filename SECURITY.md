@@ -1,6 +1,6 @@
 # 🔐 Security Policy
 
-**Current Version: 1.0.11**
+**Current Version: 1.1.0**
 
 
 ### Admin UI is Development-Only
@@ -786,6 +786,6 @@ This process ensures that security patches not only address vulnerabilities but 
 
 ## 🛡️ Reporting a Vulnerability
 
-Report a security issue via e-mail or anonymous form to the IBM Product Security Incident Response Team (PSIRT) following the guidelines under the [IBM Security Vulnerability Management](https://www.ibm.com/support/pages/ibm-security-vulnerability-management) pages.
+Report a security issue to the IBM Product Security Incident Response Team (PSIRT) via https://hackerone.com/ibm. More details can be found under the IBM Security Vulnerability Management pages.
 
 Thank you for helping to keep the project secure!
