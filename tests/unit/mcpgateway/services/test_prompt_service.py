@@ -343,6 +343,45 @@ class TestPromptService:
         assert getattr(added, "gateway_name_cache") == "Gateway One"
 
     @pytest.mark.asyncio
+    async def test_register_prompt_ignores_nested_team_and_owner(self, prompt_service, test_db):
+        """Stored team and owner come from the parameters, never from the payload."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        prompt_service._notify_prompt_added = AsyncMock()
+        pc = PromptCreate(name="scoped", description="", template="X", arguments=[], team_id="team-other", owner_email="other@example.com")
+
+        await prompt_service.register_prompt(test_db, pc, created_by="alice@example.com", team_id="team-a", owner_email="alice@example.com")
+
+        added = test_db.add.call_args[0][0]
+        assert added.team_id == "team-a"
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_register_prompt_parameter_visibility_wins(self, prompt_service, test_db):
+        """The visibility parameter takes precedence over the payload value."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        prompt_service._notify_prompt_added = AsyncMock()
+        pc = PromptCreate(name="scoped", description="", template="X", arguments=[], visibility="public")
+
+        await prompt_service.register_prompt(test_db, pc, visibility="team", team_id="team-a")
+
+        assert test_db.add.call_args[0][0].visibility == "team"
+
+    @pytest.mark.asyncio
+    async def test_register_prompts_bulk_ignores_nested_team_and_owner(self, prompt_service):
+        """Bulk create stores the parameter scope, never the payload scope."""
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        pc = PromptCreate(name="bulk", description="", template="X", arguments=[], team_id="team-other", owner_email="other@example.com")
+
+        await prompt_service.register_prompts_bulk(db=db, prompts=[pc], created_by="alice@example.com", team_id=None, owner_email=None, visibility="public")
+
+        added = db.add_all.call_args[0][0][0]
+        assert added.team_id is None
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_register_prompt_conflict(self, prompt_service, test_db):
         """Existing prompt with same name → PromptNameConflictError."""
         existing = _build_db_prompt()
