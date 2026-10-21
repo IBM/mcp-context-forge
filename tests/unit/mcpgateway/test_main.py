@@ -7134,9 +7134,34 @@ class TestCreateRoutesRejectForeignNestedTeam:
         ],
     )
     def test_nested_team_outside_token_team_returns_403(self, path, body_key, body, service_patch, app_with_temp_db, auth_headers):
+        """A nested team that differs from the token team is denied with the team message."""
+        # First-Party
+        from mcpgateway.main import _CREATE_TEAM_DENIED
+
         client = _make_team_scoped_client(app_with_temp_db, token_teams=[_TEAM_A], team_id=_TEAM_A)
         with patch(service_patch, new_callable=AsyncMock) as register:
             response = client.post(path, json={body_key: {**body, "team_id": _TEAM_OTHER}}, headers=auth_headers)
         assert response.status_code == 403
-        assert "message" in response.json()
+        assert response.json()["message"] == _CREATE_TEAM_DENIED
+        register.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "body", "service_patch"),
+        [
+            ("/servers/", "server", {"name": "test-server"}, "mcpgateway.main.server_service.register_server"),
+            ("/tools/", "tool", {"name": "test_tool", "url": "http://example.com"}, "mcpgateway.main.tool_service.register_tool"),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "Test Resource", "content": "hello"}, "mcpgateway.main.resource_service.register_resource"),
+            ("/prompts/", "prompt", {"name": "test_prompt", "template": "Hello"}, "mcpgateway.main.prompt_service.register_prompt"),
+        ],
+    )
+    def test_nested_team_outside_token_teams_returns_403_with_global_permission(self, path, body_key, body, service_patch, app_with_temp_db, auth_headers):
+        """A nested team outside token_teams is denied even when the permission check passes globally."""
+        # First-Party
+        from mcpgateway.main import _CREATE_TEAM_DENIED
+
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=[_TEAM_A], team_id=None)
+        with patch(service_patch, new_callable=AsyncMock) as register, patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=True)):
+            response = client.post(path, json={body_key: {**body, "team_id": _TEAM_OTHER}}, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["message"] == _CREATE_TEAM_DENIED
         register.assert_not_awaited()
