@@ -114,7 +114,7 @@ from mcpgateway.main import (
     validate_security_configuration,
 )
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
-from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
+from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerCreateRequest, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -10844,7 +10844,7 @@ class TestRemainingCoverageGaps:
         server_obj = MagicMock()
 
         response = await main_mod.create_server.__wrapped__(
-            SimpleNamespace(server=server_obj, team_id=None, visibility="team"),
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id=None, visibility="team"),
             request,
             db=MagicMock(),
             user={"email": "user@example.com"},
@@ -10853,7 +10853,7 @@ class TestRemainingCoverageGaps:
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
         response = await main_mod.create_server.__wrapped__(
-            SimpleNamespace(server=server_obj, team_id="team-2", visibility="team"),
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id="team-2", visibility="team"),
             request,
             db=MagicMock(),
             user={"email": "user@example.com"},
@@ -10877,7 +10877,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.server_service, "register_server", register)
         db = MagicMock()
         _ = await main_mod.create_server.__wrapped__(
-            SimpleNamespace(server=server_obj, team_id="team-1", visibility="public"),
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id="team-1", visibility="public"),
             request,
             db=db,
             user={"email": "user@example.com"},

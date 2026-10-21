@@ -92,7 +92,7 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
-from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
+from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, QueryPaginationCursor, QueryTeamId, QueryVisibility, resolve_gateway_id_filter
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -5663,6 +5663,7 @@ async def list_tools(
     team_id: QueryTeamId = None,
     visibility: QueryVisibility = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
@@ -5680,6 +5681,7 @@ async def list_tools(
         team_id: Optional team ID to filter tools by specific team
         visibility: Optional visibility filter (private, team, public)
         gateway_id: Optional gateway ID to filter tools by specific gateway
+        mcp_server_id: Alias of gateway_id
         db: Database session
         apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
                      Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
@@ -5693,6 +5695,8 @@ async def list_tools(
     Raises:
         HTTPException: If JSONPath modifier fails to process the tools list
     """
+
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
 
     # Validate apijsonpath early — fail fast before the database query
     parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
@@ -6297,6 +6301,7 @@ async def list_resources(
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6313,12 +6318,14 @@ async def list_resources(
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
         gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
+        mcp_server_id (Optional[str]): Alias of gateway_id.
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
         Union[List[ResourceRead], Dict[str, Any]]: List of resources or paginated response with nextCursor.
     """
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
     # Parse tags parameter if provided
     tags_list = None
     if tags:
@@ -6865,6 +6872,7 @@ async def list_prompts(
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6881,12 +6889,14 @@ async def list_prompts(
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
         gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
+        mcp_server_id: Alias of gateway_id.
         db: Database session.
         user: Authenticated user.
 
     Returns:
         Union[List[Dict[str, Any]], Dict[str, Any]]: List of prompt records or paginated response with nextCursor.
     """
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
     # Parse tags parameter if provided
     tags_list = None
     if tags:
