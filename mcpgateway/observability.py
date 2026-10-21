@@ -17,7 +17,7 @@ import inspect
 import logging
 import os
 import sys
-from typing import Any, Callable, cast, Dict, Mapping, Optional
+from typing import Any, Callable, cast, Dict, Mapping, MutableMapping, Optional
 from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
