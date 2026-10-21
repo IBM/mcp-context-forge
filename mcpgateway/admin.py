@@ -4279,6 +4279,7 @@ async def admin_ui(
             "selected_team_id": selected_team_id,
             "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "ui_deprecation_notice_enabled": settings.mcpgateway_ui_deprecation_notice_enabled,
             "ui_hidden_sections": sorted(hidden_sections),
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],

@@ -218,6 +218,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
+| `MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED` | Show the built-in Admin UI deprecation notice | `true` | bool |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
 | `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
@@ -232,6 +233,14 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED` | Enable automatic cleanup of expired AppBridge sessions | `true` | bool |
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS` | Seconds between expired AppBridge session cleanup runs | `300` | int, 60-86400 |
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE` | Maximum expired AppBridge sessions to delete per cleanup batch | `1000` | int, 1-100000 |
+
+The Admin UI deprecation banner announces that support ends on **27 January 2027**.
+It appears below the header on authenticated Admin UI pages and links to the
+[new UI](https://github.com/contextforge-org/contextforge-web-ui) and
+[getting started documentation](https://github.com/IBM/mcp-context-forge#optional-web-ui).
+The close button hides the banner until the page refreshes. Dismissal does not persist across page loads.
+Set `MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED=false` to hide it, then restart the gateway.
+The banner remains informational after the notice date. It does not disable the Admin UI or automatically expire.
 
 !!! note "Per-Request UI Hiding"
     For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.

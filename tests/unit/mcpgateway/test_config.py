@@ -28,6 +28,16 @@ from mcpgateway.config import (
 )
 
 
+@pytest.mark.parametrize("configured, expected", [(None, True), ("true", True), ("false", False)])
+def test_admin_ui_deprecation_notice_flag(monkeypatch, configured, expected):
+    """Enable the notice by default and respect environment overrides."""
+    monkeypatch.delenv("MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED", raising=False)
+    if configured is not None:
+        monkeypatch.setenv("MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED", configured)
+    configured_settings = Settings(_env_file=None)
+    assert configured_settings.mcpgateway_ui_deprecation_notice_enabled is expected
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)

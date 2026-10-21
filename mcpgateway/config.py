@@ -1132,6 +1132,7 @@ class Settings(BaseSettings):
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
+    mcpgateway_ui_deprecation_notice_enabled: bool = Field(default=True, description="Show the built-in Admin UI deprecation notice")
     mcpgateway_admin_api_enabled: bool = False
 
     # Migration runner ownership.
