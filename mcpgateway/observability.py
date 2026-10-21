@@ -97,7 +97,6 @@ except ImportError:
     # Provide minimal module shims so tests can patch ConsoleSpanExporter path
     try:
         # Standard
-        import sys
         import types
 
         if ("pytest" in sys.modules) or (os.getenv("MCP_TESTING") == "1"):
