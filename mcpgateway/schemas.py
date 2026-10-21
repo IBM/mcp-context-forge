@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import AliasChoices, AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -574,6 +574,38 @@ class AuthenticationValues(BaseModelWithConfigDict):
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
 
 
+_GATEWAY_ID_ALIAS = AliasChoices("gateway_id", "mcp_server_id")
+_GATEWAY_ID_CAMEL_ALIAS = AliasChoices("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id")
+
+
+def _reject_conflicting_aliases(data: Any, *spellings: str) -> Any:
+    """Reject a request body that sends several spellings of one field with different values.
+
+    Args:
+        data: Raw input before field validation.
+        *spellings: Accepted input keys for the same field.
+
+    Returns:
+        Any: ``data`` unchanged.
+
+    Raises:
+        ValueError: If two spellings are present with different values.
+
+    Examples:
+        >>> _reject_conflicting_aliases({"gateway_id": "a", "mcp_server_id": "a"}, "gateway_id", "mcp_server_id")["gateway_id"]
+        'a'
+        >>> _reject_conflicting_aliases({"gateway_id": "a", "mcp_server_id": "b"}, "gateway_id", "mcp_server_id")
+        Traceback (most recent call last):
+            ...
+        ValueError: Conflicting values for gateway_id, mcp_server_id
+    """
+    if isinstance(data, dict):
+        present = [data[key] for key in spellings if key in data]
+        if len(present) > 1 and any(value != present[0] for value in present[1:]):
+            raise ValueError(f"Conflicting values for {', '.join(spellings)}")
+    return data
+
+
 def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
     if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
@@ -854,7 +886,21 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
-    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
@@ -1453,7 +1499,21 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
-    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
@@ -2273,7 +2333,20 @@ class ResourceCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
-    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
 
     @field_validator("tags")
     @classmethod
@@ -2855,7 +2928,20 @@ class PromptCreate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
-    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
 
     @field_validator("tags")
     @classmethod
@@ -4846,6 +4932,45 @@ class ServerCreate(BaseModel):
         return v
 
 
+def _server_create_request_schema_extra(schema: Dict[str, Any]) -> None:
+    """Document that either ``server`` or ``virtual_server`` satisfies the request body.
+
+    Args:
+        schema: The generated JSON schema, modified in place.
+    """
+    schema.pop("required", None)
+    schema["anyOf"] = [{"required": ["server"]}, {"required": ["virtual_server"]}]
+    schema.setdefault("properties", {})["virtual_server"] = {"$ref": schema["properties"]["server"]["$ref"], "description": "Product-terminology alias of server"}
+
+
+class ServerCreateRequest(BaseModel):
+    """Request body for ``POST /servers`` and ``POST /v1/virtual-servers``.
+
+    Binds the new server's data and the sibling ``team_id`` and ``visibility``
+    fields in one model. The server data may arrive under ``server`` or the
+    alias ``virtual_server``.
+    """
+
+    model_config = ConfigDict(json_schema_extra=_server_create_request_schema_extra)
+
+    server: ServerCreate = Field(..., validation_alias=AliasChoices("server", "virtual_server"), description="The data for the new virtual server; also accepted as virtual_server")
+    team_id: Optional[str] = Field(None, description="Team ID to assign server to")
+    visibility: Optional[str] = Field(None, description="Server visibility: private, team, public")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_server_keys(cls, data: Any) -> Any:
+        """Reject a body that sends both ``server`` and ``virtual_server`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, "server", "virtual_server")
+
+
 class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
@@ -5136,8 +5261,25 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
     gateway_id: Optional[str] = Field(
         None,
-        description=("Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied"),
+        description=(
+            "Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied. Also accepted as mcp_server_id"
+        ),
+        validation_alias=_GATEWAY_ID_CAMEL_ALIAS,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
     credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
         "stored_with_override",
         description=(

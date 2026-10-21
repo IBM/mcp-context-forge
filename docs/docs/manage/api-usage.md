@@ -27,6 +27,23 @@ The gateway forwards the reference, argument, context, and request `_meta` to th
 owning upstream. Local schema completion remains available for local references.
 An upstream without `completions` returns JSON-RPC `-32601` on MCP routes.
 
+## Terminology aliases
+
+The product calls a registered upstream an "MCP server" and a virtual server a "virtual server". The API keeps the original names and also accepts the product names in requests.
+
+| Original | Alias | Where |
+|----------|-------|-------|
+| `gateway_id` | `mcp_server_id` | Tool, resource, and prompt create and update bodies; the MCP-server handshake test body |
+| `gateway_id` | `mcp_server_id` | Query filter on `GET /tools`, `GET /resources`, `GET /prompts`, and `GET /v1/search` |
+| `server` | `virtual_server` | Top-level key of the `POST /servers` and `POST /v1/virtual-servers` body |
+
+Rules:
+
+- Both spellings work. Responses keep the original key names.
+- Camel-case bodies accept `mcpServerId` where they accept `gatewayId`.
+- A request that sends both spellings with different values returns `422`.
+- A request that sends both spellings with the same value is accepted.
+
 ## Prerequisites
 
 Before using the API, you need to:

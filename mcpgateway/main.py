@@ -92,7 +92,7 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
-from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
+from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, QueryPaginationCursor, QueryTeamId, QueryVisibility, resolve_gateway_id_filter
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -165,7 +165,7 @@ from mcpgateway.schemas import (
     RootCreate,
     RootUpdate,
     RPCRequest,
-    ServerCreate,
+    ServerCreateRequest,
     ServerHandshakeRequest,
     ServerRead,
     ServerUpdate,
@@ -4217,10 +4217,8 @@ async def get_server(server_id: str, request: Request, db: Session = Depends(get
 @server_router.post("/", response_model=ServerRead, status_code=201)
 @require_permission("servers.create")
 async def create_server(
-    server: ServerCreate,
+    payload: ServerCreateRequest,
     request: Request,
-    team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
-    visibility: Optional[str] = Body(None, description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -4228,10 +4226,10 @@ async def create_server(
     Creates a new server.
 
     Args:
-        server (ServerCreate): The data for the new server.
+        payload (ServerCreateRequest): The request body: the new server's data under
+            ``server`` (or its product-terminology alias ``virtual_server``), plus the
+            sibling ``team_id`` and ``visibility`` fields. See ``ServerCreateRequest``.
         request (Request): The incoming request object for extracting metadata.
-        team_id (Optional[str]): Team ID to assign the server to.
-        visibility (str): Server visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -4242,6 +4240,10 @@ async def create_server(
         HTTPException: If there is a conflict with the server name or other errors.
     """
     try:
+        server = payload.server
+        team_id = payload.team_id
+        visibility = payload.visibility
+
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
@@ -5661,6 +5663,7 @@ async def list_tools(
     team_id: QueryTeamId = None,
     visibility: QueryVisibility = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
@@ -5678,6 +5681,7 @@ async def list_tools(
         team_id: Optional team ID to filter tools by specific team
         visibility: Optional visibility filter (private, team, public)
         gateway_id: Optional gateway ID to filter tools by specific gateway
+        mcp_server_id: Alias of gateway_id
         db: Database session
         apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
                      Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
@@ -5691,6 +5695,8 @@ async def list_tools(
     Raises:
         HTTPException: If JSONPath modifier fails to process the tools list
     """
+
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
 
     # Validate apijsonpath early — fail fast before the database query
     parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
@@ -6295,6 +6301,7 @@ async def list_resources(
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6311,12 +6318,14 @@ async def list_resources(
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
         gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
+        mcp_server_id (Optional[str]): Alias of gateway_id.
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
         Union[List[ResourceRead], Dict[str, Any]]: List of resources or paginated response with nextCursor.
     """
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
     # Parse tags parameter if provided
     tags_list = None
     if tags:
@@ -6863,6 +6872,7 @@ async def list_prompts(
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     gateway_id: QueryGatewayId = None,
+    mcp_server_id: QueryMcpServerId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6879,12 +6889,14 @@ async def list_prompts(
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
         gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
+        mcp_server_id: Alias of gateway_id.
         db: Database session.
         user: Authenticated user.
 
     Returns:
         Union[List[Dict[str, Any]], Dict[str, Any]]: List of prompt records or paginated response with nextCursor.
     """
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
     # Parse tags parameter if provided
     tags_list = None
     if tags:
