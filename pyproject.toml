@@ -17,6 +17,7 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
+certifi = "2026-10-21T23:59:59Z"
 cpex = "2026-10-16T23:59:59Z"
 cpex-url-reputation = "2026-10-16T23:59:59Z"
 cpex-rate-limiter = "2026-10-16T23:59:59Z"
@@ -71,6 +72,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
     "brotli>=1.2.0",
+    "certifi>=2026.10.19", # Transitive pin (httpx, requests); GHSA-6q48-6c7w-9gw2 fixed in 2026.10.19
     "click>=8.4.2", # Transitive pin
     "cpex>=0.1.4", # first PyPI release built for mcp 2.x
     "cryptography>=50.0.0",
