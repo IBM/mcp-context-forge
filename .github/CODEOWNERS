@@ -1,6 +1,3 @@
-# Plugin framework
-/mcpgateway/plugins @araujof @terylt @jonpspri
-
 # Rust projects
 /crates/ @lucarlig @dawid-nowak
 /Cargo.toml @lucarlig @dawid-nowak
@@ -11,14 +8,11 @@
 /.github/workflows/rust.yml @lucarlig @dawid-nowak
 /.github/workflows/pytest-rust.yml @lucarlig @dawid-nowak
 
-# Tests for plugin framework
-/tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
-
 # UI related files
 /mcpgateway/admin_ui/ @gcgoncalves
 /tests/playwright/ @gcgoncalves
 /tests/js/ @gcgoncalves
 
 # All files in the repo
-/.github/workflows/ @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
-* @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits @msureshkumar88
+/.github/workflows/ @brian-hussey @Lang-Akshay @ja8zyjits
+* @brian-hussey @Lang-Akshay @ja8zyjits @msureshkumar88
