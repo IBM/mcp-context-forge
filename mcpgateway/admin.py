@@ -15256,11 +15256,16 @@ async def admin_import_tools(
         # Extract base metadata for bulk import
         base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
         user_email = get_user_email(user)
-        team_id = getattr(request.state, "team_id", None) or await TeamManagementService(db).verify_team_for_user(user_email) or None
+        token_teams = extract_token_team_ids(user)
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        team_id = None if is_public_only_token else (getattr(request.state, "team_id", None) or await TeamManagementService(db).verify_team_for_user(user_email) or None)
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
+                if is_public_only_token and (tool.visibility or "public") in ("team", "private"):
+                    errors.append({"index": i, "name": name, "error": {"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."}})
+                    continue
                 _check_public_visibility_allowed(tool.visibility or "public", team_id=team_id)
                 await tool_service.register_tool(
                     db,
