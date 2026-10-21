@@ -1023,9 +1023,16 @@ class TestLegacyInstanaContextCompat:
     def test_noop_for_sdk_tracer(self):
         """Standard OpenTelemetry SDK tracers are never patched."""
         trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
-        before = trace_sdk.Tracer.__dict__["start_span"]
+        tracer_cls = getattr(trace_sdk, "Tracer", None)
+        if tracer_cls is None:
+            tracer_mod = getattr(trace_sdk, "tracer", None)
+            if tracer_mod is not None:
+                tracer_cls = getattr(tracer_mod, "Tracer", None)
+        if tracer_cls is None:
+            pytest.skip("OpenTelemetry SDK Tracer not exposed in this version")
+        before = tracer_cls.__dict__["start_span"]
         observability.ensure_legacy_instana_context_compat()
-        assert trace_sdk.Tracer.__dict__["start_span"] is before
+        assert tracer_cls.__dict__["start_span"] is before
 
     def test_init_telemetry_applies_adapter_even_when_disabled(self, fake_legacy_instana, monkeypatch):
         """Adapter runs process-wide even when ContextForge OTEL is disabled (FastAPI/MCP still trace)."""
