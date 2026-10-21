@@ -3381,6 +3381,26 @@ class TestServerServiceCoverageMissingBranches:
                 )
 
     @pytest.mark.asyncio
+    async def test_update_server_validates_foreign_team_before_name_conflict(self, server_service, mock_server):
+        """A foreign target team fails before the name lookup, so a 409 never confirms a name in that team."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        db = MagicMock()
+        db.rollback = Mock()
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server]) as lock,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.server_service._validate_server_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+        ):
+            with pytest.raises(ServerError, match="membership"):
+                await server_service.update_server(db, "srv-1", ServerUpdate(name="taken-name", visibility="team", team_id="foreign-team"), user_email="user@example.com")
+        assert lock.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_update_server_team_name_check_no_conflict_continues_then_team_not_found(self, server_service, mock_server):
         """Cover name check branch where existing_server is falsy (1183->1187)."""
         db = MagicMock()

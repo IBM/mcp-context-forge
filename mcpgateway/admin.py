@@ -17059,6 +17059,9 @@ async def admin_create_grpc_service(
         _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
+        requested_team_id = getattr(service, "team_id", None)
+        if requested_team_id and await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id) != requested_team_id:
+            raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:

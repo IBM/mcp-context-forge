@@ -16045,6 +16045,33 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("verified_team, expected_status", [([], 403), ("team-b", 201)])
+async def test_admin_create_grpc_service_checks_team_membership(monkeypatch, mock_db, verified_team, expected_status):
+    """A payload team_id the caller does not belong to returns 403 and registers nothing."""
+    monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+    monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
+    mgr = MagicMock()
+    mgr.register_service = AsyncMock(return_value={"id": "svc-1"})
+    monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: SimpleNamespace(verify_team_for_user=AsyncMock(return_value=verified_team)))
+
+    request = MagicMock(spec=Request)
+    request.client = SimpleNamespace(host="10.0.0.2")
+    request.scope = {"root_path": ""}
+    service = GrpcServiceCreate(name="grpc-service", target="localhost:50051", team_id="team-b", visibility="team")
+
+    if expected_status == 403:
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+        mgr.register_service.assert_not_awaited()
+    else:
+        response = await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 201
+        mgr.register_service.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
