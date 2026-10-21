@@ -1348,6 +1348,10 @@ class ServerService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can update this server")
 
+            # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
+            if server_update.team_id is not None and server_update.team_id != server.team_id:
+                _validate_server_team_assignment(db, user_email, server_update.team_id)
+
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
                 visibility = server_update.visibility or server.visibility
@@ -1397,8 +1401,6 @@ class ServerService(BaseService):
                 server.visibility = new_visibility
 
             if server_update.team_id is not None:
-                if server_update.team_id != server.team_id:
-                    _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
             _update_server_associations(db, server, server_update)

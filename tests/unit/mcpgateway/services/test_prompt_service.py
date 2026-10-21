@@ -1203,6 +1203,22 @@ class TestPromptService:
         assert res["template"] == "Hi, {{ name }}!"
 
     @pytest.mark.asyncio
+    async def test_update_prompt_validates_foreign_team_before_name_conflict(self, prompt_service, test_db):
+        """A foreign target team fails before the name lookup, so a 409 never confirms a name in that team."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        existing = _build_db_prompt()
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", side_effect=[existing]) as lock,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.prompt_service._validate_prompt_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+        ):
+            with pytest.raises(Exception, match="membership"):
+                await prompt_service.update_prompt(test_db, 1, PromptUpdate(name="taken-name", visibility="team", team_id="foreign-team"), user_email="user@example.com")
+        assert lock.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_update_prompt_team_id_rejects_nonexistent_team(self, prompt_service, test_db):
         """Reassigning a prompt to a non-existent team must raise PromptError."""
         existing = _build_db_prompt()

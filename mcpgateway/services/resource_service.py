@@ -3301,6 +3301,19 @@ class ResourceService(BaseService):
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can update this resource")
+
+            # SECURITY: authorize the target team before any conflict check so a 409 never confirms a URI in a foreign team.
+            if resource_update.team_id is not None and resource_update.team_id != resource.team_id:
+                _validate_resource_team_assignment(db, user_email, resource_update.team_id)
+
             # # Check for uri conflict if uri is being changed and visibility is public
             if resource_update.uri and resource_update.uri != resource.uri:
                 visibility = resource_update.visibility or resource.visibility
@@ -3334,15 +3347,6 @@ class ResourceService(BaseService):
                     )
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError("Only the owner can update this resource")
 
             # Update fields if provided
             if resource_update.uri is not None:
@@ -3447,8 +3451,6 @@ class ResourceService(BaseService):
 
             # Update team assignment if provided, validating ownership
             if resource_update.team_id is not None:
-                if resource_update.team_id != resource.team_id:
-                    _validate_resource_team_assignment(db, user_email, resource_update.team_id)
                 resource.team_id = resource_update.team_id
 
             # Update metadata fields

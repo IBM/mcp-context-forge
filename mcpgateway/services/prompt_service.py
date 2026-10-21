@@ -2374,6 +2374,19 @@ class PromptService(BaseService):
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, prompt):
+                    raise PermissionError("Only the owner can update this prompt")
+
+            # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
+            if prompt_update.team_id is not None and prompt_update.team_id != prompt.team_id:
+                _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
+
             visibility = prompt_update.visibility or prompt.visibility
             team_id = prompt_update.team_id or prompt.team_id
             owner_email = prompt.owner_email or user_email
@@ -2405,15 +2418,6 @@ class PromptService(BaseService):
                     )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError("Only the owner can update this prompt")
 
             if prompt_update.name is not None:
                 if prompt.gateway_id:
@@ -2481,8 +2485,6 @@ class PromptService(BaseService):
 
             # Update team assignment if provided, validating ownership
             if prompt_update.team_id is not None:
-                if prompt_update.team_id != prompt.team_id:
-                    _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
                 prompt.team_id = prompt_update.team_id
 
             # Update metadata fields

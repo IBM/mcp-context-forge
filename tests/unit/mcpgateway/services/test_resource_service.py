@@ -1094,6 +1094,21 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_resource_validates_foreign_team_before_uri_conflict(self, resource_service, mock_db, mock_resource):
+        """A foreign target team fails before the URI lookup, so a 409 never confirms a URI in that team."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        with (
+            patch("mcpgateway.services.resource_service.get_for_update", side_effect=[mock_resource]) as lock,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.resource_service._validate_resource_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+        ):
+            with pytest.raises(Exception, match="membership"):
+                await resource_service.update_resource(mock_db, mock_resource.id, ResourceUpdate(uri="file:///taken.txt", visibility="team", team_id="foreign-team"), user_email="user@example.com")
+        assert lock.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_update_resource_accepts_ui_extension_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
         """Resource updates should validate and persist MCP Apps metadata."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
