@@ -22,7 +22,7 @@ from mcpgateway.services.a2a_server_service import A2AServerService
 # ---------------------------------------------------------------------------
 
 
-def _make_server(name="test-server", sid=None, description="A test server", version=1, a2a_agents=None):
+def _make_server(name="test-server", sid=None, description="A test server", version=1, a2a_agents=None, visibility="public"):
     """Return a lightweight mock that looks like a DbServer row."""
     server = MagicMock()
     server.id = sid or uuid.uuid4().hex
@@ -30,6 +30,7 @@ def _make_server(name="test-server", sid=None, description="A test server", vers
     server.description = description
     server.version = version
     server.a2a_agents = a2a_agents if a2a_agents is not None else []
+    server.visibility = visibility
     return server
 
 
@@ -42,13 +43,16 @@ def _make_interface(binding="https://agent.example.com/a2a", version="1.0", prot
     return iface
 
 
-def _make_agent(aid=None, name="downstream-agent", enabled=True, capabilities=None):
+def _make_agent(aid=None, name="downstream-agent", enabled=True, capabilities=None, visibility="public", owner_email=None, team_id=None):
     """Return a lightweight mock that looks like a DbA2AAgent row."""
     agent = MagicMock()
     agent.id = aid or uuid.uuid4().hex
     agent.name = name
     agent.enabled = enabled
     agent.capabilities = capabilities if capabilities is not None else {}
+    agent.visibility = visibility
+    agent.owner_email = owner_email
+    agent.team_id = team_id
     return agent
 
 
@@ -149,6 +153,36 @@ class TestA2AServerService:
         assert len(card["skills"]) == 1
         assert card["skills"][0]["id"] == "summarize"
 
+    def test_get_server_agent_card_omits_skills_of_agents_hidden_from_caller(self, service, mock_db):
+        """A caller who can see a public server never reads skills of private or other-team agents (#6700)."""
+        public_agent = _make_agent(capabilities={"skills": [{"id": "public-skill"}]})
+        private_agent = _make_agent(capabilities={"skills": [{"id": "private-skill"}]}, visibility="private", owner_email="owner@example.com")
+        other_team_agent = _make_agent(capabilities={"skills": [{"id": "team-skill"}]}, visibility="team", team_id="team-b")
+        own_private_agent = _make_agent(capabilities={"skills": [{"id": "own-skill"}]}, visibility="private", owner_email="caller@example.com")
+        server = _make_server(a2a_agents=[public_agent, private_agent, other_team_agent, own_private_agent])
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server_id=server.id, user_email="caller@example.com", token_teams=["team-a"])
+
+        assert [skill["id"] for skill in card["skills"]] == ["public-skill", "own-skill"]
+
+    def test_get_server_agent_card_public_only_token_sees_only_public_agent_skills(self, service, mock_db):
+        """A public-only token reads skills of public agents only (#6700)."""
+        public_agent = _make_agent(capabilities={"skills": [{"id": "public-skill"}]})
+        team_agent = _make_agent(capabilities={"skills": [{"id": "team-skill"}]}, visibility="team", team_id="team-a")
+        server = _make_server(a2a_agents=[public_agent, team_agent])
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server_id=server.id, user_email="caller@example.com", token_teams=[])
+
+        assert [skill["id"] for skill in card["skills"]] == ["public-skill"]
+
     def test_get_server_agent_card_hidden_server_returns_none(self, service, mock_db):
         server = _make_server(name="private-server")
         server.visibility = "private"
@@ -160,10 +194,10 @@ class TestA2AServerService:
         assert result is None
 
     # ------------------------------------------------------------------
-    # get_server_agent_card_by_id
+    # get_server_agent_card
     # ------------------------------------------------------------------
 
-    def test_get_server_agent_card_by_id_found_with_a2a_interface(self, service, mock_db):
+    def test_get_server_agent_card_found_with_a2a_interface(self, service, mock_db):
         """Server with an enabled A2A interface returns a populated AgentCard dict, looked up by ID (#6700)."""
         server = _make_server(name="my-server", sid="srv-123", version=2)
         iface = _make_interface(binding="https://a2a.example.com/agent", version="0.9")
@@ -174,7 +208,7 @@ class TestA2AServerService:
         ]
         mock_db.execute.side_effect = exec_side_effects
 
-        card = service.get_server_agent_card_by_id(mock_db, "srv-123")
+        card = service.get_server_agent_card(mock_db, server_id="srv-123")
 
         assert card is not None
         assert card["name"] == "my-server"
@@ -182,15 +216,15 @@ class TestA2AServerService:
         assert card["protocolVersion"] == "0.9"
         assert card["version"] == "2"
 
-    def test_get_server_agent_card_by_id_server_not_found(self, service, mock_db):
+    def test_get_server_agent_card_server_not_found(self, service, mock_db):
         """Unknown server ID returns None."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        result = service.get_server_agent_card_by_id(mock_db, "no-such-id")
+        result = service.get_server_agent_card(mock_db, server_id="no-such-id")
 
         assert result is None
 
-    def test_get_server_agent_card_by_id_no_a2a_interface(self, service, mock_db):
+    def test_get_server_agent_card_no_a2a_interface(self, service, mock_db):
         """Server exists but has no enabled A2A interface → returns None."""
         server = _make_server(name="server-without-a2a", sid="srv-456")
 
@@ -200,17 +234,17 @@ class TestA2AServerService:
         ]
         mock_db.execute.side_effect = exec_side_effects
 
-        result = service.get_server_agent_card_by_id(mock_db, "srv-456")
+        result = service.get_server_agent_card(mock_db, server_id="srv-456")
 
         assert result is None
 
-    def test_get_server_agent_card_by_id_hidden_server_returns_none(self, service, mock_db):
+    def test_get_server_agent_card_hidden_server_returns_none(self, service, mock_db):
         server = _make_server(name="private-server", sid="srv-789")
         server.visibility = "private"
         server.owner_email = "other@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = server
 
-        result = service.get_server_agent_card_by_id(mock_db, "srv-789", user_email="user@example.com", token_teams=[])
+        result = service.get_server_agent_card(mock_db, server_id="srv-789", user_email="user@example.com", token_teams=[])
 
         assert result is None
 
