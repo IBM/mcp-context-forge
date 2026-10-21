@@ -496,6 +496,110 @@ async def test_close_all_drains_every_session(registry, factory_and_records):
 
 
 # --------------------------------------------------------------------------- #
+# Idle reaper backstop (#7214)                                                #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_idle_reaper_evicts_session_left_idle_past_the_window(factory_and_records):
+    """Simulates a downstream Streamable HTTP session ending without DELETE.
+
+    No evict_session()/DELETE ever arrives for "s1" here — the only thing
+    that can close its upstream session is the idle reaper sweeping past
+    idle_eviction_seconds.
+    """
+    factory, created = factory_and_records
+    reg = UpstreamSessionRegistry(
+        session_factory=factory,
+        shutdown_timeout_seconds=1.0,
+        idle_eviction_seconds=0.05,
+    )
+    reg.start_idle_reaper()
+    try:
+        async with reg.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            pass
+        assert reg.snapshot().active_sessions == 1
+
+        # No DELETE, no evict_session() call — only the reaper can clean this up.
+        for _ in range(50):
+            if reg.snapshot().active_sessions == 0:
+                break
+            await asyncio.sleep(0.05)
+
+        assert reg.snapshot().active_sessions == 0
+        assert reg.snapshot().evictions == 1
+        assert created[0][3].done()  # owner task was torn down
+    finally:
+        await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_idle_reaper_leaves_actively_used_session_alone(factory_and_records):
+    """A session whose idle_seconds never crosses the window must survive."""
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(
+        session_factory=factory,
+        shutdown_timeout_seconds=1.0,
+        idle_eviction_seconds=1000.0,
+    )
+    reg.start_idle_reaper()
+    try:
+        async with reg.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            pass
+        await asyncio.sleep(0.1)
+        assert reg.snapshot().active_sessions == 1
+        assert reg.snapshot().evictions == 0
+    finally:
+        await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_start_idle_reaper_is_noop_when_disabled(factory_and_records):
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_eviction_seconds=None)
+    reg.start_idle_reaper()
+    assert reg._reaper_task is None  # pylint: disable=protected-access
+    await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_start_idle_reaper_is_idempotent(factory_and_records):
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_eviction_seconds=1000.0)
+    reg.start_idle_reaper()
+    first_task = reg._reaper_task  # pylint: disable=protected-access
+    reg.start_idle_reaper()
+    assert reg._reaper_task is first_task  # pylint: disable=protected-access
+    await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_close_all_cancels_idle_reaper_task(factory_and_records):
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_eviction_seconds=1000.0)
+    reg.start_idle_reaper()
+    task = reg._reaper_task  # pylint: disable=protected-access
+    assert task is not None
+
+    await reg.close_all()
+
+    assert task.cancelled() or task.done()
+    assert reg._reaper_task is None  # pylint: disable=protected-access
+
+
+# --------------------------------------------------------------------------- #
 # Dead-session detection                                                       #
 # --------------------------------------------------------------------------- #
 
