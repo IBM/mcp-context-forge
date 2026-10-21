@@ -17,16 +17,19 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
+cpex = "2026-10-21T23:59:59Z"
+cpex-url-reputation = "2026-10-21T23:59:59Z"
+cpex-rate-limiter = "2026-10-21T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-10-21T23:59:59Z"
+cpex-pii-filter = "2026-10-21T23:59:59Z"
+cpex-retry-with-backoff = "2026-10-21T23:59:59Z"
+cpex-output-length-guard = "2026-10-21T23:59:59Z"
+cpex-secrets-detection = "2026-10-21T23:59:59Z"
+cpex-sql-sanitizer = "2026-10-21T23:59:59Z"
 certifi = "2026-10-21T23:59:59Z"
-cpex = "2026-10-16T23:59:59Z"
-cpex-url-reputation = "2026-10-16T23:59:59Z"
-cpex-rate-limiter = "2026-10-16T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-10-16T23:59:59Z"
-cpex-pii-filter = "2026-10-16T23:59:59Z"
-cpex-retry-with-backoff = "2026-10-16T23:59:59Z"
-cpex-output-length-guard = "2026-10-16T23:59:59Z"
-cpex-secrets-detection = "2026-10-16T23:59:59Z"
-cpex-sql-sanitizer = "2026-10-16T23:59:59Z"
+pillow = "2026-10-21T23:59:59Z"
+uv = "2026-10-21T23:59:59Z"
+pip = "2026-10-21T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -174,7 +177,7 @@ dev = [
     "redis>=8.0.1",
     "resvg-py>=0.5.0", # SVG-to-PNG rasterizer for scripts/fetch_catalog_icons.py; pure prebuilt wheels, no system cairo/rsvg
     "rich>=15.0.0",
-    "Pillow>=12.2.0",
+    "Pillow>=13.0.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
@@ -186,7 +189,7 @@ dev = [
     "ty>=0.0.1a21",
     "types-tabulate>=0.10.0.20260508",
     "url-normalize>=3.0.0",
-    "uv>=0.11.6",
+    "uv>=0.13.4",
     "websockets>=16.0",
     "pyasn1>=0.6.4", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
