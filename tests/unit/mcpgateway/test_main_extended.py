@@ -10838,7 +10838,7 @@ class TestRemainingCoverageGaps:
 
         request = _make_request("/servers")
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
-        server_obj = MagicMock()
+        server_obj = MagicMock(team_id=None, visibility=None)
 
         response = await main_mod.create_server.__wrapped__(
             server_obj,
@@ -12064,7 +12064,7 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(main_mod.resource_service, "register_resource", AsyncMock(side_effect=ResourceError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_resource.__wrapped__(MagicMock(), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
+            await main_mod.create_resource.__wrapped__(MagicMock(team_id=None, visibility=None), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_reraises_unhandled_exception(self, monkeypatch):
