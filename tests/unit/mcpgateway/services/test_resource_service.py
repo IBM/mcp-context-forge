@@ -307,6 +307,39 @@ class TestResourceRegistration:
             assert result.name == sample_resource_create.name
 
     @pytest.mark.asyncio
+    async def test_register_resource_ignores_nested_team_and_owner(self, resource_service, mock_db):
+        """Stored team and owner come from the parameters, never from the payload."""
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_scalar
+        resource = ResourceCreate(uri="file:///scoped.txt", name="scoped", content="data", team_id="team-other", owner_email="other@example.com")
+
+        with (
+            patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
+            patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()),
+        ):
+            await resource_service.register_resource(mock_db, resource, created_by="alice@example.com", team_id="team-a", owner_email="alice@example.com", visibility="private")
+
+        added = mock_db.add.call_args[0][0]
+        assert added.team_id == "team-a"
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_ignores_nested_team_and_owner(self, resource_service, mock_db):
+        """Bulk create stores the parameter scope, never the payload scope."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.add_all = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+        resource = ResourceCreate(uri="file:///bulk.txt", name="bulk", content="data", team_id="team-other", owner_email="other@example.com")
+
+        await resource_service.register_resources_bulk(db=mock_db, resources=[resource], created_by="alice@example.com", team_id=None, owner_email=None, visibility="public")
+
+        added = mock_db.add_all.call_args[0][0][0]
+        assert added.team_id is None
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_active(self, resource_service, mock_db, sample_resource_create, mock_resource):
         """URI conflict when an **active** resource already exists."""
         # Ensure visibility is a string, not a MagicMock

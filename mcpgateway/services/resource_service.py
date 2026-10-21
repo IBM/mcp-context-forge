@@ -649,9 +649,9 @@ class ResourceService(BaseService):
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "private":
                 # Scope the check to the DB constraint UniqueConstraint("team_id", "owner_email", "gateway_id", "uri"),
-                # mirroring the team_id/owner_email precedence used when DbResource is constructed below.
-                effective_team_id = getattr(resource, "team_id", None) or team_id
-                effective_owner = getattr(resource, "owner_email", None) or owner_email or created_by
+                # mirroring the team_id/owner_email used when DbResource is constructed below.
+                effective_team_id = team_id
+                effective_owner = owner_email or created_by
                 existing_resource = db.execute(
                     select(DbResource).where(
                         DbResource.uri == resource.uri,
@@ -689,9 +689,8 @@ class ResourceService(BaseService):
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
-                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(resource, "team_id", None) or team_id,
-                owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
+                team_id=team_id,
+                owner_email=owner_email or created_by,
                 # Endpoint visibility parameter takes precedence over schema default
                 visibility=visibility if visibility is not None else (getattr(resource, "visibility", None) or "public"),
                 gateway_id=gateway_id,
@@ -1013,9 +1012,8 @@ class ResourceService(BaseService):
                                 ip_address=created_from_ip,
                             )
 
-                        # Use provided parameters or schema values
-                        resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
-                        resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
+                        resource_team_id = team_id
+                        resource_owner_email = owner_email or created_by
                         resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
                         resource_gateway_id = getattr(resource, "gateway_id", None)
                         resource_extension_metadata = getattr(resource, "extension_metadata", None)
