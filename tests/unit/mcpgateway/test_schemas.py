@@ -1723,6 +1723,51 @@ class TestServerCreateRequestProductTerminologyAlias:
         assert payload.team_id == "team-1"
 
 
+class TestProductTerminologyAliasConflicts:
+    """Conflicting spellings of one field fail validation (#6544)."""
+
+    @pytest.mark.parametrize(
+        ("factory", "kwargs"),
+        [
+            (ToolCreate, {"name": "t", "url": "http://example.com"}),
+            (ToolUpdate, {}),
+            (ResourceCreate, {"uri": "file:///x", "name": "r", "content": "c"}),
+            (PromptCreate, {"name": "p", "template": "t"}),
+        ],
+    )
+    def test_conflicting_gateway_id_spellings_rejected(self, factory, kwargs):
+        with pytest.raises(ValueError, match="Conflicting values"):
+            factory.model_validate({**kwargs, "gateway_id": "a", "mcp_server_id": "b"})
+
+    def test_matching_spellings_accepted(self):
+        assert ToolUpdate.model_validate({"gatewayId": "a", "mcpServerId": "a"}).gateway_id == "a"
+
+    def test_conflicting_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError, match="Conflicting values"):
+            ServerCreateRequest.model_validate({"server": {"name": "a"}, "virtual_server": {"name": "b"}})
+
+    def test_missing_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError):
+            ServerCreateRequest.model_validate({"team_id": "t"})
+
+    def test_openapi_property_names_unchanged(self):
+        """The first accepted spelling keeps the pre-alias OpenAPI property name."""
+        assert "gatewayId" in ToolUpdate.model_json_schema()["properties"]
+        assert "gatewayId" in PromptCreate.model_json_schema()["properties"]
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        assert "gatewayId" in GatewayHandshakeRequest.model_json_schema()["properties"]
+        assert "gateway_id" in ToolCreate.model_json_schema()["properties"]
+        assert "gateway_id" in ResourceCreate.model_json_schema()["properties"]
+
+
 class TestTitleSchemas:
     """Test title field in schema models."""
 

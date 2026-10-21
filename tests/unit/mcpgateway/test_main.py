@@ -7179,3 +7179,96 @@ class TestCreateRoutesRejectForeignNestedTeam:
         assert response.status_code == 403
         assert response.json()["message"] == _CREATE_TEAM_DENIED
         register.assert_not_awaited()
+
+
+class TestMcpServerIdProductTerminologyAlias:
+    """HTTP coverage for the ``mcp_server_id`` alias of ``gateway_id`` (#6544)."""
+
+    @pytest.mark.parametrize(
+        ("path", "service", "body_key", "entity", "read_model", "mock_read"),
+        [
+            ("/tools/", "tool_service", "tool", {"name": "t", "url": "http://example.com"}, None, MOCK_TOOL_READ_SNAKE),
+            ("/resources/", "resource_service", "resource", {"uri": "test/resource", "name": "r", "content": "c"}, ResourceRead, MOCK_RESOURCE_READ),
+            ("/prompts/", "prompt_service", "prompt", {"name": "p", "template": "Hello"}, PromptRead, MOCK_PROMPT_READ),
+        ],
+    )
+    @pytest.mark.parametrize("spelling", ["mcp_server_id", "gateway_id"])
+    def test_create_accepts_alias_and_original(self, path, service, body_key, entity, read_model, mock_read, spelling, test_client, auth_headers):
+        """Create bodies map both spellings onto the ``gateway_id`` field."""
+        register = f"register_{body_key}"
+        with patch(f"mcpgateway.main.{service}.{register}") as mock_register:
+            mock_register.return_value = mock_read if read_model is None else read_model(**mock_read)
+            req = {body_key: {**entity, spelling: "gw-1"}, "team_id": None, "visibility": "private"}
+            response = test_client.post(path, json=req, headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_register.call_args.args[1].gateway_id == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "entity"),
+        [
+            ("/tools/", "tool", {"name": "t", "url": "http://example.com"}),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "r", "content": "c"}),
+            ("/prompts/", "prompt", {"name": "p", "template": "Hello"}),
+        ],
+    )
+    def test_create_rejects_conflicting_spellings(self, path, body_key, entity, test_client, auth_headers):
+        """Different values under both spellings return 422."""
+        req = {body_key: {**entity, "gateway_id": "gw-1", "mcp_server_id": "gw-2"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(path, json=req, headers=auth_headers)
+        assert response.status_code == 422
+
+    @patch("mcpgateway.routers.mcp_servers_router.test_gateway_handshake")
+    def test_handshake_accepts_mcp_server_id(self, mock_handshake, test_client, auth_headers):
+        """The gateway handshake body accepts ``mcp_server_id``."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        response = test_client.post("/v1/mcp-servers/test-handshake", json={"base_url": "https://example.com", "mcp_server_id": "gw-1"}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_handshake.call_args.args[0].gateway_id == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "service", "method"),
+        [("/tools/", "tool_service", "list_tools"), ("/resources/", "resource_service", "list_resources"), ("/prompts/", "prompt_service", "list_prompts")],
+    )
+    def test_list_filter_accepts_mcp_server_id(self, path, service, method, test_client, auth_headers):
+        """The list filter accepts ``mcp_server_id`` and forwards it as ``gateway_id``."""
+        with patch(f"mcpgateway.main.{service}.{method}") as mock_list:
+            mock_list.return_value = ([], None)
+            response = test_client.get(f"{path}?mcp_server_id=gw-1", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_list.call_args.kwargs["gateway_id"] == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "service", "method"),
+        [("/tools/", "tool_service", "list_tools"), ("/resources/", "resource_service", "list_resources"), ("/prompts/", "prompt_service", "list_prompts")],
+    )
+    def test_list_filter_rejects_conflicting_spellings(self, path, service, method, test_client, auth_headers):
+        """Different values under both query spellings return 422 without a service call."""
+        with patch(f"mcpgateway.main.{service}.{method}") as mock_list:
+            response = test_client.get(f"{path}?gateway_id=gw-1&mcp_server_id=gw-2", headers=auth_headers)
+        assert response.status_code == 422
+        mock_list.assert_not_called()
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    def test_create_server_rejects_conflicting_keys(self, path_prefix, test_client, auth_headers):
+        """Different values under ``server`` and ``virtual_server`` return 422."""
+        req = {"server": {"name": "a"}, "virtual_server": {"name": "b"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+
+    def test_openapi_documents_aliases(self, test_client):
+        """OpenAPI keeps the original property names and lists the new server key."""
+        schemas = test_client.app.openapi()["components"]["schemas"]
+        assert "gatewayId" in schemas["ToolUpdate"]["properties"]
+        assert "gatewayId" in schemas["PromptCreate"]["properties"]
+        assert "gatewayId" in schemas["GatewayHandshakeRequest"]["properties"]
+        assert "gateway_id" in schemas["ToolCreate"]["properties"]
+        assert "gateway_id" in schemas["ResourceCreate"]["properties"]
+        request = schemas["ServerCreateRequest"]
+        assert "virtual_server" in request["properties"]
+        assert request["anyOf"] == [{"required": ["server"]}, {"required": ["virtual_server"]}]
+        assert "required" not in request
