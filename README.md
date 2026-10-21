@@ -999,17 +999,6 @@ A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
 
 Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
 
-
-## Core Authors and Maintainers
-
-- [Mihai Criveti](https://www.linkedin.com/in/crivetimihai) - Distinguished Engineer, Agentic AI
-
-Special thanks to our contributors for helping us improve ContextForge:
-
-<a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" alt="Contributors to the mcp-context-forge repository" />
-</a>
-
 ## Star History and Project Activity
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ibm/mcp-context-forge&type=Date)](https://www.star-history.com/#ibm/mcp-context-forge&Date)
