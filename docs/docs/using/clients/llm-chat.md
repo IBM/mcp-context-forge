@@ -36,6 +36,12 @@ All LLM providers are configured via the Admin UI's LLM Settings. Navigate to **
 | `watsonx` | IBM watsonx.ai | API Key, project_id in additional_config |
 | `openai_compatible` | OpenAI-compatible APIs (vLLM, LocalAI, etc.) | Base URL, optional API Key |
 
+MiniMax is available as provider type `minimax`. New configurations default to
+`MiniMax-M3.1-Flash` at `https://api.minimax.io/v1`. Model discovery offers
+`MiniMax-M3.1-Flash` followed by `MiniMax-M3`; sync these models before using LLM Chat.
+Explicit model IDs and custom base URLs remain supported. Existing configurations are preserved.
+The text chat proxy uses the model's default thinking behavior and does not expose reasoning effort controls.
+
 ### 🗄️ Redis Configurations for Multi Worker Environment
 
 ```bash

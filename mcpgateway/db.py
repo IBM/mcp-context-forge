@@ -6390,6 +6390,7 @@ class LLMProviderType:
     MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
+    MINIMAX = "minimax"
 
     @classmethod
     def get_all_types(cls) -> List[str]:
@@ -6411,6 +6412,7 @@ class LLMProviderType:
             cls.MISTRAL,
             cls.GROQ,
             cls.TOGETHER,
+            cls.MINIMAX,
         ]
 
     @classmethod
@@ -6504,6 +6506,14 @@ class LLMProviderType:
                 "supports_model_list": False,
                 "requires_api_key": False,
                 "description": "Google Vertex AI (uses service account)",
+            },
+            cls.MINIMAX: {
+                "api_base": "https://api.minimax.io/v1",
+                "default_model": "MiniMax-M3.1-Flash",
+                "supports_model_list": True,
+                "models": ["MiniMax-M3.1-Flash", "MiniMax-M3"],
+                "requires_api_key": True,
+                "description": "MiniMax text models",
             },
             cls.WATSONX: {
                 "api_base": "https://us-south.ml.cloud.ibm.com",
