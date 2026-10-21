@@ -11998,7 +11998,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "a2a_service", None)
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent_card.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
+            await main_mod.get_a2a_agent_card.__wrapped__("a1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 503
 
     async def test_get_a2a_agent_card_resolves_standalone_agent(self, monkeypatch):
@@ -12010,16 +12010,18 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
 
         svc = MagicMock()
-        svc.get_agent_card_by_id = AsyncMock(return_value={"name": "ag"})
+        svc.get_agent_card = AsyncMock(return_value={"name": "ag"})
         monkeypatch.setattr(main_mod, "a2a_service", svc)
 
         mock_server_service = MagicMock()
         monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
 
-        result = await main_mod.get_a2a_agent_card.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
+        response = FastAPIResponse()
+        result = await main_mod.get_a2a_agent_card.__wrapped__("a1", request, response, db=MagicMock(), user={"email": "u"})
 
         assert result == {"name": "ag"}
-        mock_server_service.get_server_agent_card_by_id.assert_not_called()
+        mock_server_service.get_server_agent_card.assert_not_called()
+        assert response.headers["cache-control"] == "private, no-store"
 
     async def test_get_a2a_agent_card_falls_back_to_virtual_server(self, monkeypatch):
         """No standalone agent matches the ID, so the virtual-server fallback resolves the card (#6700)."""
@@ -12030,14 +12032,14 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
 
         svc = MagicMock()
-        svc.get_agent_card_by_id = AsyncMock(return_value=None)
+        svc.get_agent_card = AsyncMock(return_value=None)
         monkeypatch.setattr(main_mod, "a2a_service", svc)
 
         mock_server_service = MagicMock()
-        mock_server_service.get_server_agent_card_by_id.return_value = {"name": "srv-as-agent"}
+        mock_server_service.get_server_agent_card.return_value = {"name": "srv-as-agent"}
         monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
 
-        result = await main_mod.get_a2a_agent_card.__wrapped__("srv-1", request, db=MagicMock(), user={"email": "u"})
+        result = await main_mod.get_a2a_agent_card.__wrapped__("srv-1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
 
         assert result == {"name": "srv-as-agent"}
 
@@ -12049,15 +12051,15 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
 
         svc = MagicMock()
-        svc.get_agent_card_by_id = AsyncMock(return_value=None)
+        svc.get_agent_card = AsyncMock(return_value=None)
         monkeypatch.setattr(main_mod, "a2a_service", svc)
 
         mock_server_service = MagicMock()
-        mock_server_service.get_server_agent_card_by_id.return_value = None
+        mock_server_service.get_server_agent_card.return_value = None
         monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent_card.__wrapped__("missing", request, db=MagicMock(), user={"email": "u"})
+            await main_mod.get_a2a_agent_card.__wrapped__("missing", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 404
 
     async def test_create_a2a_agent_public_only_sets_team_id_none(self, monkeypatch):
