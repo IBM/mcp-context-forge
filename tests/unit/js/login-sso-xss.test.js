@@ -79,4 +79,19 @@ describe("login.html SSO provider button — DOM-sink XSS guard (issue #5856)", 
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector(".sso-provider-name").textContent).toBe(payload);
   });
+
+  test("keeps 'Continue with' and the name in one flex item, so the space survives (#7304)", async () => {
+    const win = renderWith({ id: "custom-oidc", name: "entra", display_name: "Microsoft" });
+
+    await win.loadSSOProviders();
+
+    const button = win.document.querySelector("#sso-providers button");
+    // The button is display:flex. A bare text node among its children is a flex item of its own,
+    // and its trailing space is dropped before the name's span.
+    const bareText = [...button.childNodes].filter((node) => node.nodeType === win.Node.TEXT_NODE && node.textContent.trim());
+    expect(bareText).toEqual([]);
+    const label = button.querySelector(".sso-provider-name").parentElement;
+    expect(label.parentElement).toBe(button);
+    expect(label.textContent).toBe("Continue with Microsoft");
+  });
 });
