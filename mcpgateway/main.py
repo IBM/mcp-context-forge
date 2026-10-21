@@ -138,6 +138,7 @@ from mcpgateway.schemas import (
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
+    AgentCard,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -4969,6 +4970,54 @@ async def get_a2a_agent(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@a2a_router.get("/{agent_id}/card", response_model=AgentCard)
+@require_permission("a2a.read")
+async def get_a2a_agent_card(
+    agent_id: str,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Retrieve the A2A AgentCard for an agent or agent-exposing virtual server.
+
+    Resolves ``agent_id`` against standalone A2A agents first, then against
+    virtual servers with an enabled A2A interface, mirroring the internal
+    ``/_internal/a2a/agents/{agent_name}/card`` lookup used by the Rust
+    sidecar. Layer-1 visibility is enforced inside the service calls.
+
+    Args:
+        agent_id (str): The ID of the agent or agent-exposing virtual server.
+        request (Request): The FastAPI request object for team_id retrieval.
+        response (Response): The response object used to set cache headers.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The AgentCard for the resolved agent.
+
+    Raises:
+        HTTPException: If the agent is not found or the caller lacks access.
+    """
+    logger.debug("User %s requested A2A agent card for ID %s", safe_log_user(user), agent_id)
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+
+    # SECURITY: visibility denial must look identical to not-found (PR #4341),
+    # so both branches fall through to the same 404 below.
+    card = await a2a_service.get_agent_card(db, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if card is None:
+        card = A2AServerService().get_server_agent_card(db, server_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if card is None:
+        logger.warning("A2A agent card not found or denied for user %s, ID %s", safe_log_user(user), agent_id)
+        raise HTTPException(status_code=404, detail="agent not found")
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return card
 
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)

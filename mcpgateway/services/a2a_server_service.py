@@ -16,12 +16,12 @@ from __future__ import annotations
 
 # Standard
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import uuid
 
 # Third-Party
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -33,7 +33,7 @@ from mcpgateway.db import ServerTaskMapping as DbServerTaskMapping
 logger = logging.getLogger(__name__)
 
 
-def _check_server_access(server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
+def _check_server_access(server: Union[DbServer, DbA2AAgent], user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
     """Apply the standard scoped visibility rules to a virtual server.
 
     Admin bypass invariant (PR #4341): never reveal another user's private
@@ -85,27 +85,30 @@ class A2AServerService:
     def get_server_agent_card(
         self,
         db: Session,
-        server_name: str,
+        server_name: Optional[str] = None,
         *,
         user_email: Optional[str] = None,
         token_teams: Optional[list[str]] = None,
+        server_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard for a virtual server.
 
-        Looks up the server by name (enabled=True), checks for an enabled
+        Looks up the server by name, or by ID when ``server_id`` is set
+        (enabled=True), checks for an enabled
         ServerInterface whose protocol contains 'a2a' (case-insensitive), and
         builds an AgentCard dict from the server and interface metadata.
         Skills are derived from associated A2A agents.
 
         Args:
             db: Database session.
-            server_name: Name of the virtual server.
+            server_name: Name of the virtual server. Ignored when ``server_id`` is set.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
+            server_id: ID of the virtual server to look up instead of ``server_name``.
 
         Returns:
             AgentCard dict, or None if the server does not exist, is disabled,
-            or has no enabled A2A interface.
+            is not visible to the caller, or has no enabled A2A interface.
 
         Examples:
             >>> from unittest.mock import MagicMock
@@ -114,22 +117,38 @@ class A2AServerService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> service.get_server_agent_card(db, "no-such-server") is None
             True
+            >>> service.get_server_agent_card(db, server_id="no-such-server") is None
+            True
         """
-        server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled.is_(True))
+        match = DbServer.id == server_id if server_id is not None else DbServer.name == server_name
+        server_query = select(DbServer).where(match, DbServer.enabled.is_(True)).options(selectinload(DbServer.a2a_agents))
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
             return None
         if not _check_server_access(server, user_email, token_teams):
             return None
 
+        return self._build_server_card(db, server, user_email, token_teams)
+
+    def _build_server_card(self, db: Session, server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> Optional[Dict[str, Any]]:
+        """Build the AgentCard dict for an already-resolved, visible server.
+
+        Args:
+            db: Database session.
+            server: The enabled, visibility-checked server row.
+            user_email: Caller's email for per-agent visibility scoping.
+            token_teams: Caller's teams for per-agent visibility scoping.
+
+        Returns:
+            AgentCard dict, or None if the server has no enabled A2A interface.
+        """
         interface = self._find_a2a_interface(db, server.id)
         if not interface:
             return None
 
-        # Collect skills from associated A2A agents
         skills: list[Dict[str, Any]] = []
         for agent in server.a2a_agents:
-            if not agent.enabled:
+            if not agent.enabled or not _check_server_access(agent, user_email, token_teams):
                 continue
             caps = agent.capabilities or {}
             for skill in caps.get("skills", []):
