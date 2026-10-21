@@ -7009,3 +7009,134 @@ def test_main_vault_router_skipped_when_backend_is_not_vault():
 
     mock_app.include_router.assert_not_called()
     mock_logger.debug.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Create-route scope resolution                                                #
+# --------------------------------------------------------------------------- #
+_PUBLIC_ONLY_DENIAL = "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."
+
+
+def _scope_request(team_id=None, token_teams=None):
+    """Build a request stub carrying the token scope state."""
+    # Standard
+    from types import SimpleNamespace
+
+    return SimpleNamespace(state=SimpleNamespace(team_id=team_id, token_teams=token_teams))
+
+
+def _scope_payload(team_id=None, visibility=None):
+    """Build a create-payload stub carrying nested scope fields."""
+    # Standard
+    from types import SimpleNamespace
+
+    return SimpleNamespace(team_id=team_id, visibility=visibility)
+
+
+class TestResolveCreateScope:
+    """Create routes derive the effective team and visibility from token state."""
+
+    @staticmethod
+    async def _resolve(request, payload, team_id=None, visibility=None, permitted=True):
+        """Run the helper with a patched permission check and return (result, mock)."""
+        # First-Party
+        from mcpgateway.main import _resolve_create_scope
+
+        with patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=permitted)) as perm:
+            result = await _resolve_create_scope(request, {"email": "alice@example.com"}, MagicMock(), "servers.create", payload, team_id, visibility)
+        return result, perm
+
+    async def test_nested_team_differs_from_token_team_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request("team-a", ["team-a"]), _scope_payload(team_id="team-other"))
+
+    async def test_nested_team_conflicts_with_top_level_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request(None, None), _scope_payload(team_id="team-other"), team_id="team-a")
+
+    async def test_team_outside_token_teams_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request(None, ["team-a"]), _scope_payload(team_id="team-other"))
+
+    async def test_permission_missing_in_final_team_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        request = _scope_request(None, ["team-a", "team-other"])
+        with patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=False)) as perm:
+            # First-Party
+            from mcpgateway.main import _resolve_create_scope
+
+            with pytest.raises(_CreateScopeDenied):
+                await _resolve_create_scope(request, {"email": "alice@example.com"}, MagicMock(), "servers.create", _scope_payload(team_id="team-other"), None, None)
+        assert perm.await_args.kwargs["team_id"] == "team-other"
+
+    async def test_nested_team_matching_token_team_is_accepted(self):
+        result, _ = await self._resolve(_scope_request("team-a", ["team-a"]), _scope_payload(team_id="team-a", visibility="team"))
+        assert result == ("team-a", "team")
+
+    async def test_nested_only_team_with_session_token_is_kept(self):
+        result, _ = await self._resolve(_scope_request(None, ["team-a"]), _scope_payload(team_id="team-a"))
+        assert result[0] == "team-a"
+
+    async def test_public_only_token_nested_team_visibility_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied) as exc_info:
+            await self._resolve(_scope_request(None, []), _scope_payload(visibility="team"))
+        assert str(exc_info.value) == _PUBLIC_ONLY_DENIAL
+
+    async def test_public_only_token_drops_team(self):
+        result, _ = await self._resolve(_scope_request(None, []), _scope_payload(team_id="team-other", visibility="public"))
+        assert result == (None, "public")
+
+    async def test_admin_bypass_accepts_requested_team(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(team_id="team-other"))
+        assert result[0] == "team-other"
+
+    async def test_top_level_visibility_wins_over_nested(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(visibility="public"), visibility="private")
+        assert result[1] == "private"
+
+    async def test_nested_visibility_used_when_top_level_absent(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(visibility="team"))
+        assert result[1] == "team"
+
+    async def test_visibility_defaults_to_public(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload())
+        assert result == (None, "public")
+
+
+_TEAM_A = "11111111-1111-4111-8111-111111111111"
+_TEAM_OTHER = "22222222-2222-4222-8222-222222222222"
+
+
+class TestCreateRoutesRejectForeignNestedTeam:
+    """A nested team outside the token scope is rejected before the service runs."""
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "body", "service_patch"),
+        [
+            ("/servers/", "server", {"name": "test-server"}, "mcpgateway.main.server_service.register_server"),
+            ("/tools/", "tool", {"name": "test_tool", "url": "http://example.com"}, "mcpgateway.main.tool_service.register_tool"),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "Test Resource", "content": "hello"}, "mcpgateway.main.resource_service.register_resource"),
+            ("/prompts/", "prompt", {"name": "test_prompt", "template": "Hello"}, "mcpgateway.main.prompt_service.register_prompt"),
+        ],
+    )
+    def test_nested_team_outside_token_team_returns_403(self, path, body_key, body, service_patch, app_with_temp_db, auth_headers):
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=[_TEAM_A], team_id=_TEAM_A)
+        with patch(service_patch, new_callable=AsyncMock) as register:
+            response = client.post(path, json={body_key: {**body, "team_id": _TEAM_OTHER}}, headers=auth_headers)
+        assert response.status_code == 403
+        assert "message" in response.json()
+        register.assert_not_awaited()
