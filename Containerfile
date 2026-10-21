@@ -413,6 +413,7 @@ RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
     && microdnf install -y --nodocs --setopt=install_weak_deps=0 \
         python${PYTHON_VERSION} \
         ca-certificates \
+        openssl \
         procps-ng \
         shadow-utils \
         libpq \
@@ -421,6 +422,28 @@ RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
     fi \
     && microdnf clean all \
     && rm -rf /var/cache/yum \
+    \
+    # Revoke emSign/eMudhra CA roots. The ca-certificates RPM ships them in a
+    # monolithic bundle; copying their PEM certs into the blocklist dir and
+    # re-running update-ca-trust is the reliable removal mechanism on UBI10.
+    && BLOCKLIST=/usr/share/pki/ca-trust-source/blocklist \
+    && csplit -z -f /tmp/cacert- /etc/pki/tls/certs/ca-bundle.crt \
+              "/-----BEGIN CERTIFICATE-----/" "{*}" 2>/dev/null \
+    && for f in /tmp/cacert-*; do \
+           subj=$(openssl x509 -in "$f" -noout -subject 2>/dev/null); \
+           echo "$subj" | grep -qi "emsign\|emudhra" || continue; \
+           slug=$(echo "$subj" | sed 's/.*CN=//' | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-'); \
+           cp "$f" "${BLOCKLIST}/${slug}.pem"; \
+       done \
+    && rm -f /tmp/cacert-* \
+    && update-ca-trust extract \
+    && if openssl crl2pkcs7 -nocrl -certfile /etc/pki/tls/certs/ca-bundle.crt \
+           | openssl pkcs7 -print_certs -noout 2>/dev/null \
+           | grep -qi "emsign\|emudhra"; then \
+           echo "ERROR: emSign/eMudhra root still present in ca-bundle.crt after update-ca-trust" >&2; \
+           exit 1; \
+       fi \
+    \
     && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
