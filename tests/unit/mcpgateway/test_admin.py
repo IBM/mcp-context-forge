@@ -2270,6 +2270,27 @@ class TestAdminBulkImportRoutes:
         assert mock_register_tool.call_count == 2
 
     @patch.object(ToolService, "register_tool")
+    async def test_bulk_import_public_only_token_denies_team_and_private_tools(self, mock_register_tool, mock_request, mock_db):
+        """A public-only token imports public tools without a team and cannot import team or private tools."""
+        base = {"url": "http://api.example.com/t", "integration_type": "REST", "request_type": "GET"}
+        tools_data = [
+            {**base, "name": "pub_tool", "visibility": "public"},
+            {**base, "name": "team_tool", "visibility": "team"},
+            {**base, "name": "private_tool", "visibility": "private"},
+        ]
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db, "token_teams": []})
+        result_data = json.loads(result.body)
+
+        assert result_data["created_count"] == 1
+        assert result_data["failed_count"] == 2
+        assert {e["name"] for e in result_data["errors"]} == {"team_tool", "private_tool"}
+        mock_register_tool.assert_awaited_once()
+        assert mock_register_tool.await_args.kwargs["team_id"] is None
+
+    @patch.object(ToolService, "register_tool")
     async def test_bulk_import_partial_failure(self, mock_register_tool, mock_request, mock_db):
         """Test bulk import with some tools failing validation."""
         # Third-Party

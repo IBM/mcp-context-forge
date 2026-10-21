@@ -1033,7 +1033,7 @@ async def _resolve_create_scope(
     if team_id and token_teams is not None and team_id not in token_teams:
         raise _CreateScopeDenied(_CREATE_TEAM_DENIED)
     if team_id and not await check_permission_inline(user, permission, team_id=team_id, db=db, request=request):
-        raise _CreateScopeDenied(_CREATE_TEAM_DENIED)
+        raise _CreateScopeDenied(f"Missing {permission} in the requested team.")
     return team_id, visibility
 
 

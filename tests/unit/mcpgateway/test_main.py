@@ -7076,9 +7076,10 @@ class TestResolveCreateScope:
             # First-Party
             from mcpgateway.main import _resolve_create_scope
 
-            with pytest.raises(_CreateScopeDenied):
+            with pytest.raises(_CreateScopeDenied) as exc_info:
                 await _resolve_create_scope(request, {"email": "alice@example.com"}, MagicMock(), "servers.create", _scope_payload(team_id="team-other"), None, None)
         assert perm.await_args.kwargs["team_id"] == "team-other"
+        assert str(exc_info.value) == "Missing servers.create in the requested team."
 
     async def test_nested_team_matching_token_team_is_accepted(self):
         result, _ = await self._resolve(_scope_request("team-a", ["team-a"]), _scope_payload(team_id="team-a", visibility="team"))
