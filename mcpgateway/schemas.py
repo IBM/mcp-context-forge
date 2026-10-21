@@ -900,6 +900,7 @@ class ToolCreate(BaseModel):
             Any: ``data`` unchanged.
         """
         return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
@@ -1512,6 +1513,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             Any: ``data`` unchanged.
         """
         return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
@@ -5259,7 +5261,9 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
     gateway_id: Optional[str] = Field(
         None,
-        description=("Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied. Also accepted as mcp_server_id"),
+        description=(
+            "Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied. Also accepted as mcp_server_id"
+        ),
         validation_alias=_GATEWAY_ID_CAMEL_ALIAS,
     )
 
@@ -5275,6 +5279,7 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
             Any: ``data`` unchanged.
         """
         return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
     credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
         "stored_with_override",
         description=(
