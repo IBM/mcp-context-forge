@@ -529,7 +529,7 @@ flowchart TD
     A[Code Changes] --> B{Pre-commit Hooks}
 
     B --> C[Ruff - Python Linter/Formatter]
-    B --> D[Black - Code Formatter]
+    B --> D[Ruff - Code Formatter]
     B --> E[isort - Import Sorter]
     B --> F[mypy - Type Checking]
     B --> G[Bandit - Security Scanner]
