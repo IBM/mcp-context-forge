@@ -1405,6 +1405,45 @@ class TestOAuthManager:
             assert call_args[1]["data"]["client_id"] == "test_client"
 
     @pytest.mark.asyncio
+    async def test_refresh_token_resends_configured_scopes(self):
+        """Refresh re-sends the configured scopes (RFC 6749 section 6); Entra v2 needs them."""
+        manager = OAuthManager()
+        credentials = {
+            "token_url": "https://login.microsoftonline.com/tenant/oauth2/v2.0/token",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "scopes": ["api://test_client/access_as_user", "offline_access"],
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "new_access_token", "expires_in": 3600})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(manager, "_get_client", return_value=mock_client):
+            await manager.refresh_token("old_refresh_token", credentials)
+
+        sent = mock_client.post.call_args[1]["data"]
+        assert sent["scope"] == "api://test_client/access_as_user offline_access"
+        assert sent["grant_type"] == "refresh_token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_without_configured_scopes_sends_no_scope(self):
+        """No configured scopes: the refresh request must not invent one."""
+        manager = OAuthManager()
+        credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "new_access_token"})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(manager, "_get_client", return_value=mock_client):
+            await manager.refresh_token("old_refresh_token", credentials)
+
+        assert "scope" not in mock_client.post.call_args[1]["data"]
+
+    @pytest.mark.asyncio
     async def test_refresh_token_with_client_secret(self):
         """Test token refresh with client secret included."""
         manager = OAuthManager()
