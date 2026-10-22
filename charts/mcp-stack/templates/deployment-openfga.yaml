@@ -1,0 +1,92 @@
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT - OpenFGA
+     -------------------------------------------------------------------
+     - Layer-2 RBAC engine, opt-in via .Values.openfga.enabled.
+     - Preshared-key auth; the key comes from the openfga secret.
+     - Own postgres datastore URI; never the gateway database.
+     - httpGet probes work here (kubelet probes need no shell), unlike
+       the distroless compose healthcheck.
+     ------------------------------------------------------------------- */}}
+{{- if .Values.openfga.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-openfga
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-openfga
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-openfga
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-openfga
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: openfga
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            # The openfga image runs as uid 10001 (nonroot distroless).
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+          image: "{{ .Values.openfga.image.repository }}:{{ .Values.openfga.image.tag }}"
+          imagePullPolicy: {{ .Values.openfga.image.pullPolicy }}
+          args:
+            - run
+            - --datastore-engine
+            - postgres
+            - --datastore-uri
+            - {{ .Values.openfga.datastore.uri | quote }}
+            - --playground-enabled=false
+            - --log-format=json
+          env:
+            - name: OPENFGA_AUTHN_METHOD
+              value: preshared
+            - name: OPENFGA_AUTHN_PRESHARED_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.openfgaSecretName" . | trim | quote }}
+                  key: {{ .Values.openfga.presharedKey.secretKey | default "OPENFGA_API_TOKEN" }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          {{- with .Values.openfga.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
