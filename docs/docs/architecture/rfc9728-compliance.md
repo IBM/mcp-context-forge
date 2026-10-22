@@ -52,7 +52,7 @@ The metadata response fields (per RFC 9728 Section 2):
 - Returns `authorization_servers` field as JSON array (RFC 9728 Section 2)
 - Includes `/mcp` suffix in resource URL
 - Cache headers for performance
-- Only exposes public servers with OAuth enabled
+- Only exposes servers with OAuth enabled
 
 **Example Request:**
 
@@ -80,7 +80,7 @@ The `get_oauth_protected_resource_metadata()` method:
 - Returns RFC 9728 compliant metadata with `authorization_servers` field (JSON array)
 - Reads `authorization_servers` (plural) from config as primary source
 - Falls back to `authorization_server` (singular) from config for backward compatibility
-- Only exposes metadata for public, enabled servers with OAuth configured
+- Only exposes metadata for enabled servers with OAuth configured
 - Includes optional `scopes_supported` if configured
 
 **Configuration Priority:**
@@ -100,9 +100,9 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 
 **Access Control:**
 
-- Only public servers expose OAuth metadata
+- Servers with OAuth enabled expose OAuth metadata at every visibility (their 401 response already advertises the metadata URL)
 - Disabled servers return 404
-- Private/team servers return 404 (prevents information leakage)
+- Private/team servers without OAuth return 404 (prevents information leakage)
 - OAuth must be explicitly enabled on the server
 
 **Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L39)
@@ -317,7 +317,7 @@ auth_servers = metadata["authorization_servers"]  # e.g., ["https://auth.example
 - [x] No authentication required for metadata endpoint
 - [x] Cache headers for performance
 - [x] UUID validation for security
-- [x] Only public servers exposed
+- [x] Only servers with OAuth enabled exposed
 - [x] Backward compatibility with legacy configs
 - [x] Comprehensive test coverage
 - [x] Deprecated endpoints provide migration guidance

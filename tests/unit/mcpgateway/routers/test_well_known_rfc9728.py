@@ -371,11 +371,12 @@ class TestServiceLayerRFC9728Compliance:
                 db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
 
-    def test_service_non_public_server_raises_not_found(self, mock_server):
-        """Test service raises ServerNotFoundError for non-public servers."""
+    def test_service_non_public_server_without_oauth_raises_not_found(self, mock_server):
+        """Test service raises ServerNotFoundError for non-public servers without OAuth."""
         from mcpgateway.services.server_service import ServerService
 
         mock_server.visibility = "private"
+        mock_server.oauth_enabled = False
         mock_db = MagicMock()
         mock_db.get.return_value = mock_server
         service = ServerService()
@@ -448,11 +449,12 @@ class TestRFC9728SecurityValidation:
 
         app.dependency_overrides.pop(get_db, None)
 
-    def test_only_public_servers_exposed(self, mock_server):
-        """Test only public servers expose OAuth metadata."""
+    def test_non_public_servers_without_oauth_not_exposed(self, mock_server):
+        """Test private and team servers without OAuth do not expose OAuth metadata."""
         from mcpgateway.services.server_service import ServerService
 
         service = ServerService()
+        mock_server.oauth_enabled = False
 
         # Test private server
         mock_server.visibility = "private"
