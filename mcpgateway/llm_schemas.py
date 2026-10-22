@@ -45,6 +45,7 @@ class LLMProviderTypeEnum(str, Enum):
     MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
+    ORCAROUTER = "orcarouter"
 
 
 class HealthStatus(str, Enum):

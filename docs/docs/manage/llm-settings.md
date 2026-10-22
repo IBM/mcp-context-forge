@@ -68,6 +68,7 @@ Run a health check on any provider to verify connectivity and credentials. The r
 | `mistral` | Mistral AI models | `https://api.mistral.ai/v1` | Required |
 | `groq` | Groq high-speed inference | `https://api.groq.com/openai/v1` | Required |
 | `together` | Together AI inference | `https://api.together.xyz/v1` | Required |
+| `orcarouter` | [OrcaRouter](https://www.orcarouter.ai) gateway (150+ models, one endpoint) | `https://api.orcarouter.ai/v1` | Required |
 
 ## Environment Variables
 
