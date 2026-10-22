@@ -483,12 +483,13 @@ class ServerService(BaseService):
         else:
             server_dict["metrics"] = None
         # Add associated IDs from relationships
-        # Filter out deactivated entities for consistent API responses
-        server_dict["associated_tools"] = [tool.name for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
-        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
-        server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
-        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
-        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        # Associations represent attached components, including currently disabled ones.
+        # Filtering components available for invocation happens in their service read paths.
+        server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
+        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
+        server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
+        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
+        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -846,13 +847,9 @@ class ServerService(BaseService):
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
-                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
-                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
-                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
-                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -962,13 +959,9 @@ class ServerService(BaseService):
         # Filter out deactivated tools, resources, prompts, and agents at query level
         query = select(DbServer).options(
             selectinload(DbServer.tools),
-            with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
             selectinload(DbServer.resources),
-            with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
             selectinload(DbServer.prompts),
-            with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
-            with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
             joinedload(DbServer.email_team),
         )
 
@@ -1184,13 +1177,9 @@ class ServerService(BaseService):
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
-                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
-                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
-                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
-                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)

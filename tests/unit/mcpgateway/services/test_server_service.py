@@ -3626,6 +3626,29 @@ class TestConvertServerToReadAssociatedToolIds:
         assert result.associated_tool_ids == ["uuid-aaa", "uuid-bbb"]
         assert result.associated_tools == ["Tool A", "Tool B"]
 
+    def test_disabled_components_remain_in_association_lists(self, server_service):
+        """Attached disabled components remain visible for counts and editing."""
+        # Standard
+        from types import SimpleNamespace
+
+        server = self._make_server(
+            tools=[
+                SimpleNamespace(id="tool-1", name="enabled", enabled=True),
+                SimpleNamespace(id="tool-2", name="disabled", enabled=False),
+            ],
+            resources=[SimpleNamespace(id="res-1", enabled=False)],
+            prompts=[SimpleNamespace(id="prompt-1", enabled=False)],
+        )
+        server.a2a_agents = [SimpleNamespace(id="agent-1", enabled=False)]
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_tools == ["enabled", "disabled"]
+        assert result.associated_tool_ids == ["tool-1", "tool-2"]
+        assert result.associated_resources == ["res-1"]
+        assert result.associated_prompts == ["prompt-1"]
+        assert result.associated_a2a_agents == ["agent-1"]
+
     def test_associated_tool_ids_empty_when_no_tools(self, server_service):
         """associated_tool_ids defaults to [] when server has no tools."""
         server = self._make_server(tools=[])
