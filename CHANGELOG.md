@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Global passthrough header inheritance** ([#6963](https://github.com/IBM/mcp-context-forge/issues/6963)) - MCP gateways with an unset allowlist inherit the global allowlist. An explicit empty list still blocks forwarding.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

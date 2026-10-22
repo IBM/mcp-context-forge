@@ -1415,7 +1415,8 @@ class ToolService(BaseService):
                 "slug": gateway.slug,
                 "transport": gateway.transport,
                 "capabilities": gateway.capabilities or {},
-                "passthrough_headers": gateway.passthrough_headers or [],
+                # None inherits the global allowlist; [] explicitly blocks forwarding.
+                "passthrough_headers": gateway.passthrough_headers,
                 "auth_type": gateway.auth_type,
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
