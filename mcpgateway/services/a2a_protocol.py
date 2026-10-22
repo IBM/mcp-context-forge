@@ -68,11 +68,11 @@ _LEGACY_TASK_STATE_TO_V1 = {
 _V1_TASK_STATE_TO_LEGACY = {
     "TASK_STATE_SUBMITTED": "submitted",
     "TASK_STATE_WORKING": "working",
-    "TASK_STATE_INPUT_REQUIRED": "input_required",
+    "TASK_STATE_INPUT_REQUIRED": "input-required",
     "TASK_STATE_COMPLETED": "completed",
     "TASK_STATE_CANCELED": "canceled",
     "TASK_STATE_FAILED": "failed",
-    "TASK_STATE_AUTH_REQUIRED": "auth_required",
+    "TASK_STATE_AUTH_REQUIRED": "auth-required",
     "TASK_STATE_REJECTED": "rejected",
 }
 
