@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth_context import resolve_canonical_user_id
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, Role, UserRole, utc_now
+from mcpgateway.services.openfga_sync import openfga_sync_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,7 @@ class RoleService:
             # If we still can't find it, something else went wrong - re-raise
             logger.error("IntegrityError but role not found after refetch: %s", e)
             raise ValueError(f"Failed to create or fetch role '{name}' in scope '{scope}': {e}") from e
+        await openfga_sync_after_commit(self.db, "role created")
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
         """Get role by ID.
@@ -495,6 +497,7 @@ class RoleService:
 
         logger.info("Updated role: %s (id: %s)", role.name, role.id)
         return role
+        await openfga_sync_after_commit(self.db, "role updated")
 
     async def delete_role(self, role_id: str) -> bool:
         """Delete a role.
@@ -552,6 +555,7 @@ class RoleService:
 
         logger.info("Deleted role: %s (id: %s)", role.name, role.id)
         return True
+        await openfga_sync_after_commit(self.db, "role deleted")
 
     async def assign_role_to_user(
         self,
@@ -737,6 +741,7 @@ class RoleService:
             # If we still can't find it, something else went wrong - re-raise
             logger.error("IntegrityError but user_role assignment not found after refetch: %s", e)
             raise ValueError(f"Failed to create or fetch role assignment for {user_email} to role {role_id}: {e}") from e
+        await openfga_sync_after_commit(self.db, "role assigned")
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], commit: bool = True) -> bool:
         """Revoke a role from a user.
@@ -790,6 +795,7 @@ class RoleService:
             SecurityValidator.sanitize_log_message(scope_id),
         )
         return True
+        await openfga_sync_after_commit(self.db, "role revoked")
 
     async def get_user_role_assignment(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> Optional[UserRole]:
         """Get a specific user role assignment.
