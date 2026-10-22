@@ -949,6 +949,16 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
+
+.PHONY: test-rbac-providers
+test-rbac-providers: uv                ## Rule catalog + provider black-box suite (needs a running stack; use testing-up or testing-up-openfga)
+	@echo "🧪 Running rule-provider suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Expected provider: $${RBAC_RULE_PROVIDER:-db} (must match the stack)"
+	@echo "   Requires: docker-compose stack (make testing-up or make testing-up-openfga)"
+	@$(UV_BIN) run pytest tests/live_gateway/test_rbac_rule_providers.py $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ rule-provider suite failed!"; exit 1; }
+	@echo "✅ rule-provider suite passed!"
+
 # deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (v1.3.0)
 test-mcp-protocol-e2e: test-e2e
 	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,1.3.0)

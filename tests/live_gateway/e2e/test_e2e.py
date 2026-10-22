@@ -133,8 +133,41 @@ skip_no_mcp_apps = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="module")
+def healed_fast_time_seed(jwt_token: str) -> None:
+    """Heal the compose-seeded fast_time gateway before MCP tests run.
+
+    Interrupted or partial e2e runs can leave the seeded gateway
+    deleted: the streamable fixture displaces it by URL and its
+    best-effort restore loses the URL race when another fixture
+    still holds the upstream. Re-create the seed here so the
+    fast-time-* tool catalog exists in any run. Plain httpx keeps
+    this fixture out of the sync-playwright fixtures, which cannot
+    instantiate inside the async client fixture chain.
+    """
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    with httpx2.Client(base_url=BASE_URL, timeout=15.0, headers=headers) as api:
+        gateways = api.get("/gateways").json()
+        if any(g.get("name") == "fast_time" for g in gateways):
+            return
+        for gw in gateways:
+            if gw.get("url") == _GATEWAY_UPSTREAM_URL:
+                with suppress(Exception):
+                    api.delete(f"/gateways/{gw['id']}")
+        with suppress(Exception):
+            api.post("/gateways", json={"name": "fast_time", "url": _GATEWAY_UPSTREAM_URL, "transport": "STREAMABLEHTTP"})
+
+        # Wait for the seeded catalog so the tests do not race the sync.
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            tools = api.get("/tools").json()
+            if any("fast-time-" in t.get("name", "") for t in tools):
+                return
+            time.sleep(1.0)
+
+
 @pytest.fixture
-async def client(jwt_token: str, mcp_url: str):
+async def client(jwt_token: str, mcp_url: str, healed_fast_time_seed: None):
     timeout = httpx2.Timeout(_CLIENT_TIMEOUT)
     headers = {"Authorization": f"Bearer {jwt_token}"}
 
@@ -350,7 +383,6 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
 
 
 class TestConnectivity:
-
     async def test_ping(self, client: ClientSession) -> None:
         """Ping roundtrips via the live gateway session."""
         await client.send_ping()
@@ -387,7 +419,6 @@ class TestConnectivity:
 # Discovery — tools / resources / prompts
 # ---------------------------------------------------------------------------
 class TestTools:
-
     async def test_tools_list_nonempty(self, client: ClientSession) -> None:
         tools = (await client.list_tools()).tools
         assert len(tools) > 0, "no tools registered on gateway"
@@ -417,7 +448,6 @@ class TestTools:
 
 
 class TestDiscovery:
-
     async def test_resources_list(self, client: ClientSession) -> None:
         resources = (await client.list_resources()).resources
         print(f"    -> {len(resources)} resources")
@@ -557,13 +587,9 @@ class TestToolCalls:
         """Require a synced tool with a declared output schema."""
         tools = (await client.list_tools()).tools
         match = next((tool for tool in tools if tool.name == tool_name), None)
-        assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. "
-            "Check that register_fast_time completed and gateway synchronization finished."
-        )
+        assert match is not None, f"Tool {tool_name!r} is not registered in the gateway. Check that register_fast_time completed and gateway synchronization finished."
         assert match.output_schema, (
-            f"Tool {tool_name!r} has no output_schema declared in the gateway: {match}. "
-            "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
+            f"Tool {tool_name!r} has no output_schema declared in the gateway: {match}. Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
         )
         return match
 
@@ -1135,18 +1161,24 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                     logger.warning("Failed to delete Streamable HTTP gateway %s: %s %s", gw_id, delete_response.status, delete_response.text())
 
         # Restore any displaced pre-existing registration (e.g. the compose-seeded
-        # "fast_time" gateway) so other tests relying on it keep working.
+        # "fast_time" gateway) so other tests relying on it keep working. The
+        # restore can race another gateway holding the same URL (the delete
+        # above may still be settling, or a lifecycle fixture registered at
+        # the same upstream), so retry until the URL frees up.
         for gw in displaced_gateways:
-            with suppress(Exception):
-                admin_api.post(
-                    "/gateways",
-                    data={
-                        "name": gw["name"],
-                        "url": gw["url"],
-                        "transport": gw.get("transport", "STREAMABLEHTTP"),
-                        "description": gw.get("description"),
-                    },
-                )
+            payload = {
+                "name": gw["name"],
+                "url": gw["url"],
+                "transport": gw.get("transport", "STREAMABLEHTTP"),
+                "description": gw.get("description"),
+            }
+            for attempt in range(5):
+                with suppress(Exception):
+                    resp = admin_api.post("/gateways", data=payload)
+                    if resp.status in (200, 201):
+                        break
+                    logger.warning("Seed restore attempt %d for %s: %s %s", attempt + 1, gw["name"], resp.status, resp.text()[:120])
+                time.sleep(1.0)
 
 
 @pytest.fixture(scope="module")
@@ -3224,9 +3256,9 @@ class TestVirtualServerLifecycle:
                     json=build_initialize(1),
                 )
 
-            assert (
-                probe.status_code == 403
-            ), f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
+            assert probe.status_code == 403, (
+                f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
+            )
         finally:
             _cleanup_user(admin_api, user)
 
@@ -4302,6 +4334,7 @@ class TestGatewayLifecycle:
                     with suppress(Exception):
                         admin_api.delete(f"/gateways/{gateway_id}")
 
+
 # ---------------------------------------------------------------------------
 # Schema ReDoS: a hostile input-schema pattern must not stall the gateway
 # ---------------------------------------------------------------------------
@@ -4375,17 +4408,29 @@ class TestSchemaRegexReDoS:
             # interpret. Matches the except/_unwrap_exception_group pattern used above at
             # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
             start = time.perf_counter()
+            rejection_text = ""
             try:
                 result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+                rejection_text = (result.content[0].text if result.content and result.content[0].text else "") if result.isError else ""
+                assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
             except (McpError, ExceptionGroup) as exc:
-                elapsed = time.perf_counter() - start
+                # Invalid tool arguments surface as a JSON-RPC error, not an
+                # isError result: the gateway maps ToolInvocationError to a
+                # -32000 protocol error, which the client raises as McpError.
+                # A timeout that never arrives (a ReadTimeout leaf) is the
+                # regression signal -- the sandbox stopped bounding the
+                # pattern. Any other leaf carrying the bounded phrase is the
+                # rejection we want.
                 leaf = _unwrap_exception_group(exc)[0]
-                pytest.fail(
+                leaf_repr = repr(leaf)
+                assert not isinstance(leaf, TimeoutError) and "ReadTimeout" not in leaf_repr, (
                     f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
-                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
-                    "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
-                    "env var to rule out the latter before treating this as a regression."
+                    f"(waited {time.perf_counter() - start:.1f}s): {leaf_repr}. Either the sandbox stopped "
+                    "bounding the catastrophic pattern, or this CI box is slow enough to exceed "
+                    "MCP_E2E_CLIENT_TIMEOUT -- raise that env var to rule out the latter before "
+                    "treating this as a regression."
                 )
+                rejection_text = str(leaf)
             elapsed = time.perf_counter() - start
             # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
             # session opens, then initialize() and call_tool() each make their own bounded
@@ -4395,9 +4440,7 @@ class TestSchemaRegexReDoS:
             # adds more round trips to this path.
             assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
             print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
-            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
-            text = result.content[0].text if result.content else ""
-            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+            assert _REDOS_BOUNDED_PHRASE in rejection_text, f"the timeout must be what stopped it; got: {rejection_text!r}"
 
             # Load-bearing: the vulnerability was one hostile request freezing the
             # worker for every other tenant. This must succeed immediately, not
