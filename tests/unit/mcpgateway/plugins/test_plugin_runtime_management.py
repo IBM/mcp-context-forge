@@ -9,7 +9,7 @@ Tests cover:
     - Global plugin enable/disable via Redis (shared state)
     - Per-plugin mode override via Redis
     - Cache invalidation helpers
-    - TTL-based cache expiry in TenantPluginManagerFactory
+    - Cached manager reuse in TenantPluginManagerFactory
     - DB error fallback in get_config_from_db
     - Wildcard binding cache invalidation
 
@@ -69,7 +69,7 @@ def _make_bare_factory(**attrs):
 
     Tests use this to exercise individual methods without loading YAML,
     creating plugin instances, or touching the DB. Pass keyword overrides to
-    pre-set attributes (``_managers``, ``_cache_ttl``, etc.); sensible defaults
+    pre-set attributes (``_managers``, ``_inflight``, etc.); sensible defaults
     are applied for the ones tests usually don't care about.
     """
     from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
@@ -78,7 +78,6 @@ def _make_bare_factory(**attrs):
     factory._managers = attrs.get("_managers", {})
     factory._inflight = attrs.get("_inflight", {})
     factory._lock = attrs.get("_lock", asyncio.Lock())
-    factory._cache_ttl = attrs.get("_cache_ttl", 30)
     factory._base_config = attrs.get("_base_config", MagicMock())
     factory._timeout = attrs.get("_timeout", 30)
     factory._observability = attrs.get("_observability", None)
@@ -270,53 +269,6 @@ class TestGetPluginModeOverride:
         with _mock_redis(side_effect=Exception("timeout")):
             with pytest.raises(RuntimeError, match="Redis client unavailable"):
                 await get_plugin_mode_override("RateLimiterPlugin")
-
-
-# ---------------------------------------------------------------------------
-# Layer 1: TTL cache expiry
-# ---------------------------------------------------------------------------
-
-
-class TestTTLCacheExpiry:
-    """Tests for TTL-based cache expiry in TenantPluginManagerFactory."""
-
-    @pytest.mark.asyncio
-    async def test_cache_returns_manager_within_ttl(self):
-        """Cached manager is returned when within TTL."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
-        cached = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
-        factory = _make_bare_factory(_managers={"test::tool": cached})
-
-        manager = await factory.get_manager("test::tool")
-        assert manager is cached.manager
-
-    @pytest.mark.asyncio
-    async def test_cache_evicts_after_ttl(self):
-        """Cached manager is reported as expired once the TTL window has passed."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
-        expired = _CachedManager(manager=MagicMock(), created_at=time.monotonic() - 60)
-        factory = _make_bare_factory(_managers={"test::tool": expired}, _cache_ttl=5)
-
-        async with factory._lock:
-            entry = factory._managers.get("test::tool")
-            assert entry is not None
-            assert entry.is_expired(factory._cache_ttl)
-
-    def test_cache_ttl_default(self):
-        """Default TTL is 30 seconds."""
-        from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
-
-        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 30
-
-    def test_cache_ttl_zero_disables(self):
-        """TTL of 0 short-circuits the expiry check so entries never auto-evict."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
-        entry = _CachedManager(manager=MagicMock(), created_at=time.monotonic() - 10_000)
-        assert entry.is_expired(0) is False
-        assert entry.is_expired(5) is True
 
 
 class TestApplyRedisModeOverrides:
@@ -887,14 +839,12 @@ class TestFactoryInvalidateTeam:
 
     @pytest.mark.asyncio
     async def test_invalidates_only_matching_team(self):
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "team_a::tool_2": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "team_b::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "__global__": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
+                "team_a::tool_1": MagicMock(),
+                "team_a::tool_2": MagicMock(),
+                "team_b::tool_1": MagicMock(),
+                "__global__": MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -908,12 +858,10 @@ class TestFactoryInvalidateTeam:
     @pytest.mark.asyncio
     async def test_uses_class_separator_when_not_specified(self):
         """Default separator is ``CONTEXT_ID_SEPARATOR`` — saves the listener from knowing it on the wire."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "team_a-other::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
+                "team_a::tool_1": MagicMock(),
+                "team_a-other::tool_1": MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -951,13 +899,11 @@ class TestTeamBindingChangeRoundTrip:
 
         import mcpgateway.plugins as framework
         from mcpgateway.plugins import _handle_invalidation_message
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "team_a::tool_2": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
-                "team_b::tool_1": _CachedManager(manager=MagicMock(), created_at=time.monotonic()),
+                "team_a::tool_1": MagicMock(),
+                "team_a::tool_2": MagicMock(),
+                "team_b::tool_1": MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -1313,26 +1259,15 @@ class TestFactoryGetManagerBranches:
     """Narrow pins on the ``TenantPluginManagerFactory.get_manager`` caching branches."""
 
     @pytest.mark.asyncio
-    async def test_cache_ttl_expiry_evicts_and_rebuilds(self):
-        """An expired cache entry must be popped and re-built, not served stale."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
+    async def test_cached_manager_is_reused(self):
+        """A cached manager remains available until explicit invalidation or shutdown."""
+        cached = AsyncMock()
+        factory = _make_bare_factory(_managers={"ctx-1": cached})
+        factory._build_manager = AsyncMock()
 
-        factory = _make_bare_factory(_cache_ttl=0.001)
-        stale = MagicMock(name="stale_manager")
-        factory._managers["ctx-1"] = _CachedManager(manager=stale, created_at=time.monotonic() - 10)
-
-        fresh = MagicMock(name="fresh_manager")
-        build_calls: list[str] = []
-
-        async def _fake_build(ctx):
-            build_calls.append(ctx)
-            return fresh
-
-        factory._build_manager = _fake_build
-        result = await factory.get_manager("ctx-1")
-        # Expired entry forced a rebuild (covers the TTL-eviction branch).
-        assert build_calls == ["ctx-1"]
-        assert result is fresh, "expected the rebuilt manager, got the stale cached one"
+        assert await factory.get_manager("ctx-1") is cached
+        factory._build_manager.assert_not_awaited()
+        cached.shutdown.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_apply_redis_mode_overrides_handles_client_exception(self, caplog):
@@ -1396,10 +1331,8 @@ class TestInvalidateHelpers:
         """One reload failure must not abort the sweep — it logs and moves on."""
         import logging as _logging
 
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory()
-        factory._managers["ctx-a"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
+        factory._managers["ctx-a"] = MagicMock()
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
         with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
@@ -1412,11 +1345,9 @@ class TestInvalidateHelpers:
         """Same guarantee on the team-scoped sweep."""
         import logging as _logging
 
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory()
         factory.CONTEXT_ID_SEPARATOR = "::"
-        factory._managers["team-a::tool-1"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
+        factory._managers["team-a::tool-1"] = MagicMock()
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
         with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
@@ -1426,15 +1357,13 @@ class TestInvalidateHelpers:
 
     def test_iter_context_ids_returns_snapshot_list(self):
         """``iter_context_ids`` copies the cache keys so callers iterating without the lock are safe."""
-        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
-
         factory = _make_bare_factory()
-        factory._managers["ctx-a"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
-        factory._managers["ctx-b"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
+        factory._managers["ctx-a"] = MagicMock()
+        factory._managers["ctx-b"] = MagicMock()
 
         snapshot = factory.iter_context_ids()
         # Snapshot, not a live view — mutating the cache afterwards shouldn't touch the prior read.
-        factory._managers["ctx-c"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
+        factory._managers["ctx-c"] = MagicMock()
         assert set(snapshot) == {"ctx-a", "ctx-b"}
 
 

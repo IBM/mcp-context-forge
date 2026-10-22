@@ -18043,15 +18043,12 @@ async def update_plugin_mode(
     # the caller as redis_persisted so they know whether the change reached
     # other workers.
     redis_persisted = await publish_plugin_mode_change(name, mode)
-    # The override is already stored (in-process map and/or Redis) by the line
-    # above. Treat the cache sweep as best-effort — if it raises, a background
-    # TTL refresh still reaches the new mode, and the operator must not see a
-    # 500 for an override that actually took effect.
+    # The stored override survives invalidation failure, so the caller can retry the mode change.
     try:
         await invalidate_all_plugin_managers()
     except Exception as invalidate_exc:
         LOGGER.warning(
-            "Plugin '%s' mode override stored but cache invalidation failed (%s) — fresh managers will rebuild on next TTL expiry",
+            "Plugin '%s' mode override stored but cache invalidation failed (%s) — retry the mode change to refresh cached managers",
             name,
             invalidate_exc,
         )
