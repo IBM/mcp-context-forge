@@ -24,29 +24,35 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 # Third-Party
+from mcp.client import Client as MCPSDKClient
+from mcp.client.sse import sse_client
+from mcp.client.stdio import StdioServerParameters
+import mcp.types as mcp_types
 import orjson
 
 try:
     # Third-Party
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-    from langchain_core.tools import BaseTool
-    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langchain_core.tools import BaseTool, StructuredTool, ToolException
     from langchain_ollama import ChatOllama, OllamaLLM
     from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI
     from langgraph.prebuilt import create_react_agent
 
     _LLMCHAT_AVAILABLE = True
-except ImportError:
+    _LLMCHAT_IMPORT_ERROR: Optional[ImportError] = None
+except ImportError as _llmchat_import_error:
     # Optional dependencies for LLM chat feature not installed
     # These are only needed if LLMCHAT_ENABLED=true
     _LLMCHAT_AVAILABLE = False
+    _LLMCHAT_IMPORT_ERROR = _llmchat_import_error
     BaseChatModel = None  # type: ignore
     AIMessage = None  # type: ignore
     BaseMessage = None  # type: ignore
     HumanMessage = None  # type: ignore
     BaseTool = None  # type: ignore
-    MultiServerMCPClient = None  # type: ignore
+    StructuredTool = None  # type: ignore
+    ToolException = None  # type: ignore
     ChatOllama = None  # type: ignore
     OllamaLLM = None
     AzureChatOpenAI = None  # type: ignore
@@ -95,6 +101,7 @@ from mcpgateway.config import settings
 from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 logging_service = LoggingService()
@@ -2115,6 +2122,104 @@ class ChatHistoryManager:
 # ==================== MCP CLIENT ====================
 
 
+def _mcp_transport(connection: Dict[str, Any]) -> Any:
+    """Build an MCP SDK transport for one server connection.
+
+    Args:
+        connection: Server settings with ``transport`` and either ``url`` (plus optional
+            ``headers``) or ``command`` (plus optional ``args``).
+
+    Returns:
+        A target accepted by ``mcp.client.Client``.
+
+    Raises:
+        ValueError: If the transport is not supported.
+
+    Examples:
+        >>> _mcp_transport({"transport": "stdio", "command": "python", "args": ["server.py"]}).command
+        'python'
+        >>> _mcp_transport({"transport": "carrier-pigeon"})
+        Traceback (most recent call last):
+            ...
+        ValueError: Unsupported MCP transport: carrier-pigeon
+    """
+    transport = connection.get("transport")
+    if transport == "streamable_http":
+        return streamable_http_client(connection["url"], headers=connection.get("headers"))
+    if transport == "sse":
+        return sse_client(connection["url"], headers=connection.get("headers"))
+    if transport == "stdio":
+        return StdioServerParameters(command=connection["command"], args=connection.get("args") or [])
+    raise ValueError(f"Unsupported MCP transport: {transport}")
+
+
+def _as_langchain_tool(tool: "mcp_types.Tool", connection: Dict[str, Any]) -> "BaseTool":
+    """Wrap an MCP tool as a LangChain tool that calls it over a fresh MCP session.
+
+    Args:
+        tool: Tool definition returned by ``tools/list``.
+        connection: Server settings used to reach the tool.
+
+    Returns:
+        A ``StructuredTool`` whose input schema is the MCP tool's input schema.
+    """
+
+    async def _call(**arguments: Any) -> str:
+        """Call the MCP tool and return its text content.
+
+        Args:
+            **arguments: Tool arguments.
+
+        Returns:
+            The text content blocks of the result, joined by newlines.
+
+        Raises:
+            ToolException: If the server reports the call as an error.
+        """
+        async with MCPSDKClient(_mcp_transport(connection)) as client:
+            result = await client.call_tool(tool.name, arguments)
+        text = "\n".join(block.text for block in result.content if isinstance(block, mcp_types.TextContent))
+        if result.is_error:
+            raise ToolException(text or f"MCP tool {tool.name} failed")
+        return text
+
+    return StructuredTool(name=tool.name, description=tool.description or "", args_schema=tool.input_schema, coroutine=_call)
+
+
+class _MCPToolSource:
+    """Load MCP tools as LangChain tools with the MCP SDK client.
+
+    Replaces ``langchain_mcp_adapters.client.MultiServerMCPClient``, which has no release
+    compatible with ``mcp>=2``. Takes the same ``{name: connection}`` mapping.
+    """
+
+    def __init__(self, connections: Dict[str, Dict[str, Any]]):
+        """Store the server connections.
+
+        Args:
+            connections: Server settings keyed by a connection name.
+        """
+        self._connections = connections
+
+    async def get_tools(self) -> List["BaseTool"]:
+        """List the tools of every configured server, following pagination.
+
+        Returns:
+            The servers' tools as LangChain tools.
+        """
+        tools: List[BaseTool] = []
+        for connection in self._connections.values():
+            async with MCPSDKClient(_mcp_transport(connection)) as client:
+                cursor: Optional[str] = None
+                while True:
+                    page = await client.list_tools(cursor=cursor)
+                    tools.extend(_as_langchain_tool(tool, connection) for tool in page.tools)
+                    cursor = page.next_cursor
+                    if not cursor:
+                        break
+        return tools
+
+
 class MCPClient:
     """
     Manages MCP server connections and tool loading.
@@ -2160,7 +2265,7 @@ class MCPClient:
             'streamable_http'
         """
         self.config = config
-        self._client: Optional[MultiServerMCPClient] = None
+        self._client: Optional[_MCPToolSource] = None
         self._tools: Optional[List[BaseTool]] = None
         self._connected = False
         logger.info("MCP client initialized with transport: %s", config.transport)
@@ -2195,7 +2300,7 @@ class MCPClient:
         try:
             logger.info("Connecting to MCP server via %s...", self.config.transport)
 
-            # Build server configuration for MultiServerMCPClient
+            # Build server configuration for the MCP tool source
             server_config = {
                 "transport": self.config.transport,
             }
@@ -2209,11 +2314,12 @@ class MCPClient:
                 if self.config.args:
                     server_config["args"] = self.config.args
 
-            if not MultiServerMCPClient:
-                logger.error("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
+            if not _LLMCHAT_AVAILABLE:
+                logger.error("LLM chat dependencies could not be imported (%s). Install them with: pip install '.[llmchat]'", _LLMCHAT_IMPORT_ERROR)
+                raise ImportError(f"LLM chat dependencies could not be imported ({_LLMCHAT_IMPORT_ERROR})") from _LLMCHAT_IMPORT_ERROR
 
-            # Create MultiServerMCPClient with single server
-            self._client = MultiServerMCPClient({"default": server_config})
+            # Create the tool source with a single server
+            self._client = _MCPToolSource({"default": server_config})
             self._connected = True
             logger.info("Successfully connected to MCP server")
 
@@ -2252,7 +2358,7 @@ class MCPClient:
 
         try:
             if self._client:
-                # MultiServerMCPClient manages connections internally
+                # The tool source opens a connection per operation; nothing to close
                 self._client = None
 
             self._connected = False
@@ -2448,7 +2554,7 @@ class MCPChatService:
             return
 
         if not _LLMCHAT_AVAILABLE:
-            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+            raise ImportError(f"LLM chat dependencies could not be imported ({_LLMCHAT_IMPORT_ERROR}). Install them with: pip install '.[llmchat]'") from _LLMCHAT_IMPORT_ERROR
 
         try:
             logger.info("Initializing chat service...")
@@ -3126,7 +3232,7 @@ class MCPChatService:
             raise RuntimeError("Chat service not initialized")
 
         if not _LLMCHAT_AVAILABLE:
-            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+            raise ImportError(f"LLM chat dependencies could not be imported ({_LLMCHAT_IMPORT_ERROR}). Install them with: pip install '.[llmchat]'") from _LLMCHAT_IMPORT_ERROR
 
         try:
             logger.info("Reloading tools from MCP server...")
