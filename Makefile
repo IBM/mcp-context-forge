@@ -5802,7 +5802,7 @@ compose-upgrade-pg18: compose-validate
 
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
-	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up --build -d
 
 PERF_COMPOSE_FILE := docker-compose.perf.yml
 PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(PROFILE)
