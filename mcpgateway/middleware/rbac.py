@@ -31,7 +31,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.trace_context import (
     clear_trace_context,

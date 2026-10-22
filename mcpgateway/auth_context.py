@@ -1009,7 +1009,7 @@ async def is_unrestricted_platform_admin(request: Request, user: Any, db: Sessio
         return False
 
     # First-Party
-    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
     return await PermissionService(db).check_platform_admin_permission(user_email, token_teams=None)
 

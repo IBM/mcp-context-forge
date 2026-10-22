@@ -6615,7 +6615,7 @@ class TestSetGatewayState:
         db = self._make_db_for_state(gw)
         mock_perm = MagicMock()
         mock_perm.return_value.check_resource_ownership = AsyncMock(return_value=False)
-        monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", mock_perm)
+        monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", mock_perm)
         with pytest.raises(PermissionError):
             await gateway_service.set_gateway_state(db, "gw-1", activate=True, user_email="other@example.com")
 
@@ -6924,7 +6924,7 @@ class TestDeleteGateway:
         db.rollback = MagicMock()
         mock_perm = MagicMock()
         mock_perm.return_value.check_resource_ownership = AsyncMock(return_value=False)
-        monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", mock_perm)
+        monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", mock_perm)
         with pytest.raises(PermissionError):
             await gateway_service.delete_gateway(db, "gw-1", user_email="other@example.com")
 
@@ -7075,7 +7075,7 @@ class TestUpdateGateway:
         db._get_for_update_result = gw
         mock_perm = MagicMock()
         mock_perm.return_value.check_resource_ownership = AsyncMock(return_value=False)
-        monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", mock_perm)
+        monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", mock_perm)
         db.rollback = MagicMock()
 
         update = GatewayUpdate(name="updated")

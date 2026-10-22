@@ -54,7 +54,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.team_invitation_service import (
     failed_invitation_delivery_result,
     InvitationEmailMismatchError,

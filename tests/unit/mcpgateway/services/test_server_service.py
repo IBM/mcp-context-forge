@@ -814,7 +814,7 @@ class TestServerService:
         from mcpgateway.services.server_service import ServerNameConflictError
 
         # Mock PermissionService to bypass ownership checks (this test is about name conflicts)
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 

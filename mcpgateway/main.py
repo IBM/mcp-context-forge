@@ -215,7 +215,7 @@ from mcpgateway.services.mcp_apps import (
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
