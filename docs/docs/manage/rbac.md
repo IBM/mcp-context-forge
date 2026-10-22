@@ -699,6 +699,158 @@ When `JWT_TRUST_MODE=jwt-trust`, a signed JWT alone proves identity, roles, and 
 
 ---
 
+## Rule Providers and the Rule Catalog
+
+Layer-2 RBAC decisions flow through a rule provider selected at startup.
+Layer-1 token scoping never moves behind the provider: a scoped API
+token must still carry the permission regardless of the engine.
+
+### Provider Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RBAC_RULE_PROVIDER` | `db` | Layer-2 engine: `db` (role model plus rule catalog) or `openfga` (external engine) |
+| `RBAC_RULE_PROVIDER_SHADOW` | `false` | Evaluate both engines, enforce the `db` answer, log divergence |
+| `OPENFGA_API_URL` | `http://localhost:8080` | OpenFGA HTTP API base URL |
+| `OPENFGA_STORE_ID` | empty | Pin a store. An empty value bootstraps by `OPENFGA_STORE_NAME` (default `contextforge`) |
+| `OPENFGA_API_TOKEN` / `OPENFGA_API_TOKEN_FILE` | empty | Preshared key. The file wins when both are set |
+| `OPENFGA_CACHE_TTL_SECONDS` | `30` | Client-side decision cache. Engine answers only. Database-bridged answers skip the cache |
+| `OPENFGA_RECONCILE_SECONDS` | `300` | Full tuple reconciliation interval |
+
+Selecting the engine (or shadow mode) without the URL and a token fails
+startup validation. An unreachable engine logs an ERROR line and the
+database provider answers the check. A denial requires both authorities
+to deny: the provider never fails open.
+
+### Editing Rules
+
+The `rbac_rules` catalog holds end-user-editable rules in the rule
+taxonomy: capability type (`tool`, `resource`, `prompt`, `server`,
+`gateway`, `a2a_agent`, `route`), optional capability id, optional
+permission narrow, phase, predicate, and `allow` or `deny` effect.
+Manage rules through `/rbac/rules`. Mutations require the
+`rbac.rules.manage` permission, which `platform_admin` already holds.
+
+```
+POST /rbac/rules
+{
+  "name": "block-one-tool",
+  "capability_type": "tool",
+  "capability_id": "tool-42",
+  "predicate": "role.viewer",
+  "effect": "deny"
+}
+```
+
+Predicates are CEL expressions over the gateway's attribute families
+(`subject.id`, `authenticated`, `token.is_admin`, `role.<name>`,
+`team.<id>`, `args.<name>`), matching OpenFGA condition syntax:
+comparisons, `&&`, `||`, `in`, `startsWith`, `endsWith`, `matches`,
+and `size`. The API rejects unknown top-level identifiers with 422.
+Missing attributes evaluate false. Header-sourced numeric values
+arrive as strings: compare with `int(args.limit) > 100`. The
+`contains` call is rejected; use `matches('.*text.*')` instead.
+
+### Tool-Argument Predicates
+
+A rule at `capability_type: "tool"` can read the call's arguments
+through `args.<name>`. The predicate evaluates the arguments the tool
+will execute: the JSON-RPC body arguments merged with any mirrored
+`Mcp-Param-<name>` headers. The body wins on a conflict. A rule fires
+whether or not the client mirrors headers, so omitting a header does
+not bypass an argument rule.
+
+```
+{"name": "deny-us-zones", "capability_type": "tool",
+ "capability_id": "fast-time-convert-time",
+ "permission": "tools.execute",
+ "predicate": "subject.id == 'becky@example.com' && args.target_timezone.startsWith('US/')",
+ "effect": "deny"}
+```
+
+The gateway advertises a parameter for header mirroring with the
+`x-mcp-header` annotation in `tools/list` when a rule references it.
+The annotation follows the MCP 2026-07-28 rules (SEP-2243): the
+property type must be one primitive (`string`, `integer`, `boolean`),
+the name must satisfy RFC 9110 token syntax, and a union-typed
+property never carries the annotation. A parameter the specification
+forbids annotating still evaluates through its body argument.
+
+A matching deny on a serving path returns the JSON-RPC error
+`-32003` with the message `Access denied`. The error carries no
+detail about which rule matched.
+
+The decision cache keys engine answers on the evaluated arguments.
+Change the arguments and the cache evaluates the rules again; a first
+allowed call cannot satisfy a later call that matches a deny rule.
+
+The seeded system rows mirror the built-in role matrix with one row per
+role and permission, so an unedited catalog changes no decision. A
+matching deny rule blocks, a matching allow rule grants, and no match
+passes the role decision through. The platform-admin bypass stays ahead
+of the overlay. Seed rows reject deletion with 409.
+
+### Domain Hierarchy and JWT Claims
+
+The engine authorization model carries a `domain` type with `member`
+and `admin` relations. Servers, tools, resources, prompts, and
+gateways parent to a domain. A permission check traverses from the
+resource to its domain to the caller's membership.
+
+A domain abstracts the tenant concept. A ContextForge team, an Entra
+group, or a Keycloak role can back a domain without model changes.
+
+Membership comes from the token, not from stored tuples. Each check
+carries contextual domain tuples built from the JWT `teams` claim.
+The JWT `roles` claim elevates membership to `admin` when it carries
+`team_admin` or `platform_admin`. Tokens without team claims fall
+back to `email_team_members` reads, so local session users keep
+domain traversal.
+
+Domain identifiers are slugified team names. A name with spaces or
+apostrophes, like ``RBAC Test anne's Team``, becomes the identifier
+``rbac-test-annes-team`` automatically. The engine receives a valid
+object id without naming restrictions on teams. Two team names that
+slugify to the same identifier share one domain: keep team names
+distinct after slugification to avoid merging their traversal.
+
+### Failure Modes
+
+- Engine down: checks fall through to the database provider. The
+  gateway keeps serving with role-model decisions. The reconciliation
+  log shows the engine health. Flipping `RBAC_RULE_PROVIDER=db`
+  removes the engine dependency entirely.
+- Tuple drift: the reconciliation loop converges stored tuples every
+  `OPENFGA_RECONCILE_SECONDS`. Workers that lose a concurrent write
+  race treat the reply as success and converge on the next pass.
+  Direct tuple writes from operators stay unsupported.
+- New principals: a user created after the last reconciliation has no
+  engine tuples yet. The database bridge answers for them until the
+  loop mirrors their assignments.
+- Manual reconciliation: `POST /rbac/rules/reconcile` runs the tuple
+  mirror immediately for holders of `rbac.rules.manage` and clears
+  the decision cache. A policy change then enforces on the next call
+  instead of waiting for the interval.
+ - Shadow divergence: each mismatch logs a WARNING with both answers.
+   Investigate before you cut over.
+
+### Known Limitations
+
+- The engine's tuple-read API rejects a user-only filter. The
+  provider's fresh-user permission enumeration therefore logs an
+  ERROR (`OpenFGA user-tuple read failed`) and falls through to the
+  database bridge. The failure is fail-closed and self-heals when the
+  loop writes the user's tuples. Bridged answers skip the cache.
+- Predicate attributes read roles from the token's `roles` claim.
+  A role assigned only in the database does not appear in
+  `role.<name>` until the token carries it. Deny rules that test
+  `role.<name>` should target claim-backed roles.
+- Domain parent tuples are written for servers and tools. Resources,
+  prompts, and gateways do not yet parent to a domain, so
+  entity-scoped traversal for those types answers through the marker
+  objects and the database bridge.
+
+
 ## Best Practices
 
 ### Token Lifecycle

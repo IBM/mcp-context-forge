@@ -572,7 +572,11 @@ _STUB_PUBLIC_IP = "93.184.215.14"  # IANA example.com
 # Hostnames that must resolve via real DNS even with the global stub active.
 # Opt-in via comma-separated env var; used by integration tests that talk to
 # real external IdPs (e.g. Entra ID: login.microsoftonline.com, graph.microsoft.com).
-_DNS_PASSTHROUGH_HOSTS = frozenset(
+_DNS_PASSTHROUGH_DEFAULTS = frozenset({
+    "login.microsoftonline.com",
+    "graph.microsoft.com",
+})
+_DNS_PASSTHROUGH_HOSTS = _DNS_PASSTHROUGH_DEFAULTS | frozenset(
     h.strip().lower() for h in os.environ.get("TESTS_DNS_PASSTHROUGH_HOSTS", "").split(",") if h.strip()
 )
 
@@ -666,7 +670,6 @@ def _clear_correlation_id_context():
     clear_correlation_id()
 
 
-
 @pytest.fixture(autouse=True)
 def _pin_default_trust_mode():
     """Pin ``jwt_trust_mode`` to ``db`` unless a test opts into trust mode.
@@ -685,6 +688,7 @@ def _pin_default_trust_mode():
     settings.jwt_trust_mode = "db"
     yield
     settings.jwt_trust_mode = original
+
 
 @pytest.fixture(autouse=True)
 def _restore_logger_state():

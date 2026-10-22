@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.bootstrap_db import DEFAULT_ROLE_DEFINITIONS
+from mcpgateway.services.rule_catalog_service import DEFAULT_ROLE_DEFINITIONS
 from mcpgateway.db import Base, RbacRule
 from mcpgateway.services.rule_catalog_service import (
     RuleCatalogError,

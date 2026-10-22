@@ -53,3 +53,6 @@ nav:
   - 48 End-User Identity Propagation: 041-identity-propagation.md
   - 54 Remove Granian HTTP Server: 054-remove-granian-http-server.md
   - 55 Scope Tool Lookup Cache Entries: 055-scope-tool-lookup-cache.md
+  - 56 OpenFGA Rule Provider for Layer-2 RBAC: 056-openfga-rule-provider.md
+  - 57 CEL Rule Predicates: 057-cel-rule-predicates.md
+  - 58 Argument Predicates Evaluate the Executed Arguments: 058-argument-predicates-evaluate-executed-arguments.md
