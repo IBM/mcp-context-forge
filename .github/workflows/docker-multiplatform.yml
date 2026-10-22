@@ -269,6 +269,7 @@ jobs:
             build_on_pr: true
             build_on_merge_group: true
             build_on_push: true
+            mcpgateway_ui_enabled: true
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
@@ -276,6 +277,7 @@ jobs:
             build_on_pr: false
             build_on_merge_group: true
             build_on_push: true
+            mcpgateway_ui_enabled: true
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
@@ -283,6 +285,7 @@ jobs:
             build_on_pr: false
             build_on_merge_group: false   # not merge queue
             build_on_push: false          # runner capacity — workflow_dispatch only
+            mcpgateway_ui_enabled: false              # no @tailwindcss/oxide binaries for s390x
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
@@ -290,6 +293,7 @@ jobs:
             build_on_pr: false
             build_on_merge_group: false   # not merge queue
             build_on_push: false          # runner capacity — workflow_dispatch only
+            mcpgateway_ui_enabled: false              # no @tailwindcss/oxide binaries for ppc64le
 
     # Use a cheap ubuntu-24.04 runner when this matrix entry's gate would skip all
     # work steps anyway (merge_group, PR, or push with the corresponding flag=false).
@@ -408,8 +412,11 @@ jobs:
           # The `|| ''` guards the case the step itself didn't run (same
           # `if` gate skips both), so the build-arg is simply omitted and
           # Containerfile's own default applies.
+          # MCPGATEWAY_UI_ENABLED=false is passed for s390x/ppc64le to skip the
+          # Node.js UI build steps (no @tailwindcss/oxide prebuilt binaries available).
           build-args: |
             ${{ env.WHEELS_REF && format('WHEELS_REF={0}', env.WHEELS_REF) || '' }}
+            MCPGATEWAY_UI_ENABLED=${{ matrix.mcpgateway_ui_enabled }}
 
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           outputs: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'type=cacheonly' || '' }}

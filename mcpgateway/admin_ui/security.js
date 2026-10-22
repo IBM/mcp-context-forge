@@ -399,6 +399,35 @@ export function sanitizeHtmlForInsertion(rawHtml) {
   return DOMPurify.sanitize(String(rawHtml ?? ""), GUARD_CONFIG);
 }
 
+// DOMPurify parses in a <body> context, where the HTML parser drops bare <tr>/<td>.
+// Table-section targets are therefore sanitized inside a table wrapper that is stripped afterwards.
+const TABLE_CONTEXT_WRAPPERS = {
+  TBODY: ["<table><tbody>", "</tbody></table>"],
+  THEAD: ["<table><thead>", "</thead></table>"],
+  TFOOT: ["<table><tfoot>", "</tfoot></table>"],
+  TR: ["<table><tbody><tr>", "</tr></tbody></table>"],
+};
+
+/**
+ * SECURITY: Sanitize markup destined for an element's innerHTML, keeping table rows intact.
+ *
+ * @param {string} tagName - Upper-case tag name of the element receiving the markup.
+ * @param {*} rawHtml - Markup to sanitize.
+ * @returns {string} Sanitized markup.
+ */
+function sanitizeHtmlForElement(tagName, rawHtml) {
+  const wrapper = TABLE_CONTEXT_WRAPPERS[tagName];
+  if (!wrapper) {
+    return sanitizeHtmlForInsertion(rawHtml);
+  }
+  const [open, close] = wrapper;
+  const sanitized = sanitizeHtmlForInsertion(open + String(rawHtml ?? "") + close);
+  if (sanitized.startsWith(open) && sanitized.endsWith(close)) {
+    return sanitized.slice(open.length, sanitized.length - close.length);
+  }
+  return sanitizeHtmlForInsertion(rawHtml);
+}
+
 /**
  * SECURITY: Route every Element.innerHTML write through sanitizeHtmlForInsertion().
  *
@@ -426,7 +455,7 @@ export function installInnerHtmlGuard() {
     enumerable: INNER_HTML_DESCRIPTOR.enumerable,
     get: INNER_HTML_DESCRIPTOR.get,
     set(value) {
-      const sanitized = sanitizeHtmlForInsertion(value);
+      const sanitized = sanitizeHtmlForElement(this.tagName, value);
       INNER_HTML_DESCRIPTOR.set.call(this, sanitized);
     },
   });
