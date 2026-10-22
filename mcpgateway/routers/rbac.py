@@ -18,9 +18,10 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Generator, List
+from typing import Dict, Generator, List, Optional
 
 # Third-Party
+from sqlalchemy import select
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -29,7 +30,21 @@ from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, 
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
-from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
+from mcpgateway.schemas import (
+    EntityRulesSummaryResponse,
+    PermissionCheckRequest,
+    PermissionCheckResponse,
+    PermissionListResponse,
+    RbacRuleCreateRequest,
+    RbacRuleResponse,
+    RbacRuleUpdateRequest,
+    RoleCreateRequest,
+    RoleResponse,
+    RoleUpdateRequest,
+    UserRoleAssignRequest,
+    UserRoleResponse,
+)
+from mcpgateway.services.rule_catalog_service import RuleCatalogError, RuleCatalogProtectedError, RuleCatalogService
 from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
@@ -633,3 +648,338 @@ async def get_my_permissions(
     except Exception as e:
         logger.error(f"Failed to get my permissions for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")
+
+
+@router.get("/rules", response_model=List[RbacRuleResponse])
+async def list_rules(capability_type: Optional[str] = Query(None), capability_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """List rule catalog rules.
+
+    Args:
+        capability_type: Filter by capability type when given.
+        capability_id: Filter by entity id when given.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        List[RbacRuleResponse]: Rules ordered by priority then name.
+
+    Raises:
+        HTTPException: When the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rules = catalog.list_rules(capability_type=capability_type, capability_id=capability_id)
+        db.commit()
+        db.close()
+        return [RbacRuleResponse.model_validate(rule) for rule in rules]
+    except Exception as e:
+        logger.error(f"Failed to list rbac rules: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list rules")
+
+
+@router.get("/rules/entity-summary", response_model=EntityRulesSummaryResponse)
+async def get_entity_rules_summary(capability_type: str = Query(...), capability_id: str = Query(...), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Return the rules that govern one entity.
+
+    Args:
+        capability_type: Capability type of the entity.
+        capability_id: Entity identifier.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        EntityRulesSummaryResponse: Entity rules, type-inherited rules, and
+        the built-in defaults for the capability type.
+
+    Raises:
+        HTTPException: When the capability type is unknown or the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        inherited = [r for r in catalog.list_rules(capability_type=capability_type) if r.capability_id is None]
+        scoped = [r for r in catalog.list_rules(capability_type=capability_type, capability_id=capability_id) if r.capability_id is not None]
+        defaults: Dict[str, List[str]] = {}
+        from mcpgateway.bootstrap_db import DEFAULT_ROLE_DEFINITIONS  # pylint: disable=import-outside-toplevel
+
+        for role in DEFAULT_ROLE_DEFINITIONS:
+            permissions = [
+                p
+                for p in role.get("permissions", [])
+                if p == "*"
+                or p.replace(":", ".").split(".")[0]
+                == {"tool": "tools", "resource": "resources", "prompt": "prompts", "server": "servers", "gateway": "gateways", "a2a_agent": "a2a", "route": ""}.get(capability_type, "")
+            ]
+            if permissions:
+                defaults[role["name"]] = permissions
+        db.commit()
+        db.close()
+        return EntityRulesSummaryResponse(rules=[RbacRuleResponse.model_validate(r) for r in scoped], inherited=[RbacRuleResponse.model_validate(r) for r in inherited], defaults=defaults)
+    except Exception as e:
+        logger.error(f"Failed to build entity rules summary: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to build entity rules summary")
+
+
+@router.post("/rules", response_model=RbacRuleResponse, status_code=status.HTTP_201_CREATED)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def create_rule(rule_data: RbacRuleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Create a rule catalog rule.
+
+    Args:
+        rule_data: Rule creation payload.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        RbacRuleResponse: The created rule.
+
+    Raises:
+        HTTPException: When the payload is invalid or the name duplicates.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rule = catalog.create_rule(
+            name=rule_data.name,
+            description=rule_data.description,
+            capability_type=rule_data.capability_type,
+            capability_id=rule_data.capability_id,
+            permission=rule_data.permission,
+            phase=rule_data.phase,
+            predicate=rule_data.predicate,
+            effect=rule_data.effect,
+            priority=rule_data.priority,
+            created_by=user["email"],
+        )
+        logger.info(f"RBAC rule created: {rule.id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RbacRuleResponse.model_validate(rule)
+    except RuleCatalogError as e:
+        logger.error("RBAC rule creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        logger.error(f"RBAC rule creation failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create rule")
+
+
+@router.patch("/rules/{rule_id}", response_model=RbacRuleResponse)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def update_rule(rule_id: str, rule_data: RbacRuleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Update a rule catalog rule.
+
+    Args:
+        rule_id: Rule identifier.
+        rule_data: Rule update payload.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        RbacRuleResponse: The updated rule.
+
+    Raises:
+        HTTPException: When the rule is absent or the payload is invalid.
+    """
+    fields = rule_data.model_dump(exclude_unset=True)
+    try:
+        catalog = RuleCatalogService(db)
+        rule = catalog.update_rule(rule_id, **fields)
+        logger.info(f"RBAC rule updated: {rule_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RbacRuleResponse.model_validate(rule)
+    except RuleCatalogError as e:
+        message = str(e)
+        code = status.HTTP_404_NOT_FOUND if "not found" in message else status.HTTP_422_UNPROCESSABLE_ENTITY
+        logger.error("RBAC rule update error: %s", SecurityValidator.sanitize_log_message(message))
+        raise HTTPException(status_code=code, detail=message)
+    except Exception as e:
+        logger.error(f"RBAC rule update failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update rule")
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def delete_rule(rule_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Delete a rule catalog rule.
+
+    Args:
+        rule_id: Rule identifier.
+        user: Current authenticated user.
+        db: Database session.
+
+    Raises:
+        HTTPException: When the rule is absent or protected.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        catalog.delete_rule(rule_id)
+        logger.info(f"RBAC rule deleted: {rule_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+    except RuleCatalogProtectedError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except RuleCatalogError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"RBAC rule deletion failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete rule")
+
+
+@router.get("/rules/tool-attributes")
+async def get_tool_attributes(
+    tool_name: Optional[str] = Query(None),
+    gateway_id: Optional[str] = Query(None),
+    server_id: Optional[str] = Query(None),
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Return the attribute names available for args.* predicates.
+
+    Unions three sources: rule-catalog references, the tool's own
+    inputSchema properties, and forced_header_params from the owning
+    gateway and virtual servers. The web UI uses this to populate the
+    predicate builder's attribute dropdown.
+
+    Args:
+        tool_name: Tool name for tool-scoped lookup.
+        gateway_id: Gateway id to read its forced params.
+        server_id: Virtual server id to read its forced params.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: A mapping with ``rule_attributes``, ``schema_attributes``,
+        ``forced_attributes``, and ``all_attributes`` lists.
+
+    Raises:
+        HTTPException: When the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rule_attrs = set(catalog.argument_parameters_for("tool", tool_name))
+        rule_attrs |= set(catalog.argument_parameters_for("tool"))
+
+        schema_attrs: set[str] = set()
+        if tool_name:
+            from mcpgateway.db import Tool  # pylint: disable=import-outside-toplevel
+
+            tool = db.execute(select(Tool).where(Tool.name == tool_name)).scalar_one_or_none()
+            if tool and isinstance(tool.input_schema, dict):
+                props = tool.input_schema.get("properties", {})
+                if isinstance(props, dict):
+                    schema_attrs = set(props.keys())
+
+        forced_attrs: set[str] = set()
+        if gateway_id:
+            from mcpgateway.db import Gateway as GatewayModel  # pylint: disable=import-outside-toplevel
+
+            gw = db.get(GatewayModel, gateway_id)
+            if gw and isinstance(gw.forced_header_params, list):
+                forced_attrs.update(str(p) for p in gw.forced_header_params if p)
+        if server_id:
+            from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
+
+            sv = db.get(ServerModel, server_id)
+            if sv and isinstance(sv.forced_header_params, list):
+                forced_attrs.update(str(p) for p in sv.forced_header_params if p)
+
+        db.commit()
+        db.close()
+        return {
+            "rule_attributes": sorted(rule_attrs),
+            "schema_attributes": sorted(schema_attrs),
+            "forced_attributes": sorted(forced_attrs),
+            "all_attributes": sorted(rule_attrs | schema_attrs | forced_attrs),
+        }
+    except Exception as e:
+        logger.error(f"Failed to build tool attributes: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to build tool attributes")
+
+
+@router.patch("/rules/gateway/{gateway_id}/forced-params")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def set_gateway_forced_params(gateway_id: str, params: List[str], user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Set the forced header parameters for a gateway.
+
+    Args:
+        gateway_id: Gateway identifier.
+        params: List of parameter names to force into x-mcp-header.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: The updated parameter list.
+
+    Raises:
+        HTTPException: When the gateway is absent.
+    """
+    from mcpgateway.db import Gateway as GatewayModel  # pylint: disable=import-outside-toplevel
+
+    gw = db.get(GatewayModel, gateway_id)
+    if gw is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gateway not found: {gateway_id}")
+    gw.forced_header_params = sorted(set(params))
+    db.commit()
+    logger.info(f"Forced header params set for gateway {gateway_id}: {gw.forced_header_params}")
+    return {"forced_header_params": gw.forced_header_params}
+
+
+@router.patch("/rules/server/{server_id}/forced-params")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def set_server_forced_params(server_id: str, params: List[str], user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Set the forced header parameters for a virtual server.
+
+    Args:
+        server_id: Virtual server identifier.
+        params: List of parameter names to force into x-mcp-header.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: The updated parameter list.
+
+    Raises:
+        HTTPException: When the server is absent.
+    """
+    from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
+
+    sv = db.get(ServerModel, server_id)
+    if sv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Server not found: {server_id}")
+    sv.forced_header_params = sorted(set(params))
+    db.commit()
+    logger.info(f"Forced header params set for server {server_id}: {sv.forced_header_params}")
+    return {"forced_header_params": sv.forced_header_params}
+
+
+@router.post("/rules/reconcile")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def reconcile_rule_provider(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Force the rule provider to converge instead of waiting for the interval.
+
+    With the openfga provider, role and rule mutations land in the database
+    immediately while the engine's tuples converge on the reconciliation
+    loop (OPENFGA_RECONCILE_SECONDS). This endpoint runs the mirror now
+    and reports the applied writes and deletes, so a policy change is
+    enforceable on the very next call.
+
+    Args:
+        user: Current authenticated user (needs rbac.rules.manage).
+        db: Database session, used read-only for the mirror query.
+
+    Returns:
+        dict: Provider name and the number of tuple operations applied.
+    """
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    provider = settings.rbac_rule_provider
+    if provider != "openfga":
+        return {"provider": provider, "applied": 0, "detail": "provider keeps no mirror to reconcile"}
+    from mcpgateway.services.openfga_sync import OpenFgaSyncService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.openfga_client import OpenFgaClient  # pylint: disable=import-outside-toplevel
+
+    applied = await OpenFgaSyncService(db, OpenFgaClient()).sync_now("api: rules reconcile")
+    from mcpgateway.services.openfga_provider import clear_decision_cache  # pylint: disable=import-outside-toplevel
+
+    clear_decision_cache()
+    logger.info("OpenFGA reconciliation forced via API by %s: applied=%s", user.get("email"), applied)
+    return {"provider": provider, "applied": applied}
