@@ -1830,6 +1830,60 @@ testing-up-entra:                          ## Start testing stack with the gatew
 	@echo ""
 	@echo "✅ Entra trust-mode testing stack started! Gateway: http://localhost:8080"
 
+
+.PHONY: testing-up-openfga
+# Local tag for a branch build of the ContextForge web UI. The
+# testing-up-openfga target prefers it over the pinned release image when
+# the tag exists locally; export WEB_UI_IMAGE to force any other image.
+WEB_UI_BRANCH_IMAGE ?= contextforge-web-ui:openfga-rules
+
+.PHONY: web-ui-openfga-image
+web-ui-openfga-image:                  ## Build the web-ui branch image used by testing-up-openfga (WEB_UI_DIR=<clone path> required)
+	@if [ -z "$(WEB_UI_DIR)" ]; then \
+		echo "❌ WEB_UI_DIR is not set. Point it at a web-ui checkout:"; \
+		echo "   make web-ui-openfga-image WEB_UI_DIR=~/Projects/contextforge-web-ui/.worktrees/openfga-rules"; \
+		exit 1; \
+	fi
+	docker build -t $(WEB_UI_BRANCH_IMAGE) $(WEB_UI_DIR)
+
+testing-up-openfga:                       ## Start testing stack with Layer-2 RBAC enforced by OpenFGA
+	@echo "🧪 Starting OpenFGA rule-provider testing stack..."
+	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up-openfga)"
+	@if [ -z "$$OPENFGA_API_TOKEN" ]; then \
+		echo "❌ OPENFGA_API_TOKEN is not set."; \
+		echo "   Generate a shared key, export it, and retry:"; \
+		echo "     export OPENFGA_API_TOKEN=$$(openssl rand -hex 32)"; \
+		echo "   The same key authenticates the gateway and the OpenFGA server."; \
+		exit 1; \
+	fi
+	@if [ -z "$$OPENFGA_DB_PASSWORD" ]; then \
+		OPENFGA_DB_PASSWORD=$$(openssl rand -hex 16); \
+		export OPENFGA_DB_PASSWORD; \
+		echo "   OPENFGA_DB_PASSWORD not set. Generated a random datastore password for this run."; \
+	fi
+	@# Fail early if port 8080 is already bound (nginx needs it)
+	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
+		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
+		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
+		exit 1; \
+	fi
+	@mkdir -p reports
+	@echo "   Using image $(IMAGE_LOCAL)"
+	@ui_image=$${WEB_UI_IMAGE:-}; \
+	if [ -z "$$ui_image" ] && docker image inspect $(WEB_UI_BRANCH_IMAGE) >/dev/null 2>&1; then \
+		ui_image=$(WEB_UI_BRANCH_IMAGE); \
+		echo "   Web UI: using local branch image $(WEB_UI_BRANCH_IMAGE) (build with: make web-ui-openfga-image WEB_UI_DIR=<path>)"; \
+	fi; \
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	RBAC_RULE_PROVIDER=openfga OPENFGA_API_TOKEN=$$OPENFGA_API_TOKEN WEB_UI_IMAGE=$$ui_image \
+	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.openfga.yml --profile testing --profile inspector --profile openfga up -d --scale gateway=1 --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@echo ""
+	@echo "✅ OpenFGA testing stack started! Gateway: http://localhost:8080"
+	@echo "   OpenFGA (container network): http://openfga:8080"
+	@echo "   OpenFGA (host debug):        http://localhost:${OPENFGA_PORT:-18080}"
+	@echo "   Layer-2 RBAC provider: openfga (flip back with RBAC_RULE_PROVIDER=db)"
+
 .PHONY: testing-up-rust
 testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
 	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
