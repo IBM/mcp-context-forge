@@ -146,7 +146,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssl_context_cache import build_client_ssl_context, get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.ssrf_pinning import SniPinningTransport as _SniPinningTransport
 from mcpgateway.utils.subject_token import extract_subject_jwt
@@ -5264,12 +5264,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except Exception:
                     logger.debug("client_key decryption skipped during health check")
 
-            if gateway_url and gateway_url.lower().startswith("http://"):
-                ssl_context = None
-            elif valid and gateway_ca_certificate:
-                ssl_context = get_cached_ssl_context(gateway_ca_certificate, client_cert=health_client_cert, client_key=_hc_client_key)
-            else:
-                ssl_context = None
+            ssl_context = build_client_ssl_context(
+                gateway_url,
+                gateway_ca_certificate if valid else None,
+                client_cert=health_client_cert,
+                client_key=_hc_client_key,
+            )
 
             def get_httpx_client_factory(
                 headers: dict[str, str] | None = None,
@@ -7906,12 +7906,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx2.AsyncClient: Configured HTTPX async client
             """
-            if server_url and server_url.lower().startswith("http://"):
-                ctx = None
-            elif ca_certificate:
-                ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            else:
-                ctx = None
+            ctx = build_client_ssl_context(server_url, ca_certificate, client_cert=client_cert, client_key=client_key)
 
             return httpx2.AsyncClient(
                 follow_redirects=False,
@@ -8077,12 +8072,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx2.AsyncClient: Configured HTTPX async client
             """
-            if server_url and server_url.lower().startswith("http://"):
-                ctx = None
-            elif ca_certificate:
-                ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            else:
-                ctx = None
+            ctx = build_client_ssl_context(server_url, ca_certificate, client_cert=client_cert, client_key=client_key)
 
             return httpx2.AsyncClient(
                 follow_redirects=False,
@@ -9014,10 +9004,18 @@ async def test_gateway_handshake(
             credential_source = "form"
 
     handshake_verify: Any = get_default_verify()
-    if gateway and gateway.ca_certificate and not validated_base_url.lower().startswith("http://"):
-        client_cert = None if candidate_only else gateway.client_cert
-        client_key = None if candidate_only else gateway.client_key
-        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=client_cert, client_key=client_key)
+    if gateway:
+        handshake_client_key = None if candidate_only else gateway.client_key
+        if handshake_client_key and not validated_base_url.lower().startswith("http://"):
+            handshake_client_key = get_encryption_service(settings.auth_encryption_secret).decrypt_secret_or_plaintext(handshake_client_key)
+        handshake_ctx = build_client_ssl_context(
+            validated_base_url,
+            gateway.ca_certificate,
+            client_cert=None if candidate_only else gateway.client_cert,
+            client_key=handshake_client_key,
+        )
+        if handshake_ctx is not None:
+            handshake_verify = handshake_ctx
 
     def get_httpx_client_factory(
         headers: Optional[Dict[str, str]] = None,

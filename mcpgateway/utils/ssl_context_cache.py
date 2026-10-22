@@ -245,3 +245,60 @@ def clear_ssl_context_cache() -> None:
     """
     _ssl_context_cache.clear()
     _ssl_context_cache_timestamps.clear()
+
+
+def build_client_ssl_context(
+    url: str | None,
+    ca_certificate: str | bytes | None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+) -> ssl.SSLContext | None:
+    """Build the SSL context for an outbound connection, or None to use the caller's default.
+
+    Keep system CA verification when only client credentials are configured.
+    Return None for plaintext URLs or connections without TLS material.
+    Reject incomplete client certificate and key pairs.
+
+    Args:
+        url: Target URL; ``http://`` targets short-circuit to None.
+        ca_certificate: Optional custom CA certificate in PEM format.
+        client_cert: Optional client certificate path or PEM for mTLS.
+        client_key: Optional client private key path or PEM for mTLS.
+
+    Returns:
+        A configured SSL context, or None when the caller's default verification
+        behaviour should apply.
+
+    Raises:
+        ValueError: If an HTTPS connection has an incomplete client certificate and key pair.
+
+    Examples:
+        Plaintext targets and targets with no TLS material configured need no context:
+
+        >>> from mcpgateway.utils.ssl_context_cache import build_client_ssl_context
+        >>> url = "https://api.example.com"
+        >>> build_client_ssl_context("http://plain.example.com", "CA", "/c.pem", "/k.pem") is None
+        True
+        >>> build_client_ssl_context(url, None, None, None) is None
+        True
+
+        Client credentials without a custom CA still require a context:
+
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+        >>> mod = "mcpgateway.utils.ssl_context_cache"
+        >>> clear_ssl_context_cache()
+        >>> with patch(f"{mod}.ssl.create_default_context") as mock_create:
+        ...     mock_create.return_value = Mock()
+        ...     with patch(f"{mod}._load_client_cert_chain") as mock_load:
+        ...         ctx = build_client_ssl_context(url, None, "/c.pem", "/k.pem")
+        ...     (ctx is mock_create.return_value, mock_load.call_count)
+        (True, 1)
+    """
+    if url and url.lower().startswith("http://"):
+        return None
+
+    if not (ca_certificate or client_cert or client_key):
+        return None
+
+    return get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
