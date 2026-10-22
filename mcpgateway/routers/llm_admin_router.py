@@ -697,6 +697,10 @@ async def fetch_provider_models(
     defaults = LLMProviderType.get_provider_defaults()
     provider_config = defaults.get(provider.provider_type, {})
 
+    if provider.provider_type == LLMProviderType.MINIMAX:
+        models = [{"id": model_id, "name": model_id, "owned_by": provider.provider_type} for model_id in provider_config["models"]]
+        return {"success": True, "models": models, "count": len(models)}
+
     if not provider_config.get("supports_model_list"):
         return {
             "success": False,

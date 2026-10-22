@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- MiniMax text provider with `MiniMax-M3.1-Flash` as the new-configuration default and `MiniMax-M3` as an additional model option. Explicit model IDs and custom endpoints remain supported.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

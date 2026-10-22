@@ -493,6 +493,18 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
         api_base_default="https://api.groq.com/openai/v1",
         config_fields=[],
     ),
+    "minimax": ProviderConfigDefinition(
+        provider_type="minimax",
+        display_name="MiniMax",
+        description="MiniMax text models",
+        requires_api_key=True,
+        api_key_label="MiniMax API Key",
+        api_key_help="Get your API key from https://platform.minimax.io/",
+        requires_api_base=True,
+        api_base_default="https://api.minimax.io/v1",
+        api_base_help="International: https://api.minimax.io/v1; China: https://api.minimaxi.com/v1",
+        config_fields=[],
+    ),
     "together": ProviderConfigDefinition(
         provider_type="together",
         display_name="Together AI",

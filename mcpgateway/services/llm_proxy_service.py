@@ -218,7 +218,10 @@ class LLMProxyService:
             Tuple of (url, headers, body).
         """
         api_key = self._get_api_key(provider)
-        base_url = provider.api_base or "https://api.openai.com/v1"
+        if provider.provider_type == LLMProviderType.MINIMAX:
+            base_url = provider.api_base or LLMProviderType.get_provider_defaults()[LLMProviderType.MINIMAX]["api_base"]
+        else:
+            base_url = provider.api_base or "https://api.openai.com/v1"
 
         url = f"{base_url.rstrip('/')}/chat/completions"
 

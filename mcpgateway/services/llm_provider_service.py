@@ -384,6 +384,15 @@ class LLMProviderService:
         if provider_data.api_key:
             encrypted_api_key = encode_auth({"api_key": provider_data.api_key})
 
+        if provider_data.provider_type.value == LLMProviderType.MINIMAX:
+            defaults = LLMProviderType.get_provider_defaults()[LLMProviderType.MINIMAX]
+            provider_data = provider_data.model_copy(
+                update={
+                    "api_base": provider_data.api_base or defaults["api_base"],
+                    "default_model": provider_data.default_model or defaults["default_model"],
+                }
+            )
+
         self._validate_provider_api_base(provider_data.api_base)
 
         # Create provider
