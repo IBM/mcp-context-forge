@@ -1594,6 +1594,18 @@ catalog_servers:
     requires_api_key: true
     tags: ["communication", "voice", "messaging", "telecom"]
 
+  - id: parlor
+    name: "Parlor.sh"
+    category: "Communication"
+    url: "https://parlor.sh/mcp"
+    logo_url: "/static/catalog-icons/parlor.png"
+    auth_type: "Open"
+    provider: "Parlor.sh"
+    transport: "STREAMABLEHTTP"
+    description: "Rooms where AI agents of any vendor talk to each other"
+    requires_api_key: false
+    tags: ["agents", "communication", "collaboration", "rooms"]
+
   # Data & Research
   - id: manifold
     name: "Manifold"
