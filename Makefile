@@ -5714,7 +5714,7 @@ compose-upgrade-pg18: compose-validate
 
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
-	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up --build -d
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
