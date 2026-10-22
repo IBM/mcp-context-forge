@@ -40,6 +40,7 @@ Functions:
 # Standard
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from typing import Optional
 import gzip
 import os
 import re
@@ -48,6 +49,7 @@ import re
 from fastapi import Depends, Request, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, Histogram, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_fastapi_instrumentator.metrics import Info as InstrumentatorInfo
 
 # First-Party
 from mcpgateway.config import settings
@@ -225,6 +227,125 @@ gateway_health_check_batch_duration_seconds = Histogram(
     "gateway_health_check_batch_duration_seconds",
     "Gateway health-check batch duration",
 )
+
+# --- Operator KPI metrics ---
+# Latency buckets cover sub-second tool calls through 30s upstream timeouts.
+KPI_LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
+# Plugin hooks are expected to stay in the low-millisecond range.
+PLUGIN_HOOK_BUCKETS = (0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0)
+
+_ROUTE_GROUPS = frozenset({"tools", "resources", "prompts", "mcp", "a2a", "admin"})
+
+_CALL_TYPE_ROUTE_GROUPS = {"tools/call": "tools", "resources/read": "resources", "prompts/get": "prompts"}
+
+e2e_request_duration_seconds = Histogram(
+    "e2e_request_duration_seconds",
+    "End-to-end request duration by route group",
+    labelnames=["route_group", "method", "status"],
+    buckets=KPI_LATENCY_BUCKETS,
+)
+
+requests_total = Counter(
+    "requests_total",
+    "Total requests by route group, method and status",
+    labelnames=["route_group", "method", "status"],
+)
+
+request_errors_total = Counter(
+    "request_errors_total",
+    "Failed responses by route group. status_class is 4xx/5xx for HTTP responses; "
+    '"upstream" marks upstream calls that failed behind an HTTP-200 response. '
+    "server_id/server_name are set only for virtual-server upstream failures.",
+    labelnames=["route_group", "status_class", "server_id", "server_name"],
+)
+
+virtual_server_upstream_duration_seconds = Histogram(
+    "virtual_server_upstream_duration_seconds",
+    "Upstream call duration per virtual server (network + upstream processing, excludes gateway overhead)",
+    labelnames=["server_id", "server_name", "call_type"],
+    buckets=KPI_LATENCY_BUCKETS,
+)
+
+plugin_hook_duration_seconds = Histogram(
+    "plugin_hook_duration_seconds",
+    "Plugin hook execution duration. plugin_name is '(all)' for aggregate invoke_hook "
+    "calls, which run every matching plugin and cannot be split per plugin.",
+    labelnames=["plugin_name", "hook", "hook_phase"],
+    buckets=PLUGIN_HOOK_BUCKETS,
+)
+
+
+def route_group_for_path(path: str) -> str:
+    """Map a request path to an operator-facing route group.
+
+    Args:
+        path (str): Templated or literal request path (e.g. ``/tools/{id}/invoke``).
+
+    Returns:
+        str: One of ``tools``, ``resources``, ``prompts``, ``mcp``, ``a2a``,
+        ``admin`` or ``other``.
+    """
+    segments = [seg for seg in path.lower().split("/") if seg]
+    if len(segments) > 1 and segments[0] == "v1":
+        segments = segments[1:]
+    return segments[0] if segments and segments[0] in _ROUTE_GROUPS else "other"
+
+
+def record_upstream_call(server_id: Optional[str], server_name: Optional[str], call_type: str, duration_seconds: float, *, error: bool = False) -> None:
+    """Observe one upstream call made on behalf of a virtual server.
+
+    Args:
+        server_id (Optional[str]): Virtual server ID; empty labels when the call
+            was not made through a virtual server.
+        server_name (Optional[str]): Virtual server name.
+        call_type (str): ``tools/call``, ``resources/read`` or ``prompts/get``.
+        duration_seconds (float): Time spent waiting on the upstream.
+        error (bool): True when the upstream call failed or returned an error.
+    """
+    virtual_server_upstream_duration_seconds.labels(server_id=server_id or "", server_name=server_name or "", call_type=call_type).observe(max(0.0, duration_seconds))
+    if error:
+        request_errors_total.labels(route_group=_CALL_TYPE_ROUTE_GROUPS.get(call_type, "other"), status_class="upstream", server_id=server_id or "", server_name=server_name or "").inc()
+
+
+def record_plugin_hook(hook: str, duration_seconds: float, *, plugin_name: str = "(all)") -> None:
+    """Observe one plugin hook execution.
+
+    Args:
+        hook (str): Hook identifier (e.g. ``tool_pre_invoke``).
+        duration_seconds (float): Time spent in the hook invocation.
+        plugin_name (str): Plugin name for single-plugin calls; ``(all)`` for
+            aggregate ``invoke_hook`` calls that run every matching plugin.
+    """
+    phase = "pre" if "_pre_" in hook else "post" if "_post_" in hook else "other"
+    plugin_hook_duration_seconds.labels(plugin_name=plugin_name, hook=hook, hook_phase=phase).observe(max(0.0, duration_seconds))
+
+
+def _record_request_kpis(info: "InstrumentatorInfo") -> None:
+    """Record e2e duration, request count and HTTP errors for one request.
+
+    Installed as an instrumentator handler in ``setup_metrics``; the
+    instrumentator measures ``info.duration`` around the full request.
+
+    Args:
+        info (InstrumentatorInfo): Request info measured by the instrumentator.
+    """
+    handler = info.modified_handler or info.handler or ""
+    route_group = route_group_for_path(handler)
+    method = (info.method or "").lower()
+    status = str(info.modified_status if info.modified_status else info.status)
+    # prometheus-fastapi-instrumentator >= 7 names this field modified_duration.
+    duration = getattr(info, "modified_duration", None)
+    if duration is None:
+        duration = getattr(info, "duration", 0.0)
+    e2e_request_duration_seconds.labels(route_group=route_group, method=method, status=status).observe(max(0.0, float(duration or 0.0)))
+    requests_total.labels(route_group=route_group, method=method, status=status).inc()
+    try:
+        status_code = int(status)
+    except (TypeError, ValueError):
+        return
+    if status_code >= 400:
+        status_class = "4xx" if status_code < 500 else "5xx"
+        request_errors_total.labels(route_group=route_group, status_class=status_class, server_id="", server_name="").inc()
 
 
 def _get_gateway_lifecycle_status_gauge():
@@ -471,6 +592,9 @@ def setup_metrics(app):
             should_ignore_untemplated=True,
             excluded_handlers=[re.compile(p) for p in excluded],
         )
+
+        # Operator KPIs: e2e duration, request count and HTTP errors by route group
+        instrumentator.add(_record_request_kpis)
 
         # Instrument FastAPI app
         instrumentator.instrument(app)
