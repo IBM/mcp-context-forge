@@ -5942,10 +5942,8 @@ compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 
 .PHONY: compose-restart
 compose-restart:
-	@echo "🔄  Restarting stack..."
-	$(COMPOSE) pull
-	$(COMPOSE) build
-	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d
+	@echo "🔄 Restarting stack..."
+	$(COMPOSE) up -d --pull=missing --build
 
 .PHONY: compose-build
 compose-build:
