@@ -6488,6 +6488,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Check if tool already exists for this gateway from the tools_map
                 existing_tool = existing_tools_map.get(tool.name)
                 if existing_tool:
+                    if existing_tool.catalog_stale:
+                        existing_tool.deprecated = False
+                        existing_tool.catalog_stale = False
+
                     # Update existing tool if there are changes
                     fields_to_update = False
 
@@ -6939,7 +6943,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         stale_tool_ids = []
         if not skip_stale_cleanup:
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in catalog_sync.new_tool_names and _created_via_allowed(getattr(tool, "created_via", None))]
-            if stale_tool_ids:
+            if stale_tool_ids and stale_created_via_values is not None:
+                stale_catalog_tool_ids = set(stale_tool_ids)
+                gateway_name = getattr(gateway, "name", None)
+                incoming_tool_names = {
+                    _build_gateway_tool_invocation_name(gateway_name, tool.original_name)
+                    for tool in catalog_sync.tools_to_add
+                    if isinstance(gateway_name, str) and isinstance(getattr(tool, "original_name", None), str)
+                }
+                for tool in gateway.tools:
+                    if tool.id in stale_catalog_tool_ids and tool.name in incoming_tool_names:
+                        tool.custom_name = tool.original_name
+                        tool.custom_name_slug = slugify(tool.original_name)
+                        tool.name = _build_gateway_tool_invocation_name(gateway.name, tool.original_name)
+
+                stale_tool_ids = [
+                    tool.id
+                    for tool in gateway.tools
+                    if tool.original_name not in catalog_sync.new_tool_names
+                    and _created_via_allowed(getattr(tool, "created_via", None))
+                    and not getattr(tool, "catalog_stale", False)
+                    and not getattr(tool, "deprecated", False)
+                ]
+                for tool in gateway.tools:
+                    if tool.id in stale_tool_ids:
+                        tool.deprecated = True
+                        tool.catalog_stale = True
+            elif stale_tool_ids:
                 for i in range(0, len(stale_tool_ids), 500):
                     chunk = stale_tool_ids[i : i + 500]
                     db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
@@ -6967,11 +6997,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
                     db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
-        if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+        if (stale_tool_ids and stale_created_via_values is None) or stale_resource_ids or stale_prompt_ids:
             db.expire(gateway)
 
         if not skip_stale_cleanup:
-            gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
+            if stale_created_via_values is None:
+                gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names]
             if catalog_sync.new_resource_uris is not None:
                 gateway.resources = [resource for resource in gateway.resources if resource.uri in catalog_sync.new_resource_uris or not _created_via_allowed(getattr(resource, "created_via", None))]
             if catalog_sync.new_prompt_names is not None:
@@ -6981,7 +7012,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         resources_removed = len(stale_resource_ids)
         prompts_removed = len(stale_prompt_ids)
         if tools_removed > 0:
-            logger.info(f"Removed {tools_removed} tools no longer available during {log_context}")
+            tool_action = "Removed" if stale_created_via_values is None else "Marked stale"
+            logger.info(f"{tool_action} {tools_removed} tools no longer available during {log_context}")
         if resources_removed > 0:
             logger.info(f"Removed {resources_removed} resources no longer available during {log_context}")
         if prompts_removed > 0:
