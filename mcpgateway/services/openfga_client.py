@@ -203,8 +203,8 @@ class OpenFgaClient:
                     raise
                 logger.info("OpenFGA write race: %d tuple(s) in this batch already stored (another worker wrote them)", len(batch))
 
-    async def read_tuples(self, object_filter: Optional[str] = None) -> list[dict[str, Any]]:
-        """Read stored tuples, optionally filtered by object.
+    async def read_tuples(self, object_filter: Optional[str] = None, user_filter: Optional[str] = None) -> list[dict[str, Any]]:
+        """Read stored tuples, optionally filtered by object or user.
 
         Follows every continuation token: the read endpoint pages its
         results, and a partial read makes the resync diff re-write
@@ -212,16 +212,20 @@ class OpenFgaClient:
 
         Args:
             object_filter: Exact object (``type:id``) to filter by.
+            user_filter: Exact user reference (``user:<id>``) to filter by.
 
         Returns:
             Stored tuple keys with their relations and conditions.
         """
         tuples: list[dict[str, Any]] = []
         continuation: Optional[str] = None
+        filter_key: dict[str, str] = {}
+        if object_filter:
+            filter_key["object"] = object_filter
+        if user_filter:
+            filter_key["user"] = user_filter
         while True:
-            body: dict[str, Any] = {}
-            if object_filter:
-                body["tuple_key"] = {"object": object_filter}
+            body: dict[str, Any] = {"tuple_key": filter_key} if filter_key else {}
             if continuation:
                 body["continuation_token"] = continuation
             result = await self._request("POST", f"/stores/{settings.openfga_store_id}/read", body)
