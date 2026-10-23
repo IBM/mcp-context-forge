@@ -14,6 +14,7 @@ Tests cover Issue #3620 - Non-Standard Request Format:
 """
 
 # Standard
+import base64
 from datetime import datetime, timezone
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,17 +29,15 @@ import pytest
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.main import app
 
-# JWT-shaped test token. _is_jwt_token() accepts a token only when it has three
-# non-empty, dot-separated, base64url-decodable segments. Opaque strings such as
-# "***REMOVED***" fail that check, and the bearer token is then dropped.
-#
-# Build the token from three short base64url segments joined with dots at runtime.
-# The segments are the base64url encodings of the ASCII words "header", "payload"
-# and "sig". They carry no claims, no signature and no secret. They are
-# meaningless values generated only to satisfy the shape check in these tests.
-# Joining at runtime also keeps a full JWT-like literal out of the source, so
-# secret scanners have nothing to flag.
-JWT_SHAPED_TOKEN = ".".join(["aGVhZGVy", "cGF5bG9hZA", "c2ln"])
+
+def _b64url(text: str) -> str:
+    """Base64url-encode text without padding."""
+    return base64.urlsafe_b64encode(text.encode()).rstrip(b"=").decode()
+
+
+# Passes the three-segment shape check in _is_jwt_token(). The segments are
+# meaningless placeholder words, not a real credential.
+JWT_SHAPED_TOKEN = ".".join([_b64url("header"), _b64url("payload"), _b64url("sig")])
 
 
 @pytest.fixture
