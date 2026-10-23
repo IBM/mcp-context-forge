@@ -1078,7 +1078,7 @@ class TestPluginManagerCacheTTLConfigKnob:
     def _settings(**kwargs):
         from mcpgateway.config import Settings
 
-        return Settings(jwt_secret_key=_CFG_JWT, auth_encryption_secret=_CFG_ENC, basic_auth_password="TestPassword1!", _env_file=None, **kwargs)
+        return Settings(jwt_secret_key=_CFG_JWT, auth_encryption_secret=_CFG_ENC, basic_auth_password="TestPassword1!", _env_file=None, **kwargs)  # pragma: allowlist secret
 
     def test_default_is_300(self):
         assert self._settings().plugin_manager_cache_ttl == 300
