@@ -1840,7 +1840,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             )
 
         assert result == "hello"
-        mock_build_headers.assert_called_once_with(user_context)
+        mock_build_headers.assert_called_once_with(user_context, gateway)
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_updates_headers_from_plugin_context(self):
@@ -2016,7 +2016,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 plugin_global_context=plugin_global_context,
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, None)
         assert pinned_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
         pinned_client.aclose.assert_awaited_once()
 
@@ -2057,6 +2057,7 @@ class TestToolServiceIdentityPropagationCoverage:
                     "ca_certificate": None,
                     "ca_certificate_sig": None,
                     "passthrough_headers": [],
+                    "identity_propagation": {"enabled": True},
                 },
             }
         )
@@ -2097,8 +2098,10 @@ class TestToolServiceIdentityPropagationCoverage:
                 meta_data={"existing": True},
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
-        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True})
+        gateway_arg = mock_build_headers.call_args.args[1]
+        assert gateway_arg.identity_propagation == {"enabled": True}
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, gateway_arg)
+        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, gateway_arg)
 
 class TestStreamableHttpTransportIdentityPropagationCoverage:
     """Cover transport identity forwarding branches."""
