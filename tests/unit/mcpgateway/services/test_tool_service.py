@@ -481,6 +481,7 @@ def mock_gateway():
     gw.client_cert = None
     gw.client_key = None
     gw.signing_algorithm = None
+    gw.identity_propagation = None
 
     gw.enabled = True
     gw.reachable = True
@@ -5283,6 +5284,87 @@ class TestToolService:
         session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
+    @pytest.mark.parametrize(
+        ("gateway_setting", "expect_identity"),
+        [
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+            (None, True),
+        ],
+    )
+    async def test_invoke_tool_rest_identity_follows_gateway_setting(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db, monkeypatch, gateway_setting, expect_identity):
+        """REST tool calls honour the gateway's identity setting over the global one."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_gateway.identity_propagation = gateway_setting
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert any(k.startswith("X-Forwarded-User") for k in headers) is expect_identity
+        if not expect_identity:
+            assert "alice@example.com" not in headers.values()
+
+    @pytest.mark.parametrize(
+        ("gateway_setting", "expect_identity"),
+        [
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+        ],
+    )
+    async def test_invoke_tool_mcp_identity_follows_gateway_setting(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db, monkeypatch, gateway_setting, expect_identity):
+        """MCP tool calls honour the gateway's identity setting for headers and _meta."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_gateway.identity_propagation = gateway_setting
+        mock_gateway.auth_value = None
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "sse"
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        session_mock.session.call_tool = session_mock.call_tool
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm) as proxy_client,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        sent_headers = proxy_client.call_args.kwargs["headers"]
+        sent_meta = session_mock.call_tool.call_args.kwargs.get("meta") or {}
+        assert any(k.startswith("X-Forwarded-User") for k in sent_headers) is expect_identity
+        assert ("user" in sent_meta) is expect_identity
+        if not expect_identity:
+            assert "alice@example.com" not in str(sent_headers) + str(sent_meta)
+
     @pytest.mark.parametrize("gateway_id", ["f90870e0-bbbf-4e3c-80c5-69d72a1e6e21", None])
     @pytest.mark.parametrize("reuse_context", [False, True])
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db, gateway_id, reuse_context):
@@ -9054,6 +9136,7 @@ class TestToolServiceHelpers:
         assert payload["gateway"]["passthrough_headers"] == []
         # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
         assert payload["gateway"]["auth_value"] == "secret"
+        assert "identity_propagation" in payload["gateway"]
         assert "oauth_config" not in payload["gateway"]
         assert "auth_query_params" not in payload["gateway"]
 
@@ -10540,6 +10623,7 @@ class TestInvokeToolDirectProxyViaHeader:
             owner_email=None,
             signing_algorithm=None,
             transport="STREAMABLEHTTP",
+            identity_propagation=None,
         )
 
     @pytest.fixture
