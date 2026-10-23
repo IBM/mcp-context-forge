@@ -8,6 +8,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ContextForge - Gateway Administration</title>
+    <script nonce="{{ csp_nonce(request) }}">
+      window.MCPGATEWAY_CSRF_COOKIE_NAME = {{ csrf_cookie_name | tojson }};
+    </script>
 
     <!-- Security headers are set by middleware, not meta tags -->
     <!-- Favicon -->
@@ -55,7 +58,7 @@
           evt.detail.headers["{{ auth_header_name|default('Authorization') }}"] = "Bearer " + jwtToken;
         }
 
-        const csrfToken = getCookie("mcpgateway_csrf_token");
+        const csrfToken = getCookie({{ csrf_cookie_name | tojson }});
         if (csrfToken) {
           evt.detail.headers["X-CSRF-Token"] = csrfToken;
         }
@@ -96,7 +99,7 @@
           const methodFromRequest = resource instanceof Request ? resource.method : null;
           const method = (requestInit.method || methodFromRequest || "GET").toUpperCase();
           if (isUnsafeHttpMethod(method) && isSameOriginRequest(resource)) {
-            const csrfToken = getCookie("mcpgateway_csrf_token");
+            const csrfToken = getCookie({{ csrf_cookie_name | tojson }});
             const jwtToken = getCookie("jwt_token");
             if (csrfToken || jwtToken) {
               const nextHeaders = new Headers(requestInit.headers || (resource instanceof Request ? resource.headers : undefined));
@@ -129,7 +132,7 @@
         if (!isSameOriginRequest(action)) {
           return;
         }
-        const csrfToken = getCookie("mcpgateway_csrf_token");
+        const csrfToken = getCookie({{ csrf_cookie_name | tojson }});
         if (!csrfToken) {
           return;
         }
@@ -14940,7 +14943,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               method:  'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': getCookie('mcpgateway_csrf_token') || '',
+                'X-CSRF-Token': getCookie({{ csrf_cookie_name | tojson }}) || '',
               },
               body:    JSON.stringify({ issuer }),
             }
