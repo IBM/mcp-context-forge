@@ -312,7 +312,7 @@ jobs:
                   REDIS_URL: ${{ matrix.plugin.redis_url }}
               run: |
                   . .venv/bin/activate
-                  python -m pytest "${{ matrix.plugin.tests }}" -v
+                  python -m pytest ${{ matrix.plugin.tests }} -v
 
             - name: Verify per-server quotas through both transports and replicas
               env:
