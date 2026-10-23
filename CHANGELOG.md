@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Progress for modern requests in JSON mode** ([#6647](https://github.com/IBM/mcp-context-forge/issues/6647)) - With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` and accepts `text/event-stream` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. Legacy clients see no change. The gateway now relays upstream progress to modern clients on `resources/read` and `prompts/get` ([#6648](https://github.com/IBM/mcp-context-forge/issues/6648)), `completion/complete`, and direct-proxy `tools/call`. The gateway no longer forwards the client `progressToken` upstream on `resources/read`, `prompts/get`, and `completion/complete`, including legacy and `/rpc` completion. A retried upstream resource read sends no progress callback, so progress values never restart.
+
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

@@ -51,6 +51,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.exceptions import MCPError
+from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -1876,6 +1877,145 @@ def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
         raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
 
 
+def _is_modern_protocol(version: Optional[str]) -> bool:
+    """Return whether a protocol version belongs to the modern (non-handshake) era.
+
+    Args:
+        version: The negotiated or declared protocol version, or ``None``.
+
+    Returns:
+        ``True`` for a version that is not handshake-era; ``False`` for ``None`` or a handshake-era version.
+
+    Examples:
+        >>> _is_modern_protocol("2026-07-28")
+        True
+        >>> _is_modern_protocol("2025-11-25")
+        False
+        >>> _is_modern_protocol(None)
+        False
+    """
+    return version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS
+
+
+_PROGRESS_DRAIN_TIMEOUT_SECONDS = 5.0
+_PROGRESS_SEND_TIMEOUT_SECONDS = 5.0
+
+
+class _ProgressRelay:
+    """Forward upstream progress to a downstream session and track sends still in flight.
+
+    The SDK client runs each upstream progress callback as a spawned task and resolves
+    the result at once, and the downstream SSE sink is a rendezvous stream. A handler
+    must ``drain()`` before it returns, or the SDK closes the sink and drops pending sends.
+
+    Each send is shielded, because closing a per-call upstream ``Client`` cancels its task
+    group and would abort sends still blocked on the sink. A send that hits
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS`` marks the relay stalled, and later updates are dropped.
+    On client hang-up, a pending send can hold handler teardown for at most
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS``.
+
+    Examples:
+        >>> relay = _ProgressRelay(session=None)
+        >>> relay._inflight
+        0
+    """
+
+    def __init__(self, session: Any) -> None:
+        """Capture the downstream session.
+
+        Args:
+            session: The downstream session that receives ``report_progress`` calls.
+        """
+        self._session = session
+        self._inflight = 0
+        self._idle: anyio.Event | None = None
+        self._stalled = False
+
+    async def __call__(self, progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Forward one progress update to the downstream session.
+
+        Args:
+            progress: Current progress value.
+            total: Optional total value.
+            message: Optional human-readable status message.
+        """
+        if self._stalled:
+            return
+        idle = self._idle
+        if idle is None or self._inflight == 0:
+            idle = self._idle = anyio.Event()
+        self._inflight += 1
+        try:
+            with anyio.move_on_after(_PROGRESS_SEND_TIMEOUT_SECONDS, shield=True) as scope:
+                await self._session.report_progress(progress, total, message)
+            if scope.cancelled_caught:
+                self._stalled = True
+                logger.debug("Progress relay send timed out; dropping further progress for this request")
+        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
+            logger.debug("Progress relay failed: %s", exc)
+        finally:
+            self._inflight -= 1
+            if self._inflight == 0:
+                idle.set()
+
+    async def drain(self, timeout: float = _PROGRESS_DRAIN_TIMEOUT_SECONDS) -> None:
+        """Wait until no progress send is in flight, for at most ``timeout`` seconds.
+
+        Args:
+            timeout: Upper bound on the wait, so a stalled downstream reader never hangs the call.
+        """
+        # Let spawned progress callbacks that are queued but not yet started register as in flight.
+        await anyio.sleep(0)
+        with anyio.move_on_after(timeout) as scope:
+            while self._inflight and self._idle is not None:
+                await self._idle.wait()
+        if scope.cancelled_caught:
+            logger.debug("Progress relay drain timed out with %d sends in flight", self._inflight)
+
+
+async def _drain_progress(relay: _ProgressRelay | None) -> None:
+    """Drain ``relay`` when there is one.
+
+    Args:
+        relay: The relay a handler passed to its service call, or ``None``.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.run(_drain_progress(None))
+    """
+    if relay is not None:
+        await relay.drain()
+
+
+def _downstream_progress_relay(*, include_legacy: bool = False) -> _ProgressRelay | None:
+    """Build a callback that forwards upstream progress to the downstream caller.
+
+    The downstream session is captured when the relay is built, because upstream
+    callbacks can run in the context of another request.
+
+    Args:
+        include_legacy: Also build the relay for handshake-era peers.
+
+    Returns:
+        The relay, or ``None`` without a request context or session, or for a legacy peer when ``include_legacy`` is false.
+
+    Examples:
+        >>> _downstream_progress_relay() is None
+        True
+    """
+    try:
+        ctx = mcp_app.request_context  # pylint: disable=no-member
+    except LookupError:
+        return None
+    session = getattr(ctx, "session", None) if ctx else None
+    if session is None:
+        return None
+    protocol_version = getattr(ctx, "protocol_version", None)
+    if not (_is_modern_protocol(protocol_version) or include_legacy):
+        return None
+    return _ProgressRelay(session)
+
+
 def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
     """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
 
@@ -1981,7 +2121,6 @@ async def call_tool(
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
-    downstream_session = None
     mrtr_allowed = False
     inbound_input_responses = None
     inbound_request_state = None
@@ -1993,11 +2132,10 @@ async def call_tool(
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
         if ctx:
-            downstream_session = getattr(ctx, "session", None)
             # MRTR elicitation pass-through is modern-era only (scoping decision:
             # legacy clients keep today's no-elicitation behavior).
             protocol_version = getattr(ctx, "protocol_version", None)
-            mrtr_allowed = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+            mrtr_allowed = _is_modern_protocol(protocol_version)
             raw_params = getattr(ctx, "params", None) or {}
             raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
             inbound_request_state = raw_params.get("requestState") or raw_params.get("request_state")
@@ -2016,20 +2154,7 @@ async def call_tool(
 
     _reject_invalid_meta(meta_data)
 
-    async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
-        """Forward an upstream progress update to the downstream caller.
-
-        Args:
-            progress: Current progress value.
-            total: Optional total value.
-            message: Optional human-readable status message.
-        """
-        if downstream_session is None:
-            return
-        try:
-            await downstream_session.report_progress(progress, total, message)
-        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
-            logger.debug("Progress relay failed: %s", exc)
+    progress_relay = _downstream_progress_relay(include_legacy=True)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2079,16 +2204,21 @@ async def call_tool(
 
                     # Use direct proxy method - returns raw CallToolResult from remote server
                     # Return it directly without any normalization
-                    return await tool_service.invoke_tool_direct(
-                        gateway_id=gateway_id_from_header,
-                        name=name,
-                        arguments=arguments,
-                        request_headers=request_headers,
-                        meta_data=meta_data,
-                        user_email=user_email,
-                        token_teams=token_teams,
-                        user_context=user_identity_var.get(),
-                    )
+                    direct_relay = _downstream_progress_relay()
+                    try:
+                        return await tool_service.invoke_tool_direct(
+                            gateway_id=gateway_id_from_header,
+                            name=name,
+                            arguments=arguments,
+                            request_headers=request_headers,
+                            meta_data=meta_data,
+                            user_email=user_email,
+                            token_teams=token_teams,
+                            user_context=user_identity_var.get(),
+                            progress_callback=direct_relay,
+                        )
+                    finally:
+                        await _drain_progress(direct_relay)
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
             return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], is_error=True)
@@ -2220,24 +2350,27 @@ async def call_tool(
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
-            result = await tool_service.invoke_tool(
-                db=db,
-                name=name,
-                arguments=arguments,
-                request_headers=request_headers,
-                app_user_email=app_user_email,
-                user_email=user_email,
-                token_teams=token_teams,
-                server_id=server_id,
-                meta_data=meta_data,
-                require_model_visible=True,
-                progress_callback=_relay_progress,
-                allow_input_required=mrtr_allowed,
-                input_responses=inbound_input_responses,
-                request_state=inbound_request_state,
-                plugin_global_context=plugin_global_context,
-                plugin_context_table=plugin_context_table,
-            )
+            try:
+                result = await tool_service.invoke_tool(
+                    db=db,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=request_headers,
+                    app_user_email=app_user_email,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    server_id=server_id,
+                    meta_data=meta_data,
+                    require_model_visible=True,
+                    progress_callback=progress_relay,
+                    allow_input_required=mrtr_allowed,
+                    input_responses=inbound_input_responses,
+                    request_state=inbound_request_state,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
+                )
+            finally:
+                await _drain_progress(progress_relay)
             # A result may carry its data only in structuredContent; only an empty result on both counts is "no content".
             if not result or (not result.content and not isinstance(getattr(result, "structured_content", None), (dict, list, str, int, float, bool))):
                 logger.warning("No content returned by tool: %s", name)
@@ -2989,6 +3122,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     try:
         async with get_db() as db:
+            progress_relay = _downstream_progress_relay()
             try:
                 result = await prompt_service.get_prompt(
                     db=db,
@@ -2998,6 +3132,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    progress_callback=progress_relay,
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
@@ -3010,6 +3145,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             except PromptUpstreamError as e:
                 logger.info("Upstream answered prompt %s with JSON-RPC error %s", prompt_id, e.code)
                 raise MCPError(code=_relayed_upstream_code(e.code), message=str(e), data=e.data) from e
+            finally:
+                await _drain_progress(progress_relay)
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
                 return types.GetPromptResult(messages=[])
@@ -3228,6 +3365,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
             # Default cache mode: use database
+            progress_relay = _downstream_progress_relay()
             try:
                 result = await resource_service.read_resource(
                     db=db,
@@ -3237,6 +3375,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    progress_callback=progress_relay,
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
@@ -3252,6 +3391,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                 # The resource cache content is empty
                 logger.warning("Resource %s has no cached content; returning empty", resource_uri)
                 return ""
+            finally:
+                await _drain_progress(progress_relay)
 
             # Return blob content if available (binary resources)
             if result and getattr(result, "blob", None):
@@ -3471,12 +3612,17 @@ async def complete(
             if meta is not None:
                 params["_meta"] = meta.model_dump(by_alias=True) if hasattr(meta, "model_dump") else meta
 
-            result = await completion_service.handle_completion(
-                db,
-                params,
-                user_email=user_email,
-                token_teams=token_teams,
-            )
+            progress_relay = _downstream_progress_relay()
+            try:
+                result = await completion_service.handle_completion(
+                    db,
+                    params,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    progress_callback=progress_relay,
+                )
+            finally:
+                await _drain_progress(progress_relay)
 
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
@@ -4335,6 +4481,55 @@ def _accepts_event_stream(accept_header: str) -> bool:
     return False
 
 
+def _requests_progress_stream(body: bytes | None) -> bool:
+    """Return whether a request body is one JSON-RPC message that carries a valid ``_meta.progressToken``.
+
+    Args:
+        body: Raw POST body, or ``None`` when the body could not be read.
+
+    Returns:
+        ``True`` when the body is a single JSON object whose ``params._meta.progressToken`` is a string or integer.
+
+    Examples:
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": "a"}}}')
+        True
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": true}}}')
+        False
+        >>> _requests_progress_stream(b'{"params": {}}')
+        False
+        >>> _requests_progress_stream(None)
+        False
+    """
+    if body is None or b"progressToken" not in body:
+        return False
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and progress_token_from_params(payload.get("params")) is not None
+
+
+def _has_single_modern_protocol_version(scope: Scope) -> bool:
+    """Return whether the request carries exactly one ``mcp-protocol-version`` header with a modern value.
+
+    Args:
+        scope: ASGI scope with raw ``headers``.
+
+    Returns:
+        ``True`` for one header whose value is not a handshake-era version; ``False`` for none, several, or a legacy value.
+
+    Examples:
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")]})
+        True
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2025-11-25")]})
+        False
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")] * 2})
+        False
+    """
+    values = [item[1] for item in scope.get("headers") or [] if isinstance(item, (tuple, list)) and len(item) == 2 and item[0] == b"mcp-protocol-version"]
+    return len(values) == 1 and isinstance(values[0], bytes) and _is_modern_protocol(values[0].decode("latin-1"))
+
+
 def _bucket_method_label(method: Optional[str]) -> str:
     """Map an MCP method name to a bounded Prometheus label value."""
     if not isinstance(method, str) or not method:
@@ -4699,6 +4894,10 @@ class SessionManagerWrapper:
             json_response=settings.json_response_enabled,
             stateless=stateless,
         )
+        # JSON mode answers in one body, so progress has no channel. Modern requests that ask for progress use this SSE manager instead.
+        self.progress_session_manager: StreamableHTTPSessionManager | None = None
+        if settings.json_response_enabled:
+            self.progress_session_manager = StreamableHTTPSessionManager(app=mcp_app, event_store=None, json_response=False, stateless=True)
         self.stack = AsyncExitStack()
 
     async def initialize(self) -> None:
@@ -4715,6 +4914,8 @@ class SessionManagerWrapper:
         """
         logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
+        if self.progress_session_manager is not None:
+            await self.stack.enter_async_context(self.progress_session_manager.run())
 
     async def shutdown(self) -> None:
         """
@@ -5405,7 +5606,7 @@ class SessionManagerWrapper:
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         # check if modern era request
         _pv_header = headers.get("mcp-protocol-version")
-        is_modern_era_request = _pv_header is not None and _pv_header not in HANDSHAKE_PROTOCOL_VERSIONS
+        is_modern_era_request = _is_modern_protocol(_pv_header)
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -5517,10 +5718,25 @@ class SessionManagerWrapper:
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
+        session_manager = self.session_manager
+        if (
+            self.progress_session_manager is not None
+            and method == "POST"
+            and not is_internally_forwarded
+            and _has_single_modern_protocol_version(scope)
+            and _accepts_event_stream(headers.get("accept", ""))
+        ):
+            peek = await _drain_request_body(receive)
+            outcome, receive = await _dispatch_peek_outcome(peek, receive, send, accepted_body=b"", log_label="progress stream routing", log_context=path)
+            if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
+                return
+            if not peek.too_large and _requests_progress_stream(peek.body):
+                session_manager = self.progress_session_manager
+
         span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
 
         try:
-            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
+            await session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled

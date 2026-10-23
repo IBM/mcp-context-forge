@@ -2586,6 +2586,31 @@ MCP_ENVELOPE_META_KEYS = frozenset({PROTOCOL_VERSION_META_KEY, CLIENT_INFO_META_
 MCP_ENVELOPE_META_MAX_DEPTH = 4
 
 
+def without_progress_token(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return ``meta`` without the client's progress token.
+
+    Drops both the SDK spelling (``progress_token``) and the wire spelling
+    (``progressToken``).
+
+    Args:
+        meta: The request ``_meta`` dictionary, or ``None``.
+
+    Returns:
+        A copy without the token keys, or ``None`` if nothing else remains.
+
+    Examples:
+        >>> without_progress_token({"progress_token": 1, "traceparent": "x"})
+        {'traceparent': 'x'}
+        >>> without_progress_token({"progressToken": "a"}) is None
+        True
+        >>> without_progress_token(None) is None
+        True
+    """
+    if not meta:
+        return None
+    return {k: v for k, v in meta.items() if k not in ("progress_token", "progressToken")} or None
+
+
 def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
     """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
 
