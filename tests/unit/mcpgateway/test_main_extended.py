@@ -13229,19 +13229,23 @@ class TestRpcScopedPermissions:
 
 
 class TestRedisStartupPath:
-    """Cover main.py module-level redis readiness check (lines 255/257)."""
+    """Cover the redis readiness check in ``_wait_for_redis_at_startup``."""
 
     def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
-        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "cache_type": "redis",
-                "redis_url": "redis://localhost:6379/0",
-                "redis_ssl": False,
-            },
-        )
-        # If we reach here the module loaded — lines 255/257 were executed.
+        """_wait_for_redis_at_startup calls wait_for_redis_ready when cache_type is redis."""
+        # First-Party
+        import mcpgateway.main as main_module
+
+        calls = []
+        monkeypatch.setattr(main_module, "wait_for_redis_ready", lambda **kwargs: calls.append(kwargs))
+        monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0", raising=False)
+        monkeypatch.setattr(settings, "redis_ssl", False, raising=False)
+
+        main_module._wait_for_redis_at_startup()  # pylint: disable=protected-access
+
+        assert len(calls) == 1
+        assert calls[0]["redis_url"] == "redis://localhost:6379/0"
 
 
 @pytest.fixture
