@@ -328,7 +328,7 @@ class TestServerService:
         cache.invalidate_servers = AsyncMock()
 
         with patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
-            await server_service.register_server(test_db, ServerCreate(id="550e8400e29b41d4a716446655440009", name="cache_server", description="d"))
+            await server_service.register_server(test_db, ServerCreate(id="550e8400e29b41d4a716446655440009", name="cache_server", description="d"))  # pragma: allowlist secret
 
         test_db.commit.assert_called_once()
         cache.invalidate_servers.assert_awaited_once()
