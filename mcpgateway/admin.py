@@ -13303,8 +13303,8 @@ async def admin_edit_gateway(
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
-            name=str(form.get("name")),
-            url=str(form["url"]),
+            name=form.get("name"),
+            url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
@@ -13580,17 +13580,19 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(uri_value, str) and "{" in uri_value and "}" in uri_value:
             template = uri_value
 
-        resource = ResourceCreate(
-            uri=str(form["uri"]),
-            name=str(form["name"]),
-            description=str(form.get("description", "")),
-            mime_type=str(form.get("mimeType", "")),
-            uri_template=template,
-            content=str(form["content"]),
-            tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
+        resource = ResourceCreate.model_validate(
+            {
+                "uri": form.get("uri"),
+                "name": form.get("name"),
+                "description": str(form.get("description", "")),
+                "mime_type": str(form.get("mimeType", "")),
+                "uri_template": template,
+                "content": form.get("content"),
+                "tags": tags,
+                "visibility": visibility,
+                "team_id": team_id,
+                "owner_email": user_email,
+            }
         )
 
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -13979,16 +13981,18 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     try:
         # Validate arguments JSON using prompt service
         arguments: List[Dict[str, Any]] = prompt_service.validate_arguments_json(args_value=form.get("arguments"), context="new prompt")
-        prompt = PromptCreate(
-            name=str(form["name"]),
-            display_name=str(form.get("display_name") or form["name"]),
-            description=str(form.get("description")),
-            template=str(form["template"]),
-            arguments=arguments,
-            tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
+        prompt = PromptCreate.model_validate(
+            {
+                "name": form.get("name"),
+                "display_name": form.get("display_name") or form.get("name"),
+                "description": str(form.get("description")),
+                "template": form.get("template"),
+                "arguments": arguments,
+                "tags": tags,
+                "visibility": visibility,
+                "team_id": team_id,
+                "owner_email": user_email,
+            }
         )
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -14087,6 +14091,10 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    template = form.get("template")
+    if not isinstance(template, str) or not template.strip():
+        LOGGER.warning("admin_edit_prompt rejected request with missing template")
+        return ORJSONResponse(content={"detail": "Prompt template is required."}, status_code=422)
     team_id = _form_team_id(form)
 
     visibility = str(form.get("visibility", "private"))
@@ -14117,7 +14125,7 @@ async def admin_edit_prompt(
             custom_name=str(form.get("customName") or form.get("name")),
             display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
             description=str(form.get("description")),
-            template=str(form["template"]),
+            template=template,
             arguments=arguments,
             tags=tags,
             visibility=visibility,
@@ -16441,33 +16449,35 @@ async def admin_add_a2a_agent(
         uaid_protocol = str(form.get("uaid_protocol", "a2a"))
         uaid_native_id_override = form.get("uaid_native_id_override") or None
 
-        agent_data = A2AAgentCreate(
-            name=form["name"],
-            description=form.get("description"),
-            endpoint_url=form["endpoint_url"],
-            agent_type=form.get("agent_type", "generic"),
-            protocol_version=str(form.get("protocol_version", "1.0")),
-            auth_type=auth_type_from_form,
-            auth_username=str(form.get("auth_username", "")),
-            auth_password=str(form.get("auth_password", "")),
-            auth_token=str(form.get("auth_token", "")),
-            auth_header_key=str(form.get("auth_header_key", "")),
-            auth_header_value=str(form.get("auth_header_value", "")),
-            auth_headers=auth_headers if auth_headers else None,
-            oauth_config=oauth_config,
-            auth_value=form.get("auth_value") if form.get("auth_value") else None,
-            auth_query_param_key=str(form.get("auth_query_param_key", "")) or None,
-            auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
-            tags=tags,
-            visibility=form.get("visibility", "private"),
-            team_id=team_id,
-            owner_email=user_email,
-            passthrough_headers=passthrough_headers,
-            # UAID fields for cross-gateway routing
-            generate_uaid=generate_uaid,
-            uaid_registry=uaid_registry if generate_uaid else None,
-            uaid_protocol=uaid_protocol if generate_uaid else None,
-            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
+        agent_data = A2AAgentCreate.model_validate(
+            {
+                "name": form.get("name"),
+                "description": form.get("description"),
+                "endpoint_url": form.get("endpoint_url"),
+                "agent_type": form.get("agent_type", "generic"),
+                "protocol_version": str(form.get("protocol_version", "1.0")),
+                "auth_type": auth_type_from_form,
+                "auth_username": str(form.get("auth_username", "")),
+                "auth_password": str(form.get("auth_password", "")),
+                "auth_token": str(form.get("auth_token", "")),
+                "auth_header_key": str(form.get("auth_header_key", "")),
+                "auth_header_value": str(form.get("auth_header_value", "")),
+                "auth_headers": auth_headers if auth_headers else None,
+                "oauth_config": oauth_config,
+                "auth_value": form.get("auth_value") if form.get("auth_value") else None,
+                "auth_query_param_key": str(form.get("auth_query_param_key", "")) or None,
+                "auth_query_param_value": str(form.get("auth_query_param_value", "")) or None,
+                "tags": tags,
+                "visibility": form.get("visibility", "private"),
+                "team_id": team_id,
+                "owner_email": user_email,
+                "passthrough_headers": passthrough_headers,
+                # UAID fields for cross-gateway routing
+                "generate_uaid": generate_uaid,
+                "uaid_registry": uaid_registry if generate_uaid else None,
+                "uaid_protocol": uaid_protocol if generate_uaid else None,
+                "uaid_native_id_override": uaid_native_id_override if generate_uaid else None,
+            }
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
