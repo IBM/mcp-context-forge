@@ -528,6 +528,28 @@ class TestAuthCacheInvalidation:
         assert jti in auth_cache._revoked_jtis
         assert not any(k.endswith(f":{jti}") for k in auth_cache._context_cache)
 
+    @pytest.mark.asyncio
+    async def test_invalidate_token_context_evicts_without_revoking(self, auth_cache, mock_redis):
+        """Active-state changes clear context without permanently revoking the JTI."""
+        jti = "toggle-jti"
+        auth_cache._context_cache[f"user@example.com:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": "user@example.com"}), expiry=time.time() + 10)
+        auth_cache._revocation_cache[jti] = CacheEntry(value=False, expiry=time.time() + 10)
+
+        async def _scan_iter(match=None):
+            if False:
+                yield match
+
+        mock_redis.scan_iter = _scan_iter
+        mock_redis.publish = AsyncMock(return_value=None)
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.invalidate_token_context(jti)
+
+        assert jti not in auth_cache._revoked_jtis
+        assert jti not in auth_cache._revocation_cache
+        assert not any(key.endswith(f":{jti}") for key in auth_cache._context_cache)
+        mock_redis.publish.assert_awaited_once_with("mcpgw:auth:invalidate", f"token:{jti}")
+
     def test_invalidate_all_clears_l1(self, auth_cache):
         auth_cache._user_cache["u"] = CacheEntry(value={"email": "u"}, expiry=time.time() + 10)
         auth_cache._team_cache["u:t"] = CacheEntry(value=True, expiry=time.time() + 10)
