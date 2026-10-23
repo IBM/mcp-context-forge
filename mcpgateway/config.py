@@ -1017,6 +1017,9 @@ class Settings(BaseSettings):
     # Token endpoint auth method
     dcr_token_endpoint_auth_method: str = Field(default="client_secret_basic", description="Token endpoint auth method for DCR (client_secret_basic or client_secret_post)")
 
+    # Application type (OpenID Connect Dynamic Client Registration); MCP 2026-07-28 requires one
+    dcr_application_type: Literal["auto", "web", "native"] = Field(default="auto", description="application_type sent in DCR requests; auto picks native for a loopback redirect URI and web otherwise")
+
     # Metadata cache TTL
     dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
 

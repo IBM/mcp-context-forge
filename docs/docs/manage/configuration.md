@@ -688,6 +688,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `["mcp:read"]`                 | JSON array    |
 | `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `DCR_APPLICATION_TYPE`                     | `application_type` sent in DCR requests (MCP 2026-07-28)       | `auto`                         | `auto`, `web`, `native` |
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |

@@ -264,6 +264,19 @@ OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
 
 ---
 
+## MCP 2026-07-28 Authorization Profile
+
+The gateway follows the authorization part of the `2026-07-28` MCP specification in both of its roles. What each requirement means here:
+
+- **Protected resource metadata (RFC 9728).** Every OAuth-enabled virtual server publishes `/.well-known/oauth-protected-resource/servers/{id}/mcp`, and a 401 on that server carries `resource_metadata` in `WWW-Authenticate`.
+- **Resource indicators (RFC 8707).** The `resource` parameter is sent on authorization and token requests, derived from the gateway URL when none is configured. `omit_resource` stays available for providers that reject it.
+- **Issuer validation (RFC 9207).** When an authorization server sends `iss` on the callback, it must equal the issuer from the server's validated metadata, compared as plain strings. A server that advertises `authorization_response_iss_parameter_supported` and then omits `iss` is refused. Mismatches are refused before the code is redeemed and before any provider error text is shown. Gateways configured with only `authorization_url` and `token_url`, and no `issuer`, have nothing to compare against and are not checked.
+- **Credentials bound to their issuer.** Dynamically registered clients are stored per gateway and issuer. When a gateway's issuer changes, registrations for the old issuer are deactivated and a `client_id` carried over unchanged is flagged in the log, because the new authorization server did not issue it.
+- **Dynamic Client Registration.** Requests carry `application_type`, `native` for a loopback redirect URI and `web` otherwise, or the value of `DCR_APPLICATION_TYPE`. The specification deprecates DCR in favour of Client ID Metadata Documents but keeps it for authorization servers without that support.
+- **Client ID Metadata Documents.** Not implemented in this release. The gateway registers dynamically or uses pre-registered credentials. Serving the gateway's own client metadata document and using its URL as the `client_id` is tracked as a follow-up.
+- **Token audience.** Tokens the gateway issues are audience-checked, tokens from a trusted external identity provider are checked against that provider's configured audience, and a stored upstream token is checked against the gateway's resource before it is forwarded.
+- **Client tokens toward upstreams.** An upstream registered with auth type `none` receives the caller's `Authorization` header. This is a deliberate shared-trust pattern for servers that validate the same token as the gateway. Give the upstream its own credentials when the two must be separate. `X-Upstream-Authorization` always carries a credential the caller chose for the upstream.
+
 ## Redirect URI and Callback
 
 - Default callback path: `/oauth/callback`

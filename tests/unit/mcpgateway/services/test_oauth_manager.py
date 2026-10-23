@@ -3015,3 +3015,84 @@ class TestRefreshClientAssertionNormalization:
             )
             assert decoded["iss"] == "test-client"
         assert first["client_assertion"] != second["client_assertion"]
+
+
+# --------------------------------------------------------------------------- #
+# RFC 9207 issuer validation of authorization responses (MCP 2026-07-28)
+# --------------------------------------------------------------------------- #
+
+
+def _metadata(issuer: str, advertised: bool) -> Dict:
+    return {"issuer": issuer, "authorization_response_iss_parameter_supported": advertised}
+
+
+@pytest.mark.asyncio
+async def test_iss_matching_metadata_issuer_passes(oauth_manager):
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", True))):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com/"}, "https://as.example.com")
+
+
+@pytest.mark.asyncio
+async def test_iss_mismatch_is_rejected(oauth_manager):
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", False))):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://attacker.example")
+
+
+@pytest.mark.asyncio
+async def test_iss_is_compared_without_normalisation(oauth_manager):
+    """A trailing slash or case difference is a mismatch; the spec forbids normalising before comparing."""
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", False))):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/")
+
+
+@pytest.mark.asyncio
+async def test_missing_iss_is_rejected_when_advertised(oauth_manager):
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", True))):
+        with pytest.raises(OAuthError, match="missing the iss parameter"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, None)
+
+
+@pytest.mark.asyncio
+async def test_missing_iss_passes_when_not_advertised(oauth_manager):
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", False))):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, None)
+
+
+@pytest.mark.asyncio
+async def test_iss_without_configured_issuer_is_not_compared(oauth_manager):
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock()) as discover:
+        await oauth_manager.validate_authorization_response_issuer({"authorization_url": "https://as.example.com/authorize"}, "https://anything.example")
+    discover.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_iss_falls_back_to_configured_issuer_when_discovery_fails(oauth_manager):
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrError
+
+    with patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(side_effect=DcrError("down"))):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com")
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/")
+
+
+@pytest.mark.asyncio
+async def test_complete_flow_refuses_code_exchange_on_iss_mismatch(oauth_manager):
+    """The state is consumed, but the code never reaches the token endpoint."""
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}) as retrieve,
+        patch.object(oauth_manager, "_exchange_code_for_tokens") as exchange,
+        patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new=AsyncMock(return_value=_metadata("https://as.example.com", True))),
+    ):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "issuer": "https://as.example.com"},
+                iss="https://attacker.example",
+            )
+    retrieve.assert_awaited_once()
+    exchange.assert_not_called()
