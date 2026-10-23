@@ -14,6 +14,7 @@ Tests cover Issue #3620 - Non-Standard Request Format:
 """
 
 # Standard
+import base64
 from datetime import datetime, timezone
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,6 +28,16 @@ import pytest
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.main import app
+
+
+def _b64url(text: str) -> str:
+    """Base64url-encode text without padding."""
+    return base64.urlsafe_b64encode(text.encode()).rstrip(b"=").decode()
+
+
+# Passes the three-segment shape check in _is_jwt_token(). The segments are
+# meaningless placeholder words, not a real credential.
+JWT_SHAPED_TOKEN = ".".join([_b64url("header"), _b64url("payload"), _b64url("sig")])
 
 
 @pytest.fixture
@@ -1484,7 +1495,7 @@ class TestRequestContextBearerTokenExtraction:
     def test_bearer_token_from_request_state(self, mock_request_for_context, mock_user_dict_for_context):
         """Test bearer token extracted from request.state (preferred source)."""
         # JWT-shaped token
-        jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        jwt_token = JWT_SHAPED_TOKEN
         mock_request_for_context.state.bearer_token = jwt_token
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
@@ -1496,7 +1507,7 @@ class TestRequestContextBearerTokenExtraction:
 
     def test_bearer_token_fallback_from_authorization_header(self, mock_request_for_context, mock_user_dict_for_context):
         """Test bearer token extracted from Authorization header as fallback."""
-        jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        jwt_token = JWT_SHAPED_TOKEN
         mock_request_for_context.state.bearer_token = None  # Not set by middleware
         mock_request_for_context.headers = {"authorization": f"Bearer {jwt_token}"}
 
@@ -1509,7 +1520,7 @@ class TestRequestContextBearerTokenExtraction:
 
     def test_bearer_token_case_insensitive(self, mock_request_for_context, mock_user_dict_for_context):
         """Test Authorization header parsing is case-insensitive."""
-        jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        jwt_token = JWT_SHAPED_TOKEN
         mock_request_for_context.state.bearer_token = None
         mock_request_for_context.headers = {"authorization": f"bearer {jwt_token}"}  # lowercase 'bearer'
 
@@ -1535,7 +1546,7 @@ class TestRequestContextBearerTokenExtraction:
 
     def test_jwt_token_forwarded(self, mock_request_for_context, mock_user_dict_for_context):
         """Test JWT-shaped bearer tokens are forwarded for cross-gateway auth."""
-        jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        jwt_token = JWT_SHAPED_TOKEN
         mock_request_for_context.state.bearer_token = jwt_token
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
@@ -1650,7 +1661,7 @@ class TestRequestContextCompleteContext:
 
     def test_returns_all_required_fields(self, mock_request_for_context, mock_user_dict_for_context):
         """Test context contains all required fields."""
-        jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        jwt_token = JWT_SHAPED_TOKEN
         mock_request_for_context.state.bearer_token = jwt_token
         mock_request_for_context.headers = {
             "content-type": "application/json",
