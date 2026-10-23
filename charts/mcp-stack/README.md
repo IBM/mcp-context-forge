@@ -424,7 +424,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.RETRY_JITTER_MAX | string | `"0.5"` |  |
 | mcpContextForge.config.RETRY_MAX_ATTEMPTS | string | `"3"` |  |
 | mcpContextForge.config.RETRY_MAX_DELAY | string | `"60"` |  |
-| mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.SECURE_COOKIES | string | `"true"` |  |
 | mcpContextForge.config.SECURITY_FAILED_AUTH_THRESHOLD | string | `"5"` |  |
 | mcpContextForge.config.SECURITY_HEADERS_ENABLED | string | `"true"` |  |
@@ -651,7 +650,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS | string | `'["&&", ";", "||", "$(", "> ", "< "]'` | Substrings blocked in tool descriptions (JSON array) |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
-| mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |
 | mcpContextForge.config.MAX_PATH_DEPTH | string | `"10"` |  |
 | mcpContextForge.config.MAX_PARAM_LENGTH | string | `"10000"` |  |
