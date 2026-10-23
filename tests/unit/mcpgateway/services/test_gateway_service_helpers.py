@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
-from mcp.types import ListToolsResult, Tool
+from mcp.types import Prompt, Resource, ResourceTemplate, Tool
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -1560,69 +1560,77 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     assert decode_auth(existing.auth_value) == auth_dict
 
 
+def _pagination_item(method, identity, description="first"):
+    """Build an SDK object with the specified protocol identity."""
+    if method is MCPListMethod.TOOLS:
+        return Tool(name=identity, description=description, input_schema={"type": "object"})
+    if method is MCPListMethod.PROMPTS:
+        return Prompt(name=identity, description=description)
+    if method is MCPListMethod.RESOURCES:
+        return Resource(name="shared", uri=f"test://pagination/{identity}", description=description)
+    return ResourceTemplate(name="shared", uri_template=f"test://pagination/{identity}/{{id}}", description=description)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mcp_method", list(MCPListMethod))
-async def test_get_list_paginated_single_page(mcp_method):
-    """Return one page for each MCP list method."""
+@pytest.mark.parametrize("method", list(MCPListMethod))
+@pytest.mark.parametrize(
+    "layout,cursors,expected_keys,cycle",
+    [
+        (("ab",), (None,), "ab", False),
+        (("",), (None,), "", False),
+        (("a", "bc"), ("one", None), "abc", False),
+        (("a", "a"), ("one", "one"), "a", True),
+        (("a", "b"), ("one", "one"), "ab", True),
+        (("ab", "Bc"), ("one", "one"), "abc", True),
+        (("a", "b", "Ac"), ("one", "two", "one"), "abc", True),
+        (("aAb",), (None,), "ab", False),
+        (("a", "Ab"), ("one", None), "ab", False),
+        (("", "b"), ("one", None), "b", False),
+    ],
+)
+async def test_get_list_paginated_unique_identities(method, layout, cursors, expected_keys, cycle, caplog):
+    """Preserve unique objects and stop cursor cycles without losing results."""
+    suffix, attribute = method.value
+    objects = {key: _pagination_item(method, key) for key in "abc"}
+    objects.update({key.upper(): _pagination_item(method, key, "changed") for key in "ab"})
+    pages = [SimpleNamespace(**{attribute: [objects[key] for key in keys], "next_cursor": cursor}) for keys, cursor in zip(layout, cursors)]
+    originals = [list(getattr(page, attribute)) for page in pages]
     session = AsyncMock()
-    method_suffix, response_attribute = mcp_method.value
-    list_method = getattr(session, f"list_{method_suffix}")
-    list_method.return_value = SimpleNamespace(**{response_attribute: ["t1", "t2"], "next_cursor": None})
-    assert await get_list_paginated(session, mcp_method) == ["t1", "t2"]
+    list_method = getattr(session, f"list_{suffix}")
+    list_method.side_effect = pages
+
+    result = await get_list_paginated(session, method)
+
+    assert result == [objects[key] for key in expected_keys]
+    assert all(actual is objects[key] for actual, key in zip(result, expected_keys))
+    expected_calls = [call()] + [call(cursor=cursor) for cursor in cursors[:-1]]
+    assert list_method.await_args_list == expected_calls
+    assert [getattr(page, attribute) for page in pages] == originals
+    assert (f"Repeated pagination cursor from list_{suffix}" in caplog.text) is cycle
+    duplicate = sum(map(len, layout)) > len(expected_keys)
+    assert (f"Duplicate pagination items from list_{suffix}" in caplog.text) is duplicate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", list(MCPListMethod))
+async def test_get_list_paginated_missing_cursor(method):
+    """Return the first page when the response omits its cursor."""
+    suffix, attribute = method.value
+    item = _pagination_item(method, "a")
+    session = AsyncMock()
+    list_method = getattr(session, f"list_{suffix}")
+    list_method.return_value = SimpleNamespace(**{attribute: [item]})
+    assert await get_list_paginated(session, method) == [item]
     list_method.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
-async def test_get_list_paginated_empty_first_page():
-    """Return an empty list without requesting another page."""
+async def test_get_list_paginated_preserves_upstream_error():
+    """Propagate upstream errors after collecting the first page."""
     session = AsyncMock()
-    session.list_tools.return_value = ListToolsResult(tools=[], next_cursor=None)
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == []
-    session.list_tools.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_get_list_no_cursor():
-    session = AsyncMock()
-    session.list_tools.return_value = SimpleNamespace(tools=["t1", "t2"])
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1", "t2"]
-    session.list_tools.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "mcp_method,method_name,response_attribute",
-    [
-        (MCPListMethod.TOOLS, "list_tools", "tools"),
-        (MCPListMethod.PROMPTS, "list_prompts", "prompts"),
-        (MCPListMethod.RESOURCES, "list_resources", "resources"),
-        (MCPListMethod.RESOURCE_TEMPLATES, "list_resource_templates", "resource_templates"),
-    ],
-)
-async def test_get_list_paginated_multi_page(mcp_method, method_name, response_attribute):
-    session = AsyncMock()
-    list_method = getattr(session, method_name)
-    pages = [
-        SimpleNamespace(**{response_attribute: ["t1"], "next_cursor": "cur"}),
-        SimpleNamespace(**{response_attribute: ["t2", "t3"], "next_cursor": None}),
+    session.list_tools.side_effect = [
+        SimpleNamespace(tools=[_pagination_item(MCPListMethod.TOOLS, "a")], next_cursor="one"),
+        RuntimeError("upstream failed"),
     ]
-    list_method.side_effect = pages
-    assert await get_list_paginated(session, mcp_method) == ["t1", "t2", "t3"]
-    list_method.assert_awaited_with(cursor="cur")
-    assert getattr(pages[0], response_attribute) == ["t1"]
-    assert getattr(pages[1], response_attribute) == ["t2", "t3"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("cursors", [("cur", "cur"), ("first", "second", "first")])
-async def test_get_list_paginated_stops_at_cursor_cycles(cursors, caplog):
-    """Return collected results and warn when a cursor repeats."""
-    session = AsyncMock()
-    pages = [SimpleNamespace(tools=["t1"], next_cursor=cursor) for cursor in cursors]
-    session.list_tools.side_effect = pages
-
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1"] * len(cursors)
-
-    assert session.list_tools.await_count == len(cursors)
-    assert all(page.tools == ["t1"] for page in pages)
-    assert "Repeated pagination cursor from list_tools" in caplog.text
+    with pytest.raises(RuntimeError, match="upstream failed"):
+        await get_list_paginated(session, MCPListMethod.TOOLS)
