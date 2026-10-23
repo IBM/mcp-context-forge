@@ -15264,7 +15264,9 @@ async def admin_import_tools(
             try:
                 tool = ToolCreate(**item)  # pydantic validation
                 if is_public_only_token and (tool.visibility or "public") in ("team", "private"):
-                    errors.append({"index": i, "name": name, "error": {"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."}})
+                    errors.append(
+                        {"index": i, "name": name, "error": {"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."}}
+                    )
                     continue
                 _check_public_visibility_allowed(tool.visibility or "public", team_id=team_id)
                 await tool_service.register_tool(
