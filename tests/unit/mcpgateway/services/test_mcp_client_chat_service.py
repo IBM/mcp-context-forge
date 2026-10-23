@@ -6,13 +6,17 @@ SPDX-License-Identifier: Apache-2.0
 Unit tests for mcp client chat service.
 """
 
+# Standard
 import asyncio
-import pytest
-import logging
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
+import logging
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
+import pytest
+
+# First-Party
 import mcpgateway.services.mcp_client_chat_service as svc
 
 
@@ -235,8 +239,8 @@ async def test_mcpclient_connect_disconnect_get_tools(monkeypatch):
     mock_instance.disconnect = AsyncMock(return_value=None)
     mock_instance.list_tools = AsyncMock(return_value=["ToolA"])
 
-    # Patch MultiServerMCPClient creation to return our async mock instance
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_instance))
+    # Patch the tool loader creation to return our async mock instance
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock(return_value=mock_instance))
 
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
@@ -257,8 +261,8 @@ async def test_mcpclient_connect_disconnect_get_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcpclient_connect_logs_missing_dependencies_when_multiserver_client_missing(monkeypatch, patch_logger):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", None)
+async def test_mcpclient_connect_logs_missing_dependencies_when_llmchat_unavailable(monkeypatch, patch_logger):
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
 
@@ -266,7 +270,7 @@ async def test_mcpclient_connect_logs_missing_dependencies_when_multiserver_clie
         await client.connect()
 
     assert client.is_connected is False
-    patch_logger.error.assert_any_call("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
+    patch_logger.error.assert_any_call(svc._llmchat_missing_message())
 
 
 @pytest.mark.asyncio
@@ -342,7 +346,7 @@ async def test_mcpchatservice_initialize_success_and_idempotent(monkeypatch, pat
 
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_and_chat(monkeypatch):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock())
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock())
     mcpcfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"),
         llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")),
