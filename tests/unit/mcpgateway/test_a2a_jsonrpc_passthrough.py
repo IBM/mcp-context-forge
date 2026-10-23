@@ -1489,8 +1489,9 @@ class TestRequestContextBearerTokenExtraction:
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
-                from mcpgateway.main import _extract_a2a_request_context
-                context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
+                with patch("mcpgateway.main._is_jwt_token", return_value=True):
+                    from mcpgateway.main import _extract_a2a_request_context
+                    context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
 
         assert context["bearer_token"] == jwt_token
 
@@ -1502,8 +1503,9 @@ class TestRequestContextBearerTokenExtraction:
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
-                from mcpgateway.main import _extract_a2a_request_context
-                context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
+                with patch("mcpgateway.main._is_jwt_token", return_value=True):
+                    from mcpgateway.main import _extract_a2a_request_context
+                    context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
 
         assert context["bearer_token"] == jwt_token
 
@@ -1515,8 +1517,9 @@ class TestRequestContextBearerTokenExtraction:
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
-                from mcpgateway.main import _extract_a2a_request_context
-                context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
+                with patch("mcpgateway.main._is_jwt_token", return_value=True):
+                    from mcpgateway.main import _extract_a2a_request_context
+                    context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
 
         assert context["bearer_token"] == jwt_token
 
