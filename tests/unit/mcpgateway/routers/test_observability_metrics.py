@@ -174,6 +174,7 @@ async def test_timeseries_counts_executions_per_bucket(db_session, grant_permiss
 
     assert response.buckets == ["2025-01-01T12:00:00+00:00", "2025-01-01T13:00:00+00:00"]
     assert response.values == [2, 2]
+    assert response.enabled is True
     assert response.success_count == [1, 1]
     assert response.error_count == [1, 0]
     assert len({len(response.buckets), len(response.values), len(response.success_count), len(response.error_count)}) == 1
@@ -192,8 +193,25 @@ async def test_percentiles_linear_interpolation_and_null_exclusion(db_session, g
 
     assert response.buckets == ["2025-01-01T12:00:00+00:00"]
     assert response.p50 == [150.0]
+    assert response.enabled is True
     assert response.p95 == [195.0]
     assert response.p99 == [199.0]
+
+
+@pytest.mark.asyncio
+async def test_observability_enabled_without_traffic_returns_empty_series(db_session, grant_permissions, monkeypatch):
+    """Enabled observability with no traces reports enabled=True and empty series."""
+    grant_permissions()
+    monkeypatch.setattr(observability_module, "datetime", _FrozenDatetime)
+
+    timeseries = await call_timeseries(db_session)
+    percentiles = await call_percentiles(db_session)
+
+    assert timeseries.enabled is True
+    assert (timeseries.buckets, timeseries.values, timeseries.success_count, timeseries.error_count) == ([], [], [], [])
+
+    assert percentiles.enabled is True
+    assert (percentiles.buckets, percentiles.p50, percentiles.p95, percentiles.p99) == ([], [], [], [])
 
 
 @pytest.mark.asyncio
@@ -221,7 +239,9 @@ async def test_observability_disabled_returns_empty_series(db_session, grant_per
     percentiles = await call_percentiles(db_session)
 
     assert (timeseries.buckets, timeseries.values, timeseries.success_count, timeseries.error_count) == ([], [], [], [])
+    assert timeseries.enabled is False
     assert (percentiles.buckets, percentiles.p50, percentiles.p95, percentiles.p99) == ([], [], [], [])
+    assert percentiles.enabled is False
 
 
 def test_routes_registered_on_metrics_router():
