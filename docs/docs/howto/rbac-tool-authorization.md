@@ -4,9 +4,10 @@ This guide walks through configuring RBAC so that specific users can list and ex
 tools exposed through a virtual server, while others are restricted to read-only access
 or blocked entirely. The scenario used throughout is an analytics team with data-query
 tools — such as `run-query` and `db-migrate` — on a production virtual server.
-Developers on the team need to both list and execute tools. Viewers should be able to
-browse available tools but not execute them. A sensitive `db-migrate` tool should be
-restricted by controlling who holds the `tools.execute` permission.
+Developers on the team need to list and execute tools.
+Users with a custom browse-only role can list tools but cannot execute them.
+The built-in `viewer` role includes tool execution and does not provide browse-only access.
+Restrict sensitive tool execution through effective permissions and token restrictions.
 
 ---
 
@@ -40,8 +41,8 @@ Request --> Token Scoping (Can see this tool?) --> RBAC Check (Can execute?) -->
 
 In the analytics scenario, this means a developer's JWT must contain the analytics
 team UUID in its `teams` claim (Layer 1) *and* the developer must hold a role that
-includes `tools.execute` (Layer 2). A viewer on the same team passes Layer 1 but is
-stopped at Layer 2 when attempting execution.
+includes `tools.execute` (Layer 2). A user with a custom browse-only role can pass Layer 1 but fail the execution check at Layer 2.
+Remove execution from all applicable role grants, or restrict token permissions to exclude execution.
 
 For the full reference on roles, permissions, and token scoping semantics, see
 [RBAC Configuration](../manage/rbac.md).
@@ -87,14 +88,18 @@ The three built-in roles most relevant to tool access are:
 
 | Role | `tools.read` | `tools.execute` | Use case |
 |------|:---:|:---:|------|
-| `viewer` | Yes | No | Browse tools without executing |
-| `developer` | Yes | Yes | List and execute tools |
+| `viewer` | Yes | Yes | Read resources and execute tools |
+| `developer` | Yes | Yes | Manage resources and execute tools |
 | `team_admin` | Yes | Yes | Full team management plus tool access |
 
-Assign the `developer` role to users who need to execute tools, and the `viewer`
-role to users who should only browse. Roles are scoped to a specific team, so the
-same user can hold different roles on different teams — for example, `developer` on
-the analytics team but `viewer` on the infrastructure team.
+Both `viewer` and `developer` can execute tools.
+The `developer` role also grants resource CRUD, upstream gateway management, LLM/A2A invocation, and token self-service.
+Use a custom role when users need browsing without tool execution.
+Review all applicable role assignments and token restrictions before treating access as read-only.
+See the [complete built-in permission table](../manage/rbac.md#built-in-rbac-roles) before assigning roles.
+
+Roles are scoped to a specific team, so a user can hold different roles on different teams.
+For example, a user can hold `developer` on the analytics team and `viewer` on the infrastructure team.
 
 === "API / CLI"
 
@@ -116,6 +121,11 @@ the analytics team but `viewer` on the infrastructure team.
 !!! note "Custom Roles"
 
     For fine-grained control — for example, a role with `tools.read` but not `tools.execute` for specific teams — create custom roles via bootstrap configuration. This is useful when you need granularity beyond the built-in roles, such as allowing a contractor to see tool definitions without being able to invoke them. See [Bootstrap Custom Roles](../manage/rbac.md#bootstrap-custom-roles).
+
+For the denied example below, create a custom team role with `tools.read` and without `tools.execute`.
+Assign it to a separate user and create that user's analytics-scoped token as described in Step 3.
+Export that token as `READ_ONLY_TOKEN`.
+Ensure other applicable roles do not grant execution, or explicitly restrict the token's permissions to exclude execution.
 
 ---
 
@@ -188,19 +198,18 @@ curl -X POST "$GATEWAY_URL/rpc" \
 
 Expected result: a JSON-RPC response with the tool's output in the `result` field.
 
-### Viewer attempts execution
+### Custom browse-only user attempts execution
 
-A viewer has `tools.read` but not `tools.execute`, so the same call should be rejected:
+Use `READ_ONLY_TOKEN` for the user configured with browse-only effective access in Step 2:
 
 ```bash
 curl -X POST "$GATEWAY_URL/rpc" \
-  -H "Authorization: Bearer $VIEWER_TOKEN" \
+  -H "Authorization: Bearer $READ_ONLY_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run-query", "arguments": {"sql": "SELECT count(*) FROM events"}}}'
-# Expected: JSON-RPC error with code -32603 (403 Forbidden)
 ```
 
-Expected result: a JSON-RPC error response. The viewer can list tools but cannot invoke them.
+Expected result: an authorization error. The user can list visible tools but cannot execute them.
 
 ### User from another team
 
@@ -232,7 +241,7 @@ is filtering correctly based on the `teams` claim.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Tool not visible (empty list or 404) | Token missing `teams` claim or wrong team UUID | Decode JWT and verify `teams` includes the tool's `team_id` |
-| 403 on tool execution | User has `viewer` role (no `tools.execute`) | Assign `developer` or `team_admin` role for the team |
+| 403 on tool execution | Effective permissions or token restrictions exclude `tools.execute` | Grant only required execution access and check token restrictions; do not grant developer solely to bypass this denial |
 | Admin token seeing only public tools | Token has `teams: []` (explicit empty list) | Use `teams: null` with `is_admin: true` for admin bypass |
 | Tool visible but execution returns 500 | Upstream gateway unreachable | Check gateway health: `GET /gateways/{id}` |
 

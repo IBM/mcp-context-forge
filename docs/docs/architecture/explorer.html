@@ -2221,7 +2221,7 @@ a.card-path:hover, a.gh-link:hover {
         <ul class="security-list">
           <li>platform_admin &mdash; global wildcard access</li>
           <li>team_admin &mdash; team management + read/execute</li>
-          <li>developer &mdash; tools read/execute, resources read</li>
+          <li>developer &mdash; resource CRUD, gateway management, execution/invocation, and token self-service</li>
           <li>viewer &mdash; read-only access to team resources</li>
           <li>Permission audit logging on all changes</li>
         </ul>
@@ -5136,7 +5136,7 @@ renderConfig();
         var roles = [
           {y:130,r:'platform_admin',p:'* (all)',c:C.red},
           {y:170,r:'team_admin',p:'teams.*, tools.rw, resources.r',c:C.orange},
-          {y:210,r:'developer',p:'tools.rx, resources.r',c:C.blue},
+          {y:210,r:'developer',p:'CRUD incl. gateways; execute/invoke; tokens',c:C.blue},
           {y:250,r:'viewer',p:'tools.r, resources.r (read-only)',c:C.green}
         ];
         roles.forEach(function(role) {

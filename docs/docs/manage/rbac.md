@@ -68,6 +68,18 @@ Logical groups that:
 | `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, tools.preview, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, metrics:read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
+!!! warning "Developer grants include write access"
+    The built-in `developer` role grants create, update, and delete permissions across gateways,
+    servers, tools, resources, prompts, and A2A agents.
+    It also grants tool execution, server use, LLM/A2A invocation, and token self-service.
+    Gateway write permissions allow upstream gateway registration, configuration updates, and deletion,
+    subject to resource visibility and configuration checks.
+
+    Use a custom role when users need fewer actions.
+    Review all applicable role assignments, including personal-team and global roles, when evaluating effective permissions.
+    Token scoping controls resource visibility; RBAC controls allowed actions.
+    Explicit token permission restrictions can further limit allowed actions.
+
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
 
