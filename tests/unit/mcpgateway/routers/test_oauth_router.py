@@ -5672,3 +5672,78 @@ class TestEnforceGatewayAccessCacheLayer:
         mock_cache.get_user_role.assert_awaited_once_with("outsider@example.com", "team-1")
         # No DB fallback on a negative cache hit
         mock_db.query.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# RFC 9207 iss validation on the callback (MCP 2026-07-28)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_issuer_ok_without_state_has_nothing_to_compare(mock_db):
+    # First-Party
+    from mcpgateway.routers.oauth_router import _authorization_response_issuer_ok
+
+    assert await _authorization_response_issuer_ok(None, "https://as.example.com", mock_db) is True
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_issuer_ok_reports_mismatch_from_manager(mock_db, mock_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import _authorization_response_issuer_ok
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
+        manager = Mock()
+        manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+        manager.validate_authorization_response_issuer = AsyncMock(side_effect=OAuthError("Authorization response issuer mismatch"))
+        manager_class.return_value = manager
+        assert await _authorization_response_issuer_ok("state-token", "https://attacker.example", mock_db) is False
+        manager.validate_authorization_response_issuer = AsyncMock(return_value=None)
+        assert await _authorization_response_issuer_ok("state-token", "https://as.example.com", mock_db) is True
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db, mock_request):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch("mcpgateway.routers.oauth_router._authorization_response_issuer_ok", new=AsyncMock(return_value=False)):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://attacker.example", db=mock_db)
+
+    body = response.body.decode()
+    assert response.status_code == 400
+    assert "issuer mismatch" in body
+    assert "access_denied" not in body
+    assert "user said no" not in body
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_matching_iss_shows_provider_error(mock_db, mock_request):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch("mcpgateway.routers.oauth_router._authorization_response_issuer_ok", new=AsyncMock(return_value=True)):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://as.example.com", db=mock_db)
+
+    assert response.status_code == 400
+    assert "access_denied" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_passes_iss_to_the_completion_flow(mock_db, mock_request, mock_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    token_result = {"user_id": "oauth_user_123", "expires_at": None, "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
+    with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
+        manager = Mock()
+        manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+        manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+        manager_class.return_value = manager
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://as.example.com", db=mock_db)
+
+    assert manager.complete_authorization_code_flow.call_args[1]["iss"] == "https://as.example.com"

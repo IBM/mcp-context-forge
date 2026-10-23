@@ -95,6 +95,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
+from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import resource_has_name_override, ResourceMetric, ResourceSubscription
 from mcpgateway.db import Server as DbServer
@@ -3034,6 +3035,42 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result.append(self.convert_gateway_to_read(g))
         return result
 
+    @staticmethod
+    def _retire_credentials_for_old_issuer(db: Session, gateway: DbGateway, original_oauth_config: Any) -> None:
+        """Keep OAuth client credentials bound to the authorization server that issued them.
+
+        When the issuer changes, dynamically registered clients for any other issuer are
+        deactivated so they are never reused, and a static ``client_id`` carried over
+        unchanged is flagged, since the new authorization server did not issue it
+        (MCP 2026-07-28, Authorization Server Binding).
+
+        Args:
+            db: Database session.
+            gateway: The gateway whose ``oauth_config`` was just updated.
+            original_oauth_config: The OAuth configuration before the update.
+        """
+        new_config = gateway.oauth_config if isinstance(gateway.oauth_config, dict) else {}
+        old_config = original_oauth_config if isinstance(original_oauth_config, dict) else {}
+        new_issuer = new_config.get("issuer")
+        old_issuer = old_config.get("issuer")
+        if not isinstance(new_issuer, str) or not new_issuer or not isinstance(old_issuer, str) or old_issuer.rstrip("/") == new_issuer.rstrip("/"):
+            return
+        if new_config.get("client_id") and new_config.get("client_id") == old_config.get("client_id"):
+            logger.warning(
+                "Gateway %s: OAuth issuer changed from %s to %s but client_id is unchanged; credentials issued by one authorization server must not be reused with another. "
+                "Register the client with the new issuer or clear client_id so DCR registers one.",
+                SecurityValidator.sanitize_log_message(gateway.id),
+                SecurityValidator.sanitize_log_message(old_issuer),
+                SecurityValidator.sanitize_log_message(new_issuer),
+            )
+        retired = db.execute(
+            update(RegisteredOAuthClient)
+            .where(RegisteredOAuthClient.gateway_id == gateway.id, RegisteredOAuthClient.issuer != new_issuer.rstrip("/"), RegisteredOAuthClient.is_active.is_(True))
+            .values(is_active=False)
+        ).rowcount
+        if retired:
+            logger.info("Gateway %s: deactivated %s registered OAuth client(s) bound to the previous issuer", SecurityValidator.sanitize_log_message(gateway.id), retired)
+
     async def update_gateway(
         self,
         db: Session,
@@ -3354,6 +3391,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     self._validate_private_key_jwt_config(raw_oauth_update, existing_oauth_config=original_oauth_config)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
+                    self._retire_credentials_for_old_issuer(db, gateway, original_oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token

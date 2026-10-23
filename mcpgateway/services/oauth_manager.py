@@ -40,6 +40,7 @@ from mcpgateway.common.oauth import (
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
+from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -1199,6 +1200,59 @@ class OAuthManager:
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
+    @staticmethod
+    async def _expected_issuer(credentials: Dict[str, Any]) -> tuple[Optional[str], bool]:
+        """Return the issuer an authorization response must name, and whether the AS advertises ``iss``.
+
+        The value comes from the authorization server's validated metadata when discovery
+        succeeds, so it is exactly what the server calls itself; the configured issuer is the
+        fallback. No issuer configured means nothing to compare against.
+
+        Args:
+            credentials: OAuth configuration, read for its ``issuer``.
+
+        Returns:
+            tuple[Optional[str], bool]: The expected issuer, or ``None``, and the
+            ``authorization_response_iss_parameter_supported`` flag from the metadata.
+        """
+        configured = credentials.get("issuer")
+        if not isinstance(configured, str) or not configured:
+            return None, False
+        try:
+            metadata = await DcrService().discover_as_metadata(configured)
+        except (DcrError, httpx.HTTPError, ValueError) as exc:
+            logger.debug("AS metadata unavailable for issuer %s; comparing iss against the configured value: %s", sanitize_for_log(configured), sanitize_for_log(str(exc)))
+            return configured, False
+        metadata_issuer = metadata.get("issuer")
+        expected = metadata_issuer if isinstance(metadata_issuer, str) and metadata_issuer else configured
+        return expected, bool(metadata.get("authorization_response_iss_parameter_supported"))
+
+    async def validate_authorization_response_issuer(self, credentials: Dict[str, Any], iss: Optional[str]) -> None:
+        """Apply RFC 9207 issuer validation to an authorization response (MCP 2026-07-28).
+
+        A present ``iss`` must equal the expected issuer by plain string comparison, with no
+        normalisation. An absent ``iss`` is rejected only when the authorization server
+        advertises that it sends one. Nothing is compared when no issuer is configured.
+
+        Args:
+            credentials: OAuth configuration of the gateway the response belongs to.
+            iss: The ``iss`` parameter of the authorization response, or ``None``.
+
+        Raises:
+            OAuthError: If ``iss`` is missing although advertised, or names a different issuer.
+        """
+        expected, advertised = await self._expected_issuer(credentials)
+        if iss is None:
+            if advertised:
+                raise OAuthError("Authorization response is missing the iss parameter its authorization server advertises")
+            return
+        if expected is None:
+            logger.warning("Authorization response carries iss %s but no issuer is configured to compare it with", sanitize_for_log(iss))
+            return
+        if iss != expected:
+            logger.warning("Authorization response issuer %s does not match the expected issuer %s", sanitize_for_log(iss), sanitize_for_log(expected))
+            raise OAuthError("Authorization response issuer mismatch")
+
     async def complete_authorization_code_flow(
         self,
         gateway_id: str,
@@ -1209,6 +1263,7 @@ class OAuthManager:
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         default_redirect_uri: Optional[str] = None,
+        iss: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
@@ -1223,6 +1278,8 @@ class OAuthManager:
             default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
                 neither the state pinned at authorize time nor *credentials* itself carries a
                 ``redirect_uri`` (e.g. a state stored before pinning existed).
+            iss: The ``iss`` parameter of the authorization response, validated against the
+                issuer before the code is redeemed (RFC 9207).
 
         Returns:
             Dict containing success status, user_id, expiration info, AND state_data
@@ -1235,6 +1292,9 @@ class OAuthManager:
         state_data = await self._validate_and_retrieve_state(gateway_id, state)
         if not state_data:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
+
+        # The state is consumed either way; the code never reaches a token endpoint on mismatch.
+        await self.validate_authorization_response_issuer(credentials, iss)
 
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")

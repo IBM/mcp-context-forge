@@ -234,6 +234,28 @@ class DcrService:
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {unexpected_error_detail(e)}")
 
+    def _application_type(self, redirect_uri: str) -> str:
+        """Pick the OpenID Connect ``application_type`` for a registration request.
+
+        Args:
+            redirect_uri: The callback URL the gateway registers.
+
+        Returns:
+            str: The configured value, or with ``auto`` ``native`` for a loopback callback and ``web`` otherwise.
+
+        Examples:
+            >>> service = DcrService()
+            >>> service._application_type("http://localhost:4444/oauth/callback")
+            'native'
+            >>> service._application_type("https://gateway.example.com/oauth/callback")
+            'web'
+        """
+        configured = self.settings.dcr_application_type
+        if configured != "auto":
+            return configured
+        host = (urlsplit(redirect_uri).hostname or "").lower()
+        return "native" if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost") else "web"
+
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
 
@@ -290,6 +312,7 @@ class DcrService:
             "grant_types": requested_grant_types,
             "response_types": ["code"],
             "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
+            "application_type": self._application_type(redirect_uri),
             "scope": " ".join(scopes),
         }
 

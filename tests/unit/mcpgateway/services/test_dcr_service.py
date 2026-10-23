@@ -2079,3 +2079,43 @@ class TestValidateIssuerScopedEndpoint:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestApplicationType:
+    """application_type in DCR requests (MCP 2026-07-28, OpenID Connect Dynamic Client Registration)."""
+
+    def test_auto_picks_native_for_loopback_and_web_otherwise(self):
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(dcr_application_type="auto")
+        assert dcr_service._application_type("http://localhost:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://127.0.0.1:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://gateway.localhost/oauth/callback") == "native"
+        assert dcr_service._application_type("https://gateway.example.com/oauth/callback") == "web"
+
+    def test_configured_value_wins(self):
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(dcr_application_type="web")
+        assert dcr_service._application_type("http://localhost:4444/oauth/callback") == "web"
+
+    @pytest.mark.asyncio
+    async def test_register_client_sends_application_type(self, test_db):
+        dcr_service = DcrService()
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
+            mock_discover.return_value = mock_metadata
+            await dcr_service.register_client(
+                gateway_id="test-gw-application-type",
+                gateway_name="Test Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="https://gateway.example.com/oauth/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+        assert mock_client.post.call_args[1]["json"]["application_type"] == "web"
