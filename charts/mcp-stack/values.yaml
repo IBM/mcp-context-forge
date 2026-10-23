@@ -395,6 +395,7 @@ mcpContextForge:
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature
     MCPGATEWAY_STDIO_TRANSPORT_ENABLED: "false" # DANGER: enables stdio process execution; only for trusted environments
     PLUGINS_CAN_OVERRIDE_RBAC: "false"  # allow plugins to bypass built-in RBAC (audit-only when false)
+    # PLUGIN_MANAGER_CACHE_TTL: "300"   # seconds before a cached plugin manager is rebuilt (0 = never expire)
 
     # ─ LLM Chat Feature ─
     LLMCHAT_ENABLED: "false"            # disabled by default; enable only if LLM providers are configured

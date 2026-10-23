@@ -307,6 +307,7 @@ def init_plugin_manager_factory(
     hook_policies: dict,
     observability: Optional[ObservabilityProvider] = None,
     db_factory: Optional[Callable] = None,
+    cache_ttl: Optional[int] = None,
 ) -> None:
     """Explicitly initialise the global plugin manager factory."""
     global _plugin_manager_factory
@@ -321,6 +322,7 @@ def init_plugin_manager_factory(
         hook_policies=hook_policies,
         observability=observability,
         db_factory=db_factory,
+        cache_ttl=cache_ttl,
     )
 
 
@@ -505,6 +507,8 @@ async def _plugin_invalidation_listener() -> None:
             _logger.info("Plugin invalidation listener subscribed to %s", _REDIS_INVALIDATION_CHANNEL)
             backoff = 1.0
             consecutive_failures = 0
+            # Pub/sub does not replay: rebuild managers to recover messages missed while disconnected.
+            await invalidate_all_plugin_managers()
 
             async for message in pubsub.listen():
                 await _handle_invalidation_message(message)
