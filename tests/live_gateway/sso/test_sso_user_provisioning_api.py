@@ -128,7 +128,7 @@ def test_enabled_deny_paths(admin_client, provider):
     restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
     response = httpx.post(f"{BASE_URL}{PATH}", json=payload, headers={"Authorization": f"Bearer {restricted}"}, timeout=10)
     assert response.status_code == 403, response.text
-    response = admin_client.post(PATH, json={**payload, "password": None})
+    response = admin_client.post(PATH, json={**payload, "password": None})  # pragma: allowlist secret
     assert response.status_code == 400, response.text
     assert response.json()["detail"] == "password not allowed for SSO users"
     # Cookie auth with a valid admin identity must still satisfy the per-route CSRF dependency.
