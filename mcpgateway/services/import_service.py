@@ -1934,6 +1934,15 @@ class ImportService:
 
             if total_assigned > 0:
                 db.commit()
+
+                # First-Party
+                from mcpgateway.cache.registry_cache import get_registry_cache  # pylint: disable=import-outside-toplevel
+
+                cache = get_registry_cache()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
+                await cache.invalidate_servers()
                 logger.info("Assigned %s imported items to %s with team visibility", total_assigned, personal_team.name)
             else:
                 logger.debug("No orphaned imported items found")

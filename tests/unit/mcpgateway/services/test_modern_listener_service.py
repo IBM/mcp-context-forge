@@ -17,8 +17,8 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import pytest
 from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ResourcesListChanged, ResourceUpdated, ToolsListChanged
+import pytest
 
 # First-Party
 from mcpgateway.services import modern_listener_service as mls
@@ -44,6 +44,10 @@ async def _fake_proxy_client(client, *_args, **_kwargs):
 
 class TestModernListenerService:
     """Event dispatch, era gating, eligibility filtering, and reconnect behavior."""
+
+    @pytest.fixture(autouse=True)
+    def _primary_worker(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: True)
 
     @pytest.mark.asyncio
     async def test_dispatch_maps_events_to_notification_types(self):
@@ -167,3 +171,176 @@ class TestModernListenerService:
 
         listen_mock.assert_not_called()
         assert "gw-1" not in service._listener_tasks
+
+
+class _EmptySubscription:
+    """A listen subscription the server closes gracefully without events."""
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+def _graceful_client():
+    client = MagicMock()
+
+    @contextlib.asynccontextmanager
+    async def listen(**_kwargs):
+        yield _EmptySubscription()
+
+    client.listen = listen
+    return client
+
+
+async def _sleep_forever(_gw):
+    await asyncio.sleep(3600)
+
+
+class TestModernListenerPrimaryGate:
+    """Listeners run only on the primary worker (``is_primary_worker()``)."""
+
+    @pytest.mark.asyncio
+    async def test_reconcile_skips_when_not_primary(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: False)
+        service = ModernListenerService(MagicMock())
+
+        with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever") as listen_mock:
+            await service._reconcile()
+
+        listen_mock.assert_not_called()
+        assert service._listener_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_reconcile_starts_when_primary(self, monkeypatch):
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: True)
+        service = ModernListenerService(MagicMock())
+
+        with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever", side_effect=_sleep_forever):
+            await service._reconcile()
+            assert "gw-1" in service._listener_tasks
+
+        await service.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_losing_primary_cancels_listeners(self, monkeypatch):
+        primary = True
+        monkeypatch.setattr(mls, "is_primary_worker", lambda: primary)
+        service = ModernListenerService(MagicMock())
+
+        with patch.object(service, "_load_eligible_gateways", return_value=[_snapshot()]), patch.object(service, "_listen_forever", side_effect=_sleep_forever):
+            await service._reconcile()
+            task = service._listener_tasks["gw-1"]
+
+            primary = False
+            await service._reconcile()
+
+        assert service._listener_tasks == {}
+        await asyncio.sleep(0)
+        assert task.cancelled()
+
+
+class TestModernListenerReconnect:
+    """Jittered reconnect and the refresh that follows a re-listen."""
+
+    def test_backoff_with_jitter_bounds(self):
+        jitter = ModernListenerService._backoff_with_jitter
+        assert jitter(10.0, rand=lambda: 0.0) == 5.0
+        assert jitter(10.0, rand=lambda: 1.0) == 15.0
+        assert jitter(mls.BACKOFF_MAX_SECONDS, rand=lambda: 1.0) == mls.BACKOFF_MAX_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_graceful_close_waits_before_relisten(self, monkeypatch):
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+        waits = []
+        monkeypatch.setattr(ModernListenerService, "_backoff_with_jitter", staticmethod(lambda backoff: waits.append(backoff) or 0.05))
+
+        attempts = 0
+        connect_times = []
+
+        @contextlib.asynccontextmanager
+        async def proxy_client(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            connect_times.append(time.monotonic())
+            if attempts >= 2:
+                service._shutdown_event.set()
+                raise ConnectionError("stop")
+            yield _graceful_client()
+
+        with patch.object(mls, "mcp_proxy_client", proxy_client):
+            await asyncio.wait_for(service._listen_forever(_snapshot()), timeout=5)
+
+        assert waits[0] == mls.BACKOFF_INITIAL_SECONDS
+        assert connect_times[1] - connect_times[0] >= 0.04
+        notification_service.notify_list_changed.assert_not_awaited()  # the first connect never refreshes
+
+    @staticmethod
+    async def _record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop):
+        waits = []
+        monkeypatch.setattr(ModernListenerService, "_backoff_with_jitter", staticmethod(lambda backoff: waits.append(backoff) or 0.0))
+        attempts = 0
+
+        @contextlib.asynccontextmanager
+        async def proxy_client(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts > attempts_before_stop:
+                service._shutdown_event.set()
+                raise ConnectionError("stop")
+            yield _graceful_client()
+
+        with patch.object(mls, "mcp_proxy_client", proxy_client):
+            await asyncio.wait_for(service._listen_forever(_snapshot()), timeout=5)
+        return waits
+
+    @pytest.mark.asyncio
+    async def test_immediate_graceful_close_keeps_doubling_backoff(self, monkeypatch):
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+
+        waits = await self._record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop=3)
+
+        initial = mls.BACKOFF_INITIAL_SECONDS
+        assert waits[:3] == [initial, initial * 2, initial * 4]
+
+    @pytest.mark.asyncio
+    async def test_stream_that_stayed_up_resets_backoff(self, monkeypatch):
+        monkeypatch.setattr(mls, "BACKOFF_MAX_SECONDS", 0.0)
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+
+        waits = await self._record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop=3)
+
+        assert waits[:3] == [mls.BACKOFF_INITIAL_SECONDS] * 3
+
+    @pytest.mark.asyncio
+    async def test_relisten_after_drop_triggers_refresh(self, monkeypatch):
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+        monkeypatch.setattr(ModernListenerService, "_backoff_with_jitter", staticmethod(lambda backoff: 0.0))
+
+        attempts = 0
+
+        @contextlib.asynccontextmanager
+        async def proxy_client(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ConnectionError("dropped")
+            service._shutdown_event.set()
+            yield _graceful_client()
+
+        gw = _snapshot()
+        with patch.object(mls, "mcp_proxy_client", proxy_client):
+            await asyncio.wait_for(service._listen_forever(gw), timeout=5)
+
+        awaited = [c.args for c in notification_service.notify_list_changed.await_args_list]
+        assert len(awaited) == 3
+        assert set(awaited) == {(gw.id, NotificationType.TOOLS_LIST_CHANGED), (gw.id, NotificationType.PROMPTS_LIST_CHANGED), (gw.id, NotificationType.RESOURCES_LIST_CHANGED)}

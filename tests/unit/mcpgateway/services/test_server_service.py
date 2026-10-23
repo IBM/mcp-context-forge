@@ -312,6 +312,24 @@ class TestServerService:
 
     # ------------------------- register_server -------------------------- #
     @pytest.mark.asyncio
+    async def test_register_server_invalidates_servers(self, server_service, test_db):
+        """A committed registration invalidates the servers cache once."""
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock()
+        test_db.add = Mock(side_effect=lambda server: server.__dict__.update(tools=[], resources=[], prompts=[], a2a_agents=[], metrics=[]))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        cache = MagicMock()
+        cache.invalidate_servers = AsyncMock()
+
+        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+            await server_service.register_server(test_db, ServerCreate(id="550e8400e29b41d4a716446655440009", name="cache_server", description="d"))  # pragma: allowlist secret
+
+        test_db.commit.assert_called_once()
+        cache.invalidate_servers.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_register_server(self, server_service, test_db, mock_tool, mock_resource, mock_prompt):
         """
         Successful registration returns a populated ServerRead.

@@ -584,7 +584,11 @@ mcpContextForge:
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     MAX_CONCURRENT_HEALTH_CHECKS: "10" # maximum concurrent health checks per worker
     AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
+    GATEWAY_MODERN_LISTENERS_ENABLED: "false" # standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
+
+    # ─ MCP subscriptions/listen ─
+    MCP_LISTEN_MAX_LIFETIME_SECONDS: "3600" # max lifetime of a subscriptions/listen stream (60-86400)
 
     # ─ MCP Session Pool (disabled) ─
     # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.

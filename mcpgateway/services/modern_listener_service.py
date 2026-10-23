@@ -24,6 +24,11 @@ registered with the SSE transport are skipped outright (SSE is a legacy-only
 transport). OAuth-authenticated servers are currently skipped — their
 token refresh lifecycle does not fit a single long-lived stream yet.
 
+Only the primary worker runs listeners (``is_primary_worker()``, selected by
+``PRIMARY_WORKER_ELECTION_BACKEND``: ``filelock`` is one per host, ``redis``
+is one per cluster). Other workers check again on every reconcile pass and
+cancel their listeners when they are not primary.
+
 Naming note: registered upstream MCP servers live in the ``gateways`` DB
 table (the ``Gateway`` model) for historical federation reasons, so
 identifiers here say ``gateway`` to match the rest of the codebase.
@@ -34,10 +39,11 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import logging
-import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+import logging
+import random
+import time
+from typing import Callable, Dict, List, Optional
 
 # Third-Party
 from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ResourcesListChanged, ResourceUpdated, ToolsListChanged
@@ -48,6 +54,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.notification_service import NotificationService, NotificationType
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcpgateway.utils.primary_worker import is_primary_worker
 from mcpgateway.utils.services_auth import decode_auth
 
 logger = logging.getLogger(__name__)
@@ -135,8 +142,23 @@ class ModernListenerService:
             except asyncio.TimeoutError:
                 continue
 
+    def _cancel_listeners(self) -> None:
+        """Cancel every running listener task."""
+        for task in self._listener_tasks.values():
+            task.cancel()
+        self._listener_tasks.clear()
+
     async def _reconcile(self) -> None:
-        """Start missing listeners, drop listeners for gone servers."""
+        """Start missing listeners, drop listeners for gone servers.
+
+        Runs listeners only on the primary worker.
+        """
+        if not is_primary_worker():
+            if self._listener_tasks:
+                logger.info("Not the primary worker; stopping %d modern listener(s)", len(self._listener_tasks))
+                self._cancel_listeners()
+            return
+
         snapshots = {gw.id: gw for gw in self._load_eligible_gateways()}
 
         # Cancel listeners whose server disappeared or became ineligible.
@@ -184,18 +206,28 @@ class ModernListenerService:
         return snapshots
 
     async def _listen_forever(self, gw: _GatewaySnapshot) -> None:
-        """Hold a listen stream to one server, reconnecting with backoff."""
+        """Hold a listen stream to one server, reconnecting with jittered backoff.
+
+        The spec defines no event replay, so each re-listen after a drop or a
+        graceful close triggers one refresh of every list kind. The backoff
+        resets only after a stream stayed up for ``BACKOFF_MAX_SECONDS``, so a
+        server that acks and closes at once is re-listened ever less often.
+        """
         backoff = BACKOFF_INITIAL_SECONDS
+        relisten = False
         while not self._shutdown_event.is_set():
+            acked_at: Optional[float] = None
+            dropped: Optional[Exception] = None
             try:
                 async with mcp_proxy_client(url=gw.url, headers=gw.headers) as client:
                     async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True) as subscription:
+                        acked_at = time.monotonic()
                         logger.info("Listening for change events on modern server %s (%s)", gw.name, gw.url)
-                        backoff = BACKOFF_INITIAL_SECONDS
+                        if relisten:
+                            for kind in (NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED):
+                                await self._notification_service.notify_list_changed(gw.id, kind)
                         async for event in subscription:
                             await self._dispatch(gw, event)
-                # Graceful close by the server: fall through and reconnect.
-                logger.info("Listen stream to server %s closed by the server; reconnecting", gw.name)
             except ListenNotSupportedError:
                 self._unsupported_until[gw.id] = time.monotonic() + UNSUPPORTED_REPROBE_SECONDS
                 logger.info(
@@ -207,12 +239,39 @@ class ModernListenerService:
             except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception as exc:  # pylint: disable=broad-except  # SubscriptionLost, MCPError, transport errors
-                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(exc).__name__, exc, backoff)
-                try:
-                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=backoff)
-                except asyncio.TimeoutError:
-                    pass
-                backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
+                dropped = exc
+            if acked_at is not None and time.monotonic() - acked_at >= BACKOFF_MAX_SECONDS:
+                backoff = BACKOFF_INITIAL_SECONDS
+            delay = self._backoff_with_jitter(backoff)
+            if dropped is None:
+                logger.info("Listen stream to server %s closed by the server; reconnecting in %.0fs", gw.name, delay)
+            else:
+                logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(dropped).__name__, dropped, delay)
+            relisten = True
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, BACKOFF_MAX_SECONDS)
+
+    @staticmethod
+    def _backoff_with_jitter(backoff: float, rand: Callable[[], float] = random.random) -> float:
+        """Spread a reconnect delay over 0.5x-1.5x so listeners do not reconnect in lockstep.
+
+        Args:
+            backoff: Base exponential backoff in seconds.
+            rand: Source of uniform values in [0, 1).
+
+        Returns:
+            The jittered delay in seconds, capped at ``BACKOFF_MAX_SECONDS``.
+
+        Examples:
+            >>> ModernListenerService._backoff_with_jitter(10.0, rand=lambda: 0.0)
+            5.0
+            >>> ModernListenerService._backoff_with_jitter(1000.0, rand=lambda: 0.9) == BACKOFF_MAX_SECONDS
+            True
+        """
+        return min(BACKOFF_MAX_SECONDS, backoff * (0.5 + rand()))
 
     async def _dispatch(self, gw: _GatewaySnapshot, event: object) -> None:
         """Map a typed listen event onto the debounced refresh pipeline."""

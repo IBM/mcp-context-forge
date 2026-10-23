@@ -50,6 +50,7 @@ import json
 import logging
 import mimetypes
 import os
+import random
 import socket
 import ssl
 import tempfile
@@ -388,6 +389,48 @@ audit_trail = get_audit_trail_service()
 
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
 GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
+
+# Jitter only shortens a health-loop tick, so the refresh interval plus one tick bound still holds.
+HEALTH_LOOP_JITTER_FRACTION = 0.1
+
+
+def _jittered_tick(interval: float, rand: Callable[[], float] = random.random) -> float:
+    """Shorten a health-loop interval by up to ``HEALTH_LOOP_JITTER_FRACTION``.
+
+    Args:
+        interval: Base interval in seconds.
+        rand: Source of uniform values in ``[0, 1)``.
+
+    Returns:
+        Interval between ``interval * (1 - HEALTH_LOOP_JITTER_FRACTION)`` and ``interval``.
+
+    Examples:
+        >>> _jittered_tick(60, rand=lambda: 0.0)
+        60.0
+        >>> _jittered_tick(60, rand=lambda: 1.0)
+        54.0
+    """
+    return interval * (1 - HEALTH_LOOP_JITTER_FRACTION * rand())
+
+
+def _refresh_backoff_seconds(failures: int, tick: float, cap: float, rand: Callable[[], float] = random.random) -> float:
+    """Return the delay before retrying a failed auto-refresh.
+
+    Args:
+        failures: Number of consecutive failed refreshes.
+        tick: Health-loop interval in seconds.
+        cap: Maximum delay in seconds.
+        rand: Source of uniform values in ``[0, 1)``.
+
+    Returns:
+        ``min(cap, tick * 2 ** failures)`` scaled by a factor between 0.5 and 1.
+
+    Examples:
+        >>> [_refresh_backoff_seconds(n, 60, 300, rand=lambda: 1.0) for n in range(4)]
+        [60.0, 120.0, 240.0, 300.0]
+    """
+    return min(cap, tick * 2**failures) * (0.5 + 0.5 * rand())
+
 
 # Only delete MCP-discovered items (not user-created entries)
 MCP_SYNC_CREATED_VIA_VALUES = {"MCP", "federation", "health_check", "manual_refresh", "notification_service", "oauth", "update"}
@@ -907,6 +950,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.prompt_service = prompt_service
         self.resource_service = resource_service
         self._gateway_failure_counts: dict[str, int] = {}
+        self._refresh_failures: dict[str, tuple[int, float]] = {}  # gateway_id -> (failure count, monotonic time of next allowed auto-refresh)
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
@@ -1928,6 +1972,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_cert=getattr(gateway, "client_cert", None),
             client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
             gateway_mode=preparation.gateway_mode,
+            refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
             status="pending",
             status_message="Gateway registration accepted and pending initialization",
             registration_attempts=0,
@@ -2355,6 +2400,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
                 # Gateway mode configuration
                 gateway_mode=preparation.gateway_mode,
+                refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
             )
 
             # Add to DB and commit immediately so tools/resources/prompts are visible
@@ -3255,6 +3301,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+                if "refresh_interval_seconds" in getattr(gateway_update, "model_fields_set", ()):
+                    gateway.refresh_interval_seconds = gateway_update.refresh_interval_seconds
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
                     # Validate visibility transitions
@@ -3471,6 +3519,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     cache = _get_registry_cache()
                     await cache.invalidate_gateways()
+                    await cache.invalidate_tools()
+                    await cache.invalidate_resources()
+                    await cache.invalidate_prompts()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                     # First-Party
@@ -3663,6 +3714,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                 # Also invalidate tags cache since gateway tags may have changed
@@ -4443,6 +4497,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
 
@@ -4584,6 +4641,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         cache = _get_registry_cache()
         await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        await cache.invalidate_resources()
+        await cache.invalidate_prompts()
         await cache.invalidate_catalog()
         tool_lookup_cache = _get_tool_lookup_cache()
         await tool_lookup_cache.invalidate_gateway(gateway_id)
@@ -5471,9 +5531,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 ref_now = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
                                 time_since_refresh = (ref_now - last_refresh).total_seconds()
 
-                                if time_since_refresh < refresh_interval:
+                                # Ticks last at least (1 - HEALTH_LOOP_JITTER_FRACTION) of the interval, so this keeps a refresh from slipping a tick later.
+                                if time_since_refresh < refresh_interval * (1 - HEALTH_LOOP_JITTER_FRACTION):
                                     refresh_needed = False
                                     logger.debug("Skipping auto-refresh for %s: last refreshed %ss ago", gateway_name, int(time_since_refresh))
+
+                            retry_at = self._refresh_failures.get(str(gateway_id), (0, 0.0))[1]
+                            if refresh_needed and time.monotonic() < retry_at:
+                                refresh_needed = False
+                                logger.debug("Skipping auto-refresh for %s: backing off after a failed refresh", gateway_name)
 
                             if refresh_needed:
                                 # Locking: Try to acquire lock to avoid conflict with manual refresh
@@ -5481,7 +5547,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if not lock.locked():
                                     # Acquire lock to prevent concurrent manual refresh
                                     async with lock:
-                                        await self._refresh_gateway_tools_resources_prompts(
+                                        refresh_result = await self._refresh_gateway_tools_resources_prompts(
                                             gateway_id=gateway_id,
                                             user_email=user_email,
                                             created_via="health_check",
@@ -5489,6 +5555,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             gateway=gateway,
                                             cycle_started_at=cycle_started_at,
                                         )
+                                        self._record_auto_refresh_outcome(str(gateway_id), refresh_result, gateway.refresh_interval_seconds)
                                         # mark_poll_completed is called inside _refresh_gateway_tools_resources_prompts
                                 else:
                                     logger.debug("Skipping auto-refresh for %s: lock held (likely manual refresh in progress)", gateway_name)
@@ -5993,6 +6060,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.warning("Follower election error: %s", e, exc_info=True)
 
+    def _record_auto_refresh_outcome(self, gateway_key: str, result: Any, gateway_refresh_interval: Optional[int]) -> None:
+        """Update the failed-refresh backoff after a scheduled auto-refresh.
+
+        Args:
+            gateway_key: Gateway id as a string.
+            result: Result dict returned by ``_refresh_gateway_tools_resources_prompts``.
+            gateway_refresh_interval: Per-gateway refresh interval; the global default applies when ``None``.
+        """
+        if not isinstance(result, dict):
+            return
+        if result.get("success") is not False:
+            self._refresh_failures.pop(gateway_key, None)
+            return
+        failures = self._refresh_failures.get(gateway_key, (0, 0.0))[0] + 1
+        cap = gateway_refresh_interval if gateway_refresh_interval is not None else getattr(settings, "gateway_auto_refresh_interval", 300)
+        self._refresh_failures[gateway_key] = (failures, time.monotonic() + _refresh_backoff_seconds(failures, self._health_check_interval, cap))
+
     async def _run_gateway_maintenance_cycle(
         self,
         user_email: str,
@@ -6016,7 +6100,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     await self.check_health_of_gateways(gateways, user_email, cycle_started_at=cycle_started_at)
                 # Re-base the deadline on the pre-batch wall time so that variable
                 # wake-up delays do not shorten the measured gap below the interval.
-                next_health_check_at = now + max(self._health_check_interval, 0)
+                next_health_check_at = now + _jittered_tick(max(self._health_check_interval, 0))
 
             if require_leader is not None and not await require_leader():
                 return
@@ -6336,6 +6420,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         db.commit()
         db.refresh(gateway)
+
+        cache = _get_registry_cache()
+        await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        await cache.invalidate_resources()
+        await cache.invalidate_prompts()
 
         # Audit log (uses its own session — never pass db)
         audit = get_audit_trail_service()

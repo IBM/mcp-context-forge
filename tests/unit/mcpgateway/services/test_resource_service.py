@@ -307,6 +307,36 @@ class TestResourceRegistration:
             assert result.name == sample_resource_create.name
 
     @pytest.mark.asyncio
+    async def test_register_resource_invalidates_resources(self, resource_service, mock_db, sample_resource_create):
+        """A committed registration invalidates the resources cache once."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        cache = MagicMock()
+        cache.invalidate_resources = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.resource_service._get_registry_cache", return_value=cache),
+            patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read"),
+        ):
+            await resource_service.register_resource(mock_db, sample_resource_create)
+
+        cache.invalidate_resources.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_register_resource_does_not_invalidate(self, resource_service, mock_db, sample_resource_create):
+        """A failed commit leaves the resources cache untouched."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.commit.side_effect = RuntimeError("commit failed")
+        cache = MagicMock()
+        cache.invalidate_resources = AsyncMock()
+
+        with patch("mcpgateway.services.resource_service._get_registry_cache", return_value=cache):
+            with pytest.raises(Exception):
+                await resource_service.register_resource(mock_db, sample_resource_create)
+
+        cache.invalidate_resources.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_active(self, resource_service, mock_db, sample_resource_create, mock_resource):
         """URI conflict when an **active** resource already exists."""
         # Ensure visibility is a string, not a MagicMock
@@ -3595,6 +3625,20 @@ class TestResourceBulkRegistration:
         assert existing.tags[0]["label"] == "updated"
         assert existing.version == 2
         mock_db.add_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_invalidates_resources_once(self, resource_service, mock_db):
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        resource_service._notify_resource_added = AsyncMock()
+        cache = MagicMock()
+        cache.invalidate_resources = AsyncMock()
+        resources = [ResourceCreate(name=f"R{i}", uri=f"file:///r{i}.txt", description="d", mime_type="text/plain", content="x") for i in range(3)]
+
+        with patch("mcpgateway.services.resource_service._get_registry_cache", return_value=cache):
+            result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester")
+
+        assert result["created"] == 3
+        cache.invalidate_resources.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
