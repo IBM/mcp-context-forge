@@ -27,9 +27,11 @@ from sqlalchemy import create_engine, or_, select
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Base, Gateway as DbGateway
 from mcpgateway.routers.mcp_servers_router import _validated_team_id, check_mcp_server_connectivity, check_mcp_server_handshake
 from mcpgateway.schemas import GatewayHandshakeRequest, GatewayHandshakeResponse, GatewayTestRequest, GatewayTestResponse
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     _classify_handshake_error,
     _gateway_test_visibility_filters,
@@ -1809,9 +1811,13 @@ async def test_handshake_form_authorization_skips_unobtainable_stored_oauth_toke
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_handshake_env")
-async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
-    """A registered gateway's private CA and client certificate are used for the SDK connection."""
-    gateway = _mock_gateway(transport="STREAMABLEHTTP", ca_certificate="ca-pem", client_cert="client-pem", client_key="key-pem")
+@pytest.mark.parametrize("ca_certificate", ["ca-pem", None])
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_handshake_uses_gateway_tls_credentials(user_ctx, db_session, ca_certificate, encrypted):
+    """Present stored client credentials with custom or system CA verification."""
+    gateway = _mock_gateway(transport="STREAMABLEHTTP", ca_certificate=ca_certificate, client_cert="client-pem", client_key="key-pem")
+    if encrypted:
+        gateway.client_key = get_encryption_service(settings.auth_encryption_secret).encrypt_secret("key-pem")
     db_session.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayHandshakeRequest(base_url="https://example.com", path="/mcp", headers={})
@@ -1820,14 +1826,14 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
     ssl_context = ssl.create_default_context()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client) as mock_resilient:
-        with patch("mcpgateway.services.gateway_service.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
             with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
                 with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                     with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
                         result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
 
     assert result.success is True
-    mock_ssl.assert_called_once_with("ca-pem", client_cert="client-pem", client_key="key-pem")
+    mock_ssl.assert_called_once_with(ca_certificate, client_cert="client-pem", client_key="key-pem")
     assert mock_transport.call_args.kwargs["verify"] is ssl_context
     # The stateless discover probe runs first, so it needs the same TLS settings or it fails
     # the handshake before the SDK client is ever built.
@@ -1836,21 +1842,25 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_allowlist")
-async def test_handshake_candidate_only_keeps_custom_ca_without_client_certificate(user_ctx, db_session):
+@pytest.mark.parametrize("ca_certificate", ["ca-pem", None])
+async def test_handshake_candidate_only_keeps_custom_ca_without_client_certificate(user_ctx, db_session, ca_certificate):
     """Candidate-only validation keeps server trust settings but excludes client credentials."""
-    gateway = _mock_gateway(id="gateway-1", url="https://example.com", ca_certificate="ca-pem", client_cert="client-pem", client_key="key-pem")
+    gateway = _mock_gateway(id="gateway-1", url="https://example.com", ca_certificate=ca_certificate, client_cert="client-pem", client_key="key-pem")
     db_session.execute.return_value.scalars.return_value.first.return_value = gateway
     request = GatewayHandshakeRequest(gateway_id="gateway-1", base_url="https://example.com", headers={}, credential_mode="candidate_only")
     mock_client = _mock_resilient_client(_discover_success())
     ssl_context = ssl.create_default_context()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client) as mock_resilient:
-        with patch("mcpgateway.services.gateway_service.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
             result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
 
     assert result.success is True
-    mock_ssl.assert_called_once_with("ca-pem", client_cert=None, client_key=None)
-    assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
+    if ca_certificate:
+        mock_ssl.assert_called_once_with(ca_certificate, client_cert=None, client_key=None)
+        assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
+    else:
+        mock_ssl.assert_not_called()
 
 
 @pytest.mark.asyncio
