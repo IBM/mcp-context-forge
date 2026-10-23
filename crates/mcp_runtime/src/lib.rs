@@ -3621,7 +3621,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return None;
     }
 

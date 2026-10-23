@@ -1,16 +1,76 @@
 
 # cargo-vet audits file
 
+[[audits.arc-swap]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "1.9.2 -> 1.9.3"
+notes = "Small patch release by vorner. Reviewed diff: 5 files, 43 insertions, 11 deletions. No new unsafe code, no new dependencies. Fixes minor documentation and internal refactor."
+
+[[audits.base64]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.22.1 -> 0.23.1"
+notes = "Reviewed diff by marshallpierce. No unsafe code (crate uses #![forbid(unsafe_code)]). Version bump with minor API additions and documentation updates."
+
+[[audits.cc]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "1.4.5 -> 1.10.0"
+notes = "Published by github:rust-lang/cc-rs team. Reviewed diff: 30 files, 5463 insertions, 1337 deletions. Build-script only crate. No unsafe code paths added beyond existing MSVC/compiler detection logic."
+
 [[audits.chacha20]]
 who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
 criteria = "safe-to-deploy"
 delta = "0.10.1 -> 0.10.2"
 notes = "Patch release by RustCrypto/stream-ciphers team. Reviewed full diff (4 files, 40 insertions, 44 deletions): fixes incorrect ChaCha20 output for large counter values via saturating_add on internal counter; no unsafe changes, no new dependencies, no behavior change for normal usage."
 
+[[audits.combine]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.9"
+notes = "Published by Marwes. Reviewed diff: 38 files changed, 237 insertions, 4233 deletions. Primarily a large cleanup/simplification release. No new unsafe additions."
+
 [[audits.crossbeam-epoch]]
 who = "cafalchio <mcafalchio@gmail.com>"
 criteria = "safe-to-deploy"
 version = "0.9.18"
+
+[[audits.ctutils]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.4.4 -> 0.4.5"
+notes = "Published by github:RustCrypto/utils team. Reviewed diff: 8 files changed, 460 insertions, 34 deletions. RustCrypto utility crate; changes are additive type-level additions with well-documented unsafe usage."
+
+[[audits.deadpool]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.12.3 -> 0.13.1"
+notes = "Published by bikeshedder. Reviewed diff: 25 files changed, 238 insertions, 142 deletions. No new unsafe code. API evolution for async pool management."
+
+[[audits.deadpool-postgres]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.14.1 -> 0.14.2"
+notes = "Published by bikeshedder. Reviewed diff: 13 files changed, 933 insertions, 279 deletions. No new unsafe code."
+
+[[audits.deadpool-runtime]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.1.4 -> 0.3.1"
+notes = "Published by bikeshedder. Reviewed diff: 5 files changed, 240 insertions, 87 deletions. Thin runtime abstraction; no unsafe code."
+
+[[audits.hybrid-array]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.4.14 -> 0.4.15"
+notes = "Published by github:RustCrypto/hybrid-array team. Reviewed diff: 4 files changed, 9 insertions, 2 deletions. Minimal patch. Existing unsafe code is well-audited RustCrypto array work."
+
+[[audits.ipnet]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "2.12.1 -> 2.12.2"
+notes = "Published by krisprice. Reviewed diff: 5 files changed, 76 insertions, 118 deletions. Pure IP/CIDR parsing; no unsafe code."
 
 [[audits.ipnetwork]]
 who = "Mohan Lakshmaiah <mohan.economist@gmail.com>"
@@ -18,11 +78,35 @@ criteria = "safe-to-deploy"
 version = "0.21.1"
 notes = "CIDR network parsing for backend URL validation SSRF protection. Reviewed for safe IP/CIDR parsing with no unsafe code or network I/O."
 
+[[audits.js-sys]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.3.104 -> 0.3.106"
+notes = "Published by github:wasm-bindgen/wasm-bindgen team. Reviewed diff: 6 files changed, 406 insertions, 13 deletions. Auto-generated wasm-bindgen bindings for JS APIs. The user-id 145038 trusted publisher covers earlier versions; this covers the team-published bump."
+
+[[audits.libc]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.2.190 -> 0.2.191"
+notes = "Published by github:rust-lang/libc team. Reviewed diff: 23 files changed, 187 insertions, 41 deletions. libc is a pure FFI bindings crate; changes are platform-specific type/constant additions with no new logic."
+
+[[audits.libredox]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.1.20 -> 0.1.25"
+notes = "Published by 4lDO2. Reviewed diff: 3 files changed, 90 insertions, 6 deletions. Redox OS syscall bindings crate; no unsafe surprises."
+
 [[audits.quinn-proto]]
 who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
 criteria = "safe-to-deploy"
 delta = "0.11.16 -> 0.11.17"
 notes = "Patch release published by Ralith. Reviewed full diff: no unsafe code changes, no new powerful imports. Fixes: CUBIC congestion-window u64 overflow via saturating_add; stream assembler chunk-count DoS bound (COMPACT_THRESHOLD); datagram buffer memory accounting includes struct overhead; CID retirement extracted into helper. All changes are pure bug-fixes with new regression tests."
+
+[[audits.rand]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.8.7 -> 0.8.8"
+notes = "Published by github:rust-random/rand team. Reviewed diff: 4 files changed, 9 insertions, 3 deletions. Minimal patch release; no new unsafe code."
 
 [[audits.rustls]]
 who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
@@ -35,6 +119,18 @@ who = "Suresh Kumar Moharajan <suresh.kumar.m@ibm.com>"
 criteria = "safe-to-deploy"
 delta = "0.23.45 -> 0.23.46"
 notes = "Automated review of https://github.com/rustls/rustls/compare/v/0.23.45...v/0.23.46. Fixes RUSTSEC-2026-0346 through RUSTSEC-2026-0349. Reviewed secret redaction, decompression bounds, ECH and handshake validation, record limits, key sequencing, stream I/O, and regression coverage. No dependency or unsafe-code additions."
+
+[[audits.rustls-platform-verifier]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.7.0 -> 0.7.1"
+notes = "Published by complexspaces. Reviewed diff: 31 files changed, 172 insertions, 179 deletions. Platform TLS verifier for reqwest stack. No new unsafe code paths."
+
+[[audits.rustls-platform-verifier-android]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.1.1 -> 0.2.0"
+notes = "Published by complexspaces. Reviewed diff: 8 files changed, 59 insertions, 81 deletions. Android-specific JNI TLS verification helper. JNI usage is inherently unsafe but well-scoped."
 
 [[audits.rustls-webpki]]
 who = "lucarlig <luca.carlig@ibm.com>"
@@ -52,6 +148,78 @@ notes = "Security patch update for RUSTSEC-2026-0104; fixes reachable panic in C
 who = "Brian Hussey <brian.hussey@ie.ibm.com>"
 criteria = "safe-to-deploy"
 delta = "0.103.15 -> 0.103.16"
+
+[[audits.schannel]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.1.29 -> 0.1.30"
+notes = "Published by steffengy. Reviewed diff: 4 files changed, 81 insertions, 45 deletions. Windows SChannel TLS bindings; unsafe usage is necessary for Windows API calls."
+
+[[audits.siphasher]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "1.0.3 -> 1.0.4"
+notes = "Published by jedisct1. Reviewed diff: 4 files changed, 230 insertions, 9 deletions. SipHash implementation; no unsafe code."
+
+[[audits.smallvec]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "1.15.2 -> 1.16.3"
+notes = "Published by jdm. Reviewed diff: 6 files changed, 618 insertions, 421 deletions. The unsafe code in smallvec is well-established and extensively tested."
+
+[[audits.sse-stream]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.2.5 -> 0.2.6"
+notes = "Published by 4t145. Reviewed diff: 4 files changed, 224 insertions, 227 deletions. SSE/streaming crate used by rmcp; no unsafe code."
+
+[[audits.synstructure]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.13.2 -> 0.14.0"
+notes = "Published by mystor. Reviewed diff: 4 files changed, 40 insertions, 41 deletions. Proc-macro helper crate; the one unnecessary unsafe block noted by the original author is still harmless."
+
+[[audits.wasm-bindgen]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.129"
+notes = "Published by github:wasm-bindgen/wasm-bindgen team. Reviewed diff: 10 files changed, 189 insertions, 28 deletions. Trusted wasm-bindgen infra; user 145038 trust covers earlier versions; this covers the team-published bump."
+
+[[audits.wasm-bindgen-futures]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.4.77 -> 0.4.79"
+notes = "Published by github:wasm-bindgen/wasm-bindgen team. Reviewed diff: 4 files changed, 239 insertions, 8 deletions. wasm-bindgen Future adapter; trusted infra."
+
+[[audits.wasm-bindgen-macro-support]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.129"
+notes = "Published by github:wasm-bindgen/wasm-bindgen team. Reviewed diff: 9 files changed, 3563 insertions, 361 deletions. Macro support crate for wasm-bindgen; proc-macro only, no ambient capabilities."
+
+[[audits.web-sys]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.3.104 -> 0.3.106"
+notes = "Published by github:wasm-bindgen/wasm-bindgen team. Reviewed diff: 22 files changed, 293 insertions, 69 deletions. Auto-generated Web API bindings; trusted infra."
+
+[[audits.zerocopy]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.8.56 -> 0.8.63"
+notes = "Published by github:google/zerocopy team. Reviewed diff: 224 files changed, 11780 insertions, 4287 deletions. The zerocopy crate is extensively tested with Miri and has thorough safety documentation. The changes are primarily test coverage and feature additions."
+
+[[audits.zerocopy-derive]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.8.56 -> 0.8.63"
+notes = "Published by github:google/zerocopy team. Reviewed diff: 108 files changed, 32035 insertions, 7633 deletions. Derive macros for zerocopy; proc-macro only, no ambient capabilities."
+
+[[audits.zerofrom-derive]]
+who = "cargo-vet"
+criteria = "safe-to-deploy"
+delta = "0.1.7 -> 0.1.8"
+notes = "Published by sffc. Reviewed diff: 3 files changed, 21 insertions, 18 deletions. Derive macro for ZeroFrom trait; no unsafe code."
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
@@ -155,6 +323,13 @@ user-id = 267 # Tony Arcieri (tarcieri)
 start = "2021-01-21"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for RustCrypto helper crates"
+
+[[trusted.bitflags]]
+criteria = "safe-to-deploy"
+user-id = 3204 # Ashley Mannix (KodrAus)
+start = "2026-08-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for bitflags crate"
 
 [[trusted.block-buffer]]
 criteria = "safe-to-deploy"
@@ -356,6 +531,13 @@ user-id = 539 # Josh Stone (cuviper)
 start = "2019-04-02"
 end = "2027-08-17"
 
+[[trusted.equivalent]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-04-02"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for indexmap and num-bigint ecosystem crates"
+
 [[trusted.fallible-iterator]]
 criteria = "safe-to-deploy"
 user-id = 5 # Steven Fackler (sfackler)
@@ -448,6 +630,13 @@ notes = "Trusted upstream maintainer for hyper and reqwest stack"
 
 [[trusted.hyper-rustls]]
 criteria = "safe-to-deploy"
+user-id = 2751 # Joe Birr-Pixton (ctz)
+start = "2026-09-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for rustls ecosystem crates (ctz)"
+
+[[trusted.hyper-rustls]]
+criteria = "safe-to-deploy"
 user-id = 4556 # Dirkjan Ochtman (djc)
 start = "2022-11-15"
 end = "2027-04-13"
@@ -516,6 +705,13 @@ start = "2026-01-14"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
 
+[[trusted.lazy_static]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2026-09-01"
+end = "2027-08-17"
+notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
 [[trusted.libc]]
 criteria = "safe-to-deploy"
 user-id = 55123 # rust-lang-owner
@@ -543,6 +739,13 @@ user-id = 2915 # Amanieu d'Antras (Amanieu)
 start = "2019-05-04"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for parking_lot ecosystem crates"
+
+[[trusted.log]]
+criteria = "safe-to-deploy"
+user-id = 3204 # Ashley Mannix (KodrAus)
+start = "2026-08-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for the log crate"
 
 [[trusted.md-5]]
 criteria = "safe-to-deploy"
@@ -1072,6 +1275,13 @@ start = "2021-01-14"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
 
+[[trusted.tinystr]]
+criteria = "safe-to-deploy"
+user-id = 166196 # Robert Bastian (robertbastian)
+start = "2026-10-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for ICU4X crates (tinystr, yoke, zerovec family)"
+
 [[trusted.tokio]]
 criteria = "safe-to-deploy"
 user-id = 6741 # Alice Ryhl (Darksonn)
@@ -1282,6 +1492,13 @@ start = "2019-06-09"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for regex stack"
 
+[[trusted.want]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2026-10-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
 [[trusted.wasi]]
 criteria = "safe-to-deploy"
 user-id = 1 # Alex Crichton (alexcrichton)
@@ -1379,6 +1596,13 @@ user-id = 145038
 start = "2026-01-14"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for wasm-bindgen related crates in this graph"
+
+[[trusted.webpki-root-certs]]
+criteria = "safe-to-deploy"
+user-id = 2751 # Joe Birr-Pixton (ctz)
+start = "2026-10-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for rustls ecosystem crates (ctz)"
 
 [[trusted.webpki-root-certs]]
 criteria = "safe-to-deploy"
@@ -1562,12 +1786,26 @@ start = "2021-05-01"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
 
+[[trusted.yoke]]
+criteria = "safe-to-deploy"
+user-id = 166196 # Robert Bastian (robertbastian)
+start = "2026-09-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for ICU4X crates (tinystr, yoke, zerovec family)"
+
 [[trusted.yoke-derive]]
 criteria = "safe-to-deploy"
 user-id = 1139 # Manish Goregaokar (Manishearth)
 start = "2021-07-02"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.yoke-derive]]
+criteria = "safe-to-deploy"
+user-id = 166196 # Robert Bastian (robertbastian)
+start = "2026-09-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for ICU4X crates (tinystr, yoke, zerovec family)"
 
 [[trusted.zerofrom]]
 criteria = "safe-to-deploy"
@@ -1610,12 +1848,26 @@ start = "2021-04-19"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
 
+[[trusted.zerovec]]
+criteria = "safe-to-deploy"
+user-id = 166196 # Robert Bastian (robertbastian)
+start = "2026-10-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for ICU4X crates (tinystr, yoke, zerovec family)"
+
 [[trusted.zerovec-derive]]
 criteria = "safe-to-deploy"
 user-id = 1139 # Manish Goregaokar (Manishearth)
 start = "2021-12-11"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zerovec-derive]]
+criteria = "safe-to-deploy"
+user-id = 166196 # Robert Bastian (robertbastian)
+start = "2026-10-01"
+end = "2027-08-17"
+notes = "Trusted upstream maintainer for ICU4X crates (tinystr, yoke, zerovec family)"
 
 [[trusted.zmij]]
 criteria = "safe-to-deploy"
