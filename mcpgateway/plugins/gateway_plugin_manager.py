@@ -16,6 +16,12 @@ gateway-specific features:
 - Optional DB wiring for per-tool plugin bindings
 
 Context ID convention: ``"<team_id>::<tool_name>"``
+
+Tools of one team that have no tool-specific ``ToolPluginBinding`` rows resolve
+to the same configuration. They share one manager cached under
+``"<team_id>::*"``. ``*`` cannot be a tool name, so the shared key never
+collides with a real tool. ``_aliases`` maps each such ``context_id`` to the
+shared key. Tools with tool-specific rows keep their own slot.
 """
 
 # Standard
@@ -39,11 +45,7 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
-# Sentinel tool-name used as the shared cache slot for team-scoped tools that
-# have no per-tool ToolPluginBinding rows.  All tools in a team without explicit
-# bindings resolve to "<team_id>::__team__" so they share one manager instance
-# instead of each creating their own slot.
-TEAM_SCOPED_TOOL_SENTINEL = "__team__"
+SHARED_TOOL_KEY = "*"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -72,9 +74,14 @@ class _CachedManager:
         self.manager = manager
         self.created_at = created_at
 
+    @staticmethod
+    def expired(created_at: float, ttl: float) -> bool:
+        """Return True when ``ttl > 0`` and *created_at* is older than ``ttl`` seconds."""
+        return ttl > 0 and (time.monotonic() - created_at) > ttl
+
     def is_expired(self, ttl: float) -> bool:
         """Return True when ``ttl > 0`` and the entry is older than ``ttl`` seconds."""
-        return ttl > 0 and (time.monotonic() - self.created_at) > ttl
+        return self.expired(self.created_at, ttl)
 
 
 class TenantPluginManagerFactory:
@@ -91,7 +98,7 @@ class TenantPluginManagerFactory:
     Call sites should use :func:`make_context_id` to construct them.
     """
 
-    DEFAULT_CACHE_TTL = 0  # 0 = no expiry; managers live for the worker lifetime
+    DEFAULT_CACHE_TTL = 300  # seconds; bounds staleness when an invalidation message is missed
     CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
 
     def __init__(
@@ -110,6 +117,7 @@ class TenantPluginManagerFactory:
         self._hook_policies = hook_policies
         self._managers: dict[str, _CachedManager] = {}
         self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
+        self._aliases: dict[str, tuple[str, float]] = {}  # context_id -> (shared cache key, alias created_at)
         self._lock = asyncio.Lock()
         self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
         self._db_factory = db_factory
@@ -131,41 +139,36 @@ class TenantPluginManagerFactory:
             return []
         return [plugin.name for plugin in self._base_config.plugins]
 
-    async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
-        """Get or create a TenantPluginManager for the given context.
+    def _cached_manager(self, context_id: str) -> Optional[TenantPluginManager]:
+        """Return the live cached manager for *context_id*, directly or through its alias."""
+        entry = self._managers.get(context_id)
+        if entry is not None and not entry.is_expired(self._cache_ttl):
+            return entry.manager
+        alias = self._aliases.get(context_id)
+        if alias is not None:
+            shared_key, aliased_at = alias
+            shared = self._managers.get(shared_key)
+            if shared is not None and not shared.is_expired(self._cache_ttl) and not _CachedManager.expired(aliased_at, self._cache_ttl):
+                return shared.manager
+        return None
 
-        For per-tool context IDs (``"<team_id>::<tool_name>"``), the factory
-        first checks whether a team-scoped canonical slot
-        (``"<team_id>::__team__"``) already exists.  When a tool has no
-        per-tool ``ToolPluginBinding`` rows, ``_build_manager`` normalises the
-        key to the team-scoped slot before caching, so all unbound tools in the
-        same team share one manager instance.  The per-tool key is looked up
-        first so that tools *with* bindings still get their own dedicated slot.
-        """
+    async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
+        """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
-        expired = None
+
+        cached = self._cached_manager(context_id)
+        if cached is not None:
+            return cached
 
         async with self._lock:
+            cached = self._cached_manager(context_id)
+            if cached is not None:
+                return cached
+
             entry = self._managers.get(context_id)
-            if entry is not None:
-                if entry.is_expired(self._cache_ttl):
-                    expired = self._managers.pop(context_id, None)
-                    logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
-                else:
-                    return entry.manager
-
-            # Fast path: check the canonical team-scoped slot for per-tool keys.
-            # _build_manager stores unbound tools under "<team_id>::__team__"
-            # so a second unbound tool in the same team hits the cache here.
-            if CONTEXT_ID_SEPARATOR in context_id:
-                team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
-                if tool_name != TEAM_SCOPED_TOOL_SENTINEL:
-                    canonical = f"{team_id}{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-                    canonical_entry = self._managers.get(canonical)
-                    if canonical_entry is not None and not canonical_entry.is_expired(self._cache_ttl):
-                        return canonical_entry.manager
-
-            if expired is not None:
+            if entry is not None and entry.is_expired(self._cache_ttl):
+                expired = self._managers.pop(context_id)
+                logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 try:
                     await expired.manager.shutdown()
                 except Exception:
@@ -188,35 +191,42 @@ class TenantPluginManagerFactory:
                 if self._inflight.get(context_id) is inflight:
                     self._inflight.pop(context_id, None)
 
+    @staticmethod
+    def _resolve_cache_key(context_id: str, bindings: list[Any]) -> str:
+        """Return the cache key for *context_id* given its resolved bindings.
+
+        A tool without tool-specific rows (wildcard rows only, or none) uses
+        the team's shared key. Any other context keeps its own key.
+        """
+        if CONTEXT_ID_SEPARATOR not in context_id:
+            return context_id
+        team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+        if any(b.tool_name == tool_name for b in bindings):
+            return context_id
+        return f"{team_id}{CONTEXT_ID_SEPARATOR}{SHARED_TOOL_KEY}"
+
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*.
 
-        When *context_id* is a per-tool key (``"<team_id>::<tool_name>"``) and
-        ``get_config_from_db`` finds no per-tool bindings, the manager is stored
-        under the canonical team-scoped key ``"<team_id>::__team__"`` instead.
-        Subsequent calls for other unbound tools in the same team hit the
-        team-scoped cache entry in ``get_manager`` without rebuilding.
+        When *context_id* resolves to the team's shared key and a live manager
+        already holds that key, the existing manager is reused. After the slow
+        ``initialize()``, the key is checked again so that a concurrent build
+        never replaces a manager that another request already received.
         """
         manager = None
         try:
-            new_config = await self.get_config_from_db(context_id)
+            bindings = await self._fetch_bindings(context_id)
+            cache_key = self._resolve_cache_key(context_id, bindings)
+            shares_slot = cache_key != context_id
 
-            # Normalize unbound per-tool keys to the team-scoped canonical slot.
-            # A tool with no ToolPluginBinding rows produces the same manager as
-            # any other unbound tool in its team; sharing one slot avoids O(tools)
-            # cold-start rebuilds.
-            cache_key = context_id
-            if new_config is None and CONTEXT_ID_SEPARATOR in context_id:
-                team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
-                if tool_name != TEAM_SCOPED_TOOL_SENTINEL:
-                    cache_key = f"{team_id}{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-                    async with self._lock:
-                        existing = self._managers.get(cache_key)
-                        if existing is not None and not existing.is_expired(self._cache_ttl):
-                            logger.debug("_build_manager: reusing team-scoped slot %s for %s", cache_key, context_id)
-                            return existing.manager
+            if shares_slot:
+                async with self._lock:
+                    existing = self._managers.get(cache_key)
+                    if existing is not None and not existing.is_expired(self._cache_ttl):
+                        self._aliases[context_id] = (cache_key, time.monotonic())
+                        return existing.manager
 
-            config = self._merge_tenant_config(new_config)
+            config = self._merge_tenant_config(self._bindings_to_overrides(bindings))
             config = await self._apply_redis_mode_overrides(config)
 
             manager = TenantPluginManager(
@@ -228,24 +238,30 @@ class TenantPluginManagerFactory:
             await manager.initialize()
 
             async with self._lock:
-                old_entry = self._managers.get(cache_key)
-                self._managers[cache_key] = _CachedManager(manager=manager, created_at=time.monotonic())
+                existing = self._managers.get(cache_key)
+                if shares_slot:
+                    self._aliases[context_id] = (cache_key, time.monotonic())
+                if shares_slot and existing is not None and not existing.is_expired(self._cache_ttl):
+                    winner, discarded = existing.manager, manager
+                else:
+                    self._managers[cache_key] = _CachedManager(manager=manager, created_at=time.monotonic())
+                    winner, discarded = manager, existing.manager if existing is not None else None
+            manager = None
 
-            old = old_entry.manager if old_entry is not None else None
-            if old is not None and old is not manager:
+            if discarded is not None and discarded is not winner:
                 try:
-                    await old.shutdown()
+                    await discarded.shutdown()
                 except Exception:
-                    logger.warning("Failed to shutdown old manager for context_id=%s", cache_key)
+                    logger.warning("Failed to shutdown superseded manager for context_id=%s", cache_key, exc_info=True)
 
-            return manager
+            return winner
 
         except asyncio.CancelledError:
             if manager is not None:
                 try:
                     await manager.shutdown()
                 except Exception:
-                    logger.warning("Failed to shutdown cancelled manager for context_id=%s", context_id)
+                    logger.warning("Failed to shutdown cancelled manager for context_id=%s", context_id, exc_info=True)
             raise
         except Exception:
             logger.error("Manager build failed for context_id=%s", context_id, exc_info=True)
@@ -253,7 +269,7 @@ class TenantPluginManagerFactory:
                 try:
                     await manager.shutdown()
                 except Exception:
-                    logger.warning("Failed to shutdown manager after error for context_id=%s", context_id)
+                    logger.warning("Failed to shutdown manager after error for context_id=%s", context_id, exc_info=True)
             raise
 
     def _merge_tenant_config(self, tenant_cfg_override: Optional[list[PluginConfigOverride]]) -> Config:
@@ -352,6 +368,7 @@ class TenantPluginManagerFactory:
         """Evict and rebuild the cached manager for *context_id*."""
         async with self._lock:
             old_entry = self._managers.pop(context_id, None)
+            self._aliases.pop(context_id, None)
 
             inflight = self._inflight.get(context_id)
             if inflight is not None:
@@ -381,6 +398,7 @@ class TenantPluginManagerFactory:
             entries = list(self._managers.values())
             inflight = list(self._inflight.values())
             self._managers.clear()
+            self._aliases.clear()
             self._inflight.clear()
 
         for task in inflight:
@@ -395,24 +413,25 @@ class TenantPluginManagerFactory:
             except Exception:
                 logger.exception("Failed to shutdown plugin manager")
 
-    async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
-        """Fetch per-tool plugin overrides from the DB for *context_id*.
+    async def _fetch_bindings(self, context_id: str) -> list[Any]:
+        """Return the ``ToolPluginBinding`` rows that apply to *context_id*.
 
-        Returns ``None`` when no *db_factory* is configured or no bindings exist.
+        Returns an empty list when no *db_factory* is configured or the
+        context ID has no ``"<team_id>::<tool_name>"`` shape.
         """
         if self._db_factory is None:
-            return None
+            return []
 
         if CONTEXT_ID_SEPARATOR not in context_id:
             logger.debug("get_config_from_db: unrecognised context_id format %r, skipping", context_id)
-            return None
+            return []
 
         team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
         try:
             db: Session = self._db_factory()
             try:
-                bindings = get_bindings_for_tool(db, team_id, tool_name)
+                return list(get_bindings_for_tool(db, team_id, tool_name))
             finally:
                 db.close()
         except Exception:
@@ -423,8 +442,18 @@ class TenantPluginManagerFactory:
             )
             raise
 
+    async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
+        """Fetch per-tool plugin overrides from the DB for *context_id*.
+
+        Returns ``None`` when no *db_factory* is configured or no bindings exist.
+        """
+        return self._bindings_to_overrides(await self._fetch_bindings(context_id))
+
+    @staticmethod
+    def _bindings_to_overrides(bindings: list[Any]) -> Optional[list[PluginConfigOverride]]:
+        """Translate binding rows into ``PluginConfigOverride`` objects."""
         if not bindings:
-            logger.debug("get_config_from_db: no bindings found for context_id=%s", context_id)
+            logger.debug("get_config_from_db: no bindings found")
             return None
 
         overrides: list[PluginConfigOverride] = []

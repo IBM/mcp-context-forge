@@ -17,6 +17,7 @@ Tests cover:
 
 # Standard
 import asyncio
+import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -471,13 +472,13 @@ class TestBuildManager:
 
     @pytest.mark.asyncio
     async def test_build_manager_happy_path(self, factory):
-        """Unbound tool is cached under the team-scoped canonical slot, not the per-tool key."""
+        """Unbound tool is cached under the team's shared key, not the per-tool key."""
         mock_manager = AsyncMock()
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
         ):
@@ -485,23 +486,21 @@ class TestBuildManager:
 
         assert result is mock_manager
         mock_manager.initialize.assert_awaited_once()
-        # Fix B: unbound tools are stored under "<team_id>::__team__", not the per-tool key.
-        assert "team::__team__" in factory._managers
+        assert "team::*" in factory._managers
         assert "team::tool" not in factory._managers
 
     @pytest.mark.asyncio
     async def test_build_manager_shuts_down_old_manager(self, factory):
-        """Rebuilding the team-scoped slot shuts down the old manager."""
+        """Replacing an expired shared-key manager shuts the old manager down."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock()
-        # Old entry lives under the canonical team-scoped key (Fix B).
-        factory._managers["team::__team__"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["team::*"] = _CachedManager(manager=old_manager, created_at=0)
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -515,13 +514,13 @@ class TestBuildManager:
         """Shutdown failure on the old team-scoped manager is logged but does not raise."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
-        factory._managers["team::__team__"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["team::*"] = _CachedManager(manager=old_manager, created_at=0)
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -536,7 +535,7 @@ class TestBuildManager:
         failing_manager.shutdown = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=RuntimeError("redis boom")),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=failing_manager),
         ):
@@ -553,7 +552,7 @@ class TestBuildManager:
             raise RuntimeError("redis error after init")
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=RuntimeError("redis fail")),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
         ):
@@ -574,7 +573,7 @@ class TestBuildManager:
             raise asyncio.CancelledError()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", side_effect=cancel_on_redis),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
         ):
@@ -591,7 +590,7 @@ class TestBuildManager:
             raise asyncio.CancelledError()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", side_effect=cancel_on_redis),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
         ):
@@ -630,7 +629,7 @@ class TestGetManager:
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -677,7 +676,7 @@ class TestReloadTenant:
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -695,7 +694,7 @@ class TestReloadTenant:
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -714,7 +713,7 @@ class TestReloadTenant:
         new_manager.initialize = AsyncMock()
 
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -1039,49 +1038,33 @@ class TestInvalidateTeamPrefixSafety:
 
 
 # ---------------------------------------------------------------------------
-# Fix A — DEFAULT_CACHE_TTL=0 and plugin_manager_cache_ttl config knob
+# Cache TTL default and config knob
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultCacheTTLIsZero:
-    """DEFAULT_CACHE_TTL must be 0 so managers live for the worker lifetime."""
+class TestDefaultCacheTTL:
+    """The default TTL bounds staleness; 0 stays available to disable expiry."""
 
-    def test_default_cache_ttl_is_zero(self):
-        assert TenantPluginManagerFactory.DEFAULT_CACHE_TTL == 0
+    def test_default_cache_ttl_is_bounded(self):
+        assert TenantPluginManagerFactory.DEFAULT_CACHE_TTL == 300
 
-    def test_factory_uses_zero_ttl_by_default(self):
+    def test_factory_uses_default_ttl(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
             f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
-        assert f._cache_ttl == 0
-
-    def test_factory_accepts_custom_ttl(self):
-        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=300)
         assert f._cache_ttl == 300
 
     @pytest.mark.asyncio
     async def test_zero_ttl_cached_entry_never_expires(self):
-        """A manager cached with TTL=0 must be returned on every subsequent call without rebuild."""
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
             f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=0)
-
         mock_manager = AsyncMock()
-        import time
-
-        # Insert a stale entry (created_at=0, far in the past).
         f._managers["ctx"] = _CachedManager(manager=mock_manager, created_at=0.0)
 
-        build_called = []
-
-        async def fake_build(context_id):
-            build_called.append(context_id)
-            return AsyncMock()
-
-        with patch.object(f, "_build_manager", side_effect=fake_build):
+        with patch.object(f, "_build_manager", new_callable=AsyncMock) as build:
             result = await f.get_manager("ctx")
 
-        assert result is mock_manager, "Cached manager must be returned when TTL=0"
-        assert not build_called, "_build_manager must not be called when TTL=0"
+        assert result is mock_manager
+        build.assert_not_awaited()
 
 
 _CFG_JWT = "T3stJwtS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
@@ -1089,155 +1072,238 @@ _CFG_ENC = "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
 
 
 class TestPluginManagerCacheTTLConfigKnob:
-    """PLUGIN_MANAGER_CACHE_TTL env-var defaults to 0 in CF Settings."""
+    """PLUGIN_MANAGER_CACHE_TTL defaults to 300 in Settings."""
 
-    def test_default_is_zero(self):
+    @staticmethod
+    def _settings(**kwargs):
         from mcpgateway.config import Settings
 
-        s = Settings(
-            jwt_secret_key=_CFG_JWT,
-            auth_encryption_secret=_CFG_ENC,
-            basic_auth_password="TestPassword1!",
-            _env_file=None,
-        )
-        assert s.plugin_manager_cache_ttl == 0
+        return Settings(jwt_secret_key=_CFG_JWT, auth_encryption_secret=_CFG_ENC, basic_auth_password="TestPassword1!", _env_file=None, **kwargs)
 
-    def test_accepts_positive_value(self):
-        from mcpgateway.config import Settings
+    def test_default_is_300(self):
+        assert self._settings().plugin_manager_cache_ttl == 300
 
-        s = Settings(
-            jwt_secret_key=_CFG_JWT,
-            auth_encryption_secret=_CFG_ENC,
-            basic_auth_password="TestPassword1!",
-            plugin_manager_cache_ttl=600,
-            _env_file=None,
-        )
-        assert s.plugin_manager_cache_ttl == 600
+    def test_accepts_zero_and_positive_values(self):
+        assert self._settings(plugin_manager_cache_ttl=0).plugin_manager_cache_ttl == 0
+        assert self._settings(plugin_manager_cache_ttl=600).plugin_manager_cache_ttl == 600
 
 
 # ---------------------------------------------------------------------------
-# Fix B — team-scoped canonical slot for unbound tools
+# Shared manager for tools without tool-specific bindings
 # ---------------------------------------------------------------------------
 
 
-class TestTeamScopedCanonicalSlot:
-    """Unbound tools must share one team-scoped manager slot, not create O(N) slots."""
+def _seed_binding(db_session, team_id, tool_name, plugin_id="OutputLengthGuardPlugin"):
+    """Insert one ToolPluginBinding row through the real service."""
+    req = ToolPluginBindingRequest(
+        teams={team_id: TeamPolicies(policies=[PluginPolicyItem(tool_names=[tool_name], plugin_id=plugin_id, mode=PluginBindingMode.ENFORCE, priority=10, config=_OLG)])}
+    )
+    ToolPluginBindingService().upsert_bindings(db_session, req, caller_email="admin@example.com")
+
+
+class TestSharedTeamManager:
+    """Tools without tool-specific rows share one manager; bound tools keep their own."""
 
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=0)
-        return f
+            return TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=0)
 
-    @pytest.mark.asyncio
-    async def test_second_unbound_tool_reuses_team_slot(self, factory):
-        """The second call for an unbound tool in the same team must NOT call _build_manager."""
-        import time
-        from mcpgateway.plugins.gateway_plugin_manager import TEAM_SCOPED_TOOL_SENTINEL
+    @staticmethod
+    def _patch_build(factory, bindings_by_context, built):
+        """Patch binding lookup, Redis overrides, and manager construction."""
 
-        first_manager = AsyncMock()
-        first_manager.initialize = AsyncMock()
+        async def fetch(context_id):
+            return bindings_by_context.get(context_id, [])
 
-        build_call_contexts = []
+        def make_manager(config, **_kwargs):
+            manager = AsyncMock()
+            built.append((manager, config))
+            return manager
 
-        async def fake_build(context_id):
-            build_call_contexts.append(context_id)
-            # Real _build_manager stores unbound tools under the canonical team key.
-            canonical = f"team42{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-            factory._managers[canonical] = _CachedManager(manager=first_manager, created_at=time.monotonic())
-            return first_manager
-
-        with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
-            patch.object(factory, "_build_manager", side_effect=fake_build),
-        ):
-            result_a = await factory.get_manager("team42::tool_a")
-            result_b = await factory.get_manager("team42::tool_b")
-
-        assert result_a is first_manager
-        assert result_b is first_manager, "Second unbound tool must reuse the team-scoped manager"
-        # _build_manager called at most once (for the first tool only).
-        assert len(build_call_contexts) <= 1, f"_build_manager called {len(build_call_contexts)} times; expected ≤1"
-
-    @pytest.mark.asyncio
-    async def test_build_manager_stores_under_team_key_when_no_bindings(self, factory):
-        """_build_manager must cache under '<team_id>::__team__' when get_config_from_db returns None."""
-        from mcpgateway.plugins.gateway_plugin_manager import TEAM_SCOPED_TOOL_SENTINEL
-
-        built_manager = AsyncMock()
-        built_manager.initialize = AsyncMock()
-
-        with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+        return (
+            patch.object(factory, "_fetch_bindings", side_effect=fetch),
+            patch.object(factory, "_merge_tenant_config", side_effect=lambda overrides: ("MERGED" if overrides else "BASE")),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
-            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=built_manager),
-        ):
-            result = await factory._build_manager("myteam::my_tool")
-
-        assert result is built_manager
-        canonical = f"myteam{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-        assert canonical in factory._managers, "Manager must be stored under the team-scoped canonical key"
-        assert "myteam::my_tool" not in factory._managers, "Per-tool key must NOT be used when there are no bindings"
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", side_effect=make_manager),
+        )
 
     @pytest.mark.asyncio
-    async def test_build_manager_stores_under_tool_key_when_bindings_exist(self, factory):
-        """_build_manager must cache under the per-tool key when bindings are present."""
-        from mcpgateway.plugins.gateway_plugin_manager import TEAM_SCOPED_TOOL_SENTINEL
+    async def test_unbound_tools_share_one_manager(self, factory):
+        built = []
+        patches = self._patch_build(factory, {}, built)
+        with patches[0], patches[1], patches[2], patches[3]:
+            a = await factory.get_manager("t::tool_a")
+            b = await factory.get_manager("t::tool_b")
+            a_again = await factory.get_manager("t::tool_a")
 
-        bound_manager = AsyncMock()
-        bound_manager.initialize = AsyncMock()
-
-        fake_binding = [PluginConfigOverride(name="my_plugin")]
-
-        with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=fake_binding),
-            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
-            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=bound_manager),
-        ):
-            result = await factory._build_manager("myteam::bound_tool")
-
-        assert result is bound_manager
-        assert "myteam::bound_tool" in factory._managers, "Per-tool key must be used when bindings exist"
-        canonical = f"myteam{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-        assert canonical not in factory._managers, "Team-scoped key must NOT be created when bindings exist"
+        assert a is b is a_again
+        assert len(built) == 1
+        assert list(factory._managers) == ["t::*"]
 
     @pytest.mark.asyncio
-    async def test_get_manager_fast_path_finds_team_slot(self, factory):
-        """get_manager must return team-scoped manager for a new unbound tool via the fast path."""
-        import time
-        from mcpgateway.plugins.gateway_plugin_manager import TEAM_SCOPED_TOOL_SENTINEL
+    async def test_bound_tool_never_gets_unbound_manager(self, factory):
+        """A bound tool built after the shared slot exists runs with its own bindings."""
+        built = []
+        bound = [SimpleNamespaceBinding("tool_b")]
+        patches = self._patch_build(factory, {"t::tool_b": bound}, built)
+        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
+            unbound = await factory.get_manager("t::tool_a")
+            bound_mgr = await factory.get_manager("t::tool_b")
 
-        existing_manager = AsyncMock()
-        canonical = f"teamX{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
-        factory._managers[canonical] = _CachedManager(manager=existing_manager, created_at=time.monotonic())
-
-        build_called = []
-
-        async def fake_build(context_id):
-            build_called.append(context_id)
-            return AsyncMock()
-
-        with patch.object(factory, "_build_manager", side_effect=fake_build):
-            result = await factory.get_manager("teamX::other_tool")
-
-        assert result is existing_manager, "Fast path must return the cached team-scoped manager"
-        assert not build_called, "_build_manager must not be called when the team-scoped slot is warm"
+        assert bound_mgr is not unbound
+        assert [config for _, config in built] == ["BASE", "MERGED"]
+        assert "t::tool_b" in factory._managers
 
     @pytest.mark.asyncio
-    async def test_sentinel_tool_name_not_collapsed(self, factory):
-        """A context_id using TEAM_SCOPED_TOOL_SENTINEL as the tool name must be cached under itself."""
-        from mcpgateway.plugins.gateway_plugin_manager import TEAM_SCOPED_TOOL_SENTINEL
+    async def test_bound_tool_config_independent_of_request_order(self, factory):
+        built = []
+        bound = [SimpleNamespaceBinding("tool_b")]
+        patches = self._patch_build(factory, {"t::tool_b": bound}, built)
+        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
+            await factory.get_manager("t::tool_b")
+            await factory.get_manager("t::tool_a")
 
-        sentinel_manager = AsyncMock()
-        sentinel_manager.initialize = AsyncMock()
-        sentinel_ctx = f"teamZ{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
+        assert [config for _, config in built] == ["MERGED", "BASE"]
 
-        with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
-            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
-            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=sentinel_manager),
-        ):
-            result = await factory._build_manager(sentinel_ctx)
+    @pytest.mark.asyncio
+    async def test_concurrent_cold_start_keeps_returned_manager_alive(self, factory):
+        """Two unbound tools built concurrently end with one manager; the loser is the one shut down."""
+        built = []
+        gate = asyncio.Event()
+        patches = self._patch_build(factory, {}, built)
 
-        assert result is sentinel_manager
-        assert sentinel_ctx in factory._managers, "Sentinel context must be stored under its own key"
+        async def delayed(config):
+            await gate.wait()
+            return config
+
+        with patches[0], patches[1], patches[3], patch.object(factory, "_apply_redis_mode_overrides", side_effect=delayed):
+            t1 = asyncio.create_task(factory.get_manager("t::tool_a"))
+            t2 = asyncio.create_task(factory.get_manager("t::tool_c"))
+            await asyncio.sleep(0.01)
+            gate.set()
+            m1, m2 = await asyncio.gather(t1, t2)
+
+        assert len(built) == 2
+        survivors = [m for m, _ in built if not m.shutdown.await_count]
+        assert len(survivors) == 1
+        assert m1 is m2 is survivors[0]
+        assert factory._managers["t::*"].manager is survivors[0]
+
+    @pytest.mark.asyncio
+    async def test_expired_bound_tool_rebuilds_with_bindings(self):
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+        built = []
+        bound = [SimpleNamespaceBinding("tool_b")]
+        patches = self._patch_build(factory, {"t::tool_b": bound}, built)
+        shared_manager = AsyncMock()
+        factory._managers["t::*"] = _CachedManager(manager=shared_manager, created_at=time.monotonic())
+        expired_manager = AsyncMock()
+        factory._managers["t::tool_b"] = _CachedManager(manager=expired_manager, created_at=0)
+
+        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
+            result = await factory.get_manager("t::tool_b")
+
+        assert result is not shared_manager
+        assert [config for _, config in built] == ["MERGED"]
+        expired_manager.shutdown.assert_awaited_once()
+        shared_manager.shutdown.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_alias_expires_with_ttl(self):
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+        factory._managers["t::*"] = _CachedManager(manager=AsyncMock(), created_at=time.monotonic())
+        factory._aliases["t::tool_a"] = ("t::*", 0)
+
+        assert factory._cached_manager("t::tool_a") is None
+
+    @pytest.mark.asyncio
+    async def test_tool_named_like_old_sentinel_gets_own_slot(self, factory):
+        """A tool named ``__team__`` is an ordinary tool and never feeds the shared slot."""
+        built = []
+        bound = [SimpleNamespaceBinding("__team__")]
+        patches = self._patch_build(factory, {"t::__team__": bound}, built)
+        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
+            await factory.get_manager("t::__team__")
+            unbound = await factory.get_manager("t::tool_a")
+
+        assert [config for _, config in built] == ["MERGED", "BASE"]
+        assert factory._managers["t::*"].manager is unbound
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_rebuilds_shared_slot(self, factory):
+        built = []
+        patches = self._patch_build(factory, {}, built)
+        with patches[0], patches[1], patches[2], patches[3]:
+            await factory.get_manager("t::tool_a")
+            await factory.invalidate_team("t")
+            await factory.get_manager("t::tool_a")
+
+        assert len(built) == 2
+        built[0][0].shutdown.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invalidate_all_rebuilds_shared_slot(self, factory):
+        built = []
+        patches = self._patch_build(factory, {}, built)
+        with patches[0], patches[1], patches[2], patches[3]:
+            await factory.get_manager("t::tool_a")
+            await factory.invalidate_all()
+
+        assert len(built) == 2
+
+    @pytest.mark.asyncio
+    async def test_reload_gives_newly_bound_tool_its_own_manager(self, factory):
+        """A tool that gains bindings leaves the shared slot once its context reloads."""
+        built = []
+        bindings = {}
+        patches = self._patch_build(factory, bindings, built)
+        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
+            shared = await factory.get_manager("t::tool_a")
+            bindings["t::tool_a"] = [SimpleNamespaceBinding("tool_a")]
+            await factory.reload_tenant("t::tool_a")
+            rebuilt = await factory.get_manager("t::tool_a")
+
+        assert rebuilt is not shared
+        assert [config for _, config in built] == ["BASE", "MERGED"]
+        assert "t::tool_a" not in factory._aliases
+        shared.shutdown.assert_not_awaited()
+
+
+def _overrides_for(bindings):
+    """Return one override per binding row, or None when there are none."""
+    return [PluginConfigOverride(name="opa")] if bindings else None
+
+
+class SimpleNamespaceBinding:
+    """Minimal stand-in for a ToolPluginBinding row."""
+
+    def __init__(self, tool_name):
+        self.tool_name = tool_name
+
+
+class TestSharedTeamManagerWithRealBindings:
+    """Shared-slot decisions with the real ``get_bindings_for_tool`` on SQLite."""
+
+    @staticmethod
+    def _resolved_key(factory, context_id):
+        bindings = asyncio.run(factory._fetch_bindings(context_id))
+        return factory._resolve_cache_key(context_id, bindings)
+
+    def test_no_bindings_uses_shared_key(self, db_session):
+        factory = _make_factory(db_session)
+        assert self._resolved_key(factory, "team-r::tool_a") == "team-r::*"
+
+    def test_tool_binding_keeps_own_key(self, db_session):
+        _seed_binding(db_session, "team-r", "tool_b")
+        factory = _make_factory(db_session)
+        assert self._resolved_key(factory, "team-r::tool_b") == "team-r::tool_b"
+        assert self._resolved_key(factory, "team-r::tool_a") == "team-r::*"
+
+    def test_wildcard_only_team_shares_one_key(self, db_session):
+        _seed_binding(db_session, "team-w", "*")
+        factory = _make_factory(db_session)
+        assert self._resolved_key(factory, "team-w::tool_a") == "team-w::*"
+        assert self._resolved_key(factory, "team-w::tool_b") == "team-w::*"

@@ -507,6 +507,8 @@ async def _plugin_invalidation_listener() -> None:
             _logger.info("Plugin invalidation listener subscribed to %s", _REDIS_INVALIDATION_CHANNEL)
             backoff = 1.0
             consecutive_failures = 0
+            # Pub/sub does not replay: rebuild managers to recover messages missed while disconnected.
+            await invalidate_all_plugin_managers()
 
             async for message in pubsub.listen():
                 await _handle_invalidation_message(message)
