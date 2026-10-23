@@ -26,15 +26,31 @@
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
 
+- **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
+
+- **Stale catalog lists after writes** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Resource, prompt, and server create, gateway update, delete, and ownership transfer, import team assignment, and gRPC service tool changes now invalidate the registry cache. Before, lists stayed stale for up to the cache TTL.
+
+- **Debounced upstream `list_changed` no longer dropped** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - An upstream `list_changed` notification inside the 5-second debounce window now schedules one trailing refresh. Before, the gateway dropped the notification and missed the change.
+
 ### Changed
 
 - **A2A agent cards follow the 1.0 schema (breaking for card consumers)** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Cards for agents with a stored protocol version of 1.x now use the A2A 1.0 `AgentCard` shape, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. `protocol_version` defaults to `"1.0"`, so most existing agents change shape. These fields leave 1.x cards: `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`. A caller that sends `A2A-Version: 0.3` to the sidecar keeps the legacy shape for a 1.x agent. A caller that sends no version follows the stored version. Agents with a stored version of 0.x keep the legacy shape. Server cards now aggregate `streaming`, `pushNotifications`, and the default input and output modes from enabled associated agents instead of hardcoded values. Server cards skip malformed capability entries. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. Scheme names are `basicAuth`, `bearerAuth`, `apiKeyAuth`, and `oauth2Auth`. OAuth schemes read the stored `scopes` list and always emit the scope map.
+
+- **2026-07-28 capabilities no longer advertise `resources.subscribe`** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - The gateway serves catalog change notifications through `subscriptions/listen` and does not honor `resourceSubscriptions`. 2026-07-28 clients use `subscriptions/listen` to track list changes. Handshake-era capabilities and `resources/subscribe` behavior stay unchanged.
+
+- **Health-check and auto-refresh jitter** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Health-loop ticks are now up to 10% shorter than the configured interval. Scheduled gateway auto-refresh can run up to 10% before its interval, and never later. The jitter keeps workers and gateways from refreshing in lockstep.
+
+- **Failed auto-refresh backs off** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - A failed scheduled gateway auto-refresh now backs off exponentially, capped at the gateway's refresh interval. Before, the gateway retried on every health-loop tick.
+
+- **Modern listeners run on the primary worker** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - With `GATEWAY_MODERN_LISTENERS_ENABLED=true`, only the primary worker holds `subscriptions/listen` streams to upstream servers. `PRIMARY_WORKER_ELECTION_BACKEND=filelock` elects one primary per host or pod. `PRIMARY_WORKER_ELECTION_BACKEND=redis` elects one primary per cluster.
 
 ### Added
 
 #### **API & Platform**
 
 - **Product-terminology request aliases for `gateway_id` and the virtual-server `server` body key** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt create/update bodies, and the gateway/MCP-server handshake test request, now also accept `mcp_server_id` as an alias of `gateway_id` ("MCP server" is the product term for what the code calls a "gateway"). The tool, resource, and prompt list endpoints and `GET /v1/search` accept `mcp_server_id` as a query alias of `gateway_id`. `POST /servers` and `POST /v1/virtual-servers` also accept a top-level `virtual_server` key as an alias of `server`. Sending two spellings with different values returns 422. Existing field names and body keys keep working, OpenAPI property names are unchanged, and responses keep the existing key names. In OpenAPI, the `Body_create_server_*` request components are replaced by `ServerCreateRequest`. Output-side aliasing, RBAC permission strings, audit `resource_type` values, and config names remain tracked under #6544.
+
+- **`subscriptions/listen` server support** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - 2026-07-28 clients on streamable HTTP can open a `subscriptions/listen` stream and receive `tools`, `prompts`, and `resources` list-changed events. Each requested kind passes the same token-scope gate as its `*/list` call. Streams end at the token expiry or after `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default `3600`). Events cross workers only with `CACHE_TYPE=redis`. `POST /rpc` returns `-32601` for `subscriptions/listen`.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
