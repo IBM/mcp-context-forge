@@ -4857,7 +4857,8 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
+    @pytest.mark.parametrize("notice_enabled", [True, False])
+    async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db, notice_enabled):
         """Test admin UI template context is properly populated."""
         # Mock all services to return empty lists
         mock_servers.return_value = []
@@ -4871,6 +4872,7 @@ class TestAdminUIRoute:
         with (
             patch.object(settings, "app_root_path", "/custom/root"),
             patch.object(settings, "gateway_tool_name_separator", "__"),
+            patch.object(settings, "mcpgateway_ui_deprecation_notice_enabled", notice_enabled),
             patch.object(settings, "jwt_secret_key", "test-secret-key-with-minimum-32-bytes"),
         ):
             await admin_ui(
@@ -4888,12 +4890,26 @@ class TestAdminUIRoute:
             assert context["include_inactive"] is True
             assert context["root_path"] == "/custom/root"
             assert context["gateway_tool_name_separator"] == "__"
+            assert context["ui_deprecation_notice_enabled"] is notice_enabled
             assert "servers" in context
             assert "tools" in context
             assert "resources" in context
             assert "prompts" in context
             assert "gateways" in context
             assert "roots" in context
+
+            # First-Party
+            from mcpgateway.main import jinja_env
+
+            rendered = jinja_env.get_template("admin.html").render(context)
+            assert ('id="admin-ui-deprecation-notice"' in rendered) is notice_enabled
+            assert ('datetime="2027-01-27"' in rendered) is notice_enabled
+            assert ("27 January 2027" in rendered) is notice_enabled
+            assert ('aria-label="Dismiss deprecation notice"' in rendered) is notice_enabled
+            if notice_enabled:
+                assert "Support for the Admin UI ends on" in rendered
+                assert 'href="https://github.com/contextforge-org/contextforge-web-ui"' in rendered
+                assert 'href="https://github.com/IBM/mcp-context-forge#optional-web-ui"' in rendered
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
