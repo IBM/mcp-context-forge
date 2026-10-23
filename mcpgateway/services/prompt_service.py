@@ -896,6 +896,8 @@ class PromptService(BaseService):
 
             computed_name = self._compute_prompt_name(custom_name, gateway=gateway)
 
+            visibility = visibility or getattr(prompt, "visibility", None) or "public"
+
             # Create DB model
             db_prompt = DbPrompt(
                 name=computed_name,
@@ -915,10 +917,9 @@ class PromptService(BaseService):
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
-                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(prompt, "team_id", None) or team_id,
-                owner_email=getattr(prompt, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(prompt, "visibility", None) or visibility,
+                team_id=team_id,
+                owner_email=owner_email or created_by,
+                visibility=visibility,
                 gateway_id=gateway_id,
             )
             # Check for existing server with the same name
@@ -1261,9 +1262,8 @@ class PromptService(BaseService):
                                 schema["description"] = arg.description
                             argument_schema["properties"][arg.name] = schema
 
-                        # Use provided parameters or schema values
-                        prompt_team_id = team_id if team_id is not None else getattr(prompt, "team_id", None)
-                        prompt_owner_email = owner_email or getattr(prompt, "owner_email", None) or created_by
+                        prompt_team_id = team_id
+                        prompt_owner_email = owner_email or created_by
                         prompt_visibility = visibility if visibility is not None else (getattr(prompt, "visibility", None) or "public")
                         prompt_gateway_id = getattr(prompt, "gateway_id", None)
 
@@ -2374,6 +2374,19 @@ class PromptService(BaseService):
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, prompt):
+                    raise PermissionError("Only the owner can update this prompt")
+
+            # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
+            if prompt_update.team_id is not None and prompt_update.team_id != prompt.team_id:
+                _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
+
             visibility = prompt_update.visibility or prompt.visibility
             team_id = prompt_update.team_id or prompt.team_id
             owner_email = prompt.owner_email or user_email
@@ -2405,15 +2418,6 @@ class PromptService(BaseService):
                     )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError("Only the owner can update this prompt")
 
             if prompt_update.name is not None:
                 if prompt.gateway_id:
@@ -2481,8 +2485,6 @@ class PromptService(BaseService):
 
             # Update team assignment if provided, validating ownership
             if prompt_update.team_id is not None:
-                if prompt_update.team_id != prompt.team_id:
-                    _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
                 prompt.team_id = prompt_update.team_id
 
             # Update metadata fields

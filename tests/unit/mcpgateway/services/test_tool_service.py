@@ -1072,6 +1072,23 @@ class TestToolService:
             assert "Failed to register tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_register_tool_ignores_nested_team_and_owner(self, tool_service, test_db):
+        """Stored team and owner come from the parameters, never from the payload."""
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        tool_service._notify_tool_added = AsyncMock()
+        tool_service.convert_tool_to_read = Mock(return_value=Mock())
+        tool_create = ToolCreate(name="scoped_tool", url="http://example.com/tools/scoped", integration_type="REST", request_type="POST", team_id="team-other", owner_email="other@example.com")
+
+        await tool_service.register_tool(test_db, tool_create, created_by="alice@example.com", team_id=None, owner_email=None)
+
+        added = test_db.add.call_args[0][0]
+        assert added.team_id is None
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_register_tool_with_none_auth(self, tool_service, test_db):
         """Test register_tool when tool.auth is None."""
 
@@ -1136,7 +1153,7 @@ class TestToolService:
         )
         test_db.commit = Mock()
         with pytest.raises(ToolNameConflictError) as exc_info:
-            await tool_service.register_tool(test_db, tool_create_team)
+            await tool_service.register_tool(test_db, tool_create_team, team_id="team123")
         assert "Team-level Tool already exists with name: team_tool" in str(exc_info.value)
 
         # --- Public visibility: conflict if name and visibility match ---
@@ -9565,6 +9582,27 @@ class TestToolServiceBulkImport:
             ]
         )
         mock_admin_cache.invalidate_tags.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_ignores_nested_team_and_owner(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_scoped", team_id="team-other", owner_email="other@example.com")
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            await service.register_tools_bulk(db=db, tools=[tool], created_by="alice@example.com", team_id=None, owner_email=None, visibility="public")
+
+        added = db.add_all.call_args[0][0][0]
+        assert added.team_id is None
+        assert added.owner_email == "alice@example.com"
 
     @pytest.mark.asyncio
     async def test_register_tools_bulk_no_changes_skips_invalidation(self):

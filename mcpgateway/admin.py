@@ -12223,6 +12223,9 @@ async def admin_add_tool(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -15252,10 +15255,20 @@ async def admin_import_tools(
 
         # Extract base metadata for bulk import
         base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
+        user_email = get_user_email(user)
+        token_teams = extract_token_team_ids(user)
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        team_id = None if is_public_only_token else (getattr(request.state, "team_id", None) or await TeamManagementService(db).verify_team_for_user(user_email) or None)
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
+                if is_public_only_token and (tool.visibility or "public") in ("team", "private"):
+                    errors.append(
+                        {"index": i, "name": name, "error": {"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."}}
+                    )
+                    continue
+                _check_public_visibility_allowed(tool.visibility or "public", team_id=team_id)
                 await tool_service.register_tool(
                     db,
                     tool,
@@ -15265,6 +15278,8 @@ async def admin_import_tools(
                     created_user_agent=base_metadata["created_user_agent"],
                     import_batch_id=import_batch_id,
                     federation_source=base_metadata["federation_source"],
+                    team_id=team_id,
+                    owner_email=user_email,
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
@@ -15285,6 +15300,8 @@ async def admin_import_tools(
                 errors.append({"index": i, "name": name, "error": formatted})
             except ToolError as ex:
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+            except HTTPException as ex:
+                errors.append({"index": i, "name": name, "error": {"message": str(ex.detail)}})
             except Exception as ex:
                 LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
                 errors.append({"index": i, "name": name, "error": {"message": unexpected_error_detail(ex)}})
@@ -17049,6 +17066,9 @@ async def admin_create_grpc_service(
         _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
+        requested_team_id = getattr(service, "team_id", None)
+        if requested_team_id and await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id) != requested_team_id:
+            raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:

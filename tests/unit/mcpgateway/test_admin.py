@@ -1702,6 +1702,26 @@ class TestAdminToolRoutes:
         assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_passes_team_and_owner(self, mock_register_tool, mock_request, mock_db, monkeypatch):
+        """admin_add_tool hands the verified team and the caller email to register_tool."""
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-a")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        mock_request.form = AsyncMock(
+            return_value=FakeForm(
+                {"name": "owned-tool", "url": "http://example.com", "requestType": "GET", "integrationType": "REST", "headers": "{}", "input_schema": "{}", "team_id": "team-a", "visibility": "team"}
+            )
+        )
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "alice@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        kwargs = mock_register_tool.call_args.kwargs
+        assert kwargs["team_id"] == "team-a"
+        assert kwargs["owner_email"] == "alice@example.com"
+        assert kwargs["visibility"] == "team"
+
+    @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
         """Test adding tool with basic authentication - covers auth_type=basic branch."""
         form_data = FakeForm(
@@ -2250,6 +2270,27 @@ class TestAdminBulkImportRoutes:
         assert mock_register_tool.call_count == 2
 
     @patch.object(ToolService, "register_tool")
+    async def test_bulk_import_public_only_token_denies_team_and_private_tools(self, mock_register_tool, mock_request, mock_db):
+        """A public-only token imports public tools without a team and cannot import team or private tools."""
+        base = {"url": "http://api.example.com/t", "integration_type": "REST", "request_type": "GET"}
+        tools_data = [
+            {**base, "name": "pub_tool", "visibility": "public"},
+            {**base, "name": "team_tool", "visibility": "team"},
+            {**base, "name": "private_tool", "visibility": "private"},
+        ]
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db, "token_teams": []})
+        result_data = json.loads(result.body)
+
+        assert result_data["created_count"] == 1
+        assert result_data["failed_count"] == 2
+        assert {e["name"] for e in result_data["errors"]} == {"team_tool", "private_tool"}
+        mock_register_tool.assert_awaited_once()
+        assert mock_register_tool.await_args.kwargs["team_id"] is None
+
+    @patch.object(ToolService, "register_tool")
     async def test_bulk_import_partial_failure(self, mock_register_tool, mock_request, mock_db):
         """Test bulk import with some tools failing validation."""
         # Third-Party
@@ -2556,6 +2597,69 @@ class TestAdminBulkImportRoutes:
         assert result.status_code == 200
         assert data["failed_count"] == 1
         assert "message" in data["errors"][0]["error"]
+
+    @staticmethod
+    def _import_request(mock_request, tools_data, state_team_id=None):
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+        mock_request.state = SimpleNamespace(team_id=state_team_id)
+
+    async def test_admin_import_tools_ignores_item_team_and_owner(self, mock_request, mock_db, monkeypatch):
+        """Item-supplied team_id and owner_email are ignored in favour of the caller's."""
+        monkeypatch.setattr(settings, "mcpgateway_bulk_import_enabled", True)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="personal-alice")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        self._import_request(
+            mock_request,
+            [{"name": "t1", "url": "http://api.example.com/t1", "integration_type": "REST", "request_type": "GET", "team_id": "team-other", "owner_email": "other@example.com"}],
+        )
+
+        with patch.object(ToolService, "register_tool") as mock_register_tool:
+            result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "alice@example.com", "db": mock_db})
+
+        assert json.loads(result.body)["created_count"] == 1
+        kwargs = mock_register_tool.call_args.kwargs
+        assert kwargs["team_id"] == "personal-alice"
+        assert kwargs["owner_email"] == "alice@example.com"
+
+    async def test_admin_import_tools_team_lookup_failure_yields_none(self, mock_request, mock_db, monkeypatch):
+        """A failed team lookup returns [], which becomes team_id=None."""
+        monkeypatch.setattr(settings, "mcpgateway_bulk_import_enabled", True)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=[])
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        self._import_request(mock_request, [{"name": "t1", "url": "http://api.example.com/t1", "integration_type": "REST", "request_type": "GET"}])
+
+        with patch.object(ToolService, "register_tool") as mock_register_tool:
+            await admin_import_tools(request=mock_request, db=mock_db, user={"email": "alice@example.com", "db": mock_db})
+
+        assert mock_register_tool.call_args.kwargs["team_id"] is None
+
+    async def test_admin_import_tools_public_visibility_rejection_is_per_item(self, mock_request, mock_db, monkeypatch):
+        """A disallowed public item fails on its own and the rest of the batch still imports."""
+        monkeypatch.setattr(settings, "mcpgateway_bulk_import_enabled", True)
+        monkeypatch.setattr(settings, "allow_public_visibility", False)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="personal-alice")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        self._import_request(
+            mock_request,
+            [
+                {"name": "pub", "url": "http://api.example.com/pub", "integration_type": "REST", "request_type": "GET", "visibility": "public"},
+                {"name": "priv", "url": "http://api.example.com/priv", "integration_type": "REST", "request_type": "GET", "visibility": "private"},
+            ],
+        )
+
+        with patch.object(ToolService, "register_tool") as mock_register_tool:
+            result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "alice@example.com", "db": mock_db})
+
+        data = json.loads(result.body)
+        assert data["created_count"] == 1
+        assert data["failed_count"] == 1
+        assert data["errors"][0]["name"] == "pub"
+        assert "Public visibility is disabled" in data["errors"][0]["error"]["message"]
+        assert mock_register_tool.call_count == 1
 
     async def test_bulk_import_outer_http_exception_passthrough(self, mock_request, mock_db, monkeypatch):
         """Cover admin_import_tools outer HTTPException re-raise."""
@@ -15959,6 +16063,33 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
         with pytest.raises(HTTPException) as excinfo:
             await c
         assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verified_team, expected_status", [([], 403), ("team-b", 201)])
+async def test_admin_create_grpc_service_checks_team_membership(monkeypatch, mock_db, verified_team, expected_status):
+    """A payload team_id the caller does not belong to returns 403 and registers nothing."""
+    monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+    monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
+    mgr = MagicMock()
+    mgr.register_service = AsyncMock(return_value={"id": "svc-1"})
+    monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: SimpleNamespace(verify_team_for_user=AsyncMock(return_value=verified_team)))
+
+    request = MagicMock(spec=Request)
+    request.client = SimpleNamespace(host="10.0.0.2")
+    request.scope = {"root_path": ""}
+    service = GrpcServiceCreate(name="grpc-service", target="localhost:50051", team_id="team-b", visibility="team")
+
+    if expected_status == 403:
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+        mgr.register_service.assert_not_awaited()
+    else:
+        response = await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 201
+        mgr.register_service.assert_awaited_once()
 
 
 @pytest.mark.asyncio
