@@ -2145,7 +2145,7 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity))
+                                headers.update(build_identity_headers(user_identity, gateway))
 
                         async def _read_resource_text_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str:
                             """Retry remote resource reads on an already established MCP session."""
