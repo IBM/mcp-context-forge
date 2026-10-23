@@ -277,11 +277,21 @@ logger = logging_service.get_logger("mcpgateway")
 # Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
 # startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
-# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
-# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
-if settings.plugins.enabled:
-    enable_plugins(True)
-    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+def _enable_plugin_subsystem_if_configured() -> None:
+    """Enable the in-memory plugin flag when plugin settings mark the subsystem enabled.
+
+    Runs at module load time, mirroring the old singleton pattern.
+    ``get_plugin_manager()`` guards on this flag, so it must be set before lifespan runs.
+    Plugin settings are only consulted when the subsystem is enabled, so invalid
+    plugin configuration never blocks startup while the feature is off.
+    """
+    if settings.plugins.enabled:
+        enable_plugins(True)
+        logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+
+_enable_plugin_subsystem_if_configured()
 
 # First-Party
 # First-Party - import module-level service singletons
