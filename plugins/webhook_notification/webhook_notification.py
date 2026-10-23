@@ -18,6 +18,7 @@ from enum import Enum
 import hashlib
 import hmac
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 # Third-Party
@@ -82,6 +83,7 @@ class AuthenticationConfig(BaseModel):
     hmac_secret: Optional[str] = None
     hmac_algorithm: str = "sha256"
     hmac_header: str = "X-Signature"
+    hmac_timestamp_header: str = "X-Timestamp"
 
 
 class WebhookConfig(BaseModel):
@@ -165,19 +167,24 @@ class WebhookNotificationPlugin(Plugin):
                 result = result.replace(placeholder, str(value))
         return result
 
-    def _create_hmac_signature(self, payload: str, secret: str, algorithm: str) -> str:
-        """Create HMAC signature for the payload.
+    def _create_hmac_signature(self, payload: str, secret: str, algorithm: str, timestamp: str) -> str:
+        """Create HMAC signature for the payload, bound to a timestamp.
+
+        The signed material is ``{timestamp}.{payload}`` so a captured
+        signature cannot be replayed at a different time.
 
         Args:
             payload: The payload to sign.
             secret: The secret key for HMAC.
             algorithm: The hash algorithm to use.
+            timestamp: Unix epoch seconds as a string, included in the signed material.
 
         Returns:
-            str: The HMAC signature string.
+            str: The HMAC signature string in the form ``{algorithm}={hex}``.
         """
         hash_func = getattr(hashlib, algorithm, hashlib.sha256)
-        signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hash_func).hexdigest()
+        signed_material = f"{timestamp}.{payload}".encode("utf-8")
+        signature = hmac.new(secret.encode("utf-8"), signed_material, hash_func).hexdigest()
         return f"{algorithm}={signature}"
 
     async def _send_webhook(
@@ -241,8 +248,10 @@ class WebhookNotificationPlugin(Plugin):
         elif auth_config.type == AuthenticationType.API_KEY and auth_config.api_key:
             headers[auth_config.api_key_header] = auth_config.api_key
         elif auth_config.type == AuthenticationType.HMAC and auth_config.hmac_secret:
-            signature = self._create_hmac_signature(payload_json, auth_config.hmac_secret, auth_config.hmac_algorithm)
+            timestamp = str(int(time.time()))
+            signature = self._create_hmac_signature(payload_json, auth_config.hmac_secret, auth_config.hmac_algorithm, timestamp)
             headers[auth_config.hmac_header] = signature
+            headers[auth_config.hmac_timestamp_header] = timestamp
 
         # Attempt delivery with retry logic
         for attempt in range(webhook.retry_attempts + 1):
