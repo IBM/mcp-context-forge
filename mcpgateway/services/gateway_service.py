@@ -6968,7 +6968,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
         if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
-            db.expire(gateway)
+            # Refresh only the gateway's catalog collections. Expiring the whole instance
+            # re-loads it and, with autoflush disabled (see db.SessionLocal), reverts rows
+            # that _sync_gateway_catalog modified in place: the refresh then reports the
+            # updates while the database keeps the old schema and description (#7273, and
+            # #7152 through the same helper). The stale rows are already deleted above.
+            db.expire(gateway, ["tools", "resources", "prompts"])
 
         if not skip_stale_cleanup:
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
