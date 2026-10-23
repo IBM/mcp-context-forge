@@ -8917,16 +8917,17 @@ CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
 CF_CONTROLPLANE_PULL_POLICY ?= never
 CF_COMPOSE_BUILD ?= true
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+CONFORMANCE_CLIENT_VERSIONS ?= 2025-11-25 2026-07-28
+CONFORMANCE_SERVER_ERAS ?= legacy modern
 
-# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
-# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+# help: conformance          - Run both MCP client versions against legacy and modern fixtures through the built-in dataplane
+# help: conformance-bless    - Update selected baselines after the complete conformance matrix finishes
 .PHONY: conformance conformance-bless
 
 # Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# Exercise only the 2025-11-25 client against a legacy fixture.
 conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
@@ -8943,8 +8944,9 @@ conformance conformance-bless:
 	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
 	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
 	"$(CF_INTEGRATION)" conformance run \
-		--client-version 2025-11-25 \
-		--server-era legacy \
+		$(foreach version,$(CONFORMANCE_CLIENT_VERSIONS),--client-version $(version)) \
+		$(foreach era,$(CONFORMANCE_SERVER_ERAS),--server-era $(era)) \
+		--lane fixture-direct \
 		--lane builtin \
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
 		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
