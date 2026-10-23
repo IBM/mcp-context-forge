@@ -7,6 +7,7 @@ Tests for WebhookNotificationPlugin.
 """
 
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -92,17 +93,71 @@ class TestWebhookNotificationPlugin:
 
     @pytest.mark.asyncio
     async def test_hmac_signature_creation(self):
-        """Test HMAC signature creation."""
+        """Test HMAC signature creation includes timestamp in signed material."""
         plugin = _create_plugin()
 
         payload = '{"test": "data"}'
         secret = "test-secret"  # pragma: allowlist secret
         algorithm = "sha256"
+        timestamp = "1700000000"
 
-        signature = plugin._create_hmac_signature(payload, secret, algorithm)
+        signature = plugin._create_hmac_signature(payload, secret, algorithm, timestamp)
 
         assert signature.startswith("sha256=")
         assert len(signature) > 10  # Basic length check
+
+        # A different timestamp must produce a different signature (timestamp is in the signed material).
+        signature_other_ts = plugin._create_hmac_signature(payload, secret, algorithm, "1700000001")
+        assert signature != signature_other_ts
+
+    @pytest.mark.asyncio
+    @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
+    async def test_webhook_delivery_with_hmac_auth_sends_timestamp_header(self, mock_client_class):
+        """Test HMAC auth sends both signature and timestamp headers."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        config = {
+            "webhooks": [
+                {
+                    "url": "https://hooks.example.com/webhook",
+                    "events": ["tool_success"],
+                    "authentication": {
+                        "type": "hmac",
+                        "hmac_secret": "test-secret",  # pragma: allowlist secret
+                        "hmac_algorithm": "sha256",
+                        "hmac_header": "X-Signature",
+                        "hmac_timestamp_header": "X-Timestamp",
+                    },
+                    "retry_attempts": 0,
+                    "enabled": True,
+                }
+            ]
+        }
+
+        plugin = _create_plugin(config)
+        plugin._client = mock_client
+
+        before = int(time.time())
+        context = _create_context()
+        webhook = plugin._cfg.webhooks[0]
+
+        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context)
+
+        after = int(time.time())
+
+        call_args = mock_client.post.call_args
+        headers = call_args[1]["headers"]
+
+        assert "X-Signature" in headers
+        assert headers["X-Signature"].startswith("sha256=")
+
+        assert "X-Timestamp" in headers
+        ts = int(headers["X-Timestamp"])
+        assert before <= ts <= after
 
     @pytest.mark.asyncio
     @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
