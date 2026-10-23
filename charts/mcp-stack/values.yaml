@@ -214,7 +214,7 @@ mcpContextForge:
     # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
     # Example:
     #   kubectl create secret generic my-gateway-tls-pass \
-    #     --from-literal=keyFilePassword=my-passphrase
+    #     --from-literal=keyFilePassword=my-passphrase  # pragma: allowlist secret
     keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
 
   ####################################################################
@@ -1004,7 +1004,7 @@ mcpContextForge:
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─
-    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL  # pragma: allowlist secret
     # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
 
     # - Bootstrap additional system roles -
@@ -1111,7 +1111,7 @@ postgres:
   credentials:                  # used only when existingSecret is blank
     database: postgresdb
     user: admin
-    password: test123           # CHANGE ME in production!
+    password: test123           # CHANGE ME in production!  # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1278,7 +1278,7 @@ redis:
     existingSecret: ""
     passwordKey: "REDIS_PASSWORD"
     #checkov:skip=CKV_SECRET_6:Redis example pass
-    password: "change-me-redis"      # CHANGE ME in production!
+    password: "change-me-redis"      # CHANGE ME in production!  # pragma: allowlist secret
   # Transport recommendation:
   # For production, prefer TLS (for example rediss:// via redis.external.url
   # or a managed Redis endpoint with TLS enabled).
@@ -1371,7 +1371,7 @@ pgadmin:
 
   env:
     email: admin@example.com
-    password: admin123           # CHANGE ME in production!
+    password: admin123           # CHANGE ME in production!  # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1467,7 +1467,7 @@ minio:
   credentials:
     rootUser: minioadmin
     #checkov:skip=CKV_SECRET_6:Example password
-    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!  # pragma: allowlist secret
 
   service:
     type: ClusterIP
@@ -1838,7 +1838,7 @@ monitoring:
     service:
       type: ClusterIP
       port: 3000
-    adminPassword: changeme
+    adminPassword: changeme  # pragma: allowlist secret
     allowSignUp: false
     persistence:
       enabled: true

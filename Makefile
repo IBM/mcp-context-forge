@@ -625,7 +625,7 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 	@echo ""
 	@echo "💡  To use this certificate:"
 	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
-	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"  # pragma: allowlist secret
 
 .PHONY: certs-remove-passphrase
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
@@ -1660,7 +1660,7 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	@echo ""
 	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100}"
 	@echo "   📧 Login email:    $${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}"
-	@echo "   🔐 Password:       $${LANGFUSE_INIT_USER_PASSWORD:-changeme}"
+	@echo "   🔐 Password:       $${LANGFUSE_INIT_USER_PASSWORD:-changeme}"  # pragma: allowlist secret
 	@echo "   🌐 Gateway:        http://localhost:$${NGINX_PORT:-8080}"
 	@echo ""
 	@echo "   OTEL traces from ContextForge → Langfuse (OTLP/HTTP)"
@@ -1747,8 +1747,8 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo ""
 	@echo "✅ Langfuse + monitoring stack started!"
 	@echo ""
-	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"
-	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"  # pragma: allowlist secret
+	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"  # pragma: allowlist secret
 	@echo "   🔥 Prometheus:     http://localhost:$${PROMETHEUS_PORT:-9090}"
 	@echo "   🧵 Tempo:          http://localhost:$${TEMPO_PORT:-3200}"
 	@echo "   🌐 Gateway:        http://localhost:$${NGINX_PORT:-8080}"
@@ -6932,7 +6932,7 @@ DEVPI_HOST := localhost
 DEVPI_PORT := 3141
 DEVPI_URL := http://$(DEVPI_HOST):$(DEVPI_PORT)
 DEVPI_USER := $(USER)
-DEVPI_PASS := dev123
+DEVPI_PASS := dev123  # pragma: allowlist secret
 DEVPI_INDEX := $(DEVPI_USER)/dev
 DEVPI_DATA_DIR := $(HOME)/.devpi
 DEVPI_PID := /tmp/devpi-server.pid
