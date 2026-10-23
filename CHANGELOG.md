@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- **`X-Upstream-Authorization` no longer overrides gateway-managed credentials** - The header is dropped, with a warning, for gateways with `auth_type` `oauth`, `bearer`, `basic`, or `authheaders`, and for REST tools and A2A agents with the same auth types. Previously any authenticated caller could replace the stored per-user upstream credential. Add `ENABLE_UPSTREAM_AUTHORIZATION_HEADER` (default `true`) to drop the header on every path.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

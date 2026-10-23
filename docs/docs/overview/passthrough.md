@@ -544,7 +544,7 @@ sequenceDiagram
 - ✅ **Check**: Did you restart the gateway after setting the flag?
 - ✅ **Check**: Are you seeing "Header passthrough is disabled" in debug logs?
 
-**Note**: `X-Upstream-Authorization` is always forwarded regardless of the `ENABLE_HEADER_PASSTHROUGH` flag. If only `X-Upstream-Authorization` is missing, check the transport-specific notes below.
+**Note**: `X-Upstream-Authorization` is renamed regardless of the `ENABLE_HEADER_PASSTHROUGH` flag, except for gateways with a gateway-managed credential (`oauth`, `bearer`, `basic`, `authheaders`) and when `ENABLE_UPSTREAM_AUTHORIZATION_HEADER=false`. If only `X-Upstream-Authorization` is missing, check the transport-specific notes below.
 
 **Other Causes**:
 

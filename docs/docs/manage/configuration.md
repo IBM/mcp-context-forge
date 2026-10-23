@@ -1401,6 +1401,7 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature           | `false`               | bool    |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers             | `false`               | bool    |
+| `ENABLE_UPSTREAM_AUTHORIZATION_HEADER` | Rename inbound `X-Upstream-Authorization` to `Authorization` for upstream. `false` drops the header on every path. Gateways with a gateway-managed credential always ignore it. | `true` | bool |
 | `ENABLE_SENSITIVE_HEADER_PASSTHROUGH` | Allow allowlisted sensitive headers to reach outbound A2A invocations. Tool pre-invoke plugin payloads still receive only non-sensitive headers. Requires `ENABLE_HEADER_PASSTHROUGH=true`. | `false` | bool |
 | `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through for gateways. A2A agents require an explicit `passthrough_headers` allowlist; an unset or empty A2A list blocks request-header forwarding. | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
 | `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds)  | `60`                  | int     |

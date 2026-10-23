@@ -3891,6 +3891,12 @@ Disallow: /
         "When enabled, whitelisted sensitive headers bypass router-level filtering.",
     )
 
+    enable_upstream_authorization_header: bool = Field(
+        default=True,
+        description="Rename the inbound X-Upstream-Authorization header to Authorization for upstream requests. "
+        "Set to false to drop the header on every path. Gateways with gateway-managed credentials always ignore the header.",
+    )
+
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)
 

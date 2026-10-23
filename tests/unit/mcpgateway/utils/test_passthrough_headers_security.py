@@ -1242,3 +1242,77 @@ class TestUpstreamAuthHeaderDenyForManagedGateways:
             )
 
         assert result.get("Authorization") == "Bearer user-token"
+
+
+class TestUpstreamAuthorizationHeaderSwitch:
+    """ENABLE_UPSTREAM_AUTHORIZATION_HEADER=false drops X-Upstream-Authorization on every path."""
+
+    def _settings(self, mock_settings, enabled):
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+        mock_settings.enable_overwrite_base_headers = False
+        mock_settings.enable_upstream_authorization_header = enabled
+
+    def test_cached_drops_header_when_disabled(self, caplog):
+        """Cached path: no rename when the switch is off, even for an unmanaged gateway."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            self._settings(mock_settings, False)
+            result = compute_passthrough_headers_cached({"x-upstream-authorization": "Bearer other"}, {}, allowed_headers=[], gateway_auth_type=None)
+
+        assert "Authorization" not in result
+        assert any("Dropped X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_renames_header_when_enabled(self):
+        """Cached path: rename still works for an unmanaged gateway when the switch is on."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            self._settings(mock_settings, True)
+            result = compute_passthrough_headers_cached({"x-upstream-authorization": "Bearer other"}, {}, allowed_headers=[], gateway_auth_type=None)
+
+        assert result.get("Authorization") == "Bearer other"
+
+    def test_db_path_drops_header_when_disabled(self):
+        """DB path: no rename when the switch is off."""
+        gateway = Mock()
+        gateway.auth_type = "none"
+        gateway.name = "gw"
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            self._settings(mock_settings, False)
+            result = get_passthrough_headers({"x-upstream-authorization": "Bearer other"}, {}, Mock(), gateway)
+
+        assert "Authorization" not in result
+
+    def test_loopback_extraction_drops_header_when_disabled(self):
+        """Loopback capture: the header is not stored for later /rpc calls when the switch is off."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import extract_headers_for_loopback
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            self._settings(mock_settings, False)
+            mock_settings.default_passthrough_headers = []
+            assert extract_headers_for_loopback({"X-Upstream-Authorization": "Bearer other"}) == {}
+
+    def test_loopback_extraction_keeps_header_when_enabled(self):
+        """Loopback capture: the header is stored when the switch is on."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import extract_headers_for_loopback
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            self._settings(mock_settings, True)
+            mock_settings.default_passthrough_headers = []
+            result = extract_headers_for_loopback({"X-Upstream-Authorization": "Bearer other"})
+
+        assert result == {"x-upstream-authorization": "Bearer other"}
+
+    def test_default_is_enabled(self):
+        """The setting defaults to true to keep the documented one-time-auth flow working."""
+        # First-Party
+        from mcpgateway.config import Settings
+
+        assert Settings.model_fields["enable_upstream_authorization_header"].default is True
