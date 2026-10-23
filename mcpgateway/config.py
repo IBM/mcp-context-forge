@@ -1393,14 +1393,12 @@ class Settings(BaseSettings):
         ),
     )
     plugin_manager_cache_ttl: int = Field(
-        default=0,
+        default=300,
         ge=0,
         description=(
             "TTL in seconds for per-context plugin manager cache entries. "
-            "0 (default) disables expiry so managers live for the worker lifetime and are refreshed "
-            "only via explicit invalidation signals (Redis pub/sub, binding changes). "
-            "Set to a positive integer only when you need periodic config refresh and "
-            "accept the per-TTL re-initialization cost for plugins such as the external OPA rules plugin."
+            "The TTL bounds staleness when a Redis invalidation message is missed. "
+            "0 disables expiry; managers then change only through explicit invalidation."
         ),
     )
 

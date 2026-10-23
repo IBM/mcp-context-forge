@@ -77,6 +77,7 @@ def _make_bare_factory(**attrs):
     factory = GatewayTenantPluginManagerFactory.__new__(GatewayTenantPluginManagerFactory)
     factory._managers = attrs.get("_managers", {})
     factory._inflight = attrs.get("_inflight", {})
+    factory._aliases = attrs.get("_aliases", {})
     factory._lock = attrs.get("_lock", asyncio.Lock())
     factory._cache_ttl = attrs.get("_cache_ttl", 30)
     factory._base_config = attrs.get("_base_config", MagicMock())
@@ -305,10 +306,10 @@ class TestTTLCacheExpiry:
             assert entry.is_expired(factory._cache_ttl)
 
     def test_cache_ttl_default(self):
-        """Default TTL is 0 (no expiry) — managers live for the worker lifetime."""
+        """Default TTL is 300 seconds."""
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
-        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 0
+        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 300
 
     def test_cache_ttl_zero_disables(self):
         """TTL of 0 short-circuits the expiry check so entries never auto-evict."""
@@ -1953,3 +1954,30 @@ class TestHMACSigningVerification:
         monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
         result = self._framework._verify_and_extract(signed)
         assert result == payload
+
+
+class TestListenerResyncOnSubscribe:
+    """Pub/sub does not replay, so the listener rebuilds managers after each subscribe."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_all_runs_after_subscribe(self, monkeypatch):
+        import mcpgateway.plugins as framework
+
+        order: list[str] = []
+        pubsub = MagicMock()
+        pubsub.subscribe = AsyncMock(side_effect=lambda *_: order.append("subscribe"))
+        pubsub.aclose = AsyncMock()
+
+        async def _stop_listening():
+            raise asyncio.CancelledError
+            yield  # pragma: no cover
+
+        pubsub.listen = _stop_listening
+        client = MagicMock()
+        client.pubsub.return_value = pubsub
+        monkeypatch.setattr(framework, "_redis", AsyncMock(return_value=client))
+        monkeypatch.setattr(framework, "invalidate_all_plugin_managers", AsyncMock(side_effect=lambda: order.append("invalidate_all")))
+
+        await framework._plugin_invalidation_listener()
+
+        assert order == ["subscribe", "invalidate_all"]

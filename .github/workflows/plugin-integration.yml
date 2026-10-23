@@ -90,6 +90,10 @@ jobs:
                       plugin_name: SecretsDetection
                       tests: tests/live_gateway/plugins/test_secrets_detection_e2e.py
                       enforcement: binding
+                    - name: plugin-manager-sharing
+                      plugin_name: SecretsDetection
+                      tests: tests/live_gateway/plugins/test_plugin_manager_sharing_e2e.py
+                      enforcement: binding
                     - name: encoded-exfil-detection
                       plugin_name: EncodedExfilDetector
                       tests: tests/live_gateway/plugins/test_encoded_exfil_detection_e2e.py
