@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_tool_preview_schema.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
