@@ -3155,6 +3155,16 @@ class Settings(BaseSettings):
     # large ``sampling/createMessage`` responses.
     mcp_body_peek_max_bytes: int = 4 * 1024 * 1024
 
+    # Hard cap (bytes) on inbound request bodies for the Python Streamable
+    # HTTP transport. Passed to the MCP SDK's
+    # StreamableHTTPSessionManager(max_request_body_size=...); larger
+    # requests are rejected with HTTP 413. Distinct from
+    # mcp_body_peek_max_bytes, which only bounds body-peek buffering and
+    # never rejects a request.
+    mcp_max_request_body_size_bytes: int = Field(
+        default=4 * 1024 * 1024, ge=1, description="Hard cap in bytes on inbound request bodies for the Python Streamable HTTP transport; larger requests are rejected with HTTP 413"
+    )
+
     # Development
     dev_mode: bool = False
     reload: bool = False

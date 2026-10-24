@@ -2870,6 +2870,139 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_manager_wrapper_passes_configured_max_request_body_size(monkeypatch):
+    """The transport passes the configured body-size limit to the SDK manager."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self, **kwargs):
+            self.config = kwargs
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        return DummySessionManager(**kwargs)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_max_request_body_size_bytes", 123456)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    wrapper = SessionManagerWrapper()
+
+    assert captured_config["max_request_body_size"] == 123456
+    await wrapper.initialize()
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_defaults_max_request_body_size_to_4_mib(monkeypatch):
+    """With the setting unset, the transport passes the 4 MiB SDK default."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self, **kwargs):
+            self.config = kwargs
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        return DummySessionManager(**kwargs)
+
+    monkeypatch.delattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_max_request_body_size_bytes", raising=False)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    wrapper = SessionManagerWrapper()
+
+    assert captured_config["max_request_body_size"] == 4194304
+    await wrapper.initialize()
+    await wrapper.shutdown()
+
+
+def _jsonrpc_body(size: int) -> bytes:
+    """Build a JSON-RPC initialize request whose body is exactly ``size`` bytes."""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "body-limit-test", "version": "0.0.0", "padding": ""},
+        },
+    }
+    encoded = json.dumps(payload).encode()
+    delta = size - len(encoded)
+    assert delta >= 0, f"base payload ({len(encoded)} bytes) exceeds target size {size}"
+    payload["params"]["clientInfo"]["padding"] = "x" * delta
+    return json.dumps(payload).encode()
+
+
+async def _post_status_to_session_manager(wrapper, body: bytes) -> int:
+    """POST ``body`` to the wrapper's real SDK session manager; return the status."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/mcp",
+        "raw_path": b"/mcp",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"host", b"testserver"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    await wrapper.session_manager.handle_request(scope, receive, send)
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    return start["status"]
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_rejects_bodies_over_configured_limit(monkeypatch):
+    """Bodies over the configured limit return 413; bodies under it are accepted."""
+    limit = 1024
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_max_request_body_size_bytes", limit)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    try:
+        over = _jsonrpc_body(limit + 1)
+        assert len(over) == limit + 1
+        assert await _post_status_to_session_manager(wrapper, over) == 413
+
+        under = _jsonrpc_body(limit - 1)
+        assert len(under) == limit - 1
+        assert await _post_status_to_session_manager(wrapper, under) != 413
+    finally:
+        await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     """Test handle_streamable_http sets server_id and calls handle_request."""
     # Standard

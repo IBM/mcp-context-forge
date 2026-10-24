@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable Python Streamable HTTP request body limit** ([#7261](https://github.com/IBM/mcp-context-forge/issues/7261)) - Added `MCP_MAX_REQUEST_BODY_SIZE_BYTES` (default `4194304`, 4 MiB) to set the hard inbound request-body limit for the Python Streamable HTTP transport. The value passes to the MCP SDK's `StreamableHTTPSessionManager(max_request_body_size=...)`; larger requests are rejected with HTTP 413. `MCP_BODY_PEEK_MAX_BYTES` remains a soft body-inspection threshold and does not change this limit.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
