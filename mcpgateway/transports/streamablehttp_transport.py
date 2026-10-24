@@ -5211,6 +5211,7 @@ class SessionManagerWrapper:
             event_store=event_store,
             json_response=settings.json_response_enabled,
             stateless=stateless,
+            max_request_body_size=settings.mcp_max_request_body_size_bytes,
         )
         # JSON mode answers in one body, so progress has no channel. Modern requests that ask for progress use this SSE manager instead.
         self.progress_session_manager: StreamableHTTPSessionManager | None = None
