@@ -24,13 +24,13 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, StringConstraints, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -2156,6 +2156,9 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+        server_id (Optional[str]): Optional virtual server ID for server-scoped tool resolution.
+                                   When provided, only tools attached to this server are considered.
+                                   Missing or null preserves global preview behavior.
 
     Examples:
         >>> ToolPreviewRequest().arguments
@@ -2169,6 +2172,7 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+    server_id: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]] = Field(None, description="Optional virtual server ID for server-scoped tool resolution")
 
     @field_validator("arguments", mode="before")
     @classmethod
