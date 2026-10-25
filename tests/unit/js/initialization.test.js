@@ -85,6 +85,8 @@ import {
 // ---------------------------------------------------------------------------
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
+  bindActorClientToggle: vi.fn(),
+  bindDiscoveryToggle: vi.fn(),
   handleAuthTypeChange: vi.fn(),
   handleAuthTypeSelection: vi.fn(),
   handleEditOAuthGrantTypeChange: vi.fn(),

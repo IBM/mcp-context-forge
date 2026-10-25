@@ -626,6 +626,20 @@ def _test_ssrf_defaults():
 
 
 @pytest.fixture(autouse=True)
+def reset_service_token_cache():
+    """Give each test a fresh process-wide gateway service-token cache.
+
+    ``GatewayService`` and the token-exchange actor resolver share one cache per
+    process, so cached discovery and actor tokens would otherwise leak between tests.
+    """
+    from mcpgateway.services import gateway_service_token_cache
+
+    gateway_service_token_cache._shared_cache = None
+    yield
+    gateway_service_token_cache._shared_cache = None
+
+
+@pytest.fixture(autouse=True)
 def clear_metrics_cache():
     """Clear the metrics cache before and after each test to ensure isolation.
 

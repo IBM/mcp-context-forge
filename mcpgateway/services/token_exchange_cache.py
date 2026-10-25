@@ -18,32 +18,18 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-class TokenExchangeCache:
-    """Stores exchanged tokens keyed by gateway, user, audience, and subject JWT.
+class _BearerTokenStore:
+    """Bearer-token storage keyed by an opaque string: Redis behind a circuit breaker, with a bounded in-memory LRU fallback.
 
-    Uses Redis when ``redis_url`` is provided and reachable; otherwise an
-    in-process bounded LRU dict.
-
-    Performance:
-      * P3 — a cache hit is a single Redis ``GET``: the serve-until deadline is
-        embedded in the stored value (``"<serve_until>:<token>"``), so no
-        separate ``TTL`` round-trip is needed.
-      * P2 — the skew window is clamped to half the token lifetime, so
-        short-lived tokens (``expires_in`` < ``skew``) are still served for
-        ~half their life instead of being instantly uncacheable.
-      * P4 — ``set_failure``/``is_failed`` provide a short negative cache so an
-        IdP outage does not trigger a retry storm.
-      * P1 — ``lock()`` returns a per-key ``asyncio.Lock`` for single-flight
-        exchange (per process; a distributed lock is Phase 2).
-
-    SECURITY (M1): cached values are bearer tokens, stored under a dedicated
-    ``token_exchange:`` namespace with TTL. Deployments that do not fully trust
-    Redis should treat this cache as in-boundary or enable at-rest encryption
-    (Phase 2). Never log a cached value.
+    Subclasses build the namespaced key. The stored value embeds the serve-until
+    deadline (``"<serve_until>:<token>"``), so a hit is a single Redis ``GET``.
+    Never log a stored value.
     """
 
+    _log_name = "TokenStore"
+
     def __init__(self, redis_url: Optional[str] = None, skew_seconds: int = 300, max_entries: int = 10000, redis_breaker_threshold: int = 3, redis_breaker_cooldown: int = 30) -> None:
-        """Initialize the cache.
+        """Initialize the store.
 
         Args:
             redis_url: Redis connection URL, or ``None`` to use the in-memory backend only.
@@ -55,7 +41,6 @@ class TokenExchangeCache:
         self._skew = skew_seconds
         self._max_entries = max_entries
         self._mem: "OrderedDict[str, Tuple[str, float]]" = OrderedDict()  # key -> (token, serve_until_epoch)
-        self._neg: "OrderedDict[str, float]" = OrderedDict()  # key -> neg_until_epoch
         self._locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()  # key -> asyncio.Lock (single-flight)
         self._redis = None
         # L5 circuit breaker: after N consecutive Redis errors, stop calling Redis for a
@@ -72,34 +57,8 @@ class TokenExchangeCache:
                 # health_check_interval + a bounded pool avoid stale conns / exhaustion under load (P6).
                 self._redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True, health_check_interval=30, max_connections=50)
             except Exception as e:  # pragma: no cover - defensive
-                logger.warning("TokenExchangeCache: Redis unavailable, using memory fallback: %s", e)
+                logger.warning("%s: Redis unavailable, using memory fallback: %s", self._log_name, e)
                 self._redis = None
-
-    @staticmethod
-    def _key(gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> str:
-        """Build a namespaced key for a gateway/user/audience/credential tuple.
-
-        Each component is hashed independently (rather than joined with a bare
-        ``:``) before being combined, so no attacker-controlled value (e.g. a
-        ``target_audience`` containing ``:``) can shift the component boundary
-        and collide with a different {gateway, user, audience} tuple — a hex
-        digest never contains the join delimiter, so the combination is
-        unambiguous by construction.
-
-        Args:
-            gateway_id: Identifier of the target gateway.
-            user_email: Email of the user the token was exchanged on behalf of.
-            audience: Target audience of the exchanged token.
-            subject_token: Inbound JWT used as the RFC 8693 subject token.
-
-        Returns:
-            A namespaced cache key string.
-        """
-        if not subject_token:
-            raise ValueError("Token exchange cache requires a subject token")
-        parts = (gateway_id or "", user_email or "", audience or "", subject_token)
-        hashed = ":".join(hashlib.sha256(part.encode("utf-8")).hexdigest() for part in parts)
-        return f"token_exchange:v2:{hashed}"
 
     def _redis_live(self) -> bool:
         """Return True if Redis should be used (configured and breaker not open). L5.
@@ -129,14 +88,15 @@ class TokenExchangeCache:
         if self._redis_fail_count == self._redis_breaker_threshold:
             self._redis_disabled_until = time.time() + self._redis_breaker_cooldown
             logger.warning(
-                "TokenExchangeCache: Redis disabled for %ss after %d consecutive errors (last op=%s): %s",
+                "%s: Redis disabled for %ss after %d consecutive errors (last op=%s): %s",
+                self._log_name,
                 self._redis_breaker_cooldown,
                 self._redis_fail_count,
                 op,
                 e,
             )
         else:
-            logger.debug("TokenExchangeCache redis %s failed (%d): %s", op, self._redis_fail_count, e)
+            logger.debug("%s redis %s failed (%d): %s", self._log_name, op, self._redis_fail_count, e)
 
     def _serve_window(self, expires_in: int) -> int:
         """Return seconds the token may be served, clamping skew to half lifetime (P2).
@@ -150,24 +110,20 @@ class TokenExchangeCache:
         effective_skew = min(self._skew, max(0, expires_in // 2))
         return max(int(expires_in) - effective_skew, 1)
 
-    def lock(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> "asyncio.Lock":
-        """Return the single-flight lock for this key, creating it on first use.
+    def _lock_for_key(self, key: str) -> "asyncio.Lock":
+        """Return the single-flight lock for ``key``, creating it on first use.
 
         The lock registry is bounded (G7): an unbounded dict of locks is the same
         memory-pressure DoS class as the token map. Idle (unlocked) locks are
         evicted oldest-first once capacity is exceeded; a held lock is skipped so
-        an in-flight exchange is never disturbed.
+        an in-flight request is never disturbed.
 
         Args:
-            gateway_id: Identifier of the target gateway.
-            user_email: Email of the user the token was exchanged on behalf of.
-            audience: Target audience of the exchanged token.
-            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            key: Namespaced cache key.
 
         Returns:
             The ``asyncio.Lock`` instance associated with this key.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -183,19 +139,15 @@ class TokenExchangeCache:
                     break
         return lock
 
-    async def get(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> Optional[str]:
-        """Return a cached token if present and still inside its serve window.
+    async def _get_key(self, key: str) -> Optional[str]:
+        """Return the token stored under ``key`` if it is still inside its serve window.
 
         Args:
-            gateway_id: Identifier of the target gateway.
-            user_email: Email of the user the token was exchanged on behalf of.
-            audience: Target audience of the exchanged token.
-            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            key: Namespaced cache key.
 
         Returns:
             The cached token string, or ``None`` on a miss, expiry, or malformed entry.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -221,18 +173,14 @@ class TokenExchangeCache:
             return None
         return token
 
-    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int, *, subject_token: str) -> None:
-        """Cache an exchanged token. Hard TTL is ``expires_in``; serve window clamps skew.
+    async def _set_key(self, key: str, token: str, expires_in: int) -> None:
+        """Store ``token`` under ``key``. Hard TTL is ``expires_in``; serve window clamps skew.
 
         Args:
-            gateway_id: Identifier of the target gateway.
-            user_email: Email of the user the token was exchanged on behalf of.
-            audience: Target audience of the exchanged token.
-            subject_token: Inbound JWT used as the RFC 8693 subject token.
-            token: The exchanged access token to cache.
+            key: Namespaced cache key.
+            token: The access token to cache.
             expires_in: Token lifetime in seconds as returned by the token endpoint.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         serve_window = self._serve_window(expires_in)
         serve_until = time.time() + serve_window
         if self._redis_live():
@@ -249,16 +197,12 @@ class TokenExchangeCache:
         while len(self._mem) > self._max_entries:
             self._mem.popitem(last=False)
 
-    async def invalidate(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> None:
-        """Remove a cached token, e.g. after an upstream 401.
+    async def _delete_key(self, key: str) -> None:
+        """Remove the token stored under ``key`` from Redis and memory.
 
         Args:
-            gateway_id: Identifier of the target gateway.
-            user_email: Email of the user the token was exchanged on behalf of.
-            audience: Target audience of the exchanged token.
-            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            key: Namespaced cache key.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -268,7 +212,139 @@ class TokenExchangeCache:
                 self._note_redis_failure("delete", e)  # L5
         self._mem.pop(key, None)
 
-    async def is_failed(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> bool:
+
+class TokenExchangeCache(_BearerTokenStore):
+    """Stores exchanged tokens keyed by gateway, user, audience, and subject JWT.
+
+    Uses Redis when ``redis_url`` is provided and reachable; otherwise an
+    in-process bounded LRU dict.
+
+    Performance:
+      * P3 — a cache hit is a single Redis ``GET``: the serve-until deadline is
+        embedded in the stored value (``"<serve_until>:<token>"``), so no
+        separate ``TTL`` round-trip is needed.
+      * P2 — the skew window is clamped to half the token lifetime, so
+        short-lived tokens (``expires_in`` < ``skew``) are still served for
+        ~half their life instead of being instantly uncacheable.
+      * P4 — ``set_failure``/``is_failed`` provide a short negative cache so an
+        IdP outage does not trigger a retry storm.
+      * P1 — ``lock()`` returns a per-key ``asyncio.Lock`` for single-flight
+        exchange (per process; a distributed lock is Phase 2).
+
+    SECURITY (M1): cached values are bearer tokens, stored under a dedicated
+    ``token_exchange:`` namespace with TTL. Deployments that do not fully trust
+    Redis should treat this cache as in-boundary or enable at-rest encryption
+    (Phase 2). Never log a cached value.
+    """
+
+    _log_name = "TokenExchangeCache"
+
+    def __init__(self, redis_url: Optional[str] = None, skew_seconds: int = 300, max_entries: int = 10000, redis_breaker_threshold: int = 3, redis_breaker_cooldown: int = 30) -> None:
+        """Initialize the cache.
+
+        Args:
+            redis_url: Redis connection URL, or ``None`` to use the in-memory backend only.
+            skew_seconds: Seconds before hard expiry to stop serving a cached token.
+            max_entries: Maximum number of entries kept in any in-memory store (LRU eviction).
+            redis_breaker_threshold: Consecutive Redis errors before the breaker opens.
+            redis_breaker_cooldown: Seconds Redis stays disabled once the breaker opens.
+        """
+        super().__init__(redis_url, skew_seconds, max_entries, redis_breaker_threshold, redis_breaker_cooldown)
+        self._neg: "OrderedDict[str, float]" = OrderedDict()  # key -> neg_until_epoch
+
+    @staticmethod
+    def _key(gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> str:
+        """Build a namespaced key for a gateway/user/audience/credential tuple.
+
+        Each component is hashed independently (rather than joined with a bare
+        ``:``) before being combined, so no attacker-controlled value (e.g. a
+        ``target_audience`` containing ``:``) can shift the component boundary
+        and collide with a different {gateway, user, audience} tuple — a hex
+        digest never contains the join delimiter, so the combination is
+        unambiguous by construction.
+
+        Args:
+            gateway_id: Identifier of the target gateway.
+            user_email: Email of the user the token was exchanged on behalf of.
+            audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode discriminator, for example ``actor:client_credentials``.
+                The empty default produces the impersonation key unchanged, so a mode
+                change misses earlier entries on every worker without invalidation.
+
+        Returns:
+            A namespaced cache key string.
+        """
+        if not subject_token:
+            raise ValueError("Token exchange cache requires a subject token")
+        parts: Tuple[str, ...] = (gateway_id or "", user_email or "", audience or "", subject_token)
+        if variant:
+            parts = (*parts, variant)
+        hashed = ":".join(hashlib.sha256(part.encode("utf-8")).hexdigest() for part in parts)
+        return f"token_exchange:v2:{hashed}"
+
+    def lock(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> "asyncio.Lock":
+        """Return the single-flight lock for this key, creating it on first use.
+
+        The lock registry is bounded (G7): an unbounded dict of locks is the same
+        memory-pressure DoS class as the token map. Idle (unlocked) locks are
+        evicted oldest-first once capacity is exceeded; a held lock is skipped so
+        an in-flight exchange is never disturbed.
+
+        Args:
+            gateway_id: Identifier of the target gateway.
+            user_email: Email of the user the token was exchanged on behalf of.
+            audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
+
+        Returns:
+            The ``asyncio.Lock`` instance associated with this key.
+        """
+        return self._lock_for_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
+
+    async def get(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> Optional[str]:
+        """Return a cached token if present and still inside its serve window.
+
+        Args:
+            gateway_id: Identifier of the target gateway.
+            user_email: Email of the user the token was exchanged on behalf of.
+            audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
+
+        Returns:
+            The cached token string, or ``None`` on a miss, expiry, or malformed entry.
+        """
+        return await self._get_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
+
+    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int, *, subject_token: str, variant: str = "") -> None:
+        """Cache an exchanged token. Hard TTL is ``expires_in``; serve window clamps skew.
+
+        Args:
+            gateway_id: Identifier of the target gateway.
+            user_email: Email of the user the token was exchanged on behalf of.
+            audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
+            token: The exchanged access token to cache.
+            expires_in: Token lifetime in seconds as returned by the token endpoint.
+        """
+        await self._set_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant), token, expires_in)
+
+    async def invalidate(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> None:
+        """Remove a cached token, e.g. after an upstream 401.
+
+        Args:
+            gateway_id: Identifier of the target gateway.
+            user_email: Email of the user the token was exchanged on behalf of.
+            audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
+        """
+        await self._delete_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
+
+    async def is_failed(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> bool:
         """Return True if a recent exchange failure is within its negative-cache TTL (P4).
 
         Args:
@@ -276,11 +352,12 @@ class TokenExchangeCache:
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
 
         Returns:
             True if a failure was recorded recently and the negative-cache TTL has not lapsed.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -297,7 +374,7 @@ class TokenExchangeCache:
             return False
         return True
 
-    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10, *, subject_token: str) -> None:
+    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10, *, subject_token: str, variant: str = "") -> None:
         """Record a short-lived exchange failure to short-circuit a retry storm (P4).
 
         Args:
@@ -306,8 +383,9 @@ class TokenExchangeCache:
             audience: Target audience of the exchanged token.
             ttl: Seconds the failure should be remembered.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:

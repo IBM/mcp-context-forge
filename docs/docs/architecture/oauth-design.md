@@ -205,6 +205,10 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 | `requested_token_type` | no | `urn:ietf:params:oauth:token-type:access_token` | The `requested_token_type` parameter sent to the AS. |
 | `client_id` / `client_secret` | yes | — | Client credentials used to authenticate the exchange request itself. `client_secret` is stored encrypted. |
 | `scopes` | no | — | Optional scopes requested for the exchanged token. |
+| `discovery` | no | — | Optional discovery credential for catalog discovery and health checks. See [Tool discovery for token-exchange gateways](#tool-discovery-for-token-exchange-gateways). |
+| `actor_token_source` | no | `none` | `none`, `client_credentials`, or `client_assertion`. Any value other than `none` turns on RFC 8693 delegation. See [Delegation (actor token)](#delegation-actor-token). |
+| `actor_token_type` | no | by source | The `actor_token_type` sent to the AS. Defaults to `urn:ietf:params:oauth:token-type:access_token` for `client_credentials` and `urn:ietf:params:oauth:token-type:jwt` for `client_assertion`. |
+| `actor` | no | — | Optional actor client for a `client_credentials` actor token: `client_id` (required in the object), `client_secret`, `token_url`, and `token_endpoint_auth_method`. Each present key overrides the parent value for the actor token request only. Accepted only with `actor_token_source` `client_credentials`. See [Actor client override](#actor-client-override). |
 
 ### Subject Token Sources
 
@@ -213,18 +217,63 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 
 ### Tool discovery for token-exchange gateways
 
-Registration (`POST /gateways`) intentionally skips the discovery probe for
-`grant_type: "token-exchange"` — there is no end-user JWT at registration
-time, so the gateway is persisted with an empty tool list. Two explicit,
-authenticated triggers populate it afterwards:
+A token-exchange gateway needs a credential to run `initialize`, `tools/list`,
+`resources/list`, and `prompts/list` upstream. Registration, update,
+reactivation, health checks, and scheduled auto-refresh run without an end
+user, so they have no subject token for an exchange. The optional `discovery`
+object supplies a service credential for these paths.
+
+#### With a discovery credential
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://as.example.com/oauth2/token",
+  "client_id": "contextforge",
+  "client_secret": "...",
+  "target_audience": "https://mcp.example.com",
+  "discovery": {
+    "grant_type": "client_credentials",
+    "scopes": ["mcp.discover"]
+  }
+}
+```
+
+`discovery.grant_type` accepts `client_credentials` only. The optional keys
+`token_url`, `client_id`, `client_secret`, `token_endpoint_auth_method`, and
+`scopes` override the parent values. Each unset key inherits from the parent
+`oauth_config`, and `private_key_jwt` settings are always inherited.
+`discovery.token_url` passes the same SSRF validation as the parent
+`token_url`. `discovery.client_secret` is encrypted at rest and masked in every
+read response. Only a platform admin can add, change, or remove `discovery`.
+
+With a discovery credential, ContextForge requests a client-credentials token
+and uses it for:
+
+- registration (`POST /gateways`), which then saves the discovered tools;
+- update re-initialization and reactivation, which reconcile the catalog against the upstream lists;
+- health checks, which probe the gateway and run scheduled auto-refresh;
+- `POST /gateways/{gateway_id}/tools/refresh` and the Admin UI `🔧 Fetch Tools`
+  button, which no longer exchange the caller's JWT.
+
+A failed discovery token request fails registration with a connection error,
+leaves the catalog unchanged on update, and marks the gateway unhealthy on a
+health check.
+
+#### Without a discovery credential
+
+Registration skips the discovery probe and saves the gateway with an empty
+tool list. Health checks skip the gateway and do not mark it unhealthy.
+Updates and reactivation keep the existing tools, resources, and prompts
+instead of pruning the catalog against the empty result. Two authenticated
+triggers populate the catalog:
 
 - **`POST /gateways/{gateway_id}/tools/refresh`** — the manual-refresh API.
-  For token-exchange gateways the caller's own inbound ContextForge JWT is
-  used as the RFC 8693 `subject_token` for a single discovery-time exchange;
-  the exchanged token (never the raw JWT) authenticates the MCP connection.
+  The caller's own inbound ContextForge JWT is used as the RFC 8693
+  `subject_token` for a single discovery-time exchange; the exchanged token
+  (never the raw JWT) authenticates the MCP connection.
 - **`POST /oauth/fetch-tools/{gateway_id}`** — the Admin UI `🔧 Fetch Tools`
-  button. For token-exchange gateways this delegates to the same
-  manual-refresh pipeline.
+  button. It delegates to the same manual-refresh pipeline.
 
 The subject token is resolved from the `Authorization: Bearer` header if one
 is present; the HttpOnly `jwt_token` session cookie is only consulted when no
@@ -235,11 +284,233 @@ than the one the bearer already authenticated the request as, so the request
 fails closed instead of silently swapping identities. Both routes are
 CSRF-protected for cookie-credentialed callers, and both fail closed: a caller
 without a structurally valid JWT gets an error — the raw credential is never
-forwarded upstream. Every exchange attempt (success or failure) is audited via
-the structured `token-exchange` event with the request's correlation id.
+forwarded upstream.
+
+`🔧 Fetch Tools` sends the `jwt_token` session cookie as the subject token.
+That cookie always holds a ContextForge-issued JWT, also after an SSO login.
+Without a discovery credential, the button therefore works only when the
+Authorization Server at `token_url` trusts the ContextForge JWT issuer. An
+external Authorization Server that trusts only its own tokens (for example IBM
+Security Verify) rejects the exchange. Configure a discovery credential, or
+call `POST /gateways/{gateway_id}/tools/refresh` with a bearer token that the
+Authorization Server accepts.
 
 There is no `🔐 Authorize` step for token-exchange gateways — no user
 consent flow exists, and the Admin UI hides that action for them.
+
+#### Invocation isolation
+
+The discovery token authorizes only `initialize`, the list methods, and health
+probes. Tool calls, resource reads, and prompt gets always use a token
+exchanged from the calling user's subject token. A request without a usable
+user JWT is rejected, and ContextForge never falls back to the discovery
+token. The invocation services (`ToolService`, `ResourceService`,
+`PromptService`) have no reference to the discovery credential.
+
+The catalog lists every tool the discovery identity can see, which can include
+tools that a given user cannot call. Visibility in ContextForge stays governed
+by the gateway's team and visibility settings. The upstream server enforces
+per-user authorization when the call arrives with the user's exchanged token.
+
+#### Caching
+
+Discovery tokens are cached per gateway in a store separate from the per-user
+exchanged-token cache, so a lookup in one store never returns a token from the
+other. The cache key includes a fingerprint of the effective discovery config,
+including the stored ciphertext of the secret. A config change on any worker
+therefore misses the old entry. Updating the gateway's `oauth_config` or
+deleting the gateway also discards the cached entries. A cached token is served
+until shortly before its `expires_in`, so health checks send at most one token
+request per token lifetime per worker. Registration does not cache, because the
+gateway row does not exist yet.
+
+#### Audit
+
+Every token request emits the structured `token-exchange` audit event with a
+`correlation_id`. The `purpose` field tells the two kinds apart:
+
+| `purpose` | Emitted for | `user_email` |
+|-----------|-------------|--------------|
+| `invocation` | A per-user exchange on a tool call, resource read, or manual refresh without a discovery credential | The calling user |
+| `discovery` | A discovery credential token request | `null` |
+
+A cache hit emits no event. No event contains an access token or a client
+secret.
+
+The `mode` field records the exchange semantics: `impersonation` for a gateway
+without delegation, and `delegation` when `actor_token_source` is
+`client_credentials` or `client_assertion`. Use it to confirm which exchanges
+carried an actor token, or to find delegation failures. No event contains a
+subject token, actor token, or exchanged token.
+
+### Delegation (actor token)
+
+By default, a token-exchange gateway requests an **impersonation** token: the
+exchange request carries only `subject_token`, and the issued token identifies
+the user alone. Set `actor_token_source` to request a **delegation** token
+instead (RFC 8693 §1.1). Each exchange request then also carries
+`actor_token` and `actor_token_type`. The actor token names ContextForge's own
+OAuth client as the acting party. An Authorization Server that supports
+delegation records it in the issued token's `act` claim (RFC 8693 §4.1), so the
+upstream MCP server can verify that ContextForge acted for the user.
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://as.example.com/oauth2/token",
+  "client_id": "contextforge",
+  "client_secret": "...",
+  "target_audience": "https://mcp.example.com",
+  "actor_token_source": "client_credentials"
+}
+```
+
+| `actor_token_source` | Actor token | Default `actor_token_type` | Caching |
+|----------------------|-------------|----------------------------|---------|
+| `none` (default) | None. The request matches earlier releases byte for byte. | — | — |
+| `client_credentials` | An access token from a `client_credentials` grant, made with the gateway's own `token_url`, `client_id`, and client authentication. No scopes are requested. | `urn:ietf:params:oauth:token-type:access_token` | Per gateway, for the token lifetime, in the service-token cache (`purpose="actor"`). One request serves every user. |
+| `client_assertion` | An RFC 7523 JWT signed with the gateway's `private_key`, with `iss` and `sub` equal to `client_id` and `aud` equal to `token_url`. | `urn:ietf:params:oauth:token-type:jwt` | Never cached. Each exchange signs a new JWT with a new `jti`, because an AS can reject a replayed `jti`. |
+
+`client_assertion` requires a usable `private_key` in the submitted or stored
+config, validated with the same rules as `private_key_jwt`. Only a platform
+admin can set, change, or remove the delegation keys, and both keys are
+rejected on any grant other than `token-exchange`.
+
+#### Sequence
+
+1. A user calls a tool, reads a resource, or runs a manual refresh with their JWT.
+2. ContextForge looks up the per-user exchanged-token cache. A hit skips the remaining steps.
+3. ContextForge gets the actor token: from the service-token cache or a new `client_credentials` request, or by signing a new assertion.
+4. ContextForge sends one exchange request with `subject_token` (the user's JWT), `actor_token`, and `actor_token_type`.
+5. The AS returns a token with an `act` claim. ContextForge caches it per user and forwards only that token upstream.
+
+The tool-call, resource-read, and manual-refresh paths all resolve the actor
+token through `resolve_actor_token()` in
+`mcpgateway/services/token_exchange_actor.py`. ContextForge does not parse or
+validate the returned `act` claim.
+
+#### Fail-closed behavior
+
+Delegation never falls back to impersonation:
+
+- If the actor token request or signing fails, ContextForge sends no exchange request. The tool call or resource read fails, and the per-user negative cache records the failure, so a retry inside the cooldown sends no request to the AS.
+- `OAuthManager.token_exchange()` refuses a delegation config that arrives without an actor token. A new call site that forgets the actor token therefore fails instead of impersonating.
+- If the AS rejects an exchange that carried a cached `client_credentials` actor token, ContextForge discards the cached actor token. The next exchange after the cooldown requests a new one.
+
+#### Cache behavior on a mode change
+
+The per-user exchanged-token cache key includes the exchange mode. A gateway
+without delegation keeps the earlier key. A delegation gateway adds
+`actor:<actor_token_source>` to the key. When an admin turns delegation on,
+off, or changes the source, every worker misses the entries cached under the
+earlier mode and runs a new exchange. No invalidation message is needed, and a
+cached impersonation token is never served after delegation is turned on.
+
+#### Secret handling
+
+`actor_token` is in `OAuthManager._SENSITIVE_TOKEN_KEYS`, and actor token
+values are redacted from every logged token request, response, and error. The
+delegation keys themselves are not secrets and are shown unmasked in gateway
+reads. Without an [`actor` override](#actor-client-override) they store no new
+credential: the actor uses the gateway's existing `client_secret` or
+`private_key`. `actor.client_secret` is encrypted and masked like `client_secret`.
+
+#### Authorization server support
+
+ContextForge cannot detect whether the AS honored `actor_token`. Check the
+issued token for an `act` claim during setup.
+
+| Authorization server | `actor_token` support | Notes |
+|----------------------|-----------------------|-------|
+| Keycloak 26.2 to 26.7 | No | Standard token exchange supports impersonation only. `tests/integration/test_oauth_token_exchange_keycloak.py` covers impersonation only. |
+| Keycloak with the `token-exchange-delegation` preview feature | Partial | Disabled by default. Accepts only `actor_token_type` `urn:ietf:params:oauth:token-type:access_token`, so use `client_credentials`. Requires a `may_act` claim in the subject token that names the actor. ContextForge JWTs carry no `may_act` claim, so `inbound_user_jwt` subject tokens are rejected. |
+| Other servers (Okta, Microsoft Entra ID, Auth0, Ping, and others) | Needs vendor verification | Confirm `actor_token` support, accepted `actor_token_type` values, and any `may_act` or client policy before you turn on delegation. |
+
+If the AS rejects `actor_token`, every exchange for the gateway fails. Set
+`actor_token_source` to `none` to restore impersonation at once.
+
+#### Actor client override
+
+Some authorization servers ignore the RFC 8693 `audience` parameter. They
+issue the exchanged token to the client that authenticates the exchange, so its
+`aud` is that client. On such a server, the gateway entry must authenticate as
+the upstream MCP server's own client. Without an override, the actor token then
+also comes from that client, and `act` never names ContextForge.
+
+The optional `actor` object separates the two clients. The exchange request
+still authenticates with the parent `client_id`. The `client_credentials`
+actor token request authenticates with the `actor` values instead:
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://tenant.verify.ibm.com/oauth2/token",
+  "client_id": "<mcp1 client ID>",
+  "client_secret": "...",
+  "target_audience": "<mcp1 client ID>",
+  "actor_token_source": "client_credentials",
+  "actor": {
+    "client_id": "<contextforge client ID>",
+    "client_secret": "..."
+  }
+}
+```
+
+| `actor` key | Effect |
+|-------------|--------|
+| `client_id` | Required. The client that requests the actor token. |
+| `client_secret` | Secret of the actor client. Encrypted at rest, masked on read. An update that submits the masked placeholder keeps the stored secret. |
+| `token_url` | Token endpoint for the actor token request only. Passes the same SSRF validation as `token_url`. Defaults to the parent `token_url`. |
+| `token_endpoint_auth_method` | Client authentication for the actor token request. Defaults to the parent method. A different method other than `private_key_jwt` drops the parent's signing key from the actor request. |
+
+- The actor token request carries no `scope`, `subject_token`, or `audience` parameter.
+- The actor token cache key includes the effective actor client. A change to `actor` never serves a token cached for the earlier actor client.
+- `actor` with `actor_token_source` `none` or `client_assertion` is rejected, and every grant other than `token-exchange` rejects it.
+- Only a platform admin can set, change, or remove `actor`.
+- Without `actor`, the actor token comes from the parent client, as before.
+
+Use one gateway entry per upstream MCP server. Each entry authenticates as
+that server's client and names the same ContextForge client in `actor`:
+
+| Gateway entry | `client_id` | `actor.client_id` | Exchanged token |
+|---------------|-------------|-------------------|-----------------|
+| mcp1 | mcp1 | contextforge | `aud=mcp1`, `act={client_id: contextforge}` |
+| mcp2 | mcp2 | contextforge | `aud=mcp2`, `act={client_id: contextforge}` |
+
+Each entry stores its own encrypted copy of the actor secret. To rotate the
+ContextForge client secret, update `actor.client_secret` on every entry.
+
+##### IBM Security Verify
+
+IBM Security Verify (ISV) ignores `audience`. It sets `aud` to the
+authenticating client plus that client's **Audiences** list. A manual test
+against an ISV tenant gave these results:
+
+| Question | Result |
+|----------|--------|
+| Does ISV honor `audience`? | No. `audience=mcp1`, an unlisted `audience`, and no `audience` return the same `aud`. |
+| Does ISV accept an actor token from another client? | Yes. Authenticated as mcp1 with a contextforge actor token, the result is `aud=[mcp1]`, `act={client_id: contextforge}`. |
+| Does ISV write `act` itself? | Yes. No custom `act` attribute rule is needed. |
+| Does ISV nest `act` on a second hop? | Yes. Authenticated as api1 with an mcp1 actor token, the result is `act={client_id: mcp1, act: {client_id: contextforge}}`. |
+| Does ISV reject an exchange with no actor token, or with the wrong actor? | Yes. `CSIAQ5242E` for a missing actor token, and `CSIAQ5201E` for an actor that `may_act` does not name. |
+
+ISV checks the `may_act` claim of the subject token against the actor token.
+`may_act` names the next actor. Configure it per client:
+
+| Client | Token it issues | `may_act` |
+|--------|-----------------|-----------|
+| The user's client (for example Claude Code) | User token | `{"client_id":"<contextforge client ID>"}` |
+| mcpN | Hop 1 token | `{"client_id":"<mcpN client ID>"}`, when mcpN exchanges again for its API |
+| apiN | Hop 2 token | none |
+
+Also configure these ISV settings:
+
+- Keep the **Audiences** list empty on every MCP and API client. ISV adds each entry to every token the client issues, so an entry can make a hop 1 token valid at the API.
+- Turn on **Require actor token** on each mcpN and apiN client.
+- Let each mcpN client accept subject tokens issued by the user's client.
+
+`infra/token-exchange-demo-isv-delegation` runs this setup end to end.
+`./demo.sh check-isv` runs both hops and the deny paths without the gateway.
 
 ### `subject_token_type`
 

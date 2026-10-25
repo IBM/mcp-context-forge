@@ -8,6 +8,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Token exchange delegation** ([#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - A `token-exchange` gateway can send an RFC 8693 `actor_token` with each exchange. Set `oauth_config.actor_token_source` to `client_credentials` or `client_assertion`. The default `none` keeps impersonation, and the request body does not change. `actor_token_type` overrides the default token type. The optional `oauth_config.actor` object names a separate actor client through `client_id`, `client_secret`, `token_url`, and `token_endpoint_auth_method`. Delegation fails closed: when the actor token is unavailable, the call fails and no impersonation request is sent. Deploy the release to every worker before you enable delegation, because an older worker ignores `actor_token_source` and impersonates.
+
+### Changed
+
+- **Token exchange audit events carry `purpose` and `mode`** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236), [#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - Each `token-exchange` audit event has a `purpose` key (`invocation` or `discovery`) and a `mode` key (`impersonation` or `delegation`). The log message changes from `token-exchange succeeded user=...` to `token-exchange succeeded purpose=... mode=... user=...`, and the failure message changes the same way. Update log-text alert rules that match the old prefix. Structured consumers of `extra["token_exchange"]` are not affected.
+
+### Breaking Changes
+
+- **Resource reads on token-exchange gateways fail closed** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236)) - `resources/read` on a `token-exchange` gateway now raises `ResourceError` when the request has no user JWT or the RFC 8693 exchange fails. Before, the read went upstream without an `Authorization` header. MCP clients and `GET /resources/{id}` callers now receive an error instead of an unauthenticated upstream response. Unauthenticated callers on deployments that set `MCP_REQUIRE_AUTH` to `false` and callers whose authorization server rejects the exchange are affected. Send an authenticated user JWT and verify the gateway's token-exchange configuration before upgrading.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

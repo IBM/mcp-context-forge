@@ -76,6 +76,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.token_exchange_actor import resolve_actor_token
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -2105,21 +2106,33 @@ class ResourceService(BaseService):
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Token exchange requires an authenticated user JWT")
-                                else:
-                                    try:
-                                        access_token = await self.oauth_manager.get_access_token(
-                                            gateway_oauth_config,
-                                            ca_certificate=gateway.ca_certificate,
-                                            client_cert=gateway.client_cert,
-                                            client_key=gateway.client_key,
-                                            subject_token=subject_token,
-                                        )
-                                        headers["Authorization"] = f"Bearer {access_token}"
-                                    except Exception as e:
-                                        logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
-                                        if span:
-                                            set_span_attribute(span, "health.status", "unhealthy")
-                                            set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+                                try:
+                                    # No negative cache here: an actor acquisition failure fails the read (fail closed).
+                                    actor_token, actor_token_type = await resolve_actor_token(
+                                        self.oauth_manager,
+                                        gateway_oauth_config,
+                                        gateway_id=gateway_id,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                    )
+                                    access_token = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                        subject_token=subject_token,
+                                        actor_token=actor_token,
+                                        actor_token_type=actor_token_type,
+                                    )
+                                except Exception as e:
+                                    logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
+                                    if span:
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+                                headers["Authorization"] = f"Bearer {access_token}"
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:

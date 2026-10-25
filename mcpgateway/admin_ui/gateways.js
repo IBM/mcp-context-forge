@@ -1,4 +1,11 @@
-import { getAuthHeaders, loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import {
+  getAuthHeaders,
+  loadAuthHeaders,
+  toggleActorClientFields,
+  toggleDiscoveryFields,
+  toggleTokenExchangeFields,
+  updateAuthHeadersJSON,
+} from "./auth.js";
 import { MASKED_AUTH_VALUE } from "./constants.js";
 import { closeModal, openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
@@ -22,6 +29,7 @@ import {
   fetchWithTimeout,
   getCurrentTeamId,
   handleFetchError,
+  isAdminUser,
   isInactiveChecked,
   makeCopyIdButton,
   safeGetElement,
@@ -239,6 +247,163 @@ export const viewGateway = async function (gatewayId) {
 /**
  * SECURE: Edit Gateway function
  */
+const TOKEN_EXCHANGE_EDIT_FIELDS = {
+  "oauth-target-audience-gw-edit": "target_audience",
+  "oauth-token-endpoint-auth-method-gw-edit": "token_endpoint_auth_method",
+  "oauth-subject-token-type-gw-edit": "subject_token_type",
+  "oauth-requested-token-type-gw-edit": "requested_token_type",
+  "oauth-subject-token-source-gw-edit": "subject_token_source",
+  "oauth-actor-token-source-gw-edit": "actor_token_source",
+  "oauth-actor-token-type-gw-edit": "actor_token_type",
+};
+
+const TOKEN_EXCHANGE_EDIT_DEFAULTS = { actor_token_source: "none" };
+
+/**
+ * Fill the edit form's token-exchange field group from a stored oauth_config.
+ * Non-token-exchange configs clear the group so stale values are not submitted.
+ * @param {object} config - Masked oauth_config from the gateway API
+ */
+export function populateTokenExchangeEditFields(config) {
+  const isTokenExchange = config.grant_type === "token-exchange";
+  setActorClientAssertionAvailable(isTokenExchange && Boolean(config.private_key));
+  Object.entries(TOKEN_EXCHANGE_EDIT_FIELDS).forEach(([id, key]) => {
+    const field = safeGetElement(id, true);
+    if (!field) {
+      return;
+    }
+    const value = isTokenExchange
+      ? config[key] || TOKEN_EXCHANGE_EDIT_DEFAULTS[key] || ""
+      : "";
+    if (field.tagName === "SELECT" && value) {
+      const option = Array.from(field.options).find((o) => o.value === value);
+      if (option) {
+        // A stored API-only value (for example private_key_jwt) must stay selectable.
+        option.hidden = false;
+        option.disabled = false;
+      }
+    }
+    field.value = value;
+  });
+  toggleTokenExchangeFields("gw-edit", config.grant_type || "");
+  populateDiscoveryEditFields(isTokenExchange ? config.discovery : null);
+  populateActorEditFields(
+    isTokenExchange ? config.actor : null,
+    isTokenExchange ? config.actor_token_source || "none" : "none",
+  );
+}
+
+/**
+ * Enable the edit form's client_assertion actor source only when a private key is stored.
+ * Key upload is API-only, so the option stays disabled without one.
+ * @param {boolean} available - Whether the stored oauth_config has a private key
+ */
+export function setActorClientAssertionAvailable(available) {
+  const select = safeGetElement("oauth-actor-token-source-gw-edit", true);
+  const option = select
+    ? Array.from(select.options).find((o) => o.value === "client_assertion")
+    : null;
+  if (option) {
+    option.disabled = !available;
+  }
+}
+
+const DISCOVERY_EDIT_FIELDS = {
+  "oauth-discovery-token-url-gw-edit": "token_url",
+  "oauth-discovery-client-id-gw-edit": "client_id",
+};
+
+/**
+ * Fill the edit form's discovery credential fields from a stored discovery object.
+ * A stored secret shows the masked placeholder, so a save keeps it.
+ * @param {object|null} discovery - Masked oauth_config.discovery, or null
+ */
+export function populateDiscoveryEditFields(discovery) {
+  const enabled = Boolean(discovery && typeof discovery === "object");
+  const checkbox = safeGetElement("oauth-discovery-enabled-gw-edit", true);
+  if (checkbox) {
+    checkbox.checked = enabled;
+  }
+  const scopes = safeGetElement("oauth-discovery-scopes-gw-edit", true);
+  if (scopes) {
+    scopes.value =
+      enabled && Array.isArray(discovery.scopes)
+        ? discovery.scopes.join(" ")
+        : "";
+  }
+  Object.entries(DISCOVERY_EDIT_FIELDS).forEach(([id, key]) => {
+    const field = safeGetElement(id, true);
+    if (field) {
+      field.value = enabled ? discovery[key] || "" : "";
+    }
+  });
+  const secret = safeGetElement("oauth-discovery-client-secret-gw-edit", true);
+  if (secret) {
+    secret.value = enabled && discovery.client_secret ? MASKED_AUTH_VALUE : "";
+  }
+  toggleDiscoveryFields("gw-edit", enabled);
+}
+
+const ACTOR_EDIT_FIELDS = {
+  "oauth-actor-client-id-gw-edit": "client_id",
+  "oauth-actor-token-url-gw-edit": "token_url",
+  "oauth-actor-token-endpoint-auth-method-gw-edit":
+    "token_endpoint_auth_method",
+};
+
+/**
+ * Fill the edit form's actor client fields from a stored actor object.
+ * A stored secret shows the masked placeholder, so a save keeps it.
+ * @param {object|null} actor - Masked oauth_config.actor, or null
+ * @param {string} source - Stored actor token source
+ */
+export function populateActorEditFields(actor, source) {
+  const present = Boolean(actor && typeof actor === "object");
+  Object.entries(ACTOR_EDIT_FIELDS).forEach(([id, key]) => {
+    const field = safeGetElement(id, true);
+    if (field) {
+      field.value = present ? actor[key] || "" : "";
+    }
+  });
+  const secret = safeGetElement("oauth-actor-client-secret-gw-edit", true);
+  if (secret) {
+    secret.value = present && actor.client_secret ? MASKED_AUTH_VALUE : "";
+  }
+  toggleActorClientFields("gw-edit", source);
+}
+
+/**
+ * A non-admin cannot render the token-exchange option, so the grant select
+ * would fall back to another grant and a save would rewrite the config.
+ * Show the stored grant read-only and disable the OAuth inputs instead; the
+ * server-side platform-admin check stays authoritative.
+ * @param {boolean} isTokenExchange - Whether the stored grant is token-exchange
+ */
+export function lockTokenExchangeEditForNonAdmin(isTokenExchange) {
+  const oauthSection = safeGetElement("auth-oauth-fields-gw-edit", true);
+  if (!oauthSection) {
+    return;
+  }
+  const locked = isTokenExchange && !isAdminUser();
+  oauthSection
+    .querySelectorAll("input, select, textarea")
+    .forEach((field) => {
+      field.disabled = locked;
+    });
+  let notice = safeGetElement("oauth-token-exchange-readonly-gw-edit", true);
+  if (locked && !notice) {
+    notice = document.createElement("p");
+    notice.id = "oauth-token-exchange-readonly-gw-edit";
+    notice.className = "text-sm text-gray-500";
+    notice.textContent =
+      "Grant type: token-exchange. Only a platform admin can change these OAuth settings.";
+    oauthSection.prepend(notice);
+  }
+  if (notice) {
+    notice.style.display = locked ? "block" : "none";
+  }
+}
+
 export const editGateway = async function (gatewayId) {
   try {
     console.log(`Editing gateway ID: ${gatewayId}`);
@@ -408,6 +573,10 @@ export const editGateway = async function (gatewayId) {
       "oauth-auth-code-fields-gw-edit"
     );
 
+    // Reset token-exchange state left over from a previously edited gateway
+    populateTokenExchangeEditFields({});
+    lockTokenExchangeEditForNonAdmin(false);
+
     // Hide all auth sections first
     if (authBasicSection) {
       authBasicSection.style.display = "none";
@@ -502,6 +671,7 @@ export const editGateway = async function (gatewayId) {
           if (oauthIssuerField) {
             oauthIssuerField.value = config.issuer || "";
           }
+          const isTokenExchange = config.grant_type === "token-exchange";
           if (oauthGrantTypeField) {
             oauthGrantTypeField.value = config.grant_type || "";
             // Show/hide authorization code fields based on grant type
@@ -514,8 +684,12 @@ export const editGateway = async function (gatewayId) {
             oauthClientIdField.value = config.client_id || "";
           }
           if (oauthClientSecretField) {
-            oauthClientSecretField.value = ""; // Don't populate secret for security
+            // Token-exchange edits keep the stored secret when the placeholder is submitted.
+            oauthClientSecretField.value =
+              isTokenExchange && config.client_secret ? MASKED_AUTH_VALUE : "";
           }
+          populateTokenExchangeEditFields(config);
+          lockTokenExchangeEditForNonAdmin(isTokenExchange);
           if (oauthTokenUrlField) {
             oauthTokenUrlField.value = config.token_url || "";
           }

@@ -1,4 +1,6 @@
 import {
+  bindActorClientToggle,
+  bindDiscoveryToggle,
   handleAuthTypeChange,
   handleAuthTypeSelection,
   handleEditOAuthGrantTypeChange,
@@ -474,6 +476,11 @@ export const setupFormHandlers = function () {
     }
   });
   // Checkpoint Ended
+
+  bindDiscoveryToggle("gw");
+  bindDiscoveryToggle("gw-edit");
+  bindActorClientToggle("gw");
+  bindActorClientToggle("gw-edit");
 
   // Register form listeners using helper function
   registerFormListeners("add-tool-form", handleToolFormSubmit, true);

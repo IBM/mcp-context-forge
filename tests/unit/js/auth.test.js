@@ -18,6 +18,11 @@ import {
   handleAuthTypeChange,
   handleOAuthGrantTypeChange,
   handleEditOAuthGrantTypeChange,
+  toggleTokenExchangeFields,
+  toggleDiscoveryFields,
+  bindDiscoveryToggle,
+  toggleActorClientFields,
+  bindActorClientToggle,
 } from "../../../mcpgateway/admin_ui/auth.js";
 import { showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils.js";
 
@@ -422,6 +427,51 @@ describe("fetchToolsForGateway", () => {
     window.ROOT_PATH = "";
     await fetchToolsForGateway("nonexistent", "Test");
     expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  test("resolves the token-exchange row button and shows loading then success", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = '<button id="fetch-tools-te-gw2">Fetch Tools</button>';
+
+    let resolveFetch;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, reload: vi.fn() },
+      writable: true,
+      configurable: true,
+    });
+
+    const pending = fetchToolsForGateway("gw2", "TE Gateway");
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    const button = document.getElementById("fetch-tools-te-gw2");
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Fetching");
+
+    resolveFetch({ ok: true, json: () => Promise.resolve({ success: true, message: "ok" }) });
+    await pending;
+
+    expect(fetchSpy).toHaveBeenCalledWith("/oauth/fetch-tools/gw2", expect.objectContaining({ method: "POST" }));
+    expect(button.textContent).toContain("Tools Fetched");
+  });
+
+  test("shows the error on the token-exchange row button", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = '<button id="fetch-tools-te-gw2">Fetch Tools</button>';
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ detail: "Token exchange failed" }),
+    });
+
+    await fetchToolsForGateway("gw2", "TE Gateway");
+
+    const button = document.getElementById("fetch-tools-te-gw2");
+    expect(button.textContent).toContain("Retry");
+    expect(button.disabled).toBe(false);
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Token exchange failed"));
   });
 });
 
@@ -1091,5 +1141,259 @@ describe("handleOAuthGrantTypeChange - a2a prefix", () => {
 
     expect(document.getElementById("oauth-username-field-a2a").style.display).toBe("block");
     expect(document.getElementById("oauth-password-field-a2a").style.display).toBe("block");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// token-exchange grant
+// ---------------------------------------------------------------------------
+describe("token-exchange grant fields", () => {
+  test("add form shows the group, hides auth-code fields, and applies defaults", () => {
+    document.body.innerHTML = `
+      <form>
+        <input name="oauth_token_url" />
+        <div id="oauth-token-exchange-fields-gw" style="display:none">
+          <input id="oauth-target-audience-gw" />
+          <select id="oauth-token-endpoint-auth-method-gw">
+            <option value=""></option>
+            <option value="client_secret_post">client_secret_post</option>
+          </select>
+          <input id="oauth-subject-token-type-gw" />
+          <input id="oauth-requested-token-type-gw" />
+          <select id="oauth-subject-token-source-gw">
+            <option value=""></option>
+            <option value="inbound_user_jwt">inbound_user_jwt</option>
+          </select>
+        </div>
+      </form>
+      <div id="oauth-auth-code-fields-gw" style="display:block"><input type="url" /></div>
+      <div id="oauth-username-field-gw" style="display:none"></div>
+      <div id="oauth-password-field-gw" style="display:none"></div>
+    `;
+
+    handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-gw", value: "token-exchange" });
+
+    expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("block");
+    expect(document.getElementById("oauth-auth-code-fields-gw").style.display).toBe("none");
+    expect(document.getElementById("oauth-target-audience-gw").required).toBe(true);
+    expect(document.querySelector('input[name="oauth_token_url"]').required).toBe(true);
+    expect(document.getElementById("oauth-token-endpoint-auth-method-gw").value).toBe("client_secret_post");
+    expect(document.getElementById("oauth-subject-token-type-gw").value).toBe("urn:ietf:params:oauth:token-type:jwt");
+    expect(document.getElementById("oauth-requested-token-type-gw").value).toBe("urn:ietf:params:oauth:token-type:access_token");
+    expect(document.getElementById("oauth-subject-token-source-gw").value).toBe("inbound_user_jwt");
+  });
+
+  test("switching away hides the group and drops required flags", () => {
+    document.body.innerHTML = `
+      <form>
+        <input name="oauth_token_url" />
+        <div id="oauth-token-exchange-fields-gw" style="display:none">
+          <input id="oauth-target-audience-gw" />
+          <select id="oauth-token-endpoint-auth-method-gw">
+            <option value=""></option>
+            <option value="client_secret_post">client_secret_post</option>
+          </select>
+          <input id="oauth-subject-token-type-gw" />
+          <input id="oauth-requested-token-type-gw" />
+          <select id="oauth-subject-token-source-gw">
+            <option value=""></option>
+            <option value="inbound_user_jwt">inbound_user_jwt</option>
+          </select>
+        </div>
+      </form>
+      <div id="oauth-auth-code-fields-gw" style="display:block"><input type="url" /></div>
+      <div id="oauth-username-field-gw" style="display:none"></div>
+      <div id="oauth-password-field-gw" style="display:none"></div>
+    `;
+    handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-gw", value: "token-exchange" });
+
+    handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-gw", value: "client_credentials" });
+
+    expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("none");
+    expect(document.getElementById("oauth-target-audience-gw").required).toBe(false);
+    expect(document.querySelector('input[name="oauth_token_url"]').required).toBe(false);
+  });
+
+  test("edit form toggles the gw-edit group", () => {
+    document.body.innerHTML = `
+      <form>
+        <input name="oauth_token_url" />
+        <div id="oauth-token-exchange-fields-gw-edit" style="display:none">
+          <input id="oauth-target-audience-gw-edit" />
+          <select id="oauth-token-endpoint-auth-method-gw-edit">
+            <option value=""></option>
+            <option value="client_secret_post">client_secret_post</option>
+          </select>
+          <input id="oauth-subject-token-type-gw-edit" />
+          <input id="oauth-requested-token-type-gw-edit" />
+          <select id="oauth-subject-token-source-gw-edit">
+            <option value=""></option>
+            <option value="inbound_user_jwt">inbound_user_jwt</option>
+          </select>
+        </div>
+      </form>
+      <div id="oauth-auth-code-fields-gw-edit" style="display:block"><input type="url" /></div>
+      <div id="oauth-username-field-gw-edit" style="display:none"></div>
+      <div id="oauth-password-field-gw-edit" style="display:none"></div>
+    `;
+
+    handleEditOAuthGrantTypeChange.call({ id: "oauth-grant-type-gw-edit", value: "token-exchange" });
+
+    expect(document.getElementById("oauth-token-exchange-fields-gw-edit").style.display).toBe("block");
+    expect(document.getElementById("oauth-auth-code-fields-gw-edit").style.display).toBe("none");
+  });
+
+  test("defaults never overwrite a populated value", () => {
+    document.body.innerHTML = `
+      <form>
+        <input name="oauth_token_url" />
+        <div id="oauth-token-exchange-fields-gw-edit" style="display:none">
+          <input id="oauth-target-audience-gw-edit" />
+          <select id="oauth-token-endpoint-auth-method-gw-edit">
+            <option value=""></option>
+            <option value="client_secret_post">client_secret_post</option>
+          </select>
+          <input id="oauth-subject-token-type-gw-edit" />
+          <input id="oauth-requested-token-type-gw-edit" />
+          <select id="oauth-subject-token-source-gw-edit">
+            <option value=""></option>
+            <option value="inbound_user_jwt">inbound_user_jwt</option>
+          </select>
+        </div>
+      </form>
+      <div id="oauth-auth-code-fields-gw-edit" style="display:block"><input type="url" /></div>
+      <div id="oauth-username-field-gw-edit" style="display:none"></div>
+      <div id="oauth-password-field-gw-edit" style="display:none"></div>
+    `;
+    document.getElementById("oauth-subject-token-type-gw-edit").value = "urn:custom";
+
+    toggleTokenExchangeFields("gw-edit", "token-exchange");
+
+    expect(document.getElementById("oauth-subject-token-type-gw-edit").value).toBe("urn:custom");
+  });
+
+  test("is a no-op when the group is not rendered (non-admin)", () => {
+    document.body.innerHTML = `<div id="oauth-auth-code-fields-gw" style="display:block"></div>`;
+    expect(() => toggleTokenExchangeFields("gw", "token-exchange")).not.toThrow();
+  });
+
+  test("A2A grant changes never touch the gateway group", () => {
+    document.body.innerHTML = `
+      <form>
+        <input name="oauth_token_url" />
+        <div id="oauth-token-exchange-fields-gw" style="display:none">
+          <input id="oauth-target-audience-gw" />
+          <select id="oauth-token-endpoint-auth-method-gw">
+            <option value=""></option>
+            <option value="client_secret_post">client_secret_post</option>
+          </select>
+          <input id="oauth-subject-token-type-gw" />
+          <input id="oauth-requested-token-type-gw" />
+          <select id="oauth-subject-token-source-gw">
+            <option value=""></option>
+            <option value="inbound_user_jwt">inbound_user_jwt</option>
+          </select>
+        </div>
+      </form>
+      <div id="oauth-auth-code-fields-gw" style="display:block"><input type="url" /></div>
+      <div id="oauth-username-field-gw" style="display:none"></div>
+      <div id="oauth-password-field-gw" style="display:none"></div>
+    `;
+
+    handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-a2a", value: "token-exchange" });
+
+    expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("none");
+  });
+});
+
+describe("token-exchange actor client fields", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function render(prefix) {
+    document.body.innerHTML = `
+      <select id="oauth-actor-token-source-${prefix}">
+        <option value="none">none</option>
+        <option value="client_credentials">client_credentials</option>
+        <option value="client_assertion">client_assertion</option>
+      </select>
+      <div id="oauth-actor-client-fields-${prefix}" style="display:none"></div>
+    `;
+  }
+
+  test.each(["gw", "gw-edit"])("toggleActorClientFields shows the %s group only for client_credentials", (prefix) => {
+    render(prefix);
+    const group = document.getElementById(`oauth-actor-client-fields-${prefix}`);
+
+    toggleActorClientFields(prefix, "client_credentials");
+    expect(group.style.display).toBe("block");
+    toggleActorClientFields(prefix, "client_assertion");
+    expect(group.style.display).toBe("none");
+    toggleActorClientFields(prefix, "none");
+    expect(group.style.display).toBe("none");
+  });
+
+  test("bindActorClientToggle follows the source select", () => {
+    render("gw");
+    bindActorClientToggle("gw");
+    const select = document.getElementById("oauth-actor-token-source-gw");
+    const group = document.getElementById("oauth-actor-client-fields-gw");
+
+    select.value = "client_credentials";
+    select.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("block");
+
+    select.value = "none";
+    select.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("none");
+  });
+
+  test("is a no-op when the group is not rendered (non-admin)", () => {
+    expect(() => toggleActorClientFields("gw", "client_credentials")).not.toThrow();
+    expect(() => bindActorClientToggle("gw")).not.toThrow();
+  });
+});
+
+describe("token-exchange discovery credential fields", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function render(prefix) {
+    document.body.innerHTML = `
+      <input type="checkbox" id="oauth-discovery-enabled-${prefix}" />
+      <div id="oauth-discovery-fields-${prefix}" style="display:none"></div>
+    `;
+  }
+
+  test.each(["gw", "gw-edit"])("toggleDiscoveryFields shows and hides the %s group", (prefix) => {
+    render(prefix);
+    const group = document.getElementById(`oauth-discovery-fields-${prefix}`);
+
+    toggleDiscoveryFields(prefix, true);
+    expect(group.style.display).toBe("block");
+    toggleDiscoveryFields(prefix, false);
+    expect(group.style.display).toBe("none");
+  });
+
+  test("bindDiscoveryToggle follows the checkbox", () => {
+    render("gw");
+    bindDiscoveryToggle("gw");
+    const checkbox = document.getElementById("oauth-discovery-enabled-gw");
+    const group = document.getElementById("oauth-discovery-fields-gw");
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("block");
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("none");
+  });
+
+  test("is a no-op when the group is not rendered (non-admin)", () => {
+    expect(() => toggleDiscoveryFields("gw", true)).not.toThrow();
+    expect(() => bindDiscoveryToggle("gw")).not.toThrow();
   });
 });
