@@ -132,6 +132,16 @@ class GatewayServiceTokenCache(_BearerTokenStore):
         """
         await self._set_key(self._key(purpose, gateway_id, fingerprint), token, expires_in)
 
+    async def delete(self, purpose: str, gateway_id: str, fingerprint: str) -> None:
+        """Remove one cached service token by its exact key, locally and in Redis.
+
+        Args:
+            purpose: Token purpose.
+            gateway_id: Gateway identifier.
+            fingerprint: Config fingerprint.
+        """
+        await self._delete_key(self._key(purpose, gateway_id, fingerprint))
+
     async def invalidate(self, gateway_id: str, purpose: Optional[str] = None) -> None:
         """Remove cached service tokens of a gateway, for every fingerprint.
 

@@ -24,7 +24,7 @@ from mcpgateway.services import gateway_service_token_cache
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, OAuthTokenExchangeError
 from mcpgateway.services.token_exchange_actor import build_actor_oauth_config, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 
@@ -301,6 +301,44 @@ class TestResolveActorToken:
         assert await service_cache.get("discovery", "gw", "fp") == "discovery-tok"
         await resolve_actor_token(manager, cfg, gateway_id="gw")
         assert manager.get_client_credentials_token_response.await_count == 2
+
+    async def test_invalidate_deletes_exact_key_without_scan(self, service_cache, monkeypatch):
+        """Actor eviction deletes the one deterministic key and never scans the keyspace."""
+        cfg = _te_config(actor_token_source="client_credentials")
+        await resolve_actor_token(_cc_manager(return_value={"access_token": "actor-tok", "expires_in": 600}), cfg, gateway_id="gw")
+        scan = AsyncMock()
+        monkeypatch.setattr(service_cache, "invalidate", scan)
+
+        await invalidate_actor_token("gw", cfg, OAuthTokenExchangeError("x", status_code=401))
+
+        scan.assert_not_awaited()
+        assert service_cache._mem == {}
+
+    async def test_invalidate_keeps_token_for_non_actor_failure(self, service_cache):
+        cfg = _te_config(actor_token_source="client_credentials")
+        await resolve_actor_token(_cc_manager(return_value={"access_token": "actor-tok", "expires_in": 600}), cfg, gateway_id="gw")
+
+        await invalidate_actor_token("gw", cfg, OAuthTokenExchangeError("denied", status_code=400, error_code="invalid_grant"))
+        await invalidate_actor_token("gw", cfg, OAuthTokenExchangeError("actor down", stage="actor", status_code=401))
+
+        assert len(service_cache._mem) == 1
+
+    async def test_actor_failures_carry_actor_stage(self, service_cache):
+        manager = _cc_manager(side_effect=RuntimeError("as down"))
+        with pytest.raises(OAuthTokenExchangeError) as excinfo:
+            await resolve_actor_token(manager, _te_config(actor_token_source="client_credentials"), gateway_id="gw")
+        assert excinfo.value.stage == "actor"
+
+    async def test_service_cache_delete_removes_redis_key(self):
+        cache = GatewayServiceTokenCache()
+        cache._redis = AsyncMock()
+        cache._redis_live = lambda: True
+        await cache.set("actor", "gw", "fp", "a", expires_in=600)
+
+        await cache.delete("actor", "gw", "fp")
+
+        cache._redis.delete.assert_awaited_once_with(GatewayServiceTokenCache._key("actor", "gw", "fp"))
+        cache._redis.scan_iter.assert_not_called()
 
     async def test_invalidate_noop_for_other_sources(self, service_cache):
         await service_cache.set("actor", "gw", "fp", "actor-tok", expires_in=600)
