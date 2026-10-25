@@ -84,7 +84,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, validate_private_key_material
+from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, validate_private_key_material
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
@@ -114,6 +114,7 @@ from mcpgateway.schemas import (
     GatewayTestRequest,
     GatewayTestResponse,
     GatewayUpdate,
+    OAUTH_DISCOVERY_GRANT_TYPES,
     PromptCreate,
     ResourceCreate,
     ServerHandshakeRequest,
@@ -125,6 +126,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
+from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
@@ -135,6 +137,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.internal_http import internal_loopback_base_url
@@ -391,6 +394,58 @@ GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
 
 # Only delete MCP-discovered items (not user-created entries)
 MCP_SYNC_CREATED_VIA_VALUES = {"MCP", "federation", "health_check", "manual_refresh", "notification_service", "oauth", "update"}
+
+
+_DISCOVERY_INHERITED_CLIENT_AUTH_KEYS = (
+    "token_url",
+    "client_id",
+    "client_secret",
+    "token_endpoint_auth_method",
+    "private_key",
+    "private_key_jwt_kid",
+    "token_endpoint_auth_signing_alg",
+)
+_DISCOVERY_PURPOSE = "discovery"
+_DISCOVERY_OVERRIDE_KEYS = ("token_url", "client_id", "client_secret", "token_endpoint_auth_method")
+
+
+def build_discovery_oauth_config(oauth_config: Optional[dict]) -> Optional[dict]:
+    """Derive the effective client-credentials config for a token-exchange gateway's discovery credential.
+
+    Client-auth keys inherit from the parent config, and ``discovery`` overrides them.
+    The result never carries token-exchange keys, so it cannot drive a per-user exchange.
+
+    Args:
+        oauth_config: Gateway ``oauth_config``, or ``None``.
+
+    Returns:
+        A new ``client_credentials`` config dict, or ``None`` when the config has no ``discovery`` object.
+
+    Examples:
+        >>> parent = {"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "c", "scopes": ["a"], "target_audience": "x"}
+        >>> build_discovery_oauth_config({**parent, "discovery": {"grant_type": "client_credentials"}})
+        {'token_url': 'https://as/token', 'client_id': 'c', 'grant_type': 'client_credentials', 'scopes': ['a']}
+        >>> build_discovery_oauth_config({**parent, "discovery": {"grant_type": "client_credentials", "client_id": "svc", "scopes": ["mcp.discover"]}})
+        {'token_url': 'https://as/token', 'client_id': 'svc', 'grant_type': 'client_credentials', 'scopes': ['mcp.discover']}
+        >>> build_discovery_oauth_config(parent) is None
+        True
+        >>> build_discovery_oauth_config(None) is None
+        True
+    """
+    if not isinstance(oauth_config, dict):
+        return None
+    discovery = oauth_config.get("discovery")
+    if not isinstance(discovery, dict):
+        return None
+    effective: dict = {key: oauth_config[key] for key in _DISCOVERY_INHERITED_CLIENT_AUTH_KEYS if oauth_config.get(key) is not None}
+    for key in _DISCOVERY_OVERRIDE_KEYS:
+        if discovery.get(key) not in (None, ""):
+            effective[key] = discovery[key]
+    effective["grant_type"] = "client_credentials"
+    scopes = discovery.get("scopes") if discovery.get("scopes") else oauth_config.get("scopes")
+    if scopes:
+        effective["scopes"] = list(scopes)
+    return effective
 
 
 class GatewayError(Exception):
@@ -910,6 +965,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
+        self._service_token_cache = GatewayServiceTokenCache(redis_url=getattr(settings, "redis_url", None))
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
@@ -1015,6 +1071,49 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
 
     @staticmethod
+    def _initialize_skips_discovery(oauth_config: Optional[dict]) -> bool:
+        """Report whether ``_initialize_gateway()`` skips discovery for this config without pre-auth headers.
+
+        A token-exchange gateway without a discovery credential has no subject token
+        outside a user request, so ``_initialize_gateway()`` returns empty capability
+        and catalog lists for it. Callers use this to keep the stored catalog instead
+        of pruning it against that empty result. With a discovery credential,
+        initialization discovers for real and the result reconciles normally.
+
+        Args:
+            oauth_config: Stored gateway oauth_config, or ``None``.
+
+        Returns:
+            True when initialization skips discovery for this config.
+
+        Examples:
+            >>> GatewayService._initialize_skips_discovery({"grant_type": "token-exchange"})
+            True
+            >>> GatewayService._initialize_skips_discovery({"grant_type": "token-exchange", "discovery": {"grant_type": "client_credentials"}})
+            False
+            >>> GatewayService._initialize_skips_discovery({"grant_type": "client_credentials"})
+            False
+            >>> GatewayService._initialize_skips_discovery(None)
+            False
+        """
+        return isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "token-exchange" and build_discovery_oauth_config(oauth_config) is None
+
+    @classmethod
+    def _discovery_result_is_unusable(cls, gateway: DbGateway, tools: list, resources: list, prompts: list) -> bool:
+        """Report whether an initialization result must not drive stale-catalog cleanup.
+
+        Args:
+            gateway: Gateway whose stored oauth_config was used for initialization.
+            tools: Tools returned by initialization.
+            resources: Resources returned by initialization.
+            prompts: Prompts returned by initialization.
+
+        Returns:
+            True when initialization skipped discovery and returned nothing.
+        """
+        return not tools and not resources and not prompts and cls._initialize_skips_discovery(gateway.oauth_config)
+
+    @staticmethod
     def _validate_token_exchange_config(oauth_config: Optional[dict]) -> Optional[dict]:
         """Validate and default RFC 8693 token-exchange config. No-op for other grants.
 
@@ -1053,7 +1152,40 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
+        GatewayService._validate_discovery_config(oauth_config.get("discovery"))
         return oauth_config
+
+    @staticmethod
+    def _validate_discovery_config(discovery: Any) -> None:
+        """Validate the optional discovery credential of a token-exchange config.
+
+        The private-key material of the effective discovery config is validated in
+        ``_validate_private_key_jwt_config``, which can resolve masked placeholders.
+
+        Args:
+            discovery: The ``oauth_config["discovery"]`` value, or ``None``.
+
+        Raises:
+            ValueError: If ``discovery`` is not an object, names an unsupported grant or
+                auth method, or carries a ``token_url`` that fails egress validation.
+        """
+        if discovery is None:
+            return
+        if not isinstance(discovery, dict):
+            raise PublicValidationError("discovery must be an object")
+        if discovery.get("grant_type") not in OAUTH_DISCOVERY_GRANT_TYPES:
+            raise PublicValidationError(f"discovery.grant_type must be one of {OAUTH_DISCOVERY_GRANT_TYPES}")
+        token_url = discovery.get("token_url")
+        if token_url:
+            # Same egress guard as the parent token_url: the gateway POSTs client credentials here.
+            try:
+                SecurityValidator.validate_url(token_url, "OAuth token URL")
+            except ValueError as e:
+                logger.warning("Rejected token-exchange discovery.token_url for SSRF/validation: %s", SecurityValidator.sanitize_log_message(str(e)))
+                raise
+        raw_method = discovery.get("token_endpoint_auth_method")
+        if raw_method is not None and normalize_token_endpoint_auth_method(raw_method) not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+            raise PublicValidationError(f"discovery.token_endpoint_auth_method must be one of {sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS)}")
 
     @staticmethod
     def _validate_private_key_jwt_config(oauth_config: Optional[dict], existing_oauth_config: Optional[dict] = None) -> None:
@@ -1097,6 +1229,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not oauth_config:
             return
 
+        GatewayService._validate_private_key_jwt_material(oauth_config, existing_oauth_config)
+        discovery_config = build_discovery_oauth_config(oauth_config)
+        if discovery_config is not None:
+            GatewayService._validate_private_key_jwt_material(discovery_config, build_discovery_oauth_config(existing_oauth_config) or existing_oauth_config)
+
+    @staticmethod
+    def _validate_private_key_jwt_material(oauth_config: dict, existing_oauth_config: Optional[dict]) -> None:
+        """Validate the effective ``private_key_jwt`` key of one client-auth config. No-op for other methods.
+
+        Args:
+            oauth_config: Client-auth config being applied.
+            existing_oauth_config: The stored counterpart of ``oauth_config``, or ``None`` on create.
+
+        Raises:
+            ValueError: See ``_validate_private_key_jwt_config``.
+        """
         # One policy point for this field, shared with the schema and the signing
         # path, so a config this gate skips can never be one the runtime signs
         # with private_key_jwt.
@@ -1375,6 +1523,126 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
             return {"Authorization": f"Bearer {exchanged}"}
 
+    async def _resolve_discovery_header(
+        self,
+        oauth_config: Optional[dict],
+        *,
+        gateway_id: Optional[str],
+        gateway_name: str,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """Return an Authorization header from the token-exchange discovery credential.
+
+        Call only from discovery paths: initialization, health checks, and refresh.
+        Invocation paths must use the per-user exchange and never this credential.
+
+        Args:
+            oauth_config: Stored gateway oauth_config (``grant_type == "token-exchange"``).
+            gateway_id: Gateway identifier for the cache key, or ``None`` before the gateway row exists (no caching).
+            gateway_name: Gateway display name, used in error messages and the audit event.
+            ca_certificate: Optional custom CA certificate for the token endpoint.
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
+
+        Returns:
+            ``{"Authorization": "Bearer ..."}``, or ``None`` when the gateway has no discovery credential.
+
+        Raises:
+            GatewayConnectionError: If the discovery token request fails.
+        """
+        discovery_config = build_discovery_oauth_config(oauth_config)
+        if discovery_config is None:
+            return None
+        fingerprint = service_token_fingerprint(discovery_config)
+
+        if gateway_id:
+            cached = await self._service_token_cache.get(_DISCOVERY_PURPOSE, gateway_id, fingerprint)
+            if cached:
+                return {"Authorization": f"Bearer {cached}"}
+            async with self._service_token_cache.lock(_DISCOVERY_PURPOSE, gateway_id, fingerprint):
+                cached = await self._service_token_cache.get(_DISCOVERY_PURPOSE, gateway_id, fingerprint)
+                if cached:
+                    return {"Authorization": f"Bearer {cached}"}
+                return await self._request_discovery_token(discovery_config, gateway_id, gateway_name, fingerprint, ca_certificate, client_cert, client_key)
+        return await self._request_discovery_token(discovery_config, gateway_id, gateway_name, fingerprint, ca_certificate, client_cert, client_key)
+
+    async def _request_discovery_token(
+        self,
+        discovery_config: dict,
+        gateway_id: Optional[str],
+        gateway_name: str,
+        fingerprint: str,
+        ca_certificate: Optional[str],
+        client_cert: Optional[str],
+        client_key: Optional[str],
+    ) -> Dict[str, str]:
+        """Request a discovery token, cache it, and emit the ``purpose="discovery"`` audit event.
+
+        Args:
+            discovery_config: Effective client-credentials config from ``build_discovery_oauth_config()``.
+            gateway_id: Gateway identifier, or ``None`` to skip caching.
+            gateway_name: Gateway display name.
+            fingerprint: Config fingerprint for the cache key.
+            ca_certificate: Optional custom CA certificate for the token endpoint.
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
+
+        Returns:
+            A dict with a single Authorization header carrying the discovery token.
+
+        Raises:
+            GatewayConnectionError: If the token request fails.
+        """
+        correlation_id = get_correlation_id()
+        audit_gateway_id = gateway_id or gateway_name
+        started = time.monotonic()
+        try:
+            response = await self.oauth_manager.get_client_credentials_token_response(discovery_config, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+            token = response["access_token"]
+        except Exception as e:
+            safe_reason = SecurityValidator.sanitize_log_message(str(e))
+            audit_token_exchange(
+                user_email=None,
+                gateway_id=audit_gateway_id,
+                target_audience=None,
+                success=False,
+                expires_in=None,
+                upstream=gateway_name,
+                error=safe_reason,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                correlation_id=correlation_id,
+                purpose=_DISCOVERY_PURPOSE,
+            )
+            logger.warning(
+                "Discovery token request failed for gateway %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_name),
+                safe_reason,
+                extra={"gateway_id": gateway_id, "correlation_id": correlation_id},
+            )
+            raise GatewayConnectionError(f"Discovery credential token request failed for gateway '{gateway_name}'. Contact your administrator.") from None
+
+        try:
+            expires_in = int(response.get("expires_in") or self._TOKEN_EXCHANGE_FALLBACK_TTL)
+        except (TypeError, ValueError):
+            expires_in = self._TOKEN_EXCHANGE_FALLBACK_TTL
+        if gateway_id:
+            await self._service_token_cache.set(_DISCOVERY_PURPOSE, gateway_id, fingerprint, token, expires_in=expires_in)
+        audit_token_exchange(
+            user_email=None,
+            gateway_id=audit_gateway_id,
+            target_audience=None,
+            success=True,
+            expires_in=expires_in,
+            upstream=gateway_name,
+            error=None,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            correlation_id=correlation_id,
+            purpose=_DISCOVERY_PURPOSE,
+        )
+        return {"Authorization": f"Bearer {token}"}
+
     @staticmethod
     def normalize_url(url: str) -> str:
         """
@@ -1509,6 +1777,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
+        gateway_id: Optional[str] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str]]:
         """Initialize a gateway and optionally bound remote MCP work.
 
@@ -1525,6 +1794,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params=auth_query_params,
             client_cert=client_cert,
             client_key=client_key,
+            gateway_id=gateway_id,
         )
         if initialize_timeout is None:
             return await initialize_task
@@ -3346,6 +3616,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     self._validate_private_key_jwt_config(raw_oauth_update, existing_oauth_config=original_oauth_config)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
+                    if gateway.oauth_config != original_oauth_config:
+                        await self._service_token_cache.invalidate(gateway.id)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
@@ -3560,6 +3832,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             auth_query_params=auth_query_params_decrypted,
                             client_cert=connection_material.client_cert,
                             client_key=connection_material.client_key,
+                            gateway_id=gateway.id,
                         )
                     except Exception as init_err:
                         # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
@@ -3596,6 +3869,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway=gateway,
                         catalog_sync=catalog_sync,
                         log_context="gateway update",
+                        skip_stale_cleanup=self._discovery_result_is_unusable(gateway, tools, resources, prompts),
                     )
 
                     gateway.capabilities = capabilities
@@ -4142,6 +4416,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             oauth_auto_fetch_tool_flag=True,
                             client_cert=act_client_cert,
                             client_key=act_client_key,
+                            gateway_id=gateway.id,
                         )
                         catalog_sync = self._sync_gateway_catalog(
                             db,
@@ -4158,9 +4433,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # resources, prompts, and their virtual server associations.
                         # Mirrors the guard in _refresh_gateway_tools_resources_prompts.
                         is_auth_code_gateway = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
-                        skip_stale_cleanup = not tools and not resources and not prompts and is_auth_code_gateway
+                        skip_stale_cleanup = (not tools and not resources and not prompts and is_auth_code_gateway) or self._discovery_result_is_unusable(gateway, tools, resources, prompts)
                         if skip_stale_cleanup:
-                            logger.debug(f"Empty response from auth_code gateway {gateway.name} during reactivation, preserving existing items")
+                            logger.debug(f"Empty response from auth_code or token-exchange gateway {gateway.name} during reactivation, preserving existing items")
                         self._reconcile_gateway_catalog(
                             db,
                             gateway=gateway,
@@ -4440,6 +4715,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.reachable = False
                 db.commit()
                 db.refresh(gateway)
+                await self._service_token_cache.invalidate(str(gateway_id))
 
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
@@ -4495,6 +4771,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._hard_delete_gateway(db, gateway)
 
             db.commit()
+            await self._service_token_cache.invalidate(str(gateway_id))
 
             await self._finalize_gateway_deletion(
                 gateway_id=str(gateway_id),
@@ -4835,6 +5112,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_cert=connection_material.client_cert,
                 client_key=connection_material.client_key,
                 initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
+                gateway_id=gateway.id,
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
@@ -4851,6 +5129,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway lifecycle worker",
+                skip_stale_cleanup=self._discovery_result_is_unusable(gateway, tools, resources, prompts),
             )
 
             if not self._finalize_pending_gateway_success(db, gateway, capabilities):
@@ -5352,18 +5631,30 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             except Exception as e:
                                 logger.warning("Failed to obtain stored OAuth token for gateway %s, proceeding with unauthenticated health check: %s", gateway_name, e)
                         elif grant_type == "token-exchange":
-                            # Token-exchange (RFC 8693) requires an inbound end-user JWT as the
-                            # subject token. A periodic health check has no associated user
-                            # request, so this grant cannot be satisfied here. Mirror the
-                            # discovery path (_prepare_gateway_registration's connection probe),
-                            # which also cannot obtain a subject token outside a user request and
-                            # skips the probe rather than failing: treating "no subject token" as
-                            # a health-check failure would mark every token-exchange gateway
-                            # permanently unreachable, since no periodic check ever has one.
-                            logger.debug("Gateway %s uses token-exchange grant; skipping health-check probe (no subject token available outside a user request)", gateway_name)
-                            if span:
-                                set_span_attribute(span, "health.status", "skipped")
-                            return
+                            try:
+                                discovery_header = await self._resolve_discovery_header(
+                                    gateway_oauth_config,
+                                    gateway_id=gateway_id,
+                                    gateway_name=gateway_name,
+                                    ca_certificate=gateway.ca_certificate,
+                                    client_cert=gateway.client_cert,
+                                    client_key=gateway.client_key,
+                                )
+                            except Exception as e:
+                                if span:
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, e)
+                                await self._handle_gateway_failure(gateway, error=e, auth_query_params=auth_query_params_decrypted)
+                                return
+                            if discovery_header is None:
+                                # Without a discovery credential, the per-user subject token is the only
+                                # credential, and a periodic check has none. Skip rather than fail:
+                                # failing would mark every such gateway permanently unreachable.
+                                logger.debug("Gateway %s uses token-exchange grant without a discovery credential; skipping health-check probe", gateway_name)
+                                if span:
+                                    set_span_attribute(span, "health.status", "skipped")
+                                return
+                            headers.update(discovery_header)
                         else:
                             # For Client Credentials flow, get token directly
                             try:
@@ -5689,6 +5980,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        gateway_id: Optional[str] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -5712,6 +6004,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 When True, attempts to connect even for auth_code gateways (for activation after user authorization).
             client_cert: Optional client certificate path or PEM for mTLS
             client_key: Optional client private key path or PEM for mTLS
+            gateway_id: Gateway identifier used to cache the token-exchange discovery token,
+                or ``None`` before the gateway row exists (registration).
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -5785,15 +6079,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         logger.error("Failed to obtain OAuth access token: %s", e)
                         raise GatewayConnectionError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
                 elif grant_type == "token-exchange":
-                    # Token-exchange (RFC 8693) requires an inbound end-user JWT as the subject
-                    # token. Gateway initialization/registration has no associated user request,
-                    # so the discovery probe cannot be satisfied here. Mirror the
-                    # authorization_code flow above: skip the connection attempt and persist
-                    # the gateway with an empty tool list rather than failing the registration
-                    # call outright. Tool/capability discovery for token-exchange gateways is
-                    # deferred to a later authenticated trigger (e.g. an explicit refresh).
-                    logger.info("Token-exchange gateway configured for '%s'. Skipping discovery probe; tools will be populated on a later authenticated refresh.", url)
-                    return {}, [], [], [], []
+                    discovery_header = await self._resolve_discovery_header(
+                        oauth_config,
+                        gateway_id=gateway_id,
+                        gateway_name=sanitize_url_for_logging(url, auth_query_params),
+                        ca_certificate=ca_certificate,
+                        client_cert=client_cert,
+                        client_key=client_key,
+                    )
+                    if discovery_header is None:
+                        # Without a discovery credential there is no subject token outside a user
+                        # request. Skip the probe and persist an empty catalog, as for
+                        # authorization_code; a later authenticated refresh populates it.
+                        logger.info("Token-exchange gateway configured for '%s'. Skipping discovery probe; tools will be populated on a later authenticated refresh.", url)
+                        return {}, [], [], [], []
+                    authentication = discovery_header
 
             capabilities = {}
             tools = []
@@ -7532,20 +7832,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_grant_type = gateway_oauth_config.get("grant_type") if isinstance(gateway_oauth_config, dict) else None
 
             if gateway_grant_type == "token-exchange":
-                # A token-exchange gateway's Authorization must always come from a fresh
-                # RFC 8693 exchange of the caller's inbound JWT -- never from generic header
-                # passthrough, which would forward the caller's raw JWT upstream unexchanged.
+                # A token-exchange gateway's Authorization comes from its discovery credential
+                # or from a fresh RFC 8693 exchange of the caller's inbound JWT -- never from
+                # generic header passthrough, which would forward the caller's raw JWT upstream.
+                tls_material = {"ca_certificate": gateway.ca_certificate, "client_cert": getattr(gateway, "client_cert", None), "client_key": getattr(gateway, "client_key", None)}
                 try:
-                    pre_auth_headers = await self._resolve_token_exchange_header(
-                        gateway_oauth_config,
-                        gateway_id,
-                        gateway_name,
-                        user_email,
-                        request_headers or {},
-                        ca_certificate=gateway.ca_certificate,
-                        client_cert=getattr(gateway, "client_cert", None),
-                        client_key=getattr(gateway, "client_key", None),
-                    )
+                    pre_auth_headers = await self._resolve_discovery_header(gateway_oauth_config, gateway_id=gateway_id, gateway_name=gateway_name, **tls_material)
+                    if pre_auth_headers is None:
+                        pre_auth_headers = await self._resolve_token_exchange_header(gateway_oauth_config, gateway_id, gateway_name, user_email, request_headers or {}, **tls_material)
                 except Exception as e:
                     token_exchange_error = str(e)
             elif request_headers:

@@ -5504,6 +5504,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <option value="client_credentials">
                         Client Credentials (Machine-to-Machine)
                       </option>
+                      {% if is_admin %}
+                      <option value="token-exchange">
+                        Token Exchange (RFC 8693 On-Behalf-Of)
+                      </option>
+                      {% endif %}
                     </select>
                   </div>
 
@@ -5641,6 +5646,87 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     />
                   </div>
 
+                  {% if is_admin %}
+                  <div id="oauth-token-exchange-fields-gw" class="space-y-4" style="display: none">
+                    <p class="text-sm text-gray-500">
+                      RFC 8693 token exchange: each tool call exchanges the caller's inbound JWT for a token scoped to the target audience. Platform admins only.
+                    </p>
+                    <div>
+                      <label for="oauth-target-audience-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Target Audience <span class="text-red-500">*</span>
+                      </label>
+                      <input type="text" name="oauth_target_audience" id="oauth-target-audience-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="downstream-mcp-client" />
+                    </div>
+                    <div>
+                      <label for="oauth-token-endpoint-auth-method-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Token Endpoint Auth Method
+                      </label>
+                      <select name="oauth_token_endpoint_auth_method" id="oauth-token-endpoint-auth-method-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                        <option value="client_secret_post" selected>client_secret_post</option>
+                        <option value="client_secret_basic">client_secret_basic</option>
+                        <option value="private_key_jwt" hidden disabled>private_key_jwt (configure through the API)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="oauth-subject-token-type-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Subject Token Type
+                      </label>
+                      <input type="text" name="oauth_subject_token_type" id="oauth-subject-token-type-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" value="urn:ietf:params:oauth:token-type:jwt" />
+                    </div>
+                    <div>
+                      <label for="oauth-requested-token-type-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Requested Token Type
+                      </label>
+                      <input type="text" name="oauth_requested_token_type" id="oauth-requested-token-type-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" value="urn:ietf:params:oauth:token-type:access_token" />
+                    </div>
+                    <div>
+                      <label for="oauth-subject-token-source-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Subject Token Source
+                      </label>
+                      <select name="oauth_subject_token_source" id="oauth-subject-token-source-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                        <option value="inbound_user_jwt" selected>inbound_user_jwt</option>
+                      </select>
+                    </div>
+                    <div id="oauth-discovery-section-gw" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                      <input type="hidden" name="oauth_discovery_present" value="1" />
+                      <div class="flex items-center">
+                        <input type="checkbox" name="oauth_discovery_enabled" id="oauth-discovery-enabled-gw" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                        <label for="oauth-discovery-enabled-gw" class="ml-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Use a discovery credential (client credentials)
+                        </label>
+                      </div>
+                      <p class="text-sm text-gray-500">
+                        Registration, health checks, and tool refresh use this service token to list tools, resources, and prompts. Tool calls always use the per-user exchange. Blank overrides inherit the values above.
+                      </p>
+                      <div id="oauth-discovery-fields-gw" class="space-y-4" style="display: none">
+                        <div>
+                          <label for="oauth-discovery-scopes-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Discovery Scopes
+                          </label>
+                          <input type="text" name="oauth_discovery_scopes" id="oauth-discovery-scopes-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="mcp.discover" />
+                        </div>
+                        <div>
+                          <label for="oauth-discovery-token-url-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Discovery Token URL (optional override)
+                          </label>
+                          <input type="url" name="oauth_discovery_token_url" id="oauth-discovery-token-url-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="https://oauth.example.com/token" />
+                        </div>
+                        <div>
+                          <label for="oauth-discovery-client-id-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Discovery Client ID (optional override)
+                          </label>
+                          <input type="text" name="oauth_discovery_client_id" id="oauth-discovery-client-id-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                        </div>
+                        <div>
+                          <label for="oauth-discovery-client-secret-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Discovery Client Secret (optional override)
+                          </label>
+                          <input type="password" name="oauth_discovery_client_secret" id="oauth-discovery-client-secret-gw" autocomplete="off" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
                   <div id="oauth-auth-code-fields-gw">
                     <div>
                       <label
@@ -10089,6 +10175,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <option value="password">
                               Resource Owner Password Credentials (Keycloak/Legacy)
                             </option>
+                            {% if is_admin %}
+                            <option value="token-exchange">
+                              Token Exchange (RFC 8693 On-Behalf-Of)
+                            </option>
+                            {% endif %}
                           </select>
                         </div>
 
@@ -10238,6 +10329,87 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           />
                         </div>
 
+                        {% if is_admin %}
+                        <div id="oauth-token-exchange-fields-gw-edit" class="space-y-4" style="display: none">
+                          <p class="text-sm text-gray-500">
+                            RFC 8693 token exchange: each tool call exchanges the caller's inbound JWT for a token scoped to the target audience. Platform admins only.
+                          </p>
+                          <div>
+                            <label for="oauth-target-audience-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Target Audience <span class="text-red-500">*</span>
+                            </label>
+                            <input type="text" name="oauth_target_audience" id="oauth-target-audience-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="downstream-mcp-client" />
+                          </div>
+                          <div>
+                            <label for="oauth-token-endpoint-auth-method-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Token Endpoint Auth Method
+                            </label>
+                            <select name="oauth_token_endpoint_auth_method" id="oauth-token-endpoint-auth-method-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                              <option value="client_secret_post" selected>client_secret_post</option>
+                              <option value="client_secret_basic">client_secret_basic</option>
+                              <option value="private_key_jwt" hidden disabled>private_key_jwt (configure through the API)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label for="oauth-subject-token-type-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Subject Token Type
+                            </label>
+                            <input type="text" name="oauth_subject_token_type" id="oauth-subject-token-type-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" value="urn:ietf:params:oauth:token-type:jwt" />
+                          </div>
+                          <div>
+                            <label for="oauth-requested-token-type-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Requested Token Type
+                            </label>
+                            <input type="text" name="oauth_requested_token_type" id="oauth-requested-token-type-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" value="urn:ietf:params:oauth:token-type:access_token" />
+                          </div>
+                          <div>
+                            <label for="oauth-subject-token-source-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Subject Token Source
+                            </label>
+                            <select name="oauth_subject_token_source" id="oauth-subject-token-source-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                              <option value="inbound_user_jwt" selected>inbound_user_jwt</option>
+                            </select>
+                          </div>
+                          <div id="oauth-discovery-section-gw-edit" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                            <input type="hidden" name="oauth_discovery_present" value="1" />
+                            <div class="flex items-center">
+                              <input type="checkbox" name="oauth_discovery_enabled" id="oauth-discovery-enabled-gw-edit" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                              <label for="oauth-discovery-enabled-gw-edit" class="ml-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Use a discovery credential (client credentials)
+                              </label>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                              Registration, health checks, and tool refresh use this service token to list tools, resources, and prompts. Tool calls always use the per-user exchange. Blank overrides inherit the values above.
+                            </p>
+                            <div id="oauth-discovery-fields-gw-edit" class="space-y-4" style="display: none">
+                              <div>
+                                <label for="oauth-discovery-scopes-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Discovery Scopes
+                                </label>
+                                <input type="text" name="oauth_discovery_scopes" id="oauth-discovery-scopes-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="mcp.discover" />
+                              </div>
+                              <div>
+                                <label for="oauth-discovery-token-url-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Discovery Token URL (optional override)
+                                </label>
+                                <input type="url" name="oauth_discovery_token_url" id="oauth-discovery-token-url-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="https://oauth.example.com/token" />
+                              </div>
+                              <div>
+                                <label for="oauth-discovery-client-id-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Discovery Client ID (optional override)
+                                </label>
+                                <input type="text" name="oauth_discovery_client_id" id="oauth-discovery-client-id-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                              </div>
+                              <div>
+                                <label for="oauth-discovery-client-secret-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  Discovery Client Secret (optional override)
+                                </label>
+                                <input type="password" name="oauth_discovery_client_secret" id="oauth-discovery-client-secret-gw-edit" autocomplete="off" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {% endif %}
                         <div
                           id="oauth-auth-code-fields-gw-edit"
                         >

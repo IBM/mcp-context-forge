@@ -299,6 +299,18 @@ class TestTokenExchangeAudit:
         assert event["correlation_id"] == "corr-123"
         assert event["request_id"] == "req-456"
 
+    @pytest.mark.parametrize("purpose", ["invocation", "discovery"])
+    def test_audit_emits_purpose(self, caplog, purpose):
+        # Standard
+        import logging
+
+        kwargs = {} if purpose == "invocation" else {"purpose": purpose}
+        with caplog.at_level(logging.INFO):
+            audit_token_exchange(user_email=None, gateway_id="gw1", target_audience=None, success=True, expires_in=60, upstream="https://upstream", error=None, latency_ms=1, **kwargs)
+        rec = next(r for r in caplog.records if hasattr(r, "token_exchange"))
+        assert rec.token_exchange["purpose"] == purpose
+        assert f"purpose={purpose}" in rec.getMessage()
+
 
 # First-Party
 from mcpgateway.utils.subject_token import extract_inbound_bearer
@@ -569,6 +581,32 @@ async def test_audit_and_logs_keep_correlation_without_raw_tokens(service_class,
     assert correlation_id in captured
     assert subject not in captured
     assert exchanged not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_tool_call_exchange_audits_invocation_purpose(fail, caplog):
+    """The per-user exchange on the tool-call path emits ``purpose="invocation"``."""
+    import logging
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    subject = make_test_jwt("purpose@example.test", extra_payload={"jti": "purpose-subject"})
+    service = ToolService()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=OAuthError("synthetic failure") if fail else None, return_value={"access_token": "exch", "expires_in": 3600})
+    with caplog.at_level(logging.INFO, logger="mcpgateway.audit.token_exchange"):
+        call = service._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "purpose@example.test", {"authorization": f"Bearer {subject}"})
+        if fail:
+            with pytest.raises(ToolInvocationError):
+                await call
+        else:
+            await call
+    events = [r.token_exchange for r in caplog.records if hasattr(r, "token_exchange")]
+    assert len(events) == 1
+    assert events[0]["purpose"] == "invocation"
+    assert events[0]["success"] is (not fail)
 
 
 def _mock_te_cache(get_return=None, failed=False):

@@ -174,6 +174,57 @@ def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
             raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
 
 
+OAUTH_DISCOVERY_GRANT_TYPES = ("client_credentials",)
+
+
+def _validate_oauth_discovery(discovery: Any) -> None:
+    """Validate the optional ``discovery`` object structurally, including its ``token_url`` override.
+
+    Args:
+        discovery: The ``oauth_config["discovery"]`` value, or ``None``.
+
+    Raises:
+        ValueError: If ``discovery`` is not an object, names an unsupported grant, or its ``token_url`` is not a string or fails validation.
+    """
+    if discovery is None:
+        return
+    if not isinstance(discovery, dict):
+        raise ValueError("oauth_config.discovery must be an object")
+    if discovery.get("grant_type") not in OAUTH_DISCOVERY_GRANT_TYPES:
+        raise ValueError(f"oauth_config.discovery.grant_type must be one of: {', '.join(OAUTH_DISCOVERY_GRANT_TYPES)}")
+    raw_value = discovery.get("token_url")
+    if raw_value in (None, ""):
+        return
+    if not isinstance(raw_value, str):
+        raise ValueError("oauth_config.discovery.token_url must be a string URL")
+    validate_core_url(raw_value, "OAuth config discovery.token_url")
+
+
+def _reject_discovery_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject a ``discovery`` object on any grant other than ``token-exchange``.
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original value when valid.
+
+    Raises:
+        ValueError: If ``discovery`` is present and ``grant_type`` is not ``token-exchange``.
+
+    Examples:
+        >>> _reject_discovery_outside_token_exchange({"grant_type": "token-exchange", "discovery": {}})
+        {'grant_type': 'token-exchange', 'discovery': {}}
+        >>> _reject_discovery_outside_token_exchange({"grant_type": "client_credentials", "discovery": {}})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.discovery is only supported for the token-exchange grant type
+    """
+    if isinstance(v, dict) and v.get("discovery") is not None and v.get("grant_type") != "token-exchange":
+        raise ValueError("oauth_config.discovery is only supported for the token-exchange grant type")
+    return v
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -202,6 +253,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    _validate_oauth_discovery(v.get("discovery"))
     if "redirect_uri_after_oauth" in v:
         redirect_after_oauth = v["redirect_uri_after_oauth"]
         if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
@@ -3465,7 +3517,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         new MCP server registrations. Existing records keep working via
         ``GatewayUpdate`` (backwards compatibility).
         """
-        v = _validate_oauth_config_urls(v)
+        v = _reject_discovery_outside_token_exchange(_validate_oauth_config_urls(v))
         if isinstance(v, dict) and v.get("grant_type") == "password":
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
@@ -3838,8 +3890,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing OAuth configuration entries and reject ``discovery`` outside token-exchange."""
+        return _reject_discovery_outside_token_exchange(_validate_oauth_config_urls(v))
 
     @field_validator("description", mode="before")
     @classmethod

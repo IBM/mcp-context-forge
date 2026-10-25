@@ -11382,3 +11382,149 @@ class TestUpstreamErrorRelay:
         assert result.is_error is True
         assert result.content[0].text == "Unknown tool: [REDACTED]"
         assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
+
+
+# ---------------------------------------------------------------------------
+# Token-exchange discovery credential never reaches invocation paths
+# ---------------------------------------------------------------------------
+
+
+class TestTokenExchangeDiscoveryInvocationIsolation:
+    """A cached discovery token for a gateway must never authorize a tool call."""
+
+    _TE_DISCOVERY = {
+        "grant_type": "token-exchange",
+        "client_id": "cf",
+        "token_url": "https://as.example.com/token",
+        "target_audience": "aud",
+        "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+    }
+    _USER_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+
+    @staticmethod
+    async def _seed_discovery_cache():
+        """Cache a discovery token for the gateway under its real key.
+
+        Returns:
+            GatewayServiceTokenCache: Cache holding ``svc-discovery-tok``.
+        """
+        # First-Party
+        from mcpgateway.services.gateway_service import build_discovery_oauth_config
+        from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache, service_token_fingerprint
+
+        cache = GatewayServiceTokenCache()
+        fingerprint = service_token_fingerprint(build_discovery_oauth_config(TestTokenExchangeDiscoveryInvocationIsolation._TE_DISCOVERY))
+        await cache.set("discovery", "gw-uuid-1", fingerprint, "svc-discovery-tok", expires_in=3600)
+        return cache
+
+    async def _invoke(self, tool_service, *, request_headers, exchange_side_effect=None, discovery_side_effect=None):
+        """Invoke an MCP tool on a token-exchange gateway with a discovery credential.
+
+        Args:
+            tool_service: ToolService under test.
+            request_headers: Inbound request headers.
+            exchange_side_effect: Optional exception for the per-user exchange.
+            discovery_side_effect: Optional exception for discovery token requests.
+
+        Returns:
+            tuple: ``(result_or_exception, captured_upstream_headers, proxy_mock)``.
+        """
+        # First-Party
+        from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config=dict(self._TE_DISCOVERY))
+        captured_headers: dict[str, str] = {}
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
+
+        def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            captured_headers.update(headers or {})
+
+            class _CM:
+                async def __aenter__(self):
+                    return mock_session
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        tool_service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+        tool_service.oauth_manager = MagicMock()
+        tool_service.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "user-exchanged-tok", "expires_in": 3600}, side_effect=exchange_side_effect)
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="svc-discovery-tok")
+        tool_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600}, side_effect=discovery_side_effect)
+        service_cache = await self._seed_discovery_cache()
+        proxy = MagicMock(side_effect=fake_proxy_client)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _req, base, *_a, **_k: dict(base)),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", proxy),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch("mcpgateway.services.gateway_service.GatewayService._resolve_discovery_header", side_effect=AssertionError("invocation must never use the discovery credential")),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            try:
+                outcome = await tool_service.invoke_tool(MagicMock(), "test_tool", {}, request_headers=request_headers, app_user_email="u@e")
+            except Exception as exc:  # noqa: BLE001 - the deny-path tests assert on the exception
+                outcome = exc
+        assert list(service_cache._mem.values())[0][0] == "svc-discovery-tok"
+        return outcome, captured_headers, proxy
+
+    @pytest.mark.asyncio
+    async def test_tool_call_uses_only_exchanged_user_token(self, tool_service):
+        outcome, captured, _proxy = await self._invoke(tool_service, request_headers={"authorization": f"Bearer {self._USER_JWT}"})
+
+        assert not isinstance(outcome, Exception)
+        assert captured["Authorization"] == "Bearer user-exchanged-tok"
+        assert "svc-discovery-tok" not in repr(captured)
+        assert tool_service.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == self._USER_JWT
+        tool_service.oauth_manager.get_access_token.assert_not_awaited()
+        tool_service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_headers", [None, {}, {"authorization": "Bearer opaque-not-a-jwt"}])
+    async def test_tool_call_without_user_jwt_rejected_without_upstream_request(self, tool_service, request_headers):
+        outcome, captured, proxy = await self._invoke(tool_service, request_headers=request_headers)
+
+        assert isinstance(outcome, ToolInvocationError)
+        proxy.assert_not_called()
+        assert captured == {}
+        tool_service.oauth_manager.token_exchange.assert_not_awaited()
+        tool_service.oauth_manager.get_access_token.assert_not_awaited()
+        tool_service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_discovery_failure_does_not_affect_tool_call(self, tool_service):
+        """When discovery token requests fail, the per-user exchange runs as usual."""
+        outcome, captured, _proxy = await self._invoke(tool_service, request_headers={"authorization": f"Bearer {self._USER_JWT}"}, discovery_side_effect=RuntimeError("discovery as down"))
+
+        assert not isinstance(outcome, Exception)
+        assert captured["Authorization"] == "Bearer user-exchanged-tok"
+        tool_service.oauth_manager.token_exchange.assert_awaited_once()
+
+    def test_invocation_services_never_reference_discovery_resolver(self):
+        """Structural guarantee: invocation services have no path to the discovery credential."""
+        # Standard
+        import inspect
+
+        # First-Party
+        from mcpgateway.services import prompt_service, resource_service, tool_service as tool_service_module
+
+        for module in (tool_service_module, resource_service, prompt_service):
+            source = inspect.getsource(module)
+            for forbidden in ("_resolve_discovery_header", "build_discovery_oauth_config", "GatewayServiceTokenCache", "get_client_credentials_token_response"):
+                assert forbidden not in source, f"{module.__name__} references {forbidden}"
