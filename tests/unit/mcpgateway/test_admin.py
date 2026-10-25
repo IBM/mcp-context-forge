@@ -867,6 +867,151 @@ class TestAdminServerRoutes:
         assert server_update.oauth_config["authorization_servers"] == ["https://auth.atlassian.com"]
         assert server_update.oauth_config["scopes_supported"] == ["read:jira-work", "write:jira-work"]
 
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_multiple_servers_and_resource(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Add form accepts comma-separated issuer URLs and a resource audience (issue #7338)."""
+        form_data = FakeForm(
+            {
+                "name": "Server_Multi_As",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://idp1.example.com, https://idp2.example.com",
+                "oauth_scopes": "openid profile",
+                "oauth_token_endpoint": "https://idp1.example.com/token",
+                "oauth_resource": "https://api.example.com",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            },
+        )
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        server_create = mock_register_server.call_args.args[1]
+        assert server_create.oauth_enabled is True
+        assert server_create.oauth_config["authorization_servers"] == ["https://idp1.example.com", "https://idp2.example.com"]
+        assert server_create.oauth_config["resource"] == "https://api.example.com"
+        assert server_create.oauth_config["scopes_supported"] == ["openid", "profile"]
+        assert server_create.oauth_config["token_endpoint"] == "https://idp1.example.com/token"
+
+    @patch.object(ServerService, "update_server")
+    @patch.object(ServerService, "get_server")
+    async def test_admin_edit_server_preserves_api_set_oauth_values(self, mock_get_server, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Saving the Edit form must not erase values that were configured through the API (issue #7338)."""
+        server_id = "00000000-0000-0000-0000-000000000003"
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Server_Api_Set",
+                "description": "Configured through the API with resource and multiple authorization servers",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "",
+                "oauth_scopes": "",
+                "oauth_token_endpoint": "",
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda request, user: (None, None))
+
+        existing_server = MagicMock()
+        existing_server.model_dump.return_value = {
+            "oauth_config": {
+                "authorization_servers": ["https://idp1.example.com", "https://idp2.example.com"],
+                "scopes_supported": ["openid"],
+                "token_endpoint": "https://idp1.example.com/token",
+                "audience": "api.example.com",
+                "resource": "https://api.example.com",
+                "client_secret": "encrypted-blob",
+            }
+        }
+        mock_get_server.return_value = existing_server
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "OAuth_Server_Api_Set"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        mock_update_server.assert_called_once()
+        server_update = mock_update_server.call_args[0][2]
+        assert server_update.oauth_enabled is True
+        assert server_update.oauth_config["authorization_servers"] == ["https://idp1.example.com", "https://idp2.example.com"]
+        assert server_update.oauth_config["scopes_supported"] == ["openid"]
+        assert server_update.oauth_config["token_endpoint"] == "https://idp1.example.com/token"
+        assert server_update.oauth_config["audience"] == "api.example.com"
+        assert server_update.oauth_config["resource"] == "https://api.example.com"
+        assert server_update.oauth_config["client_secret"] == "encrypted-blob"
+
+    @patch.object(ServerService, "update_server")
+    @patch.object(ServerService, "get_server")
+    async def test_admin_edit_server_oauth_form_values_override(self, mock_get_server, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Filled form fields replace the stored values; other API-set keys survive."""
+        server_id = "00000000-0000-0000-0000-000000000004"
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Server_Override",
+                "description": "Form values must win over stored values",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://idp3.example.com, https://idp3.example.com",
+                "oauth_resource": "https://new-api.example.com",
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda request, user: (None, None))
+
+        existing_server = MagicMock()
+        existing_server.model_dump.return_value = {
+            "oauth_config": {
+                "authorization_servers": ["https://idp1.example.com", "https://idp2.example.com"],
+                "scopes_supported": ["openid"],
+                "resource": "https://api.example.com",
+                "client_secret": "encrypted-blob",
+            }
+        }
+        mock_get_server.return_value = existing_server
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "OAuth_Server_Override"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        server_update = mock_update_server.call_args[0][2]
+        assert server_update.oauth_enabled is True
+        assert server_update.oauth_config["authorization_servers"] == ["https://idp3.example.com"]
+        assert server_update.oauth_config["resource"] == "https://new-api.example.com"
+        assert server_update.oauth_config["scopes_supported"] == ["openid"]
+        assert server_update.oauth_config["client_secret"] == "encrypted-blob"
+
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_disable_oauth(self, mock_update_server, mock_request, mock_db):
         """Test disabling OAuth configuration when editing a server."""

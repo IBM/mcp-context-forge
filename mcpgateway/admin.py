@@ -1051,6 +1051,72 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     return oauth_config
 
 
+def _parse_server_oauth_form(
+    form: Any,
+    existing_config: Optional[dict[str, Any]] = None,
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """Assemble a virtual server ``oauth_config`` from the Admin UI form.
+
+    The server Add/Edit forms manage ``authorization_servers`` (one issuer
+    URL, or several separated by commas/newlines, matching the API shape),
+    ``scopes_supported``, ``token_endpoint``, ``audience`` and ``resource``
+    (RFC 8707). On edit, values that were configured through the API are
+    preserved when the matching form field is left empty, instead of being
+    silently dropped when the form rebuilds ``oauth_config``.
+
+    Args:
+        form: Submitted form data (must support ``.get``).
+        existing_config: The server's currently stored ``oauth_config`` on
+            edit, or ``None`` on create.
+
+    Returns:
+        ``(enabled, oauth_config)``. ``enabled`` is False when the form
+        enabled OAuth but no authorization server can be determined; in that
+        case ``oauth_config`` is None and OAuth must be disabled.
+    """
+    authorization_servers_raw = str(form.get("oauth_authorization_server", "")).strip()
+    scopes_str = str(form.get("oauth_scopes", "")).strip()
+    token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+    oauth_audience = str(form.get("oauth_audience", "")).strip()
+    oauth_resource = parse_oauth_resource_form(form.get("oauth_resource"))
+
+    existing: dict[str, Any] = dict(existing_config) if existing_config else {}
+    existing_servers = existing.get("authorization_servers") or []
+    if isinstance(existing_servers, str):
+        existing_servers = [existing_servers]
+
+    if authorization_servers_raw:
+        authorization_servers = [url.strip() for url in authorization_servers_raw.replace("\n", ",").split(",") if url.strip()]
+        # De-duplicate while preserving order.
+        authorization_servers = list(dict.fromkeys(authorization_servers))
+    else:
+        authorization_servers = list(existing_servers)
+
+    if not authorization_servers:
+        return False, None
+
+    # Preserve keys configured through the API that the form does not manage.
+    oauth_config: dict[str, Any] = {key: value for key, value in existing.items() if key not in {"authorization_servers", "scopes_supported", "token_endpoint", "audience", "resource"}}
+    oauth_config["authorization_servers"] = authorization_servers
+    if scopes_str:
+        oauth_config["scopes_supported"] = scopes_str.split()
+    elif existing.get("scopes_supported"):
+        oauth_config["scopes_supported"] = existing["scopes_supported"]
+    if token_endpoint:
+        oauth_config["token_endpoint"] = token_endpoint
+    elif existing.get("token_endpoint"):
+        oauth_config["token_endpoint"] = existing["token_endpoint"]
+    if oauth_audience:
+        oauth_config["audience"] = oauth_audience
+    elif existing.get("audience"):
+        oauth_config["audience"] = existing["audience"]
+    if oauth_resource is not None:
+        oauth_config["resource"] = oauth_resource
+    elif "resource" in existing:
+        oauth_config["resource"] = existing["resource"]
+    return True, oauth_config
+
+
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
     """Parse gateway data from either JSON body or form data.
 
@@ -3192,23 +3258,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         oauth_enabled = form.get("oauth_enabled") == "on"
         oauth_config = None
         if oauth_enabled:
-            authorization_server = str(form.get("oauth_authorization_server", "")).strip()
-            scopes_str = str(form.get("oauth_scopes", "")).strip()
-            token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
-
-            if authorization_server:
-                oauth_config = {"authorization_servers": [authorization_server]}
-                if scopes_str:
-                    # Convert space-separated scopes to list
-                    oauth_config["scopes_supported"] = scopes_str.split()
-                if token_endpoint:
-                    oauth_config["token_endpoint"] = token_endpoint
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                oauth_audience = str(form.get("oauth_audience", "")).strip()
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-            else:
+            oauth_config_ok, oauth_config = _parse_server_oauth_form(form)
+            if not oauth_config_ok:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
                     "OAuth was enabled for server '%s' but no authorization server was provided; disabling OAuth for this server.",
@@ -3354,23 +3405,19 @@ async def admin_edit_server(
         oauth_enabled = form.get("oauth_enabled") == "on"
         oauth_config = None
         if oauth_enabled:
-            authorization_server = str(form.get("oauth_authorization_server", "")).strip()
-            scopes_str = str(form.get("oauth_scopes", "")).strip()
-            token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
-
-            if authorization_server:
-                oauth_config = {"authorization_servers": [authorization_server]}
-                if scopes_str:
-                    # Convert space-separated scopes to list
-                    oauth_config["scopes_supported"] = scopes_str.split()
-                if token_endpoint:
-                    oauth_config["token_endpoint"] = token_endpoint
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                oauth_audience = str(form.get("oauth_audience", "")).strip()
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-            else:
+            # Preserve values configured through the API when the form fields
+            # are left empty, instead of rebuilding oauth_config from the
+            # form-managed fields only.
+            existing_oauth_config: Optional[dict[str, Any]] = None
+            try:
+                auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+                existing_server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
+                existing_oauth_config = existing_server.model_dump().get("oauth_config")
+            except ServerNotFoundError:
+                # update_server below surfaces the not-found error as before.
+                existing_oauth_config = None
+            oauth_config_ok, oauth_config = _parse_server_oauth_form(form, existing_oauth_config)
+            if not oauth_config_ok:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
                     "OAuth was enabled for server '%s' but no authorization server was provided; disabling OAuth for this server.",
