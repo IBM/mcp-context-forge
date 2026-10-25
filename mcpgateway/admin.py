@@ -1096,9 +1096,10 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["redirect_uri_after_oauth"] = oauth_redirect_uri_after_oauth
     if oauth_client_id:
         oauth_config["client_id"] = oauth_client_id
-    if oauth_client_secret == settings.masked_auth_value and oauth_grant_type == "token-exchange":
-        # Encryption downstream swaps the masked placeholder for the stored secret.
-        oauth_config["client_secret"] = oauth_client_secret
+    if oauth_client_secret == settings.masked_auth_value:
+        if oauth_grant_type == "token-exchange":
+            # Encryption downstream swaps the masked placeholder for the stored secret.
+            oauth_config["client_secret"] = oauth_client_secret
     elif oauth_client_secret:
         if encrypt_secret:
             encryption = get_encryption_service(settings.auth_encryption_secret)
@@ -1133,7 +1134,7 @@ def _require_token_exchange_client_secret(oauth_config: Any, existing_oauth_conf
 
     Args:
         oauth_config: Submitted oauth_config.
-        existing_oauth_config: Stored oauth_config on edit, used when the form keeps the stored secret.
+        existing_oauth_config: Stored oauth_config on edit. Its secret counts only when it is also a token-exchange config.
 
     Raises:
         PublicValidationError: If ``client_secret`` is missing and the auth method needs one.
@@ -1141,7 +1142,11 @@ def _require_token_exchange_client_secret(oauth_config: Any, existing_oauth_conf
     Examples:
         >>> _require_token_exchange_client_secret({"grant_type": "client_credentials"})
         >>> _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "private_key_jwt"})
-        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"client_secret": "stored"})  # pragma: allowlist secret
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "token-exchange", "client_secret": "stored"})  # pragma: allowlist secret
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "client_credentials", "client_secret": "stored"})  # pragma: allowlist secret
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none
         >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"})
         Traceback (most recent call last):
         ...
@@ -1154,7 +1159,7 @@ def _require_token_exchange_client_secret(oauth_config: Any, existing_oauth_conf
     submitted = oauth_config.get("client_secret")
     if submitted and submitted != settings.masked_auth_value:
         return
-    if isinstance(existing_oauth_config, dict) and existing_oauth_config.get("client_secret"):
+    if isinstance(existing_oauth_config, dict) and existing_oauth_config.get("grant_type") == "token-exchange" and existing_oauth_config.get("client_secret"):
         return
     raise PublicValidationError("client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none")
 
@@ -1166,6 +1171,8 @@ def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: A
     submitted grant are both ``token-exchange``, keys the form does not render
     (for example ``private_key``) keep their stored value. A rendered text field
     submitted blank clears its key. A blank secret field keeps the stored secret.
+    When the grant changes, a masked ``client_secret`` placeholder is dropped so
+    the secret of another grant is never kept.
 
     Args:
         submitted: oauth_config assembled from the edit form fields.
@@ -1182,8 +1189,12 @@ def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: A
         [('grant_type', 'token-exchange'), ('private_key', 'enc'), ('target_audience', 'b')]
         >>> _merge_token_exchange_edit({"grant_type": "client_credentials"}, stored, form)
         {'grant_type': 'client_credentials'}
+        >>> _merge_token_exchange_edit({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value}, {"grant_type": "client_credentials"}, form)
+        {'grant_type': 'token-exchange'}
     """
     if not isinstance(existing, dict) or existing.get("grant_type") != "token-exchange" or submitted.get("grant_type") != "token-exchange":
+        if submitted.get("client_secret") == settings.masked_auth_value:
+            return {key: value for key, value in submitted.items() if key != "client_secret"}
         return submitted
     merged = dict(existing)
     merged.update(submitted)

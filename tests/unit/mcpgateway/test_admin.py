@@ -7750,11 +7750,11 @@ class TestTokenExchangeAdminForms:
             assert key not in config
 
     async def test_assemble_masked_secret_kept_only_for_token_exchange(self):
-        """A masked secret is passed through for token-exchange and encrypted as before for other grants."""
+        """A masked secret is passed through for token-exchange and dropped for other grants."""
         te = await _assemble_oauth_config_from_fields(FakeForm(dict(_TE_FORM_FIELDS, oauth_client_secret=settings.masked_auth_value)), encrypt_secret=False)
         assert te["client_secret"] == settings.masked_auth_value
-        cc = await _assemble_oauth_config_from_fields(FakeForm({"oauth_grant_type": "client_credentials", "oauth_client_secret": settings.masked_auth_value}), encrypt_secret=False)
-        assert cc["client_secret"] == settings.masked_auth_value
+        cc = await _assemble_oauth_config_from_fields(FakeForm({"oauth_grant_type": "client_credentials", "oauth_client_secret": settings.masked_auth_value}), encrypt_secret=True)
+        assert "client_secret" not in cc
 
     def test_require_client_secret(self):
         """The admin form check requires a secret unless the auth method needs none."""
@@ -7765,7 +7765,9 @@ class TestTokenExchangeAdminForms:
         _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": "x"})  # pragma: allowlist secret
         _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "private_key_jwt"})
         _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "none"})
-        _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value}, {"client_secret": "stored"})  # pragma: allowlist secret
+        _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value}, {"grant_type": "token-exchange", "client_secret": "stored"})  # pragma: allowlist secret
+        with pytest.raises(PublicValidationError):
+            _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "client_credentials", "client_secret": "stored"})  # pragma: allowlist secret
         _require_token_exchange_client_secret({"grant_type": "client_credentials"})
 
     @patch.object(GatewayService, "register_gateway")
@@ -7868,6 +7870,33 @@ class TestTokenExchangeAdminForms:
 
         assert result.status_code == 200
         assert mock_update_gateway.call_args.args[2].oauth_config["client_secret"] == settings.masked_auth_value
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_switch_from_token_exchange_drops_masked_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Switching away from token-exchange never stores the masked placeholder as the secret."""
+        form = {
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": _TE_STORED_CONFIG["token_url"],
+            "oauth_client_id": _TE_STORED_CONFIG["client_id"],
+            "oauth_client_secret": settings.masked_auth_value,
+        }
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, _TE_STORED_CONFIG)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["grant_type"] == "client_credentials"
+        assert "client_secret" not in submitted
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_switch_to_token_exchange_requires_new_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Switching to token-exchange rejects a masked secret that belongs to the previous grant."""
+        stored = {"grant_type": "client_credentials", "token_url": "https://as.example.com/token", "client_id": "cc-client", "client_secret": "cc-ciphertext"}  # pragma: allowlist secret
+        form = dict(self._edit_form_from_stored(dict(_TE_STORED_CONFIG, token_endpoint_auth_method="client_secret_post")), oauth_client_secret=settings.masked_auth_value)
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 400
+        assert "client_secret is required" in json.loads(result.body)["message"]
+        mock_update_gateway.assert_not_called()
 
     @patch.object(GatewayService, "update_gateway")
     async def test_edit_blank_rendered_field_clears_key(self, mock_update_gateway, mock_request, mock_db):

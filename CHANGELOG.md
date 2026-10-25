@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Resource reads on token-exchange gateways fail closed** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236)) - `resources/read` on a `token-exchange` gateway now raises `ResourceError` when the request has no user JWT or the RFC 8693 exchange fails. Before, the read went upstream without an `Authorization` header. MCP clients and `GET /resources/{id}` callers now receive an error instead of an unauthenticated upstream response. Unauthenticated callers on deployments that set `MCP_REQUIRE_AUTH` to `false` and callers whose authorization server rejects the exchange are affected. Send an authenticated user JWT and verify the gateway's token-exchange configuration before upgrading.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
