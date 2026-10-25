@@ -17,13 +17,15 @@ SECURITY: an actor token is a bearer credential. Never log its value.
 """
 
 # Standard
+import hashlib
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
 # First-Party
 from mcpgateway.common.oauth import ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION, ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS, ACTOR_TOKEN_SOURCE_NONE, DEFAULT_ACTOR_TOKEN_TYPES, normalize_token_endpoint_auth_method
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, OAuthTokenExchangeError
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,10 @@ _ACTOR_FALLBACK_TTL = 60
 # Keys of the optional ``actor`` object that override the parent client for the actor token request only.
 _ACTOR_OVERRIDE_KEYS = ("token_url", "client_id", "client_secret", "token_endpoint_auth_method")
 _SIGNING_KEY_MATERIAL_KEYS = ("private_key", "private_key_jwt_kid", "token_endpoint_auth_signing_alg")
+# Keys of the exchange client that shape the issued token's identity and ``act`` claim.
+_EXCHANGE_CLIENT_KEYS = ("token_url", "client_id", "token_endpoint_auth_method", "client_secret", "private_key", "private_key_jwt_kid", "token_endpoint_auth_signing_alg")
+# RFC 6749 §5.2 error codes that blame the actor token or the client that requests it.
+_ACTOR_REJECTION_ERRORS = frozenset({"invalid_client", "unauthorized_client"})
 
 
 def actor_token_source(oauth_config: Optional[Dict[str, Any]]) -> str:
@@ -76,22 +82,38 @@ def exchange_mode(oauth_config: Optional[Dict[str, Any]]) -> str:
 def exchange_cache_variant(oauth_config: Optional[Dict[str, Any]]) -> str:
     """Return the ``TokenExchangeCache`` key variant for the config's exchange mode.
 
-    Impersonation keeps the empty variant, so its keys stay unchanged.
+    Impersonation keeps the empty variant, so its keys stay unchanged. The
+    delegation variant carries a fingerprint of the exchange client, the actor
+    client, and ``actor_token_type``. A change to any of them misses the tokens
+    issued with the old ``act`` claim on every worker.
 
     Args:
         oauth_config: Gateway ``oauth_config``, or ``None``.
 
     Returns:
-        ``""`` for impersonation, ``actor:<source>`` for delegation.
+        ``""`` for impersonation, ``actor:<source>:<fingerprint>`` for delegation.
 
     Examples:
         >>> exchange_cache_variant({})
         ''
-        >>> exchange_cache_variant({"actor_token_source": "client_credentials"})
-        'actor:client_credentials'
+        >>> exchange_cache_variant({"actor_token_source": "client_credentials"}).startswith("actor:client_credentials:")
+        True
+        >>> base = {"actor_token_source": "client_credentials", "client_id": "mcp1", "actor": {"client_id": "cf"}}
+        >>> exchange_cache_variant(base) == exchange_cache_variant({**base, "actor": {"client_id": "other"}})
+        False
     """
     source = actor_token_source(oauth_config)
-    return "" if source == ACTOR_TOKEN_SOURCE_NONE else f"actor:{source}"
+    if source == ACTOR_TOKEN_SOURCE_NONE:
+        return ""
+    assert oauth_config is not None  # nosec B101 (type-narrowing only)
+    actor_config = build_actor_oauth_config(oauth_config) if source == ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS else {}
+    material = {
+        "exchange_client": {key: oauth_config.get(key) for key in _EXCHANGE_CLIENT_KEYS},
+        "actor_client": service_token_fingerprint(actor_config) if actor_config else None,
+        "actor_token_type": oauth_config.get("actor_token_type") or DEFAULT_ACTOR_TOKEN_TYPES.get(source),
+    }
+    fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return f"actor:{source}:{fingerprint}"
 
 
 def build_actor_oauth_config(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -160,7 +182,8 @@ async def resolve_actor_token(
         ``(actor_token, actor_token_type)``, or ``(None, None)`` for impersonation.
 
     Raises:
-        OAuthError: If the actor token cannot be obtained. The message carries no token value.
+        OAuthTokenExchangeError: If the actor token cannot be obtained, with ``stage`` ``actor``.
+            The message carries no token value.
     """
     source = actor_token_source(oauth_config)
     if source == ACTOR_TOKEN_SOURCE_NONE:
@@ -172,19 +195,63 @@ async def resolve_actor_token(
     elif source == ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION:
         token = await _client_assertion_actor_token(oauth_manager, oauth_config)
     else:
-        raise OAuthError("Unsupported actor_token_source")
+        raise OAuthTokenExchangeError("Unsupported actor_token_source", stage="actor")
     return token, token_type
 
 
-async def invalidate_actor_token(gateway_id: Optional[str], oauth_config: Optional[Dict[str, Any]]) -> None:
-    """Discard the cached ``client_credentials`` actor token of a gateway after a rejected exchange.
+def is_actor_rejection(exc: BaseException) -> bool:
+    """Report whether a failed exchange blames the cached actor token.
+
+    A network error, a policy denial for one user, or an expired subject token
+    leaves the shared actor token valid. Only an HTTP 401, an ``invalid_client``
+    or ``unauthorized_client`` error, or an ``error_description`` that names the
+    actor token points at the actor.
+
+    Args:
+        exc: Exception raised by the exchange.
+
+    Returns:
+        True when the exchange request was rejected because of the actor.
+
+    Examples:
+        >>> is_actor_rejection(OAuthTokenExchangeError("x", status_code=401))
+        True
+        >>> is_actor_rejection(OAuthTokenExchangeError("x", status_code=400, error_code="invalid_client"))
+        True
+        >>> is_actor_rejection(OAuthTokenExchangeError("x", status_code=400, error_code="invalid_request", error_description="actor_token expired"))
+        True
+        >>> is_actor_rejection(OAuthTokenExchangeError("x", status_code=400, error_code="invalid_grant"))
+        False
+        >>> is_actor_rejection(OAuthTokenExchangeError("x"))
+        False
+        >>> is_actor_rejection(OAuthTokenExchangeError("x", stage="actor", status_code=401))
+        False
+        >>> is_actor_rejection(RuntimeError("boom"))
+        False
+    """
+    if not isinstance(exc, OAuthTokenExchangeError) or exc.stage != "exchange":
+        return False
+    if exc.status_code == 401 or exc.error_code in _ACTOR_REJECTION_ERRORS:
+        return True
+    return "actor" in (exc.error_description or "").lower()
+
+
+async def invalidate_actor_token(gateway_id: Optional[str], oauth_config: Optional[Dict[str, Any]], exc: Optional[BaseException] = None) -> None:
+    """Discard the cached ``client_credentials`` actor token of a gateway after an actor rejection.
+
+    Deletes the one deterministic cache key of the gateway's current actor config.
+    When ``exc`` is given, the key is deleted only if ``is_actor_rejection(exc)``.
 
     Args:
         gateway_id: Gateway identifier.
         oauth_config: Gateway ``oauth_config``. No-op unless the source is ``client_credentials``.
+        exc: Exception raised by the exchange, or ``None`` to evict unconditionally.
     """
-    if gateway_id and actor_token_source(oauth_config) == ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
-        await get_service_token_cache().invalidate(gateway_id, purpose=ACTOR_PURPOSE)
+    if not gateway_id or not isinstance(oauth_config, dict) or actor_token_source(oauth_config) != ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
+        return
+    if exc is not None and not is_actor_rejection(exc):
+        return
+    await get_service_token_cache().delete(ACTOR_PURPOSE, gateway_id, service_token_fingerprint(build_actor_oauth_config(oauth_config)))
 
 
 async def _client_credentials_actor_token(
@@ -248,16 +315,16 @@ async def _request_client_credentials_actor_token(
         The actor access token.
 
     Raises:
-        OAuthError: If the token request fails or returns no access token.
+        OAuthTokenExchangeError: If the token request fails or returns no access token.
     """
     try:
         response = await oauth_manager.get_client_credentials_token_response(actor_config, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         token = response["access_token"]
     except Exception as exc:
         # The cause is chained for debugging; the message names no token value.
-        raise OAuthError("Actor token request failed for token-exchange delegation") from exc
+        raise OAuthTokenExchangeError("Actor token request failed for token-exchange delegation", stage="actor") from exc
     if not isinstance(token, str) or not token:
-        raise OAuthError("Actor token request returned no access token")
+        raise OAuthTokenExchangeError("Actor token request returned no access token", stage="actor")
     if gateway_id:
         try:
             expires_in = int(response.get("expires_in") or _ACTOR_FALLBACK_TTL)
@@ -278,12 +345,14 @@ async def _client_assertion_actor_token(oauth_manager: OAuthManager, oauth_confi
         The signed actor JWT.
 
     Raises:
-        OAuthError: If the key cannot be decrypted, loaded, or used to sign.
+        OAuthTokenExchangeError: If the key cannot be decrypted, loaded, or used to sign.
     """
     try:
         runtime_credentials = await oauth_manager._prepare_runtime_credentials(oauth_config, "token-exchange actor")  # pylint: disable=protected-access
         return await oauth_manager.build_client_assertion(runtime_credentials)
-    except OAuthError:
+    except OAuthTokenExchangeError:
         raise
+    except OAuthError as exc:
+        raise OAuthTokenExchangeError(str(exc), stage="actor") from exc
     except Exception as exc:
-        raise OAuthError("Actor token signing failed for token-exchange delegation") from exc
+        raise OAuthTokenExchangeError("Actor token signing failed for token-exchange delegation", stage="actor") from exc

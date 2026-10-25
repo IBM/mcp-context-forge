@@ -1544,7 +1544,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await invalidate_actor_token(gateway_id, oauth_config)
+                await invalidate_actor_token(gateway_id, oauth_config, e)
                 await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
                 audit_token_exchange(
                     user_email=app_user_email,

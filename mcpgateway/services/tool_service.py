@@ -4460,7 +4460,7 @@ class ToolService(BaseService):
                 latency_ms = int((time.monotonic() - started) * 1000)
                 # H1: caller gets a generic message; AS detail never echoed out.
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await invalidate_actor_token(gateway_id, oauth_config)
+                await invalidate_actor_token(gateway_id, oauth_config, e)
                 await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)  # P4
                 audit_token_exchange(
                     user_email=app_user_email,

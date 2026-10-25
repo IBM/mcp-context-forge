@@ -18,7 +18,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
@@ -1159,10 +1159,47 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.debug("Token exchange attempt %s failed: %s", attempt + 1, self._LEAKY_PARAM_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", str(e)))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}")
+                    status_code, error_code, error_description = self._token_error_fields(e)
+                    raise OAuthTokenExchangeError(
+                        f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}",
+                        status_code=status_code,
+                        error_code=error_code,
+                        error_description=error_description,
+                    )
                 await asyncio.sleep(2**attempt)
 
-        raise OAuthError("Token exchange failed after all retry attempts")
+        raise OAuthTokenExchangeError("Token exchange failed after all retry attempts")
+
+    @staticmethod
+    def _token_error_fields(exc: httpx.HTTPError) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+        """Return the HTTP status and RFC 6749 §5.2 error fields of a failed token request.
+
+        Args:
+            exc: Error raised by the token request.
+
+        Returns:
+            ``(status_code, error, error_description)``. Each item is ``None`` when unknown.
+
+        Examples:
+            >>> request = httpx.Request("POST", "https://as/token")
+            >>> response = httpx.Response(400, json={"error": "invalid_client"}, request=request)
+            >>> OAuthManager._token_error_fields(httpx.HTTPStatusError("bad", request=request, response=response))
+            (400, 'invalid_client', None)
+            >>> OAuthManager._token_error_fields(httpx.ConnectError("down"))
+            (None, None, None)
+        """
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return None, None, None
+        response = exc.response
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            return response.status_code, None, None
+        error_code = body.get("error") if isinstance(body.get("error"), str) else None
+        error_description = body.get("error_description") if isinstance(body.get("error_description"), str) else None
+        return response.status_code, error_code, error_description
 
     @staticmethod
     def _apply_default_redirect_uri(credentials: Dict[str, Any], default_redirect_uri: Optional[str] = None) -> Dict[str, Any]:
@@ -2365,6 +2402,38 @@ class OAuthError(Exception):
         ...     isinstance(e, OAuthError)
         True
     """
+
+
+class OAuthTokenExchangeError(OAuthError):
+    """Raised when an RFC 8693 token exchange or its actor token request fails.
+
+    ``stage`` is ``actor`` when the actor token could not be obtained, and
+    ``exchange`` when the exchange request itself failed. The token endpoint
+    fields are ``None`` when no response arrived, for example on a network error.
+
+    Examples:
+        >>> err = OAuthTokenExchangeError("denied", status_code=401, error_code="invalid_client")
+        >>> err.stage, err.status_code, err.error_code, err.error_description
+        ('exchange', 401, 'invalid_client', None)
+        >>> isinstance(OAuthTokenExchangeError("x", stage="actor"), OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, stage: str = "exchange", status_code: Optional[int] = None, error_code: Optional[str] = None, error_description: Optional[str] = None) -> None:
+        """Initialize with message, failure stage, and token endpoint response fields.
+
+        Args:
+            message: Human-readable error description. Never carries a token value.
+            stage: ``actor`` or ``exchange``.
+            status_code: HTTP status of the token endpoint response, if any.
+            error_code: RFC 6749 §5.2 ``error`` value of the response, if any.
+            error_description: ``error_description`` value of the response, if any.
+        """
+        super().__init__(message)
+        self.stage = stage
+        self.status_code = status_code
+        self.error_code = error_code
+        self.error_description = error_description
 
 
 class OAuthInvalidGrantError(OAuthError):

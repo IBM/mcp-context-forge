@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 # First-Party
 from mcpgateway.common.oauth import CLIENT_ASSERTION_TYPE_JWT_BEARER, MAX_CLIENT_ASSERTION_TTL_SECONDS
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, parse_expires_in
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, OAuthTokenExchangeError, parse_expires_in
 
 
 def _isolated_client(mock_client, captured_kwargs=None):
@@ -3161,6 +3161,29 @@ class TestTokenExchangeActorTokenSecrecy:
         for record in caplog.records:
             assert _ACTOR_TOKEN_VALUE not in record.getMessage()
             assert _ACTOR_TOKEN_VALUE not in repr(record.__dict__)
+
+    @pytest.mark.asyncio
+    async def test_http_status_failure_carries_status_and_error_code(self, oauth_manager):
+        request = httpx.Request("POST", "https://issuer.example.com/token")
+        error_response = httpx.Response(401, json={"error": "invalid_client", "error_description": "actor_token rejected"}, request=request)
+        response = MagicMock()
+        response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("401", request=request, response=error_response))
+
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=response):
+            with pytest.raises(OAuthTokenExchangeError) as exc_info:
+                await oauth_manager.token_exchange(oauth_config=_te_secret_config(), subject_token="inbound.jwt")
+
+        assert (exc_info.value.stage, exc_info.value.status_code, exc_info.value.error_code) == ("exchange", 401, "invalid_client")
+        assert exc_info.value.error_description == "actor_token rejected"
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_has_no_status(self, oauth_manager):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, side_effect=httpx.ConnectError("down")):
+            with pytest.raises(OAuthTokenExchangeError) as exc_info:
+                await oauth_manager.token_exchange(oauth_config=_te_secret_config(), subject_token="inbound.jwt")
+
+        assert exc_info.value.status_code is None
+        assert exc_info.value.error_code is None
 
     @pytest.mark.asyncio
     async def test_guard_failure_never_logs_actor_type_values(self, oauth_manager, caplog):
