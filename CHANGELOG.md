@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **mTLS with system CA verification** ([#6771](https://github.com/IBM/mcp-context-forge/issues/6771)) - Gateways present client certificates without a custom CA. Handshake tests decrypt stored keys and preserve candidate credential isolation.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
