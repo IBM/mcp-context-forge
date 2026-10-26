@@ -141,7 +141,13 @@ def _make_recording_handler(expected_candidate: str) -> tuple[type[BaseHTTPReque
 # isolated_gateway fixture  (mirrors test_rest_non_json_output_schema_e2e.py)
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def isolated_gateway(tmp_path: Path) -> Iterator[_GatewayFixture]:
+def gateway_environment() -> dict[str, str]:
+    """Return additional settings for an isolated gateway subprocess."""
+    return {}
+
+
+@pytest.fixture
+def isolated_gateway(tmp_path: Path, gateway_environment: dict[str, str]) -> Iterator[_GatewayFixture]:
     """Start a private, single-tenant gateway subprocess for this test module.
 
     Uses SQLite + a random port so no compose stack is required.
@@ -187,6 +193,8 @@ def isolated_gateway(tmp_path: Path) -> Iterator[_GatewayFixture]:
         "NO_PROXY": "localhost,127.0.0.1",
         "PYTHONUNBUFFERED": "1",
     }
+
+    env.update(gateway_environment)
 
     token = make_test_jwt(
         "admin@example.com",
