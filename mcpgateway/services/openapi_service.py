@@ -99,7 +99,7 @@ def _cacheable_failure(exc: Exception) -> Optional[_CachedFailure]:
 
 
 _spec_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | _CachedFailure, int]] = collections.OrderedDict()
-_spec_cache_bytes = 0
+_SPEC_CACHE_BYTES = 0
 _spec_locks: dict[str, _SpecLock] = {}
 _spec_locks_guard = asyncio.Lock()
 
@@ -132,14 +132,14 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, 
             response body is not valid JSON.
         httpx.HTTPError: If the request fails.
     """
-    global _spec_cache_bytes
+    global _SPEC_CACHE_BYTES
 
     now = time.monotonic()
 
     # --- evict expired entries on every access ---
     expired_keys = [k for k, (expires_at, _, _) in _spec_cache.items() if expires_at <= now]
     for k in expired_keys:
-        _spec_cache_bytes -= _spec_cache.pop(k)[2]
+        _SPEC_CACHE_BYTES -= _spec_cache.pop(k)[2]
 
     fresh = _fresh_cached_copy(spec_url)
     if fresh is not None:
@@ -221,21 +221,21 @@ def _store(spec_url: str, value: dict[str, Any] | _CachedFailure, ttl: float) ->
         value: Parsed specification, or a traceback-free cached failure.
         ttl: Lifetime of the entry in seconds.
     """
-    global _spec_cache_bytes
+    global _SPEC_CACHE_BYTES
 
     entry_size = _estimate_spec_cache_size(spec_url, value, _SPEC_CACHE_MAX_BYTES)
     previous = _spec_cache.pop(spec_url, None)
     if previous is not None:
-        _spec_cache_bytes -= previous[2]
+        _SPEC_CACHE_BYTES -= previous[2]
     if entry_size > _SPEC_CACHE_MAX_BYTES:
         return
 
     _spec_cache[spec_url] = (time.monotonic() + ttl, value, entry_size)
-    _spec_cache_bytes += entry_size
+    _SPEC_CACHE_BYTES += entry_size
     _spec_cache.move_to_end(spec_url)
-    while len(_spec_cache) > _SPEC_CACHE_MAX or _spec_cache_bytes > _SPEC_CACHE_MAX_BYTES:
+    while len(_spec_cache) > _SPEC_CACHE_MAX or _SPEC_CACHE_BYTES > _SPEC_CACHE_MAX_BYTES:
         _, (_, _, evicted_size) = _spec_cache.popitem(last=False)
-        _spec_cache_bytes -= evicted_size
+        _SPEC_CACHE_BYTES -= evicted_size
 
 
 def _fresh_cached_copy(spec_url: str) -> Optional[dict[str, Any]]:
