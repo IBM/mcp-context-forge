@@ -40,6 +40,18 @@ The adapter normalizes between v1 and legacy forms at the gateway boundary, allo
 - **Testing overhead**: Both v1 and v0.3 paths must be tested to ensure correctness
 - **Migration lag**: Clients upgrading at different rates may experience interoperability testing challenges
 
+## Agent Card Shape
+
+Agent cards dispatch on the stored protocol version through `is_v1_a2a_protocol()`. Cards for 1.x agents use the A2A 1.0 `AgentCard` shape. Cards for 0.x agents keep the legacy shape.
+
+- The `protocol_version` column defaults to `"1.0"` and an empty value counts as 1.x. Existing agents with the default switch to the 1.0 shape.
+- 1.x cards drop `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`.
+- The card describes the upstream agent. `supportedInterfaces[].url` carries the stored `endpoint_url`, and OAuth flows carry the stored `token_url` and `authorization_url`. Callers reach the agent through the gateway. Layer-1 visibility scopes who can read the card.
+- Server cards report `ServerInterface.binding` as the interface `url`. `resolve_server_agent` treats `binding` as the endpoint, so the card and invocation agree. Issue #7027 asks for the endpoint, not the protocol binding, and this decision follows that request. The protocol binding comes from `ServerInterface.protocol`.
+- `protocolBinding: "JSONRPC"` and `extendedAgentCard: true` for agent cards reflect the only binding and the `GetExtendedAgentCard` support of the sidecar.
+- Server cards aggregate capabilities, modes, and skills from enabled associated agents and skip malformed entries.
+- Security schemes derive from auth configuration only. Cards never read `auth_value`, `client_secret`, or `private_key`.
+
 ## Implementation Notes
 
 - Legacy method aliases (`message/send`, `tasks/get`) are accepted alongside v1 names (`SendMessage`, `GetTask`, `ListTasks`)

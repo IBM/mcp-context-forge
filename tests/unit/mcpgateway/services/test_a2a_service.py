@@ -2921,6 +2921,7 @@ class TestInvokeAgentEdgeCases:
     def _make_card_agent(**overrides):
         """Build a SimpleNamespace with every field the card builders touch, defaults overridable (#7027)."""
         defaults = dict(
+            id="agent-1",
             name="ag",
             description="desc",
             endpoint_url="https://x.com",
@@ -3024,7 +3025,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, requirements = _build_security_scheme(agent)
 
-        scheme_name = f"{auth_type}Auth"
+        scheme_name = f"{auth_type}Auth"  # basicAuth / bearerAuth
         assert schemes == {scheme_name: expected_scheme}
         assert requirements == [{"schemes": {scheme_name: {}}}]
 
@@ -3049,7 +3050,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, _requirements = _build_security_scheme(agent)
 
-        assert schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
 
     def test_build_security_scheme_oauth_always_emits_scopes_map(self):
         # First-Party
@@ -3059,7 +3060,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, _requirements = _build_security_scheme(agent)
 
-        assert schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
 
     @pytest.mark.parametrize(
         "oauth_config",
@@ -3085,7 +3086,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, _requirements = _build_security_scheme(agent)
 
-        assert schemes == {"query_paramAuth": {"apiKeySecurityScheme": {"location": "query", "name": "tavilyApiKey"}}}
+        assert schemes == {"apiKeyAuth": {"apiKeySecurityScheme": {"location": "query", "name": "tavilyApiKey"}}}
         assert "<encrypted>" not in str(schemes)
 
     def test_build_security_scheme_oauth_client_credentials(self):
@@ -3099,7 +3100,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, _requirements = _build_security_scheme(agent)
 
-        flows = schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]
+        flows = schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]
         assert flows["clientCredentials"]["tokenUrl"] == "https://auth.example.com/token"
         assert flows["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
         assert "<should-never-appear>" not in str(schemes)
@@ -3115,7 +3116,7 @@ class TestInvokeAgentEdgeCases:
 
         schemes, _requirements = _build_security_scheme(agent)
 
-        flows = schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]
+        flows = schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]
         assert flows["authorizationCode"]["authorizationUrl"] == "https://auth.example.com/authorize"
         assert flows["authorizationCode"]["tokenUrl"] == "https://auth.example.com/token"
 
@@ -3126,6 +3127,62 @@ class TestInvokeAgentEdgeCases:
         agent = self._make_card_agent(auth_type="not-a-real-type")
 
         assert _build_security_scheme(agent) == (None, None)
+
+    @pytest.mark.parametrize("scopes", [5, {"a": 1}, True])
+    def test_build_security_scheme_oauth_non_list_scopes_coerced_to_empty(self, scopes):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scopes": scopes})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
+
+    async def test_get_agent_card_null_skills_yield_empty_list(self, service, mock_db):
+        for version in ("1.0", "0.3"):
+            agent = self._make_card_agent(protocol_version=version, capabilities={"skills": None})
+            mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+            result = await service.get_agent_card(mock_db, "ag")
+
+            assert result["skills"] == []
+
+    async def test_get_agent_card_v1_includes_extensions(self, service, mock_db):
+        extensions = [{"uri": "https://example.com/ext", "required": False}]
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(capabilities={"extensions": extensions})
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["capabilities"]["extensions"] == extensions
+
+    async def test_get_agent_card_v1_full_card_with_auth_never_leaks_credentials_and_parses_with_sdk(self, service, mock_db):
+        """A full v1 card carries the derived scheme, no credential values, and parses as an SDK AgentCard (#7027)."""
+        agent = self._make_card_agent(
+            auth_type="oauth",
+            auth_value="<enc-auth-value>",  # pragma: allowlist secret
+            oauth_config={
+                "grant_type": "client_credentials",
+                "token_url": "https://auth.example.com/token",
+                "scopes": ["read"],
+                "client_secret": "<leak-client-secret>",  # pragma: allowlist secret
+                "private_key": "<leak-private-key>",  # pragma: allowlist secret
+            },
+            capabilities={"streaming": True, "skills": [{"id": "s1", "name": "S1", "description": "d", "tags": ["t"]}]},
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["securitySchemes"]["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read"}
+        assert result["securityRequirements"] == [{"schemes": {"oauth2Auth": {}}}]
+        rendered = str(result)
+        for secret in ("<enc-auth-value>", "<leak-client-secret>", "<leak-private-key>"):
+            assert secret not in rendered
+
+        json_format = pytest.importorskip("google.protobuf.json_format")
+        types = pytest.importorskip("a2a.types")
+        json_format.ParseDict(result, types.AgentCard())
 
     async def test_invoke_prepare_failure_without_auth_wraps_error(self, service, mock_db, monkeypatch):
         agent = SimpleNamespace(

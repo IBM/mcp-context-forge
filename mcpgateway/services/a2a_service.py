@@ -407,7 +407,10 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
         raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
-_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "client_id", "authorization_url", "token_url", "scopes", "scope")
+_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "authorization_url", "token_url", "scopes", "scope")
+
+
+_SECURITY_SCHEME_NAMES = {"basic": "basicAuth", "bearer": "bearerAuth", "query_param": "apiKeyAuth", "oauth": "oauth2Auth"}  # pragma: allowlist secret
 
 
 def _oauth_scope_names(safe: Dict[str, Any]) -> List[str]:
@@ -422,6 +425,8 @@ def _oauth_scope_names(safe: Dict[str, Any]) -> List[str]:
     raw = safe.get("scopes") or safe.get("scope") or []
     if isinstance(raw, str):
         raw = raw.replace(",", " ").split()
+    elif not isinstance(raw, (list, tuple)):
+        return []
     return [str(scope).strip() for scope in raw if str(scope).strip()]
 
 
@@ -491,9 +496,11 @@ def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]],
         scheme = None
 
     if scheme is None:
+        if auth_type:
+            logger.debug("Omitting A2A card security scheme for agent %s: auth type %r cannot be expressed schema-validly from stored configuration", agent.id, auth_type)
         return None, None
 
-    scheme_name = f"{auth_type}Auth"
+    scheme_name = _SECURITY_SCHEME_NAMES[auth_type]
     # An unscoped StringList serializes to {} (protobuf JSON omits the empty
     # repeated "list" field), verified against the installed a2a SDK's own
     # MessageToDict output — not {"list": []}.
@@ -1507,7 +1514,7 @@ class A2AAgentService(BaseService):
                 "pushNotifications": bool(capabilities.get("pushNotifications", False)),
                 "stateTransitionHistory": bool(capabilities.get("stateTransitionHistory", False)),
             },
-            "skills": capabilities.get("skills", []),
+            "skills": capabilities.get("skills") or [],
             "supportsAuthenticatedExtendedCard": True,
         }
 
@@ -1529,6 +1536,8 @@ class A2AAgentService(BaseService):
         """
         capabilities = agent.capabilities or {}
 
+        # JSONRPC is the only binding ContextForge's A2A invocation path supports,
+        # and extendedAgentCard reflects sidecar GetExtendedAgentCard support.
         interface: Dict[str, Any] = {
             "url": agent.endpoint_url,
             "protocolBinding": "JSONRPC",
@@ -1554,7 +1563,7 @@ class A2AAgentService(BaseService):
             "capabilities": card_capabilities,
             "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
             "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
-            "skills": capabilities.get("skills", []),
+            "skills": capabilities.get("skills") or [],
         }
         if agent.icon_url:
             card["iconUrl"] = agent.icon_url

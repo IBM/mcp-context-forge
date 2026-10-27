@@ -211,6 +211,25 @@ class TestA2AServerService:
         assert card["capabilities"]["streaming"] is True
         assert card["capabilities"]["pushNotifications"] is True
 
+    def test_get_server_agent_card_skips_malformed_capabilities(self, service, mock_db):
+        """Malformed free-form capabilities on one agent never break the card (#7027)."""
+        bad_agents = [
+            _make_agent(name="bad1", capabilities={"defaultInputModes": None, "defaultOutputModes": "text", "skills": None}),
+            _make_agent(name="bad2", capabilities={"skills": [{"id": ["list-id"]}, {"id": "ok"}, "not-a-dict"], "defaultInputModes": [None, 5, "file"]}),
+        ]
+        server = _make_server(a2a_agents=bad_agents)
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert [skill for skill in card["skills"] if isinstance(skill, dict)] == [{"id": "ok"}]
+        assert card["defaultInputModes"] == ["file"]
+        assert card["defaultOutputModes"] == ["text"]
+
     def test_get_server_agent_card_modes_reflect_associated_agents(self, service, mock_db):
         """defaultInputModes/defaultOutputModes union across enabled agents, not hardcoded (#7027)."""
         agent_a = _make_agent(name="a1", capabilities={"defaultInputModes": ["text"]})

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 # Standard
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NamedTuple, Optional
 import uuid
 
 # Third-Party
@@ -32,6 +32,17 @@ from mcpgateway.db import ServerTaskMapping as DbServerTaskMapping
 from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol
 
 logger = logging.getLogger(__name__)
+
+
+class _AggregatedCapabilities(NamedTuple):
+    """Capabilities, modes, and skills aggregated across a server's associated agents."""
+
+    streaming: bool
+    push_notifications: bool
+    skills: list[Dict[str, Any]]
+    input_modes: list[str]
+    output_modes: list[str]
+
 
 _A2A_BINDING_PREFIX = "a2a-"
 _DEFAULT_PROTOCOL_BINDING = "JSONRPC"
@@ -153,22 +164,26 @@ class A2AServerService:
 
         return self._build_server_card(server, interface)
 
-    def _aggregate_agent_capabilities(self, server: DbServer) -> tuple[bool, bool, list[Dict[str, Any]], list[str], list[str]]:
+    def _aggregate_agent_capabilities(self, server: DbServer) -> _AggregatedCapabilities:
         """Aggregate capability flags, modes, and deduplicated skills from enabled associated agents.
+
+        Malformed free-form ``capabilities`` entries (a non-list ``skills`` or
+        mode field, a non-string mode, a non-string skill ``id``) are skipped
+        so one bad agent cannot break the server card.
 
         Args:
             server: The virtual server whose associated A2A agents to aggregate.
 
         Returns:
-            A ``(streaming, push_notifications, skills, input_modes,
-            output_modes)`` tuple. ``streaming`` and ``push_notifications``
-            are ``True`` if any enabled associated agent declares them.
-            ``skills`` keeps only the first occurrence of each skill id, so
-            identical ids from different agents don't collide. ``input_modes``
-            and ``output_modes`` are the union of ``defaultInputModes``/
-            ``defaultOutputModes`` declared by enabled associated agents, in
-            first-seen order, or ``["text"]`` when no agent declares any —
-            Server/ServerInterface have no capabilities column of their own.
+            An :class:`_AggregatedCapabilities`. ``streaming`` and
+            ``push_notifications`` are ``True`` if any enabled associated agent
+            declares them. ``skills`` keeps only the first occurrence of each
+            skill id, so identical ids from different agents don't collide.
+            ``input_modes`` and ``output_modes`` are the union of
+            ``defaultInputModes``/``defaultOutputModes`` declared by enabled
+            associated agents, in first-seen order, or ``["text"]`` when no
+            agent declares any — Server/ServerInterface have no capabilities
+            column of their own.
         """
         streaming = False
         push_notifications = False
@@ -179,23 +194,27 @@ class A2AServerService:
         for agent in server.a2a_agents:
             if not agent.enabled:
                 continue
-            caps = agent.capabilities or {}
+            caps = agent.capabilities if isinstance(agent.capabilities, dict) else {}
             streaming = streaming or bool(caps.get("streaming", False))
             push_notifications = push_notifications or bool(caps.get("pushNotifications", False))
-            for skill in caps.get("skills", []):
+            raw_skills = caps.get("skills")
+            for skill in raw_skills if isinstance(raw_skills, list) else []:
                 skill_id = skill.get("id") if isinstance(skill, dict) else None
                 if skill_id is not None:
+                    if not isinstance(skill_id, str):
+                        logger.debug("Skipping skill with non-string id on agent %s", agent.id)
+                        continue
                     if skill_id in seen_skill_ids:
+                        logger.debug("Dropping duplicate skill id %r from agent %s", skill_id, agent.id)
                         continue
                     seen_skill_ids.add(skill_id)
                 skills.append(skill)
-            for mode in caps.get("defaultInputModes", []):
-                if mode not in input_modes:
-                    input_modes.append(mode)
-            for mode in caps.get("defaultOutputModes", []):
-                if mode not in output_modes:
-                    output_modes.append(mode)
-        return streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"]
+            for key, modes in (("defaultInputModes", input_modes), ("defaultOutputModes", output_modes)):
+                declared = caps.get(key)
+                for mode in declared if isinstance(declared, list) else []:
+                    if isinstance(mode, str) and mode not in modes:
+                        modes.append(mode)
+        return _AggregatedCapabilities(streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"])
 
     def _build_server_card(self, server: DbServer, interface: DbServerInterface) -> Dict[str, Any]:
         """Dispatch card construction by the interface's declared protocol version.
@@ -207,21 +226,12 @@ class A2AServerService:
         Returns:
             AgentCard dict, shaped per the interface's declared protocol version.
         """
-        streaming, push_notifications, skills, input_modes, output_modes = self._aggregate_agent_capabilities(server)
+        capabilities = self._aggregate_agent_capabilities(server)
         if is_v1_a2a_protocol(interface.version):
-            return self._build_v1_server_card(server, interface, streaming, push_notifications, skills, input_modes, output_modes)
-        return self._build_legacy_server_card(server, interface, streaming, push_notifications, skills, input_modes, output_modes)
+            return self._build_v1_server_card(server, interface, capabilities)
+        return self._build_legacy_server_card(server, interface, capabilities)
 
-    def _build_legacy_server_card(
-        self,
-        server: DbServer,
-        interface: DbServerInterface,
-        streaming: bool,
-        push_notifications: bool,
-        skills: list[Dict[str, Any]],
-        input_modes: list[str],
-        output_modes: list[str],
-    ) -> Dict[str, Any]:
+    def _build_legacy_server_card(self, server: DbServer, interface: DbServerInterface, capabilities: _AggregatedCapabilities) -> Dict[str, Any]:
         """Build the pre-1.0 AgentCard shape for a v0.3 interface.
 
         Preserved unchanged (aside from aggregating capabilities and modes
@@ -231,11 +241,7 @@ class A2AServerService:
         Args:
             server: The visibility-checked virtual server row.
             interface: Its enabled A2A ``ServerInterface`` row.
-            streaming: Aggregated streaming capability.
-            push_notifications: Aggregated push-notifications capability.
-            skills: Deduplicated skills aggregated from associated agents.
-            input_modes: Aggregated default input modes.
-            output_modes: Aggregated default output modes.
+            capabilities: Capabilities, modes, and skills aggregated from associated agents.
 
         Returns:
             AgentCard dict in the A2A v0.3 shape.
@@ -246,27 +252,18 @@ class A2AServerService:
             "url": interface.binding,
             "version": str(server.version),
             "protocolVersion": interface.version or "1.0",
-            "defaultInputModes": input_modes,
-            "defaultOutputModes": output_modes,
+            "defaultInputModes": capabilities.input_modes,
+            "defaultOutputModes": capabilities.output_modes,
             "capabilities": {
-                "streaming": streaming,
-                "pushNotifications": push_notifications,
+                "streaming": capabilities.streaming,
+                "pushNotifications": capabilities.push_notifications,
                 "stateTransitionHistory": False,
             },
-            "skills": skills,
+            "skills": capabilities.skills,
             "supportsAuthenticatedExtendedCard": True,
         }
 
-    def _build_v1_server_card(
-        self,
-        server: DbServer,
-        interface: DbServerInterface,
-        streaming: bool,
-        push_notifications: bool,
-        skills: list[Dict[str, Any]],
-        input_modes: list[str],
-        output_modes: list[str],
-    ) -> Dict[str, Any]:
+    def _build_v1_server_card(self, server: DbServer, interface: DbServerInterface, capabilities: _AggregatedCapabilities) -> Dict[str, Any]:
         """Build the A2A 1.0 AgentCard shape for a v1+ interface.
 
         Transport is reported through ``supportedInterfaces``, with
@@ -276,11 +273,7 @@ class A2AServerService:
         Args:
             server: The visibility-checked virtual server row.
             interface: Its enabled A2A ``ServerInterface`` row.
-            streaming: Aggregated streaming capability.
-            push_notifications: Aggregated push-notifications capability.
-            skills: Deduplicated skills aggregated from associated agents.
-            input_modes: Aggregated default input modes.
-            output_modes: Aggregated default output modes.
+            capabilities: Capabilities, modes, and skills aggregated from associated agents.
 
         Returns:
             AgentCard dict in the A2A 1.0 shape.
@@ -299,13 +292,13 @@ class A2AServerService:
             "version": str(server.version),
             "supportedInterfaces": [iface],
             "capabilities": {
-                "streaming": streaming,
-                "pushNotifications": push_notifications,
+                "streaming": capabilities.streaming,
+                "pushNotifications": capabilities.push_notifications,
                 "extendedAgentCard": True,
             },
-            "defaultInputModes": input_modes,
-            "defaultOutputModes": output_modes,
-            "skills": skills,
+            "defaultInputModes": capabilities.input_modes,
+            "defaultOutputModes": capabilities.output_modes,
+            "skills": capabilities.skills,
         }
 
     def resolve_server_agent(
