@@ -329,3 +329,127 @@ async def test_get_db_creates_own_session_when_no_middleware_session():
 
 # Tests removed - obsolete after #3883
 # Middleware no longer creates or manages database sessions, so no rollback/invalidate operations.
+
+
+class TestObservabilityMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` coverage: passthroughs, finish-on-start, error paths."""
+
+    @staticmethod
+    def _scope(path: str = "/rpc") -> dict:
+        return {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "state": {},
+        }
+
+    @staticmethod
+    def _service() -> MagicMock:
+        service = MagicMock(spec=ObservabilityService)
+        service.start_trace.return_value = "trace-1"
+        service.start_span.return_value = "span-1"
+        return service
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = ObservabilityMiddleware(app=app, enabled=True, service=self._service())
+        await middleware({"type": "lifespan"}, AsyncMock(), AsyncMock())
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_disabled(self):
+        """enabled=False: downstream app runs untouched, no trace started."""
+        service = self._service()
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+
+        middleware = ObservabilityMiddleware(app=app, enabled=False, service=service)
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(self._scope(), AsyncMock(), send)
+        assert sent[0]["status"] == 200
+        service.start_trace.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_skips_excluded_path(self):
+        """Health-check paths run downstream without starting a trace."""
+        service = self._service()
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+
+        middleware = ObservabilityMiddleware(app=app, enabled=True, service=service)
+        await middleware(self._scope(path="/health"), AsyncMock(), AsyncMock())
+        service.start_trace.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_finishes_trace_once_on_response_start(self):
+        """Response-start ends span/trace exactly once with the final status; body streams."""
+        service = self._service()
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"2")]})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = ObservabilityMiddleware(app=app, enabled=True, service=service)
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(self._scope(), AsyncMock(), send)
+
+        assert [m["type"] for m in sent] == ["http.response.start", "http.response.body"]
+        service.end_span.assert_called_once()
+        service.end_trace.assert_called_once()
+        assert service.end_trace.call_args.kwargs["http_status_code"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_mid_body_exception_does_not_double_finish(self):
+        """A streaming failure after response-start must not re-end the span/trace."""
+        service = self._service()
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            raise RuntimeError("stream broke")
+
+        middleware = ObservabilityMiddleware(app=app, enabled=True, service=service)
+
+        with pytest.raises(RuntimeError, match="stream broke"):
+            await middleware(self._scope(), AsyncMock(), AsyncMock())
+
+        service.end_span.assert_called_once()
+        service.end_trace.assert_called_once()
+        service.add_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_exception_before_start_finishes_error(self):
+        """A failure before response-start ends the trace with error status."""
+        service = self._service()
+
+        async def app(scope, receive, send):
+            raise ValueError("handler blew up")
+
+        middleware = ObservabilityMiddleware(app=app, enabled=True, service=service)
+
+        with pytest.raises(ValueError, match="handler blew up"):
+            await middleware(self._scope(), AsyncMock(), AsyncMock())
+
+        service.end_span.assert_called_once()
+        assert service.end_span.call_args.kwargs["status"] == "error"
+        service.end_trace.assert_called_once()
+        service.add_event.assert_called_once()

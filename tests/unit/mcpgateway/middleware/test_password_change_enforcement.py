@@ -305,3 +305,78 @@ async def test_middleware_logs_api_token_skip(middleware, mock_user, caplog):
 
                 # Check that log message was created
                 assert any("skipping password change enforcement for api token" in record.message.lower() for record in caplog.records)
+
+
+class TestPasswordChangeEnforcementASGIEntry:
+    """Deny-path and pass-through coverage for the pure-ASGI ``__call__`` entry."""
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scopes(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = PasswordChangeEnforcementMiddleware(app)
+
+        async def noop(*_args):
+            return None
+
+        await middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_emits_redirect_and_never_calls_downstream(self, mock_user):
+        """Password-change-required user on /admin/*: 303 redirect is sent and downstream never runs."""
+        mock_user.password_change_required = True
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        middleware = PasswordChangeEnforcementMiddleware(app)
+        scope = {"type": "http", "method": "GET", "path": "/admin/overview", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        with patch("mcpgateway.config.settings.password_change_enforcement_enabled", True):
+            with patch.object(Request, "state", create=True) as mock_state:
+                mock_state.user = mock_user
+                mock_state.auth_method = "jwt"
+                await middleware(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 303
+        headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in sent[0]["headers"]}
+        assert headers["location"] == "/admin/change-password-required"
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_feature_disabled(self):
+        """Feature flag off: downstream app runs and its response is sent verbatim."""
+        sent = []
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = PasswordChangeEnforcementMiddleware(app)
+        scope = {"type": "http", "method": "GET", "path": "/admin/overview", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        with patch("mcpgateway.config.settings.password_change_enforcement_enabled", False):
+            await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
