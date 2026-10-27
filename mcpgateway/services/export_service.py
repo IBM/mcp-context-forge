@@ -590,6 +590,7 @@ class ExportService:
             server_data = {
                 "name": server.name,
                 "description": server.description,
+                "instructions": getattr(server, "instructions", None),
                 "tool_ids": list(server.associated_tools),
                 "sse_endpoint": f"{root_path}/servers/{server.id}/sse",
                 "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",

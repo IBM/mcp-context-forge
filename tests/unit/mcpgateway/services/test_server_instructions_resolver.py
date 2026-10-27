@@ -288,6 +288,91 @@ def test_no_auth_context_sees_only_public(vis_seed):
 
 
 # ---------------------------------------------------------------------------
+# Upstream gateway visibility deny-path tests (CWE-639 / CWE-200)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gw_seed(session_factory):
+    """Seed a public virtual server whose only upstream gateway has a chosen visibility."""
+    db: Session = session_factory()
+
+    def _server(gateway_visibility: str, gateway_owner: Optional[str] = None, gateway_team: Optional[str] = None) -> str:
+        up = Gateway(
+            name="gw",
+            slug="gw",
+            url="https://gw.example.com/mcp",
+            capabilities={},
+            upstream_instructions=UPSTREAM_TEXT,
+            visibility=gateway_visibility,
+            owner_email=gateway_owner,
+            team_id=gateway_team,
+        )
+        db.add(up)
+        db.flush()
+        t = Tool(original_name="t", custom_name="t", custom_name_slug="t", input_schema={"type": "object"}, gateway_id=up.id)
+        db.add(t)
+        db.flush()
+        row = Server(name="vs", visibility="public")
+        row.tools.append(t)
+        db.add(row)
+        db.commit()
+        return row.id
+
+    def _resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = ()) -> Optional[str]:
+        with patch("mcpgateway.services.server_service.SessionLocal", session_factory):
+            return ServerService._resolve_instructions_sync(server_id, user_email=user_email, token_teams=token_teams)  # pylint: disable=protected-access
+
+    yield type("GwSeed", (), {"server": staticmethod(_server), "resolve": staticmethod(_resolve)})
+    db.close()
+
+
+def test_private_gateway_text_hidden_from_public_only_token(gw_seed):
+    """A public-only token never receives the text of a private upstream gateway."""
+    sid = gw_seed.server("private", gateway_owner="alice@example.com")
+    assert gw_seed.resolve(sid, user_email=None, token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_private_gateway_text_hidden_from_other_user(gw_seed):
+    """A user who does not own a private upstream gateway receives the default text."""
+    sid = gw_seed.server("private", gateway_owner="alice@example.com")
+    assert gw_seed.resolve(sid, user_email="bob@example.com", token_teams=["team-1"]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_private_gateway_text_visible_to_owner(gw_seed):
+    """The owner of a private upstream gateway receives its text."""
+    sid = gw_seed.server("private", gateway_owner="alice@example.com")
+    assert gw_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-1"]) == UPSTREAM_TEXT
+
+
+def test_private_gateway_text_hidden_from_admin_bypass_of_another_user(gw_seed):
+    """Admin bypass never reads another user's private upstream gateway."""
+    sid = gw_seed.server("private", gateway_owner="alice@example.com")
+    assert gw_seed.resolve(sid, user_email="admin@example.com", token_teams=None) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_team_gateway_text_hidden_from_wrong_team(gw_seed):
+    """A token for another team does not receive the text of a team upstream gateway."""
+    sid = gw_seed.server("team", gateway_team="team-1")
+    assert gw_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-2"]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_team_gateway_text_visible_to_team_member(gw_seed):
+    """A token for the gateway's team receives its text."""
+    sid = gw_seed.server("team", gateway_team="team-1")
+    assert gw_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-1"]) == UPSTREAM_TEXT
+
+
+def test_operator_override_does_not_need_gateway_visibility(gw_seed, session_factory):
+    """The operator override is not upstream text, so a hidden gateway does not block it."""
+    sid = gw_seed.server("private", gateway_owner="alice@example.com")
+    with session_factory() as db:
+        db.query(Server).filter(Server.id == sid).update({"instructions": "Operator text."})
+        db.commit()
+    assert gw_seed.resolve(sid, user_email=None, token_teams=[]) == "Operator text."
+
+
+# ---------------------------------------------------------------------------
 # /rpc initialize deny-path tests (CWE-639 / CWE-200)
 # ---------------------------------------------------------------------------
 

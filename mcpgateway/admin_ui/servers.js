@@ -781,6 +781,7 @@ export const editServer = async function (serverId) {
     const instructionsField = safeGetElement("edit-server-instructions");
     if (instructionsField) {
       instructionsField.value = server.instructions || "";
+      instructionsField.dataset.originalValue = instructionsField.value;
     }
 
     const idField = safeGetElement("edit-server-id");

@@ -1525,7 +1525,7 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:30a1a177aaedec68f3bc1e26807e4dea59afd508366f852aea87f0a703c72b01} # HashiCorpIgnore
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:30a1a177aaedec68f3bc1e26807e4dea59afd508366f852aea87f0a703c72b01} # pragma: allowlist secret
     restart: unless-stopped
     networks: [mcpnet]
     ports:

@@ -435,6 +435,26 @@ class TestCacheInvalidationPerType:
 
 
     @pytest.mark.asyncio
+    async def test_refresh_keeps_upstream_instructions_for_unauthenticated_token_exchange_gateway(self, gateway_service):
+        """An auto-refresh with no exchanged header must not wipe stored instructions or the catalog."""
+        mock_gateway = _make_mock_gateway(oauth_config={"grant_type": "token-exchange"})
+        mock_gateway.upstream_instructions = "Stored text."
+        mock_session = MagicMock()
+        mock_session.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
+            patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
+        ):
+            mock_fresh.return_value.__enter__.return_value = mock_session
+            mock_init.return_value = ({}, [], [], [], [], None)
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
+
+        assert result["tools_removed"] == 0
+        assert mock_gateway.upstream_instructions == "Stored text."
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("previous", "reported", "expected"),
         [

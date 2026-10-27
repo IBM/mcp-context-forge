@@ -7339,9 +7339,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         result["validation_errors"] = validation_errors
 
+        # A token-exchange gateway needs a caller JWT, so a refresh without an exchanged header
+        # gets an empty result from discovery. Keep the stored catalog and upstream instructions.
+        is_unauthenticated_token_exchange_gateway = (
+            isinstance(gateway_oauth_config, dict)
+            and gateway_oauth_config.get("grant_type") == "token-exchange"
+            and not (pre_auth_headers and any(k.lower() == "authorization" for k in pre_auth_headers))
+        )
+
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
-        if not tools and not resources and not prompts and is_auth_code_gateway:
-            logger.debug("No tools/resources/prompts returned from auth_code gateway %s (user may not have authorized)", gateway_name)
+        if not tools and not resources and not prompts and (is_auth_code_gateway or is_unauthenticated_token_exchange_gateway):
+            logger.debug("No tools/resources/prompts returned from %s gateway %s (no authenticated caller)", "auth_code" if is_auth_code_gateway else "token-exchange", gateway_name)
             return result
 
         # For non-auth_code gateways, empty responses are legitimate and will clear stale items

@@ -2051,28 +2051,35 @@ class ServerService(BaseService):
         metrics_cache.invalidate_prefix("top_servers:")
 
     @staticmethod
-    def _instructions_visible(visibility: str, team_id: Optional[str], owner_email: Optional[str], user_email: Optional[str], token_teams: Optional[Sequence[str]]) -> bool:
-        """Apply the ``_check_server_access`` Layer-1 rule to a server row.
+    def _instructions_visible(db: Session, visibility: str, team_id: Optional[str], owner_email: Optional[str], user_email: Optional[str], token_teams: Optional[Sequence[str]]) -> bool:
+        """Apply the Layer-1 visibility rule of ``_check_server_access`` to a server or gateway row.
+
+        Admin bypass comes from ``is_admin_bypass_granted()``. A caller with
+        ``token_teams=None`` who is not an admin gets no team access, because the
+        resolver does not look up team membership.
 
         Args:
-            visibility: Server visibility (``public``, ``team`` or ``private``).
-            team_id: Team that owns the server.
-            owner_email: Owner of the server.
+            db: Database session, used to resolve admin status.
+            visibility: Row visibility (``public``, ``team`` or ``private``).
+            team_id: Team that owns the row.
+            owner_email: Owner of the row.
             user_email: Authenticated caller, or None.
             token_teams: ``None`` is admin bypass, ``[]`` is public-only, a list is team-scoped.
 
         Returns:
-            bool: True when the caller can see the server.
+            bool: True when the caller can see the row.
         """
         if visibility == "public":
             return True
-        if token_teams is not None and len(token_teams) == 0:
+        if is_admin_bypass_granted(db, user_email, list(token_teams) if token_teams is not None else None):
+            if visibility == "private":
+                return bool(user_email) and owner_email == user_email
+            return True
+        if not user_email or not token_teams:
             return False
         if visibility == "private":
-            return bool(user_email) and owner_email == user_email
-        if token_teams is None:
-            return True
-        return team_id in token_teams
+            return owner_email == user_email
+        return bool(team_id) and team_id in token_teams
 
     @staticmethod
     def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
@@ -2086,10 +2093,11 @@ class ServerService(BaseService):
         default text.
 
         A server that the caller cannot see returns the default text instead of
-        leaking operator or upstream text (CWE-639 / CWE-200). The visibility rule
-        matches ``_check_server_access``. Admin bypass (``token_teams=None``) sees
-        public servers, team servers and the caller's own private servers, never
-        another user's private server. ``token_teams=[]`` sees public servers only.
+        leaking operator or upstream text (CWE-639 / CWE-200). The upstream text
+        needs the same check on the upstream gateway, as ``tools/list`` does for
+        tools. The visibility rule matches ``_check_server_access``. Admin bypass
+        sees public rows, team rows and the caller's own private rows, never
+        another user's private row. ``token_teams=[]`` sees public rows only.
         A caller that passes no scope gets the public-only rule.
 
         Args:
@@ -2103,7 +2111,7 @@ class ServerService(BaseService):
         db: Session = SessionLocal()
         try:
             row = db.execute(select(DbServer.visibility, DbServer.team_id, DbServer.owner_email).where(DbServer.id == server_id)).one_or_none()
-            if row is None or not ServerService._instructions_visible(row.visibility, row.team_id, row.owner_email, user_email, token_teams):
+            if row is None or not ServerService._instructions_visible(db, row.visibility, row.team_id, row.owner_email, user_email, token_teams):
                 logger.debug("Server %s not visible to caller; sending default instructions", server_id)
                 return DEFAULT_SERVER_INSTRUCTIONS
 
@@ -2134,7 +2142,11 @@ class ServerService(BaseService):
             if has_a2a_agent:
                 logger.debug("Instructions for server %s: rule=default (a2a agent present)", server_id)
                 return DEFAULT_SERVER_INSTRUCTIONS
-            upstream_instructions = db.execute(select(DbGateway.upstream_instructions).where(DbGateway.id == gateway_ids[0])).scalar_one_or_none()
+            gateway_row = db.execute(select(DbGateway.visibility, DbGateway.team_id, DbGateway.owner_email, DbGateway.upstream_instructions).where(DbGateway.id == gateway_ids[0])).one_or_none()
+            if gateway_row is not None and not ServerService._instructions_visible(db, gateway_row.visibility, gateway_row.team_id, gateway_row.owner_email, user_email, token_teams):
+                logger.debug("Instructions for server %s: rule=default (upstream gateway not visible to caller)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            upstream_instructions = gateway_row.upstream_instructions if gateway_row is not None else None
             if upstream_instructions:
                 logger.debug("Instructions for server %s: rule=upstream", server_id)
                 return upstream_instructions

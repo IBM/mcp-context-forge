@@ -927,7 +927,8 @@ The gateway chooses the text in this order:
 2. **Upstream text.** The text of the upstream server, when the virtual server is single-upstream.
    A virtual server is single-upstream when every tool, resource, and prompt comes from the same registered gateway
    and the virtual server has no A2A agent. A virtual server that uses only some tools of one gateway is single-upstream.
-   When that upstream server sends no text, the virtual server sends no `instructions` field.
+   When that upstream server sends no text, the virtual server sends the default text.
+   A caller that cannot see the upstream gateway also receives the default text.
 3. **Default text.** Every other virtual server, and the global `/mcp` endpoint, send the default text.
 
 ```bash
