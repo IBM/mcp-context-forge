@@ -5869,7 +5869,7 @@ async def preview_tool(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolPreviewResponse:
-    """Validate and resolve a tool invocation without executing it (#5629).
+    """Validate and resolve a tool invocation without executing it.
 
     Dry-run counterpart to live tool invocation: no REST/MCP/A2A/gRPC call is made, and no
     TOOL_POST_INVOKE hook runs. Shares tool resolution/RBAC with the live invocation path
@@ -5879,7 +5879,7 @@ async def preview_tool(
     Args:
         name: Name of the tool to preview.
         request: FastAPI request object, used to resolve the caller's visibility scope.
-        body: Candidate arguments to validate against the tool's input schema.
+        body: Candidate arguments and optional server_id for scoped resolution.
         db: Database session.
         user: Authenticated user with permissions.
 
@@ -5888,8 +5888,9 @@ async def preview_tool(
             plugin pre-hooks that actually ran, and non-fatal warnings).
 
     Raises:
-        HTTPException: 404 if the feature is disabled, or if the tool is not found or not
-            accessible to the caller (same visibility rules as live invocation). 400 if
+        HTTPException: 404 if the feature is disabled, or if the tool/server is not found or not
+            accessible to the caller (same visibility rules as live invocation). 403 if the
+            server_id is provided but the token is not authorized for that server. 400 if
             resolution fails for a reason short of not-found -- an ambiguous tool name or a
             deprecated tool (same as live invocation's own ``ToolInvocationError`` handling).
     """
@@ -5898,6 +5899,30 @@ async def preview_tool(
 
     body = body or ToolPreviewRequest()
     auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+
+    server_id = body.server_id
+    if server_id:
+        cached = getattr(request.state, "_jwt_verified_payload", None)
+        payload = cached[1] if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict) else None
+        if cached is not None and payload is None:
+            raise HTTPException(status_code=403, detail="Unable to read verified token scopes")
+        # Legacy and session tokens may omit scopes; malformed scopes must not grant access.
+        token_scopes = payload.get("scopes", {}) if payload is not None else {}
+        if not isinstance(token_scopes, dict):
+            raise HTTPException(status_code=403, detail="Unable to read verified token scopes")
+        if not validate_server_access(token_scopes, server_id):
+            raise HTTPException(status_code=403, detail=f"Token not authorized for server: {server_id}")
+
+        try:
+            await server_service.ensure_server_access(
+                db=db,
+                server_id=server_id,
+                user_email=auth_user_email,
+                token_teams=auth_token_teams,
+            )
+        except ServerNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
     try:
         return await tool_service.preview_tool_invocation(
             db,
@@ -5905,6 +5930,7 @@ async def preview_tool(
             arguments=body.arguments,
             user_email=auth_user_email,
             token_teams=auth_token_teams,
+            server_id=server_id,
             # SECURITY: strip Authorization/Cookie/etc. before these reach a preview_safe
             # plugin's TOOL_PRE_INVOKE hook -- live invocation never hands a hook the
             # caller's raw inbound headers either, only resolved runtime headers.
