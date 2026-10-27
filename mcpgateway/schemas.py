@@ -5018,7 +5018,9 @@ def _server_create_request_schema_extra(schema: Dict[str, Any]) -> None:
     """
     schema.pop("required", None)
     schema["anyOf"] = [{"required": ["server"]}, {"required": ["virtual_server"]}]
-    schema.setdefault("properties", {})["virtual_server"] = {"$ref": schema["properties"]["server"]["$ref"], "description": "Product-terminology alias of server"}
+    properties = schema.setdefault("properties", {})
+    server_schema = properties.get("server", {})
+    properties["virtual_server"] = {**server_schema, "description": "Product-terminology alias of server"}
 
 
 class ServerCreateRequest(BaseModel):
