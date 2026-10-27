@@ -22,7 +22,7 @@ Architecture (Issue #3883 - Separate Session Pattern, Issue #5072 - Session Reus
     - When obs_db is None, creates independent session (auto-close after commit)
     - ObservabilityMiddleware creates single session for entire trace lifecycle
       (start_trace → start_span → end_span → end_trace), reducing from 4-6 sessions
-      to 1 session per traced request
+      to 1 session per HTTP trace lifecycle; child writers can create additional sessions
 
     Query operations (get_trace, get_traces, get_spans, etc.) accept a session parameter
     to use the request-scoped session with proper RBAC and token scoping.
@@ -39,7 +39,8 @@ Transaction Semantics:
     - This is intentional for best-effort observability visibility
     - Context managers (trace_span, trace_tool_invocation, trace_a2a_request) create
       a single independent session for the entire span lifecycle
-    - Middleware batches all trace operations into single session with atomic commit
+    - Middleware commits parent records before request processing for independent child writers.
+    - Middleware batches completion updates in the reused session.
 
 Examples:
     >>> from mcpgateway.services.observability_service import ObservabilityService  # doctest: +SKIP
@@ -416,6 +417,7 @@ class ObservabilityService:
             obs_db, session_owned = _get_or_create_observability_session()
 
         try:
+            obs_db.flush()
             trace = obs_db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
             if not trace:
                 logger.warning("Trace %s not found", trace_id)
@@ -616,6 +618,7 @@ class ObservabilityService:
             obs_db, session_owned = _get_or_create_observability_session()
 
         try:
+            obs_db.flush()
             span = obs_db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
             if not span:
                 logger.warning("Span %s not found", span_id)
