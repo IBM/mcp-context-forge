@@ -10,7 +10,7 @@ This document describes the complete release process for ContextForge, from pre-
 |-------|-------|
 | [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
 | [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
-| [3. Rust & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, npm update |
+| [3. JavaScript Dependency Updates](#3-javascript-dependency-updates) | npm update, frontend CDN dependencies |
 | [4. Quality Gates](#4-quality-gates) | Package metadata validation, secrets scanning (pre-commit/CI handle the rest) |
 | [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
 | [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
@@ -193,58 +193,11 @@ make test
 
 ---
 
-## 3. Rust & JavaScript Dependency Updates
+## 3. JavaScript Dependency Updates
 
 Update non-Python dependencies across the repository.
 
-### 3.1 Rust dependencies
-
-Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
-
-```bash
-cargo update --workspace
-
-# Verify build + lint + tests
-make rust-check
-```
-
-| What it runs | Description |
-|--------------|-------------|
-| `cargo fmt --check` | Verify Rust formatting |
-| `cargo clippy -- -D warnings` | Lint for common mistakes and anti-patterns |
-| `cargo test --lib --release` | Run Rust unit tests |
-
-### 3.2 Rust supply-chain vetting
-
-After any Rust dependency update, run cargo-vet before release freeze:
-
-```bash
-make rust-vet
-```
-
-The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
-
-If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
-
-| Option | When to use it | What to do |
-|--------|----------------|------------|
-| Use an imported audit | A trusted upstream audit set already covers the crate/version | Review the suggested import, then update `supply-chain/config.toml` and `supply-chain/imports.lock` if the trust relationship is acceptable |
-| Audit the diff | Cargo-vet suggests a small `cargo vet diff <crate> <old> <new>` | Review the exact version diff, then record it with `cargo vet certify <crate> <old> <new>` |
-| Audit the crate fully | The crate is new, or the diff is not a useful review unit | Inspect the exact crate source with `cargo vet inspect <crate> <version>`, then record it with `cargo vet certify <crate> <version>` |
-| Add a temporary exemption | The update is needed now, but a full audit is not practical before release | Add the narrowest `[[exemptions.<crate>]]` entry in `supply-chain/config.toml` with the required criteria, and document why it is acceptable |
-| Skip or revert the update | The audit cost or risk is too high for the release window | Keep the currently vetted version and move the dependency update to a follow-up task |
-
-Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
-
-When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
-
-At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
-
-```bash
-cargo vet prune
-```
-
-### 3.3 JavaScript dependencies (npm)
+### 3.1 JavaScript dependencies (npm)
 
 Update `package.json` and verify the frontend builds and passes linting:
 
@@ -261,7 +214,7 @@ make lint-web
 make test-js-coverage
 ```
 
-### 3.4 Frontend CDN dependencies
+### 3.2 Frontend CDN dependencies
 
 The Admin UI installs vendor JavaScript through npm and bundles/chunks it with Vite. Release validation should therefore focus on npm dependency updates and verifying the generated bundle, not CDN-pinned assets.
 
@@ -300,7 +253,7 @@ The Admin UI installs vendor JavaScript through npm and bundles/chunks it with V
 !!! note "Bundled frontend assets"
     Admin UI vendor JavaScript is installed from npm and bundled/chunked with Vite. Keep `package.json`, `package-lock.json`, and the Admin UI source in sync when updating frontend dependencies.
 
-### 3.5 Rebuild containers
+### 3.3 Rebuild containers
 
 After updating all dependency ecosystems, rebuild the production container from scratch to verify everything integrates:
 
@@ -1445,9 +1398,7 @@ python .github/tools/update_dependencies.py --file pyproject.toml
 make install-dev
 make pip-audit
 
-# 2. Rust / JS / CDN dependency updates
-cargo update --workspace
-make rust-vet
+# 2. JS / CDN dependency updates
 npm update && npm audit && npm audit fix
 make lint-web test-js-coverage
 # Frontend deps: update package.json/package-lock.json and rebuild the Vite bundle
