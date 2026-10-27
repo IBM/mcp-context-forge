@@ -9,9 +9,9 @@ This middleware automatically captures HTTP requests and responses as observabil
 providing comprehensive visibility into all gateway operations.
 
 Session Management (Issue #3883):
-    This middleware does NOT create or manage request.state.db. Each observability
-    operation (start_trace, start_span, end_span, end_trace) creates its own short-lived
-    independent database session that commits immediately on a best-effort basis.
+    This middleware reuses one observability session, separate from request.state.db.
+    Parent records commit before request processing so independent child writers can see them.
+    Completion updates share a final commit. Each commit releases its database connection.
 
     This separation ensures observability data persists even when main request transactions
     fail, providing visibility into partial failures. SQL query instrumentation is handled
@@ -155,8 +155,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         plugins_trace_id_token = None
         span_id_token = None
 
+        # First-Party
+        from mcpgateway.db import SessionLocal
+
+        obs_db = None
         try:
-            # Start trace (creates independent observability session)
+            obs_db = SessionLocal()
+            # Independent child writers require committed parent records before request processing.
             trace_id = self.service.start_trace(
                 name=f"{http_method} {request.url.path}",
                 trace_id=external_trace_id,  # Use external trace ID if provided
@@ -174,6 +179,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     "service.name": "mcp-gateway",
                     "service.version": getattr(settings, "version", "unknown"),
                 },
+                commit=True,
+                obs_db=obs_db,
             )
 
             # Store trace_id in request state for use in route handlers
@@ -191,12 +198,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if hasattr(request.state, "db") and request.state.db is not None:
                 attach_trace_to_session(request.state.db, trace_id)
 
-            # Start request span (creates independent observability session)
+            # Start request span (reuses the observability session)
             span_id = self.service.start_span(
                 trace_id=trace_id,
                 name="http.request",
                 kind="server",
                 attributes={"http.method": http_method, "http.url": http_url},
+                commit=True,
+                obs_db=obs_db,
             )
 
             # Store span_id in request state for use in route handlers / plugin hook call sites
@@ -218,6 +227,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 plugins_trace_id.reset(plugins_trace_id_token)
             if trace_id_token is not None:
                 current_trace_id.reset(trace_id_token)
+            if obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception:
+                    pass
             return await call_next(request)
 
         # Process request (trace is set up at this point)
@@ -226,7 +240,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 response = await call_next(request)
                 status_code = response.status_code
 
-                # End span successfully (creates independent observability session)
+                # End span successfully (reuses the observability session)
                 if span_id:
                     try:
                         self.service.end_span(
@@ -236,11 +250,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                                 "http.status_code": status_code,
                                 "http.response_size": response.headers.get("content-length"),
                             },
+                            commit=False,
+                            obs_db=obs_db,
                         )
                     except Exception as end_span_error:
                         logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
-                # End trace (creates independent observability session)
+                # End trace (reuses the observability session)
                 if trace_id:
                     duration_ms = (time.time() - start_time) * 1000
                     try:
@@ -249,6 +265,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             status="ok" if status_code < 400 else "error",
                             http_status_code=status_code,
                             attributes={"response_time_ms": duration_ms},
+                            commit=True,
+                            obs_db=obs_db,
                         )
                     except Exception as end_trace_error:
                         logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
@@ -268,9 +286,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                                 "exception.type": type(e).__name__,
                                 "exception.message": sanitized_error,
                             },
+                            commit=False,
+                            obs_db=obs_db,
                         )
 
-                        # Add exception event (creates independent observability session)
+                        # Add exception event (reuses the observability session)
                         self.service.add_event(
                             span_id,
                             name="exception",
@@ -279,11 +299,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             exception_type=type(e).__name__,
                             exception_message=sanitized_error,
                             exception_stacktrace=traceback.format_exc(),
+                            obs_db=obs_db,
                         )
                     except Exception as log_error:
                         logger.warning(f"Failed to log exception in span: {log_error}")
 
-                # End trace with error (creates independent observability session)
+                # End trace with error (reuses the observability session)
                 if trace_id:
                     try:
                         sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
@@ -292,6 +313,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             status="error",
                             status_message=sanitized_error,
                             http_status_code=500,
+                            commit=True,
+                            obs_db=obs_db,
                         )
                     except Exception as trace_error:
                         logger.warning(f"Failed to end trace: {trace_error}")
@@ -304,3 +327,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             current_span_id.reset(span_id_token)
             plugins_trace_id.reset(plugins_trace_id_token)
             current_trace_id.reset(trace_id_token)
+            try:
+                obs_db.close()
+            except Exception as close_error:
+                logger.debug(f"Failed to close observability session: {close_error}")
