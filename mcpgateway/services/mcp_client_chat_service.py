@@ -2187,7 +2187,8 @@ class MCPToolLoader:
     """Load the tools of one MCP server as LangChain tools, using the MCP SDK client.
 
     Every listing and every tool call opens its own session, so nothing stays connected
-    between chat turns.
+    between chat turns. Talking to the server (:meth:`list_tools`, :meth:`call_tool`) is
+    kept apart from wrapping the result for LangChain (:meth:`_as_langchain_tool`).
 
     Examples:
         >>> loader = MCPToolLoader({"transport": "stdio", "command": "python"})
@@ -2203,25 +2204,47 @@ class MCPToolLoader:
         """
         self.connection = connection
 
-    async def get_tools(self) -> List["BaseTool"]:
-        """List every tool the server offers, following pagination.
+    async def list_tools(self) -> List["mcp_types.Tool"]:
+        """List every tool definition the server offers, following pagination.
 
         Returns:
-            List[BaseTool]: One LangChain tool per MCP tool.
+            List[mcp_types.Tool]: The definitions exactly as ``tools/list`` returned them.
         """
-        tools: List[BaseTool] = []
+        tools: List[mcp_types.Tool] = []
         async with MCPSDKClient(_build_transport(self.connection)) as client:
             cursor: Optional[str] = None
             while True:
                 page = await client.list_tools(cursor=cursor)
-                tools.extend(self._wrap(tool) for tool in page.tools)
+                tools.extend(page.tools)
                 cursor = page.next_cursor
                 if not cursor:
                     break
         return tools
 
-    def _wrap(self, tool: "mcp_types.Tool") -> "BaseTool":
-        """Turn one MCP tool definition into a LangChain tool that calls it.
+    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> tuple[str, bool]:
+        """Call one tool over a fresh session.
+
+        Args:
+            name: The tool to call.
+            arguments: The tool arguments.
+
+        Returns:
+            tuple[str, bool]: The text content of the result and whether the server marked it an error.
+        """
+        async with MCPSDKClient(_build_transport(self.connection)) as client:
+            result = await client.call_tool(name, arguments)
+        return _result_text(result), bool(result.is_error)
+
+    async def get_tools(self) -> List["BaseTool"]:
+        """List the server's tools as LangChain tools.
+
+        Returns:
+            List[BaseTool]: One LangChain tool per MCP tool.
+        """
+        return [self._as_langchain_tool(tool) for tool in await self.list_tools()]
+
+    def _as_langchain_tool(self, tool: "mcp_types.Tool") -> "BaseTool":
+        """Wrap one MCP tool definition in a LangChain tool that calls it through :meth:`call_tool`.
 
         Args:
             tool: The tool definition from ``tools/list``.
@@ -2231,7 +2254,7 @@ class MCPToolLoader:
         """
 
         async def _call(**arguments: Any) -> str:
-            """Call the MCP tool over a fresh session and return its text content.
+            """Call the MCP tool and return its text content.
 
             Args:
                 **arguments: The tool arguments chosen by the LLM.
@@ -2242,10 +2265,8 @@ class MCPToolLoader:
             Raises:
                 ToolException: If the server marked the result as an error.
             """
-            async with MCPSDKClient(_build_transport(self.connection)) as client:
-                result = await client.call_tool(tool.name, arguments)
-            text = _result_text(result)
-            if result.is_error:
+            text, is_error = await self.call_tool(tool.name, arguments)
+            if is_error:
                 raise ToolException(text or f"Tool {tool.name} failed")
             return text
 
