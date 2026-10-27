@@ -2529,3 +2529,27 @@ async def test_refresh_locks_allows_growth_when_all_entries_held():
     # Clean up class-level state
     VaultTokenBackend._refresh_locks = {}
     VaultTokenBackend._refresh_locks_mutex = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("binding,status", [("gw-1", "valid"), ("gw-2", "unbound"), (None, "unbound")])
+async def test_validation_token_requires_exact_vault_binding(binding, status):
+    """Same-URL and legacy Vault records cannot substitute for an exact gateway binding."""
+    from pydantic import SecretStr
+
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth")
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
+    backend._vault_request = AsyncMock(return_value={"data": {"data": {
+        "gateway_id": binding, "email": "caller@example.com", "mcp_url": "https://example.com/mcp",
+        "token": {"access_token": "validation-value"}, "expires_at": None,
+    }}})
+    backend._refresh_access_token = AsyncMock()
+    backend._write_token_cache = MagicMock()
+    result = await backend.read_validation_token("gw-1", "team-1", "caller@example.com")
+    assert result.status == status
+    assert result.access_token == ("validation-value" if status == "valid" else None)
+    backend._refresh_access_token.assert_not_called()
+    backend._write_token_cache.assert_not_called()
+    assert backend._vault_request.call_args.args[0] == "GET"
+    assert "caller%40example.com" in backend._vault_request.call_args.args[1]

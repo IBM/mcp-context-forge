@@ -46,8 +46,8 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_resource import derive_resource_origin
+from mcpgateway.utils.oauth_errors import oauth_failure
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -103,6 +103,7 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
     Returns:
         User context dict with email, teams, is_admin
     """
+    del db
     if not current_user:
         return {}
 
@@ -602,7 +603,7 @@ async def _enforce_gateway_access(
             token_teams = []
 
         if (
-            token_scoping_middleware._check_resource_team_ownership(
+            token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
                 f"/gateways/{gateway_id}",
                 token_teams,
                 db=db,
@@ -843,7 +844,18 @@ async def initiate_oauth_flow(
         raise HTTPException(status_code=500, detail="Failed to initiate OAuth flow")
 
 
-@oauth_router.get("/callback")
+@oauth_router.get(
+    "/callback",
+    responses={
+        400: {
+            "description": (
+                "Safe OAuth failure HTML. Popup postMessage preserves type, status, error, and errorDescription, and adds "
+                "errorCode, failedStage, and reauthorizationRequired. Codes include redirect_uri_mismatch, insufficient_scope, "
+                "invalid_client, token_url_unreachable, token_exchange_failed, and oauth_error. Unknown provider failures remain generic."
+            )
+        }
+    },
+)
 async def oauth_callback(
     request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
@@ -892,6 +904,7 @@ async def oauth_callback(
     # Determine early whether this callback was initiated from the React UI popup.
     # The authorize endpoint prefixes the state token with "popup." when popup=True,
     # so we can detect it here without any additional storage lookups.
+    del error_description
     is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
     csp_nonce = get_csp_nonce_from_request(request)
 
@@ -911,16 +924,24 @@ async def oauth_callback(
                 try:
                     await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
                 except OAuthError:
-                    # RFC 9207: never act on or show the provider's error when the issuer does not match
-                    error, error_description = "issuer_mismatch", "Authorization response issuer mismatch."
-            error_text = escape(error)
-            description_text = escape(error_description or "OAuth provider returned an authorization error.")
-            # Sanitize untrusted query parameters before logging to prevent log injection
-            logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
+                    # RFC 9207: discard provider errors when the response issuer does not match.
+                    error = "issuer_mismatch"
+            failure = oauth_failure(error)
+            error_text = escape(failure.code)
+            description_text = escape(failure.message)
+            logger.warning("OAuth provider callback failed: %s", failure.code)
             if is_popup:
                 return _popup_callback_response(
                     csp_nonce,
-                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
+                    {
+                        "type": "oauth_callback",
+                        "status": "error",
+                        "error": failure.code,
+                        "errorDescription": failure.message,
+                        "errorCode": failure.code,
+                        "failedStage": "authorization",
+                        "reauthorizationRequired": failure.reauthorization_required,
+                    },
                     status_code=400,
                 )
             return HTMLResponse(
@@ -1303,15 +1324,22 @@ async def oauth_callback(
         return response
 
     except OAuthError as e:
-        # CWE-209: log full detail server-side only; never render internal error
-        # strings (which may contain upstream hostnames, token-endpoint URLs, or
-        # raw HTTP response bodies) into the browser-facing HTML page.
-        logger.error("OAuth callback failed: %s", sanitize_for_log(str(e)))
-        _oauth_user_msg = "OAuth authorization failed. Please check your configuration and try again."
+        # Provider exception text can contain tokens or unsafe response bodies.
+        failure = oauth_failure(e.error_code)
+        logger.error("OAuth callback failed: %s", failure.code)
+        _oauth_user_msg = failure.message
         if is_popup:
             return _popup_callback_response(
                 csp_nonce,
-                {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": _oauth_user_msg},
+                {
+                    "type": "oauth_callback",
+                    "status": "error",
+                    "error": "oauth_error",
+                    "errorDescription": _oauth_user_msg,
+                    "errorCode": failure.code,
+                    "failedStage": "token_exchange",
+                    "reauthorizationRequired": failure.reauthorization_required,
+                },
                 status_code=400,
             )
         return HTMLResponse(
@@ -1347,8 +1375,8 @@ async def oauth_callback(
         )
 
     except Exception as e:
-        # CWE-209: log full detail server-side only.
-        logger.error("Unexpected error in OAuth callback: %s", sanitize_for_log(str(e)))
+        # Provider exception text can contain tokens or unsafe response bodies.
+        logger.error("Unexpected error in OAuth callback: %s", type(e).__name__)
         _unexpected_user_msg = "An unexpected error occurred during authorization. Please contact your administrator."
         if is_popup:
             return _popup_callback_response(
