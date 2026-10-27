@@ -3083,7 +3083,7 @@ async def test_iss_without_configured_issuer_is_not_compared(oauth_manager):
 
 @pytest.mark.asyncio
 async def test_discovery_failure_falls_back_to_configured_issuer_without_trailing_slash(oauth_manager):
-    """The configured value may carry a slash the admin typed; the server's iss is still compared exactly."""
+    """Without validated metadata a trailing slash is ignored on both sides; a different issuer is still refused."""
     # First-Party
     from mcpgateway.services.dcr_service import DcrError
 
@@ -3093,8 +3093,11 @@ async def test_discovery_failure_falls_back_to_configured_issuer_without_trailin
         await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com/"}, None, gateway_id="gw")
     assert any("AS metadata unavailable" in call.args[0] for call in logger.warning.call_args_list)
     with patch(DISCOVER, new=AsyncMock(side_effect=DcrError("down"))), patch(SECURITY):
+        # A server whose issuer ends in a slash, such as Auth0, sends iss with the slash
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://tenant.auth0.com/"}, "https://tenant.auth0.com/", gateway_id="gw")
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/", gateway_id="gw")
         with pytest.raises(OAuthError, match="issuer mismatch"):
-            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/", gateway_id="gw")
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://other.example.com/", gateway_id="gw")
 
 
 @pytest.mark.asyncio

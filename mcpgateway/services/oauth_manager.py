@@ -1202,13 +1202,14 @@ class OAuthManager:
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     @staticmethod
-    async def _expected_issuer(credentials: Dict[str, Any], gateway_id: Optional[str]) -> tuple[Optional[str], bool]:
+    async def _expected_issuer(credentials: Dict[str, Any], gateway_id: Optional[str]) -> tuple[Optional[str], bool, bool]:
         """Return the issuer an authorization response must name, and whether the AS advertises ``iss``.
 
         The value comes from the authorization server's validated metadata when discovery
         succeeds, so it is exactly what the server calls itself. When discovery fails the
-        configured issuer is used without its trailing slash, since that is the only value
-        held and an admin may have typed the slash. ``None`` means nothing can be compared:
+        configured issuer is used and both sides are compared without a trailing slash,
+        since an admin may have typed one and some servers end their issuer with one.
+        ``None`` means nothing can be compared:
         no issuer is configured, or the metadata issuer is a template such as a multi-tenant
         placeholder, which no real response can ever equal.
 
@@ -1217,30 +1218,33 @@ class OAuthManager:
             gateway_id: The gateway, for the log lines.
 
         Returns:
-            tuple[Optional[str], bool]: The expected issuer, or ``None``, and the
-            ``authorization_response_iss_parameter_supported`` flag from the metadata.
+            tuple[Optional[str], bool, bool]: The expected issuer, or ``None``; the
+            ``authorization_response_iss_parameter_supported`` flag from the metadata; and
+            whether the comparison must ignore a trailing slash (the fallback path).
         """
         configured = credentials.get("issuer")
         if not isinstance(configured, str) or not configured:
-            return None, False
+            return None, False, False
         try:
             metadata = await DcrService().discover_as_metadata(configured)
         except DcrIssuerMismatchError as exc:
             if "{" in (exc.metadata_issuer or ""):
                 logger.warning("Gateway %s: issuer metadata names the template %s; the iss parameter cannot be validated", sanitize_for_log(gateway_id), sanitize_for_log(exc.metadata_issuer))
-                return None, False
+                return None, False, False
             logger.warning(
                 "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
             )
-            return configured.rstrip("/"), False
+            return configured.rstrip("/"), False, True
         except (DcrError, httpx.HTTPError, ValueError) as exc:
             logger.warning(
                 "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
             )
-            return configured.rstrip("/"), False
+            return configured.rstrip("/"), False, True
         metadata_issuer = metadata.get("issuer")
-        expected = metadata_issuer if isinstance(metadata_issuer, str) and metadata_issuer else configured.rstrip("/")
-        return expected, bool(metadata.get("authorization_response_iss_parameter_supported"))
+        advertised = bool(metadata.get("authorization_response_iss_parameter_supported"))
+        if isinstance(metadata_issuer, str) and metadata_issuer:
+            return metadata_issuer, advertised, False
+        return configured.rstrip("/"), advertised, True
 
     @staticmethod
     def _record_issuer_mismatch(gateway_id: Optional[str], expected: str, received: Optional[str]) -> None:
@@ -1271,7 +1275,8 @@ class OAuthManager:
         """Apply RFC 9207 issuer validation to an authorization response (MCP 2026-07-28).
 
         A present ``iss``, empty included, must equal the expected issuer by plain string
-        comparison. An absent ``iss`` is rejected only when the authorization server
+        comparison; only on the fallback path, with no validated metadata, is a trailing
+        slash ignored on both sides. An absent ``iss`` is rejected only when the authorization server
         advertises that it sends one. Nothing is compared when no issuer is configured or
         the metadata issuer is a template.
 
@@ -1283,7 +1288,7 @@ class OAuthManager:
         Raises:
             OAuthError: If ``iss`` is missing although advertised, or names a different issuer.
         """
-        expected, advertised = await self._expected_issuer(credentials, gateway_id)
+        expected, advertised, ignore_trailing_slash = await self._expected_issuer(credentials, gateway_id)
         if expected is None:
             return
         if iss is None:
@@ -1292,7 +1297,8 @@ class OAuthManager:
                 self._record_issuer_mismatch(gateway_id, expected, None)
                 raise OAuthError("Authorization response is missing the iss parameter its authorization server advertises")
             return
-        if iss != expected:
+        received = iss.rstrip("/") if ignore_trailing_slash else iss
+        if received != expected:
             logger.warning("Gateway %s: authorization response issuer %s does not match the expected issuer %s", sanitize_for_log(gateway_id), sanitize_for_log(iss), sanitize_for_log(expected))
             self._record_issuer_mismatch(gateway_id, expected, iss)
             raise OAuthError("Authorization response issuer mismatch")
