@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Gateway catalog refresh (`POST /gateways/{id}/tools/refresh` and the other callers of `_reconcile_gateway_catalog`) no longer discards in-place tool updates when the same pass also removes stale items. The gateway is now expired per collection instead of as a whole, so pending `input_schema`/`description` updates survive and the reported `tools_updated` count matches the stored rows (#7273, #7152).
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
