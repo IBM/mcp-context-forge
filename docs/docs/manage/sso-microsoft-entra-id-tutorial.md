@@ -474,8 +474,11 @@ ContextForge includes these default roles:
 
 1. **`platform_admin`** (global scope) - Full platform access with all permissions
 2. **`team_admin`** (team scope) - Team management, tools, resources, prompts
-3. **`developer`** (team scope) - Tool execution and resource access
+3. **`developer`** (team scope) - Resource CRUD, upstream gateway management, execution/invocation, and token self-service
 4. **`viewer`** (team scope) - Read access and tool execution within team scope
+
+The `developer` role grants write access, including gateway registration, update, and deletion.
+Review the [complete built-in permission table](rbac.md#built-in-rbac-roles) before mapping identity-provider groups to roles.
 
 ### 8.5.1 Prerequisites
 
