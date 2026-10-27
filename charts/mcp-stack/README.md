@@ -805,6 +805,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |
 | mcpContextForge.secret.DCR_ALLOWED_ISSUERS | string | `"[]"` |  |
 | mcpContextForge.secret.DCR_TOKEN_ENDPOINT_AUTH_METHOD | string | `"client_secret_basic"` |  |
+| mcpContextForge.secret.DCR_APPLICATION_TYPE | string | `"auto"` |  |
 | mcpContextForge.secret.DCR_METADATA_CACHE_TTL | string | `"3600"` |  |
 | mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"ContextForge ({gateway_name})"` |  |
 | mcpContextForge.secret.DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED | string | `"false"` |  |

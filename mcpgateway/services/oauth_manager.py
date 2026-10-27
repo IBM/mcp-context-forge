@@ -40,9 +40,10 @@ from mcpgateway.common.oauth import (
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
-from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
+from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
@@ -1201,15 +1202,19 @@ class OAuthManager:
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     @staticmethod
-    async def _expected_issuer(credentials: Dict[str, Any]) -> tuple[Optional[str], bool]:
+    async def _expected_issuer(credentials: Dict[str, Any], gateway_id: Optional[str]) -> tuple[Optional[str], bool]:
         """Return the issuer an authorization response must name, and whether the AS advertises ``iss``.
 
         The value comes from the authorization server's validated metadata when discovery
-        succeeds, so it is exactly what the server calls itself; the configured issuer is the
-        fallback. No issuer configured means nothing to compare against.
+        succeeds, so it is exactly what the server calls itself. When discovery fails the
+        configured issuer is used without its trailing slash, since that is the only value
+        held and an admin may have typed the slash. ``None`` means nothing can be compared:
+        no issuer is configured, or the metadata issuer is a template such as a multi-tenant
+        placeholder, which no real response can ever equal.
 
         Args:
             credentials: OAuth configuration, read for its ``issuer``.
+            gateway_id: The gateway, for the log lines.
 
         Returns:
             tuple[Optional[str], bool]: The expected issuer, or ``None``, and the
@@ -1220,37 +1225,76 @@ class OAuthManager:
             return None, False
         try:
             metadata = await DcrService().discover_as_metadata(configured)
+        except DcrIssuerMismatchError as exc:
+            if "{" in (exc.metadata_issuer or ""):
+                logger.warning("Gateway %s: issuer metadata names the template %s; the iss parameter cannot be validated", sanitize_for_log(gateway_id), sanitize_for_log(exc.metadata_issuer))
+                return None, False
+            logger.warning(
+                "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
+            )
+            return configured.rstrip("/"), False
         except (DcrError, httpx.HTTPError, ValueError) as exc:
-            logger.debug("AS metadata unavailable for issuer %s; comparing iss against the configured value: %s", sanitize_for_log(configured), sanitize_for_log(str(exc)))
-            return configured, False
+            logger.warning(
+                "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
+            )
+            return configured.rstrip("/"), False
         metadata_issuer = metadata.get("issuer")
-        expected = metadata_issuer if isinstance(metadata_issuer, str) and metadata_issuer else configured
+        expected = metadata_issuer if isinstance(metadata_issuer, str) and metadata_issuer else configured.rstrip("/")
         return expected, bool(metadata.get("authorization_response_iss_parameter_supported"))
 
-    async def validate_authorization_response_issuer(self, credentials: Dict[str, Any], iss: Optional[str]) -> None:
+    @staticmethod
+    def _record_issuer_mismatch(gateway_id: Optional[str], expected: str, received: Optional[str]) -> None:
+        """Raise a security event for an authorization response that names the wrong issuer.
+
+        Args:
+            gateway_id: The gateway the response belongs to.
+            expected: The issuer the response had to name.
+            received: The ``iss`` the response carried, or ``None`` when it was missing.
+        """
+        try:
+            get_security_logger().log_suspicious_activity(
+                activity_type="oauth_issuer_mismatch",
+                description=f"Authorization response for gateway {gateway_id} did not name the expected issuer",
+                user_id=None,
+                user_email=None,
+                client_ip="unknown",
+                user_agent=None,
+                threat_score=0.7,
+                severity=SecuritySeverity.HIGH,
+                threat_indicators={"gateway_id": gateway_id, "expected_issuer": expected, "received_issuer": received},
+                action_taken="authorization_code_not_redeemed",
+            )
+        except Exception as exc:  # noqa: BLE001 - a logging failure must not change the outcome
+            logger.debug("Security event for issuer mismatch not recorded: %s", exc)
+
+    async def validate_authorization_response_issuer(self, credentials: Dict[str, Any], iss: Optional[str], gateway_id: Optional[str] = None) -> None:
         """Apply RFC 9207 issuer validation to an authorization response (MCP 2026-07-28).
 
-        A present ``iss`` must equal the expected issuer by plain string comparison, with no
-        normalisation. An absent ``iss`` is rejected only when the authorization server
-        advertises that it sends one. Nothing is compared when no issuer is configured.
+        A present ``iss``, empty included, must equal the expected issuer by plain string
+        comparison. An absent ``iss`` is rejected only when the authorization server
+        advertises that it sends one. Nothing is compared when no issuer is configured or
+        the metadata issuer is a template.
 
         Args:
             credentials: OAuth configuration of the gateway the response belongs to.
-            iss: The ``iss`` parameter of the authorization response, or ``None``.
+            iss: The ``iss`` parameter of the authorization response, or ``None`` when absent.
+            gateway_id: The gateway, for the log lines and the security event.
 
         Raises:
             OAuthError: If ``iss`` is missing although advertised, or names a different issuer.
         """
-        expected, advertised = await self._expected_issuer(credentials)
+        expected, advertised = await self._expected_issuer(credentials, gateway_id)
+        if expected is None:
+            return
         if iss is None:
             if advertised:
+                logger.warning("Gateway %s: authorization response omits the iss parameter its authorization server advertises", sanitize_for_log(gateway_id))
+                self._record_issuer_mismatch(gateway_id, expected, None)
                 raise OAuthError("Authorization response is missing the iss parameter its authorization server advertises")
             return
-        if expected is None:
-            logger.warning("Authorization response carries iss %s but no issuer is configured to compare it with", sanitize_for_log(iss))
-            return
         if iss != expected:
-            logger.warning("Authorization response issuer %s does not match the expected issuer %s", sanitize_for_log(iss), sanitize_for_log(expected))
+            logger.warning("Gateway %s: authorization response issuer %s does not match the expected issuer %s", sanitize_for_log(gateway_id), sanitize_for_log(iss), sanitize_for_log(expected))
+            self._record_issuer_mismatch(gateway_id, expected, iss)
             raise OAuthError("Authorization response issuer mismatch")
 
     async def complete_authorization_code_flow(
@@ -1294,7 +1338,7 @@ class OAuthManager:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
 
         # The state is consumed either way; the code never reaches a token endpoint on mismatch.
-        await self.validate_authorization_response_issuer(credentials, iss)
+        await self.validate_authorization_response_issuer(credentials, iss, gateway_id=gateway_id)
 
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")

@@ -5678,38 +5678,28 @@ class TestEnforceGatewayAccessCacheLayer:
 # RFC 9207 iss validation on the callback (MCP 2026-07-28)
 # --------------------------------------------------------------------------- #
 
-
-@pytest.mark.asyncio
-async def test_issuer_ok_without_state_has_nothing_to_compare(mock_db):
-    # First-Party
-    from mcpgateway.routers.oauth_router import _authorization_response_issuer_ok
-
-    assert await _authorization_response_issuer_ok(None, "https://as.example.com", mock_db) is True
-    mock_db.execute.assert_not_called()
+DISCOVER = "mcpgateway.services.oauth_manager.DcrService.discover_as_metadata"
 
 
-@pytest.mark.asyncio
-async def test_issuer_ok_reports_mismatch_from_manager(mock_db, mock_gateway):
-    # First-Party
-    from mcpgateway.routers.oauth_router import _authorization_response_issuer_ok
+def _as_metadata(issuer: str, advertised: bool) -> dict:
+    return {"issuer": issuer, "authorization_response_iss_parameter_supported": advertised}
 
+
+@pytest.fixture
+def issuer_gateway(mock_gateway, mock_db):
+    """A gateway with an issuer, resolved from any state through the real manager."""
+    mock_gateway.oauth_config["issuer"] = "https://as.example.com"
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-    with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
-        manager = Mock()
-        manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
-        manager.validate_authorization_response_issuer = AsyncMock(side_effect=OAuthError("Authorization response issuer mismatch"))
-        manager_class.return_value = manager
-        assert await _authorization_response_issuer_ok("state-token", "https://attacker.example", mock_db) is False
-        manager.validate_authorization_response_issuer = AsyncMock(return_value=None)
-        assert await _authorization_response_issuer_ok("state-token", "https://as.example.com", mock_db) is True
+    with patch("mcpgateway.services.oauth_manager.OAuthManager.resolve_gateway_id_from_state", new=AsyncMock(return_value="gateway123")):
+        yield mock_gateway
 
 
 @pytest.mark.asyncio
-async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db, mock_request):
+async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db, mock_request, issuer_gateway):
     # First-Party
     from mcpgateway.routers.oauth_router import oauth_callback
 
-    with patch("mcpgateway.routers.oauth_router._authorization_response_issuer_ok", new=AsyncMock(return_value=False)):
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", False))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
         response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://attacker.example", db=mock_db)
 
     body = response.body.decode()
@@ -5720,15 +5710,57 @@ async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db,
 
 
 @pytest.mark.asyncio
-async def test_callback_error_with_matching_iss_shows_provider_error(mock_db, mock_request):
+async def test_callback_error_without_iss_from_an_advertising_server_is_refused(mock_db, mock_request, issuer_gateway):
     # First-Party
     from mcpgateway.routers.oauth_router import oauth_callback
 
-    with patch("mcpgateway.routers.oauth_router._authorization_response_issuer_ok", new=AsyncMock(return_value=True)):
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", db=mock_db)
+
+    assert "issuer mismatch" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_matching_iss_shows_provider_error(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))):
         response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://as.example.com", db=mock_db)
 
     assert response.status_code == 400
     assert "access_denied" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_without_state_shows_provider_error(mock_db, mock_request):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    response = await oauth_callback(request=mock_request, code=None, state=None, error="access_denied", iss="https://anything.example", db=mock_db)
+
+    assert "access_denied" in response.body.decode()
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_success_path_refuses_wrong_iss_before_the_code_exchange(mock_db, mock_request, issuer_gateway):
+    """Through the real route and the real manager: the state is consumed, the token endpoint is never called."""
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with (
+        patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._validate_and_retrieve_state", new=AsyncMock(return_value={"code_verifier": "v", "app_user_email": "test@example.com"})),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._exchange_code_for_tokens", new=AsyncMock()) as exchange,
+        patch("mcpgateway.services.oauth_manager.get_security_logger"),
+        patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+    ):
+        response = await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://attacker.example", db=mock_db)
+
+    assert response.status_code == 400
+    assert "OAuth Authorization Failed" in response.body.decode()
+    exchange.assert_not_called()
 
 
 @pytest.mark.asyncio

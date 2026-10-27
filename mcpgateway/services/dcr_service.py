@@ -14,6 +14,7 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 # Standard
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import ipaddress
 import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -187,7 +188,7 @@ class DcrService:
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
                     if metadata_issuer != normalized_issuer:
-                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                        raise DcrIssuerMismatchError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}", metadata.get("issuer"))
 
                     # Cache the metadata
                     _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
@@ -222,7 +223,7 @@ class DcrService:
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
                     if metadata_issuer != normalized_issuer:
-                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                        raise DcrIssuerMismatchError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}", metadata.get("issuer"))
 
                     # Cache the metadata
                     _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
@@ -254,7 +255,12 @@ class DcrService:
         if configured != "auto":
             return configured
         host = (urlsplit(redirect_uri).hostname or "").lower()
-        return "native" if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost") else "web"
+        if host == "localhost" or host.endswith(".localhost"):
+            return "native"
+        try:
+            return "native" if ipaddress.ip_address(host).is_loopback else "web"
+        except ValueError:
+            return "web"
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
@@ -559,6 +565,24 @@ class DcrService:
 
 class DcrError(Exception):
     """DCR-related errors."""
+
+
+class DcrIssuerMismatchError(DcrError):
+    """The metadata document names a different issuer than the one it was fetched for.
+
+    Attributes:
+        metadata_issuer: The ``issuer`` value the document carried.
+    """
+
+    def __init__(self, message: str, metadata_issuer: Optional[str] = None):
+        """Keep the issuer the document named.
+
+        Args:
+            message: The error message.
+            metadata_issuer: The ``issuer`` value found in the metadata document.
+        """
+        super().__init__(message)
+        self.metadata_issuer = metadata_issuer
 
 
 async def validate_issuer_scoped_endpoint(url: Any, issuer: Optional[str], field_name: str) -> str:

@@ -2089,8 +2089,11 @@ class TestApplicationType:
         dcr_service.settings = SimpleNamespace(dcr_application_type="auto")
         assert dcr_service._application_type("http://localhost:4444/oauth/callback") == "native"
         assert dcr_service._application_type("http://127.0.0.1:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://127.1.2.3:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://[::1]:4444/oauth/callback") == "native"
         assert dcr_service._application_type("http://gateway.localhost/oauth/callback") == "native"
         assert dcr_service._application_type("https://gateway.example.com/oauth/callback") == "web"
+        assert dcr_service._application_type("http://10.0.0.5:4444/oauth/callback") == "web"
 
     def test_configured_value_wins(self):
         dcr_service = DcrService()
