@@ -62,7 +62,7 @@ class TestRateLimiterRedisUrl:
 
         from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
-        middleware = RateLimitMiddleware(MagicMock())
+        RateLimitMiddleware(MagicMock())
 
         # Verify dedicated function was called
         mock_get_client.assert_called()
@@ -80,7 +80,7 @@ class TestRateLimiterRedisUrl:
 
         from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
-        middleware = RateLimitMiddleware(MagicMock())
+        RateLimitMiddleware(MagicMock())
 
         # Verify client was obtained (will use main REDIS_URL via _get_sync_redis_client)
         mock_get_client.assert_called()
@@ -1690,3 +1690,15 @@ class TestRateLimitMiddlewareTiers:
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")
+
+
+@pytest.mark.parametrize("path", ["/v1/mcp-servers/test-handshake", "/gateways/test-handshake", "/gateways/test-handshake/"])
+def test_handshake_uses_connection_test_rate_tier(path):
+    """Public aliases share the connection-test rate limit without burst allowance."""
+    from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware, settings
+
+    with patch.object(RateLimitMiddleware, "_init_redis"):
+        middleware = RateLimitMiddleware(MagicMock())
+    tier = middleware.get_endpoint_tier(path, "POST")
+    assert tier["limit"] == settings.rate_limit_critical_rpm
+    assert tier["burst"] == 0

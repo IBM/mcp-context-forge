@@ -2295,3 +2295,200 @@ def test_handshake_http_candidate_only_denies_hidden_gateway(monkeypatch, rbac_b
         mock_client.request.assert_not_called()
     finally:
         engine.dispose()
+
+
+@pytest.fixture
+def post_authorization_context(db_session, user_ctx):
+    """Provide a visible OAuth gateway and a read-only caller token."""
+    from mcpgateway.services.token_backends.base import ValidationToken
+
+    gateway = _mock_gateway(auth_type="oauth", oauth_config={"grant_type": "authorization_code"}, team_id=None)
+    db_session.execute.return_value.scalars.return_value.first.return_value = gateway
+    request = GatewayHandshakeRequest(base_url=gateway.url, gateway_id=gateway.id, validation_mode="post_authorization")
+    with (
+        patch("mcpgateway.middleware.rbac.check_permission_inline", new_callable=AsyncMock, return_value=True) as permission,
+        patch("mcpgateway.services.token_storage_service.build_token_user_context", return_value={"email": user_ctx["email"], "teams": None}),
+        patch("mcpgateway.services.token_storage_service.TokenStorageService.read_validation_token", new_callable=AsyncMock, return_value=ValidationToken("valid", "caller-token")) as token,
+        patch("mcpgateway.services.gateway_service.audit_trail.log_action") as audit,
+    ):
+        yield request, gateway, token, permission, audit
+
+
+@pytest.mark.parametrize("fields", [{}, {"gateway_id": "g", "headers": {"authorization": "override"}}, {"gateway_id": "g", "credential_mode": "candidate_only"}])
+def test_post_authorization_rejects_unsafe_input(fields):
+    """Strict mode requires an exact gateway and rejects credential overrides."""
+    with pytest.raises(ValidationError):
+        GatewayHandshakeRequest(base_url="https://example.com", validation_mode="post_authorization", **fields)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("empty", [False, True])
+async def test_post_authorization_lists_with_callers_stored_token(post_authorization_context, user_ctx, db_session, legacy, empty):
+    """Both paths validate stored tokens and accept empty tools lists."""
+    request, gateway, token, permission, audit = post_authorization_context
+    tools = [] if empty else [{"name": "echo", "inputSchema": {"type": "object"}}]
+    listing = _json_response(200, {"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}})
+    client = _mock_resilient_client(_json_response(404, {}) if legacy else _discover_success({"tools": {}}), listing)
+    transport, session = _mock_sdk_session()
+    session.list_tools.return_value.tools = tools
+    session.list_resources = AsyncMock()
+    session.list_prompts = AsyncMock()
+    with (
+        patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=client),
+        patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport),
+        patch("mcpgateway.services.gateway_service.ClientSession", return_value=session),
+    ):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    assert result.success
+    assert result.component_counts == {"tools": len(tools)}
+    assert result.stages == {"token": "ok", "negotiation": "ok", "tools_list": "ok"}
+    assert result.raw_preview is None
+    token.assert_awaited_once_with(gateway.id, user_ctx["email"])
+    assert any(call.args[1] == "gateways.update" for call in permission.await_args_list)
+    assert client.request.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer caller-token"
+    session.list_resources.assert_not_called()
+    session.list_prompts.assert_not_called()
+    db_session.commit.assert_not_called()
+    db_session.add.assert_not_called()
+    audit.assert_called_once()
+    assert "caller-token" not in str(audit.call_args)
+    assert "db" not in audit.call_args.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("failure", ["denied", "scope", "malformed", "unsupported"])
+async def test_post_authorization_listing_failures_are_not_success(post_authorization_context, user_ctx, db_session, legacy, failure):
+    """Listing failures and absent tools remain explicit on both negotiation paths."""
+    request, _gateway, _token, _permission, _audit = post_authorization_context
+    status = 403 if failure in ("denied", "scope") else 200
+    payload = {"error": "insufficient_scope"} if failure == "scope" else {"result": {"tools": "invalid"}}
+    response = httpx.Response(status, json=payload, request=httpx.Request("POST", "http://example.com"))
+    client = _mock_resilient_client(_json_response(404, {}) if legacy else _discover_success({} if failure == "unsupported" else {"tools": {}}), response)
+    transport, session = _mock_sdk_session()
+    if failure == "unsupported":
+        session.initialize.return_value.capabilities.tools = None
+    elif failure in ("scope", "denied"):
+        session.list_tools.side_effect = httpx.HTTPStatusError("unsafe caller-token", request=response.request, response=response)
+    else:
+        session.list_tools.side_effect = ValueError("unsafe caller-token")
+    with (
+        patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=client),
+        patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport),
+        patch("mcpgateway.services.gateway_service.ClientSession", return_value=session),
+    ):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    assert not result.success
+    assert result.failed_stage == "tools_list"
+    assert result.stages["negotiation"] == "ok"
+    expected = {"denied": "tools_list_failed", "scope": "insufficient_scope", "malformed": "tools_list_failed", "unsupported": "tools_unsupported"}
+    assert result.error_code == expected[failure]
+    assert "caller-token" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.parametrize("status,code", [(None, "authorization_missing"), ("expired", "token_expired"), ("unbound", "authorization_missing"), ("invalid", "invalid_token")])
+async def test_post_authorization_token_failure_never_calls_upstream(post_authorization_context, user_ctx, db_session, status, code):
+    """Missing, expired, invalid, and unbound tokens fail before any MCP call."""
+    from mcpgateway.services.token_backends.base import ValidationToken
+
+    request, _gateway, token, _permission, _audit = post_authorization_context
+    token.return_value = ValidationToken(status) if status else None
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as client:
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    assert result.error_code == code
+    assert result.failed_stage == "token"
+    assert result.reauthorization_required
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+async def test_post_authorization_update_permission_denied(post_authorization_context, user_ctx, db_session):
+    """Read permission alone does not permit post-authorization validation."""
+    from fastapi import HTTPException
+
+    request, _gateway, token, permission, _audit = post_authorization_context
+    permission.return_value = False
+    with pytest.raises(HTTPException) as exc:
+        await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    assert exc.value.status_code == 403
+    token.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.parametrize("cause", ["hidden", "path", "storage", "timeout"])
+async def test_post_authorization_target_and_storage_fail_closed(post_authorization_context, user_ctx, db_session, cause):
+    """Target mismatches, backend failures, and token timeouts never probe upstream."""
+    request, _gateway, token, _permission, _audit = post_authorization_context
+    if cause == "hidden":
+        db_session.execute.return_value.scalars.return_value.first.return_value = None
+    elif cause == "path":
+        request.path = "/other"
+    elif cause == "storage":
+        token.side_effect = RuntimeError("unsafe caller-token")
+    else:
+        import asyncio
+        from mcpgateway.services import gateway_service as service_module
+
+        original_timeout = asyncio.timeout
+
+        async def stalled_token(*args):
+            await asyncio.sleep(1)
+        token.side_effect = stalled_token
+        timeout_patch = patch.object(service_module.asyncio, "timeout", side_effect=lambda _: original_timeout(0.01))
+        timeout_patch.start()
+    try:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as client:
+            result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    finally:
+        if cause == "timeout":
+            timeout_patch.stop()
+    assert not result.success
+    assert result.error_code == {"hidden": "gateway_unavailable", "path": "gateway_unavailable", "storage": "token_storage_unavailable", "timeout": "timeout"}[cause]
+    assert "caller-token" not in result.model_dump_json()
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.parametrize("disabled", [False, True])
+async def test_post_authorization_denies_wrong_team_and_disabled_gateways(team_b_gateway_db, disabled):
+    """Strict validation checks enabled state and team visibility before token access."""
+    db = team_b_gateway_db()
+    gateway = db.get(DbGateway, "gw-team-b")
+    if disabled:
+        gateway.enabled = False
+        db.commit()
+    user = {"email": "caller@example.com", "token_teams": [gateway.team_id] if disabled else ["another-team"], "permissions": ["gateways.read", "gateways.update"], "db": db}
+    request = GatewayHandshakeRequest(base_url=gateway.url, gateway_id=gateway.id, validation_mode="post_authorization")
+    with (
+        patch("mcpgateway.services.token_storage_service.TokenStorageService.read_validation_token", new_callable=AsyncMock) as token,
+        patch("mcpgateway.services.gateway_service.ResilientHttpClient") as client,
+        patch("mcpgateway.services.gateway_service.audit_trail.log_action"),
+    ):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user, db=db)
+    assert result.error_code == "gateway_unavailable"
+    token.assert_not_called()
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_handshake_env")
+async def test_post_authorization_redacts_token_echoes(post_authorization_context, user_ctx, db_session, caplog):
+    """Upstream metadata cannot expose the caller token in the validation response."""
+    request, _gateway, _token, _permission, _audit = post_authorization_context
+    discover = _discover_success({"tools": {}, "extension": {"value": "caller-token"}})
+    discover.json.return_value["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] = "caller-token"
+    client = _mock_resilient_client(discover, _json_response(200, {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}))
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=client):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+    assert result.success
+    assert result.server_name == "[REDACTED]"
+    assert "caller-token" not in result.model_dump_json()
+    assert "caller-token" not in caplog.text

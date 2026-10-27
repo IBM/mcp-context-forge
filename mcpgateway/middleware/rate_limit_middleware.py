@@ -139,6 +139,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_high_rpm,
                 "burst": settings.rate_limit_high_burst,
             },
+            "GATEWAY_HANDSHAKE": {
+                "pattern": r"^/gateways/test-handshake/?$",
+                "methods": {"POST"},
+                "limit": settings.rate_limit_critical_rpm,
+                "burst": 0,
+            },
             "MEDIUM": {
                 "pattern": r"^/(mcp|tools|prompts|resources|servers|gateways|llmchat)(/|$)",
                 "limit": settings.rate_limit_medium_rpm,

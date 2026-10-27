@@ -998,8 +998,8 @@ class TestOAuthRouter:
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         assert "OAuth Authorization Failed" in result.body.decode()
-        assert "invalid_target" in result.body.decode()
-        assert "AADSTS9010010" in result.body.decode()
+        assert "oauth_error" in result.body.decode()
+        assert "AADSTS9010010" not in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_missing_code_without_error(self, mock_db, mock_request):
@@ -4284,7 +4284,6 @@ class TestOAuthCallbackCSPCompliance:
         assert len(nonces_seen) == 3, "Each request should have a unique CSP nonce"
 
 
-
 class TestOAuthRouterPopupMode:
     """Test cases for OAuth router popup mode functionality."""
 
@@ -4358,7 +4357,7 @@ class TestOAuthRouterPopupMode:
                     call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
                     # popup is a Query object with default False, check its value
                     popup_arg = call_args[1]["popup"]
-                    assert popup_arg == False or (hasattr(popup_arg, 'default') and popup_arg.default == False)
+                    assert popup_arg is False or (hasattr(popup_arg, 'default') and popup_arg.default is False)
 
     @pytest.mark.asyncio
     async def test_popup_notification_script_helper(self):
@@ -4548,7 +4547,8 @@ class TestOAuthRouterPopupMode:
         assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
         assert '"status": "error"' in body or '"status":"error"' in body
         assert '"error": "access_denied"' in body or '"error":"access_denied"' in body
-        assert '"errorDescription": "User denied authorization"' in body or '"errorDescription":"User denied authorization"' in body
+        assert "The provider denies authorization" in body
+        assert "User denied authorization" not in body
 
         # Verify no legacy admin UI elements
         assert 'Return to Admin Panel' not in body
@@ -4752,7 +4752,8 @@ class TestOAuthRouterPopupMode:
         # Verify legacy admin UI error elements
         assert 'OAuth Authorization Failed' in body
         assert 'access_denied' in body
-        assert 'User denied authorization' in body
+        assert 'The provider denies authorization' in body
+        assert 'User denied authorization' not in body
         assert 'Return to Admin Panel' in body
 
         # Verify NO postMessage script
@@ -5185,9 +5186,11 @@ class TestPersistLearnedAudience:
         assert gateway.oauth_config is not original
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for _build_user_context session-token path (CWE-863 fix)
-# ===========================================================================
+# ====================================================================
+
 
 
 class TestBuildUserContextSessionTokenPath:
@@ -5324,9 +5327,11 @@ class TestBuildUserContextSessionTokenPath:
         assert result["teams"] is None
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for oauth_router callback scope handling (lines 914-930)
-# ===========================================================================
+# ====================================================================
+
 
 
 class TestOAuthCallbackScopeHandling:
@@ -5427,9 +5432,11 @@ class TestOAuthCallbackScopeHandling:
         assert response.status_code in (200, 400)
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for oauth_router fetch-tools GatewayConnectionError (lines 1317-1318)
-# ===========================================================================
+# ====================================================================
+
 
 
 class TestFetchToolsGatewayConnectionError:
@@ -5779,3 +5786,43 @@ async def test_callback_passes_iss_to_the_completion_flow(mock_db, mock_request,
             await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://as.example.com", db=mock_db)
 
     assert manager.complete_authorization_code_flow.call_args[1]["iss"] == "https://as.example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,expected", [("redirect_uri_mismatch", "redirect_uri_mismatch"), ("insufficient_scope", "insufficient_scope"), ("ambiguous", "oauth_error")])
+async def test_callback_safe_structured_provider_errors(mock_db, mock_request_popup, provider, expected, caplog):
+    """Callbacks preserve safe evidence and discard unsafe provider descriptions."""
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    result = await oauth_callback(
+        code=None, state="popup.test", error=provider, error_description="client_secret=unsafe-provider-body",
+        request=mock_request_popup, db=mock_db,
+    )
+    body = result.body.decode()
+    assert result.status_code == 400
+    assert f'"errorCode": "{expected}"' in body
+    assert '"failedStage": "authorization"' in body
+    assert '"errorDescription"' in body
+    assert "unsafe-provider-body" not in body
+    assert "unsafe-provider-body" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["token_url_unreachable", "redirect_uri_mismatch", "token_exchange_failed"])
+async def test_callback_preserves_safe_exchange_codes(mock_db, mock_request_popup, mock_gateway, error_code, caplog):
+    """Token-exchange errors retain safe structured fields without exposing exception details."""
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    manager = Mock()
+    manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+    manager.complete_authorization_code_flow = AsyncMock(side_effect=OAuthError("unsafe-exchange-body", error_code=error_code))
+    with patch("mcpgateway.routers.oauth_router.OAuthManager", return_value=manager):
+        result = await oauth_callback(code="code", state="popup.state", request=mock_request_popup, db=mock_db)
+    body = result.body.decode()
+    assert result.status_code == 400
+    assert f'"errorCode": "{error_code}"' in body
+    assert '"failedStage": "token_exchange"' in body
+    assert '"errorDescription"' in body
+    assert "unsafe-exchange-body" not in body
+    assert "unsafe-exchange-body" not in caplog.text

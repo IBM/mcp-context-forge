@@ -491,3 +491,147 @@ class TestCandidateCredentialHandshake:
             finally:
                 _delete_gateway(client, gateway_a_id)
                 _delete_gateway(client, gateway_b_id)
+
+
+@contextlib.contextmanager
+def _oauth_validation_upstream(legacy: bool):
+    """Serve OAuth tokens and MCP requests for a real post-authorization flow.
+
+    Args:
+        legacy: Reject discovery to exercise initialize negotiation.
+
+    Yields:
+        Upstream URL and mutable listing behavior with request counters.
+    """
+    state = {"token_calls": 0, "tools_calls": 0, "scope_error": False, "empty": False}
+    access_token = secrets.token_urlsafe(32)
+
+    class Handler(BaseHTTPRequestHandler):
+        """Serve a local OAuth provider and an authenticated MCP endpoint."""
+
+        def do_POST(self):  # noqa: N802
+            """Issue tokens or dispatch authenticated MCP JSON-RPC requests."""
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.path == "/token":
+                state["token_calls"] += 1
+                self.reply(200, {"access_token": access_token, "token_type": "Bearer", "expires_in": 3600, "scope": "tools:read"})
+                return
+            if self.headers.get("Authorization") != f"Bearer {access_token}":
+                self.reply(401, {"error": "invalid_token"})
+                return
+            request = json.loads(body)
+            method = request.get("method")
+            if method == "notifications/initialized":
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if method == "server/discover":
+                if legacy:
+                    self.reply(404, {})
+                    return
+                result = {"supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}}
+            elif method == "initialize":
+                result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "oauth-validation", "version": "1"}}
+            elif method == "tools/list":
+                state["tools_calls"] += 1
+                if state["scope_error"]:
+                    self.reply(200, {"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32000, "message": "Listing denied", "data": {"error": "insufficient_scope"}}})
+                    return
+                result = {"tools": [] if state["empty"] else [{"name": "validation_echo", "inputSchema": {"type": "object"}}]}
+            else:
+                result = {}
+            self.reply(200, {"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+        def reply(self, status, body):
+            """Return a JSON response with a bounded content length."""
+            payload = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format, *args):
+            """Keep request details out of test output."""
+
+    server = _DualStackThreadingHTTPServer(("::", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield f"http://localhost:{server.server_address[1]}", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_post_authorization_live_stored_token_validation(isolated_gateway: _GatewayFixture, legacy: bool):
+    """A real OAuth callback stores the caller token before strict validation lists tools."""
+    from urllib.parse import parse_qs, urlparse
+
+    client, _token, base_url, signing_key = isolated_gateway
+    with _oauth_validation_upstream(legacy) as (upstream, state):
+        response = client.post(_GATEWAYS_PATH, json={
+            "name": f"oauth-validation-{uuid.uuid4().hex[:8]}", "url": f"{upstream}/mcp", "transport": "STREAMABLEHTTP",
+            "visibility": "public", "auth_type": "oauth", "oauth_config": {
+                "grant_type": "authorization_code", "client_id": "validation-client", "authorization_url": f"{upstream}/authorize",
+                "token_url": f"{upstream}/token", "redirect_uri": f"{base_url}/oauth/callback", "scopes": ["tools:read"],
+            },
+        })
+        assert response.status_code in (200, 201, 202), response.text
+        body = response.json()
+        gateway_id = body.get("id") or body["gateway"]["id"]
+        payload = {"base_url": f"{upstream}/mcp", "gateway_id": gateway_id, "validation_mode": "post_authorization"}
+        try:
+            missing = _post_handshake(client, payload)
+            assert missing.status_code == 200, missing.text
+            assert missing.json()["errorCode"] == "authorization_missing", missing.text
+            authorization = client.get(f"/oauth/authorize/{gateway_id}", params={"popup": "true"}, follow_redirects=False)
+            assert authorization.status_code in (302, 307), authorization.text
+            oauth_state = parse_qs(urlparse(authorization.headers["location"]).query)["state"][0]
+            callback = client.get("/oauth/callback", params={"code": "consented-code", "state": oauth_state})
+            assert callback.status_code == 200 and '"status": "success"' in callback.text, callback.text
+            token_calls = state["token_calls"]
+            components_before = {path: _request_json(client, "GET", path) for path in ("/tools", "/resources", "/prompts")}
+            for empty in (False, True):
+                state["empty"] = empty
+                before = state["tools_calls"]
+                result = _post_handshake(client, payload)
+                assert result.status_code == 200, result.text
+                outcome = result.json()
+                assert outcome["success"], outcome
+                assert outcome["componentCounts"]["tools"] == (0 if empty else 1)
+                assert outcome["stages"] == {"token": "ok", "negotiation": "ok", "tools_list": "ok"}
+                assert outcome["negotiationPath"] == ("initialize" if legacy else "server_discover")
+                assert state["tools_calls"] == before + 1
+                assert state["token_calls"] == token_calls
+            other_email = f"validation-other-{uuid.uuid4().hex[:8]}@example.com"
+            _request_json(client, "POST", "/auth/email/admin/users", json={
+                "email": other_email, "password": "E2eCandidate!42", "full_name": "Validation Other", "is_admin": False,  # pragma: allowlist secret
+                "is_active": True, "password_change_required": False,
+            }, expected=(201,))
+            roles = _request_json(client, "GET", "/rbac/roles")
+            role_id = next(role["id"] for role in roles if role["name"] == "platform_admin")
+            _request_json(client, "POST", f"/rbac/users/{other_email}/roles", json={"role_id": role_id, "scope": "global"})
+            other_token = make_test_jwt(other_email, teams=[], secret=signing_key, algorithm="HS256", include_email_claim=True)
+            before = state["tools_calls"]
+            with httpx.Client(base_url=base_url, headers=make_auth_headers(other_token), trust_env=False, timeout=20) as other_client:
+                other = _post_handshake(other_client, payload)
+            assert other.status_code == 200, other.text
+            assert other.json()["errorCode"] == "authorization_missing", other.text
+            assert state["tools_calls"] == before
+            state["scope_error"] = True
+            denied = _post_handshake(client, payload)
+            assert denied.status_code == 200, denied.text
+            assert not denied.json()["success"]
+            assert denied.json()["failedStage"] == "tools_list"
+            assert denied.json()["errorCode"] == "insufficient_scope", denied.text
+            assert {path: _request_json(client, "GET", path) for path in components_before} == components_before
+            override = _post_handshake(client, {**payload, "headers": {"Authorization": "Bearer override"}})
+            assert override.status_code == 422
+            anonymous = client.post(_HANDSHAKE_PATH, json=payload, headers={"Authorization": ""})
+            assert anonymous.status_code == 401
+        finally:
+            _delete_gateway(client, gateway_id)

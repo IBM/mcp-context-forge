@@ -59,6 +59,7 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
+from fastapi import HTTPException
 from filelock import FileLock, Timeout
 import httpx
 import httpx2
@@ -66,6 +67,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
+from mcp.types import ListToolsResult
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -114,6 +116,7 @@ from mcpgateway.schemas import (
     GatewayTestRequest,
     GatewayTestResponse,
     GatewayUpdate,
+    GatewayValidationStage,
     PromptCreate,
     ResourceCreate,
     ServerHandshakeRequest,
@@ -141,6 +144,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -8488,7 +8492,7 @@ async def _validate_gateway_test_target(
     }
 
 
-def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
+def _classify_handshake_error(root_cause: BaseException) -> tuple[Literal["transport", "protocol", "auth", "invalid_response"], str]:
     """Classify a handshake failure into a failure class and actionable copy.
 
     Args:
@@ -8506,12 +8510,112 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
 
+@dataclass
+class _ValidationProgress:
+    """Track the current stage and completed negotiation across a shared deadline."""
+
+    stage: GatewayValidationStage = "gateway"
+    negotiation_path: Optional[Literal["server_discover", "initialize"]] = None
+
+
+class _PostAuthorizationFailure(Exception):
+    """Stop strict validation with safe stage information."""
+
+    def __init__(self, code: str, stage: GatewayValidationStage):
+        """Capture an internal code and stage without upstream exception text.
+
+        Args:
+            code: Stable error code.
+            stage: Failed validation stage.
+        """
+        super().__init__(code)
+        self.code = code
+        self.stage = stage
+
+
+def _validation_failure(code: str, stage: GatewayValidationStage, start_time: float) -> GatewayHandshakeResponse:
+    """Build a safe post-authorization failure response.
+
+    Args:
+        code: Stable failure code.
+        stage: Failed validation stage.
+        start_time: Monotonic validation start time.
+
+    Returns:
+        A structured failure with completed and skipped stages.
+    """
+    messages = {
+        "gateway_unavailable": "The requested gateway is unavailable for validation.",
+        "permission_denied": "Access denied.",
+        "unsupported_auth": "Post-authorization validation requires an OAuth authorization_code gateway.",
+        "token_storage_unavailable": "Stored authorization cannot be read. Try again later.",  # nosec B105 - Fixed error copy.
+        "tools_unsupported": "The server does not advertise tools. A live tools/list request cannot be validated.",
+        "tools_list_failed": "The required tools/list request fails. Check upstream access and protocol support.",
+        "mcp_handshake_failed": "MCP negotiation fails. Check the gateway transport and server configuration.",
+        "timeout": "Connection validation exceeds its ten-second budget.",
+        "blocked": "The target is blocked by the gateway test policy.",
+        "validation_failed": "Connection validation fails. Try again later.",
+    }
+    failure = oauth_failure(code)
+    stages: Dict[Literal["token", "negotiation", "tools_list"], Literal["ok", "failed", "skipped", "unsupported"]] = {
+        "token": "skipped",  # nosec B105 - Stage label.
+        "negotiation": "skipped",
+        "tools_list": "skipped",
+    }
+    if stage in stages:
+        for key in stages:
+            stages[key] = "failed" if key == stage else "ok"
+            if key == stage:
+                break
+    if code == "tools_unsupported":
+        stages["tools_list"] = "unsupported"
+    return GatewayHandshakeResponse(
+        success=False,
+        latency_ms=int((time.monotonic() - start_time) * 1000),
+        credential_source="stored" if stage in ("negotiation", "tools_list") else "none",
+        stages=stages,
+        failed_stage=stage,
+        error_code=code,
+        error=messages.get(code, failure.message),
+        reauthorization_required=failure.reauthorization_required,
+        failure_class=(
+            "auth"
+            if code in ("authorization_missing", "token_expired", "invalid_token", "insufficient_scope")
+            else "transport"
+            if code in ("timeout", "blocked", "gateway_unavailable", "token_storage_unavailable")
+            else "protocol"
+        ),
+    )
+
+
+def _strict_list_error(exc: BaseException) -> str:
+    """Classify listing errors without inferring scope failures from status alone.
+
+    Args:
+        exc: Upstream exception.
+
+    Returns:
+        A stable error code.
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return response_oauth_code(exc.response) or ("invalid_token" if exc.response.status_code == 401 else "tools_list_failed")
+    if isinstance(exc, MCPError) and isinstance(exc.error.data, dict):
+        code = exc.error.data.get("error")
+        if isinstance(code, str) and code in ("invalid_token", "insufficient_scope"):
+            return code
+    return "tools_list_failed"
+
+
 async def _probe_mcp_session(
     session: ClientSession,
     *,
     credential_source: Literal["stored", "form", "none", "session"],
     start_time: float,
     log_context: str,
+    strict: bool = False,
+    progress: Optional[_ValidationProgress] = None,
 ) -> GatewayHandshakeResponse:
     """Run initialize plus first-page component listings on an open MCP session.
 
@@ -8525,6 +8629,8 @@ async def _probe_mcp_session(
         credential_source: Provenance of the credentials used to open the session.
         start_time: ``time.monotonic()`` value captured when the handshake attempt began.
         log_context: Sanitized identifier (URL or server id) used in list-call debug logs.
+        strict: Require a successful tools listing.
+        progress: Current stage for the shared validation deadline.
 
     Returns:
         GatewayHandshakeResponse: The successful initialize-path result.
@@ -8533,12 +8639,18 @@ async def _probe_mcp_session(
     capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
     component_counts: Dict[str, int] = {}
     counts_partial = False
+    if strict:
+        if progress is not None:
+            progress.stage = "tools_list"
+            progress.negotiation_path = "initialize"
+        if init.capabilities.tools is None:
+            raise _PostAuthorizationFailure("tools_unsupported", "tools_list")
     for capability, list_call, attr in (
         (init.capabilities.tools, session.list_tools, "tools"),
         (init.capabilities.resources, session.list_resources, "resources"),
         (init.capabilities.prompts, session.list_prompts, "prompts"),
     ):
-        if capability is None:
+        if capability is None or (strict and attr != "tools"):
             continue
         try:
             list_result = await list_call()
@@ -8546,6 +8658,8 @@ async def _probe_mcp_session(
             if getattr(list_result, "next_cursor", None):
                 counts_partial = True
         except Exception as list_exc:
+            if strict:
+                raise _PostAuthorizationFailure(_strict_list_error(list_exc), "tools_list") from None
             logger.debug("MCP handshake list_%s failed for %s: %s", attr, log_context, list_exc)
 
     return GatewayHandshakeResponse(
@@ -8559,7 +8673,7 @@ async def _probe_mcp_session(
         component_counts=component_counts or None,
         counts_partial=counts_partial,
         credential_source=credential_source,
-        raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
+        raw_preview=None if strict else json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
     )
 
 
@@ -8976,11 +9090,67 @@ async def test_gateway_connectivity(
         )
 
 
-async def test_gateway_handshake(
+async def test_gateway_handshake(request: GatewayHandshakeRequest, team_id: Optional[str], user: Any, db: Session) -> GatewayHandshakeResponse:
+    """Run a compatible handshake or strict stored-token validation.
+
+    Args:
+        request: Handshake target and validation mode.
+        team_id: Optional team filter.
+        user: Authenticated caller context.
+        db: Request database session.
+
+    Returns:
+        Handshake outcome or structured post-authorization stage results.
+    """
+    if request.validation_mode == "handshake":
+        return await _test_gateway_handshake(request, team_id, user, db)
+    from mcpgateway.auth_context import get_user_email
+
+    gateway_id = request.gateway_id
+    if gateway_id is None:
+        raise HTTPException(status_code=422, detail="gateway_id is required for post_authorization validation")
+    start_time = time.monotonic()
+    progress = _ValidationProgress()
+    denial: Optional[HTTPException] = None
+    try:
+        async with asyncio.timeout(10):
+            result = await _test_gateway_handshake(request, team_id, user, db, progress)
+    except HTTPException as exc:
+        denial = exc
+        result = _validation_failure("permission_denied", "gateway", start_time)
+    except _PostAuthorizationFailure as exc:
+        result = _validation_failure(exc.code, exc.stage, start_time)
+    except TimeoutError:
+        result = _validation_failure("timeout", progress.stage, start_time)
+    except Exception:
+        result = _validation_failure("validation_failed", progress.stage, start_time)
+    result.negotiation_path = progress.negotiation_path
+    audit_target = urlparse(str(request.base_url))
+    audit_target = audit_target._replace(query="", fragment="", netloc=audit_target.netloc.rsplit("@", 1)[-1])
+    audit_trail.log_action(
+        action="gateway.oauth_connection_validation",
+        user_id=get_user_email(user),
+        resource_type="gateway",
+        resource_id=gateway_id,
+        success=result.success,
+        details={
+            "stages": result.stages,
+            "success": result.success,
+            "error_code": result.error_code,
+            "target": urlunparse(audit_target),
+        },
+    )
+    if denial is not None:
+        raise denial
+    return result
+
+
+async def _test_gateway_handshake(
     request: GatewayHandshakeRequest,
     team_id: Optional[str],
     user: Any,
     db: Session,
+    progress: Optional[_ValidationProgress] = None,
 ) -> GatewayHandshakeResponse:
     """Test whether a URL speaks MCP by attempting a protocol handshake.
 
@@ -8995,6 +9165,7 @@ async def test_gateway_handshake(
         team_id (Optional[str]): Optional team ID for team-specific gateways.
         user (Any): Authenticated user context dict.
         db (Session): Database session.
+        progress: Current stage for strict validation.
 
     Returns:
         GatewayHandshakeResponse: The handshake outcome, including negotiation path,
@@ -9008,6 +9179,7 @@ async def test_gateway_handshake(
     # First-Party
     from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
 
+    strict = request.validation_mode == "post_authorization"
     start_time: float = time.monotonic()
 
     def _latency_ms() -> int:
@@ -9016,10 +9188,14 @@ async def test_gateway_handshake(
 
     def _failure(failure_class: Literal["transport", "protocol", "auth", "invalid_response"], error: str) -> GatewayHandshakeResponse:
         """Build a failed handshake response preserving the resolved credential source."""
+        if strict:
+            raise _PostAuthorizationFailure("invalid_token" if failure_class == "auth" else "mcp_handshake_failed", "negotiation")
         return GatewayHandshakeResponse(success=False, latency_ms=_latency_ms(), credential_source=credential_source, failure_class=failure_class, error=error)
 
     target = await _validate_gateway_test_target(str(request.base_url), team_id, user, db)
     if target is None:
+        if strict:
+            raise _PostAuthorizationFailure("blocked", "gateway")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         # Generic error message - don't expose allowlist or validation details
         return GatewayHandshakeResponse(
@@ -9047,6 +9223,13 @@ async def test_gateway_handshake(
     except Exception:
         gateway = None
 
+    if strict and gateway is not None:
+        from mcpgateway.middleware.rbac import check_permission_inline
+
+        if not await check_permission_inline(user, "gateways.update", team_id=gateway.team_id, db=db, allow_admin_bypass=False):
+            raise HTTPException(status_code=403, detail="Access denied")
+    if strict and (gateway is None or hostname_url not in _gateway_url_match_variants(gateway.url)):
+        raise _PostAuthorizationFailure("gateway_unavailable", "gateway")
     if exact_gateway_requested and (gateway is None or gateway.url not in _gateway_url_match_variants(validated_base_url)):
         return GatewayHandshakeResponse(
             success=False,
@@ -9066,7 +9249,31 @@ async def test_gateway_handshake(
     # A form-supplied Authorization header replaces stored credentials, so don't fail the
     # handshake on an unobtainable stored OAuth token the caller is not going to use.
     form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)
-    if not candidate_only and gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
+    if strict:
+        if gateway is None or gateway.auth_type != "oauth" or not gateway.oauth_config or gateway.oauth_config.get("grant_type") != "authorization_code":
+            raise _PostAuthorizationFailure("unsupported_auth", "gateway")
+        from mcpgateway.auth_context import extract_token_team_ids
+        from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService
+
+        if progress is not None:
+            progress.stage = "token"
+        if not user_email or user_email == "unknown":
+            raise _PostAuthorizationFailure("authorization_missing", "token")
+        try:
+            context = build_token_user_context(db, user_email, extract_token_team_ids(user), user.get("jwt_teams_claim"))
+            stored_token = await TokenStorageService(db, user_context=context).read_validation_token(gateway.id, user_email)
+        except Exception:
+            raise _PostAuthorizationFailure("token_storage_unavailable", "token") from None
+        if stored_token is None or stored_token.status == "unbound":
+            raise _PostAuthorizationFailure("authorization_missing", "token")
+        if stored_token.status != "valid" or not stored_token.access_token:
+            raise _PostAuthorizationFailure("token_expired" if stored_token.status == "expired" else "invalid_token", "token")
+        validation_access_token = stored_token.access_token
+        headers["Authorization"] = f"Bearer {validation_access_token}"
+        credential_source = "stored"
+        if progress is not None:
+            progress.stage = "negotiation"
+    elif not candidate_only and gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
         grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
         try:
             if grant_type == "authorization_code":
@@ -9157,8 +9364,27 @@ async def test_gateway_handshake(
             ),
         )
 
+    def _finish(result: GatewayHandshakeResponse) -> GatewayHandshakeResponse:
+        """Attach strict stage results and remove credential echoes from upstream metadata."""
+        if not strict:
+            return result
+        result.raw_preview = None
+        result.stages = {"token": "ok", "negotiation": "ok", "tools_list": "ok"}  # nosec B105 - Stage labels.
+
+        def redact(value: Any) -> Any:
+            """Remove the stored token from all returned metadata strings."""
+            if isinstance(value, str):
+                return value.replace(validation_access_token, "[REDACTED]")
+            if isinstance(value, dict):
+                return {redact(key): redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            return value
+
+        return GatewayHandshakeResponse.model_validate(redact(result.model_dump()))
+
     try:
-        async with asyncio.timeout(settings.health_check_timeout):
+        async with asyncio.timeout(10 if strict else settings.health_check_timeout):
             discover_result: Optional[Dict[str, Any]] = None
 
             # Skip server/discover probe in legacy mode — go straight to SDK initialize
@@ -9188,9 +9414,13 @@ async def test_gateway_handshake(
                     try:
                         response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
                     except httpx.RequestError as e:
+                        if strict:
+                            raise _PostAuthorizationFailure("mcp_handshake_failed", "negotiation") from None
                         logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
                         return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
 
+                    if strict and response.status_code in (401, 403):
+                        raise _PostAuthorizationFailure(response_oauth_code(response) or ("invalid_token" if response.status_code == 401 else "mcp_handshake_failed"), "negotiation")
                     if response.status_code in (401, 403):
                         return _failure("auth", _HANDSHAKE_AUTH_COPY)
 
@@ -9201,23 +9431,32 @@ async def test_gateway_handshake(
                             # A bare `{"result": {}}`, or another method's result, is not evidence that
                             # the server implements discovery: fall through to the initialize probe.
                             if isinstance(result_payload, dict) and (isinstance(result_payload.get("capabilities"), dict) or isinstance(result_payload.get("supportedVersions"), list)):
+                                if strict and (body.get("jsonrpc") != "2.0" or body.get("id") != 1 or "error" in body):
+                                    raise _PostAuthorizationFailure("mcp_handshake_failed", "negotiation")
                                 discover_result = result_payload
                         except ValueError:
                             discover_result = None
 
                     if discover_result is not None:
                         capabilities = discover_result.get("capabilities") if isinstance(discover_result.get("capabilities"), dict) else None
-                        result_meta = discover_result.get("_meta") if isinstance(discover_result.get("_meta"), dict) else {}
-                        server_info = result_meta.get("io.modelcontextprotocol/serverInfo")
-                        if not isinstance(server_info, dict):
-                            # Servers predating the namespaced metadata put serverInfo at the top level.
-                            server_info = discover_result.get("serverInfo") if isinstance(discover_result.get("serverInfo"), dict) else {}
+                        result_meta_value = discover_result.get("_meta")
+                        result_meta = result_meta_value if isinstance(result_meta_value, dict) else {}
+                        server_info_value = result_meta.get("io.modelcontextprotocol/serverInfo")
+                        if not isinstance(server_info_value, dict):
+                            server_info_value = discover_result.get("serverInfo")
+                        server_info = server_info_value if isinstance(server_info_value, dict) else {}
                         component_counts: Dict[str, int] = {}
                         counts_partial = False
+                        if strict:
+                            if progress is not None:
+                                progress.stage = "tools_list"
+                                progress.negotiation_path = "server_discover"
+                            if not capabilities or not isinstance(capabilities.get("tools"), dict):
+                                raise _PostAuthorizationFailure("tools_unsupported", "tools_list")
                         if capabilities:
                             list_methods = {"tools": "tools/list", "resources": "resources/list", "prompts": "prompts/list"}
                             for cap_key, method in list_methods.items():
-                                if cap_key not in capabilities:
+                                if cap_key not in capabilities or (strict and cap_key != "tools"):
                                     continue
                                 try:
                                     list_headers = {**discover_headers, "Mcp-Method": method}
@@ -9228,27 +9467,47 @@ async def test_gateway_handshake(
                                         json={"jsonrpc": "2.0", "id": 2, "method": method, "params": {"_meta": request_meta}},
                                         extensions={"sni_hostname": validated_hostname},
                                     )
+                                    if strict and not 200 <= list_response.status_code < 300:
+                                        raise _PostAuthorizationFailure(
+                                            response_oauth_code(list_response) or ("invalid_token" if list_response.status_code == 401 else "tools_list_failed"), "tools_list"
+                                        )
                                     list_body = list_response.json()
                                     list_result = list_body.get("result") if isinstance(list_body, dict) else None
+                                    if strict and (
+                                        not isinstance(list_result, dict)
+                                        or not isinstance(list_result.get("tools"), list)
+                                        or list_body.get("jsonrpc") != "2.0"
+                                        or list_body.get("id") != 2
+                                        or "error" in list_body
+                                    ):
+                                        raise _PostAuthorizationFailure(response_oauth_code(list_response) or "tools_list_failed", "tools_list")
+                                    if strict:
+                                        ListToolsResult.model_validate(list_result)
                                     if isinstance(list_result, dict) and isinstance(list_result.get(cap_key), list):
                                         component_counts[cap_key] = len(list_result[cap_key])
                                         if list_result.get("nextCursor"):
                                             counts_partial = True
+                                except _PostAuthorizationFailure:
+                                    raise
                                 except Exception as list_exc:
+                                    if strict:
+                                        raise _PostAuthorizationFailure("tools_list_failed", "tools_list") from None
                                     logger.debug("MCP handshake %s failed for %s: %s", method, sanitize_url_for_logging(validated_base_url), list_exc)
 
-                        return GatewayHandshakeResponse(
-                            success=True,
-                            latency_ms=_latency_ms(),
-                            negotiation_path="server_discover",
-                            protocol_version=MCP_STATELESS_PROTOCOL_VERSION,
-                            server_name=server_info.get("name"),
-                            server_version=server_info.get("version"),
-                            capabilities=capabilities,
-                            component_counts=component_counts or None,
-                            counts_partial=counts_partial,
-                            credential_source=credential_source,
-                            raw_preview=json.dumps(discover_result, default=str)[:4096],
+                        return _finish(
+                            GatewayHandshakeResponse(
+                                success=True,
+                                latency_ms=_latency_ms(),
+                                negotiation_path="server_discover",
+                                protocol_version=MCP_STATELESS_PROTOCOL_VERSION,
+                                server_name=server_info.get("name"),
+                                server_version=server_info.get("version"),
+                                capabilities=capabilities,
+                                component_counts=component_counts or None,
+                                counts_partial=counts_partial,
+                                credential_source=credential_source,
+                                raw_preview=None if strict else json.dumps(discover_result, default=str)[:4096],
+                            )
                         )
 
             async def _probe_session(session: ClientSession) -> GatewayHandshakeResponse:
@@ -9260,7 +9519,11 @@ async def test_gateway_handshake(
                 Returns:
                     GatewayHandshakeResponse: The successful initialize-path result.
                 """
-                return await _probe_mcp_session(session, credential_source=credential_source, start_time=start_time, log_context=sanitize_url_for_logging(validated_base_url))
+                return _finish(
+                    await _probe_mcp_session(
+                        session, credential_source=credential_source, start_time=start_time, log_context=sanitize_url_for_logging(validated_base_url), strict=strict, progress=progress
+                    )
+                )
 
             try:
                 # SECURITY: the SDK keeps the validated hostname (it rejects a server-advertised
@@ -9278,18 +9541,25 @@ async def test_gateway_handshake(
                         async with streamable_http_client(url=hostname_url, http_client=probe_http_client) as (read_stream, write_stream):
                             async with ClientSession(read_stream, write_stream) as session:
                                 return await _probe_session(session)
-            except TimeoutError:
+            except (_PostAuthorizationFailure, TimeoutError):
                 raise
             except Exception as e:
                 root_cause: BaseException = e
                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:  # pylint: disable=no-member
                     root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
+                if strict:
+                    if isinstance(root_cause, _PostAuthorizationFailure):
+                        raise root_cause
+                    code = _strict_list_error(root_cause)
+                    raise _PostAuthorizationFailure(code if code != "tools_list_failed" else "mcp_handshake_failed", "negotiation") from None
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
                     copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
                 logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(root_cause)))
                 return _failure(failure_class, copy)
     except TimeoutError:
+        if strict:
+            raise
         return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)
 
 

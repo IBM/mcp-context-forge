@@ -1181,7 +1181,7 @@ class TestExchangeCodeFinalFallback:
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
-        with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
+        with pytest.raises(OAuthError, match="OAuth token exchange fails"):
             await manager.exchange_code_for_token(credentials, code="c", state="s")
 
 
@@ -2587,3 +2587,29 @@ class TestLegacyStatePayloadStripsIdentity:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pkce", [False, True])
+@pytest.mark.parametrize("provider,expected", [("redirect_uri_mismatch", "redirect_uri_mismatch"), ("invalid_grant", "token_exchange_failed"), ("invalid_client", "invalid_client"), (None, "token_url_unreachable")])
+async def test_code_exchange_preserves_only_safe_error_codes(pkce, provider, expected, caplog):
+    """Both exchange implementations preserve explicit codes without logging response bodies."""
+    manager = OAuthManager(max_retries=1)
+    credentials = {"client_id": "test", "token_url": "https://provider.example/token", "redirect_uri": "https://gateway.example/oauth/callback"}
+    request = httpx.Request("POST", credentials["token_url"])
+    response = httpx.Response(400, request=request, json={"error": provider, "error_description": "unsafe-provider-body"})
+    exception = httpx.ConnectError("unsafe-provider-body", request=request) if provider is None else httpx.HTTPStatusError("unsafe-provider-body", request=request, response=response)
+    with (
+        patch.object(manager, "_prepare_runtime_credentials", AsyncMock(return_value=credentials)),
+        patch.object(manager, "_apply_token_endpoint_auth", AsyncMock()),
+        patch.object(manager, "_refresh_client_assertion", AsyncMock()),
+        patch.object(manager, "_post_token_request", AsyncMock(side_effect=exception)),
+    ):
+        with pytest.raises(OAuthError) as exc:
+            if pkce:
+                await manager._exchange_code_for_tokens(credentials, "code", "verifier")
+            else:
+                await manager.exchange_code_for_token(credentials, "code", "state")
+    assert exc.value.error_code == expected
+    assert "unsafe-provider-body" not in str(exc.value)
+    assert "unsafe-provider-body" not in caplog.text
