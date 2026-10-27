@@ -622,9 +622,8 @@ class ServerService(BaseService):
                 icon=server_in.icon,
                 enabled=True,
                 tags=server_in.tags or [],
-                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(server_in, "team_id", None) or team_id,
-                owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
+                team_id=team_id,
+                owner_email=owner_email or created_by,
                 # IMPORTANT: Prefer function parameter over schema default
                 # The API has visibility as a separate Body param that should override schema default
                 visibility=visibility or getattr(server_in, "visibility", None) or "public",
@@ -640,8 +639,8 @@ class ServerService(BaseService):
             )
             # Check for existing server with the same name (with row locking to prevent race conditions)
             # The unique constraint is on (team_id, owner_email, name), so we check based on that
-            owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
-            team_id_to_check = getattr(server_in, "team_id", None) or team_id
+            owner_email_to_check = owner_email or created_by
+            team_id_to_check = team_id
 
             # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
             conditions = [
@@ -1349,6 +1348,10 @@ class ServerService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can update this server")
 
+            # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
+            if server_update.team_id is not None and server_update.team_id != server.team_id:
+                _validate_server_team_assignment(db, user_email, server_update.team_id)
+
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
                 visibility = server_update.visibility or server.visibility
@@ -1398,8 +1401,6 @@ class ServerService(BaseService):
                 server.visibility = new_visibility
 
             if server_update.team_id is not None:
-                if server_update.team_id != server.team_id:
-                    _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
             _update_server_associations(db, server, server_update)

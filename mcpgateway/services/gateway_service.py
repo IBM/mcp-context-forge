@@ -6662,6 +6662,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         created_by="system",
                         created_via=created_via,
                         visibility=getattr(resource, "visibility", None) or gateway.visibility,
+                        team_id=gateway.team_id,
+                        owner_email=gateway.owner_email,
                     )
                     db_resource.gateway = gateway
                     resources_to_add.append(db_resource)
@@ -6773,6 +6775,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         created_by="system",
                         created_via=created_via,
                         visibility=getattr(prompt, "visibility", None) or gateway.visibility,
+                        team_id=gateway.team_id,
+                        owner_email=gateway.owner_email,
                     )
                     db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)
