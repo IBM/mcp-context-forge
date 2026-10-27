@@ -10,7 +10,7 @@ description = "Deprecated experimental Rust MCP runtime edge for ContextForge"
 
 [features]
 default = []
-rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
+rmcp-upstream-client = ["dep:rmcp"]
 
 [dependencies]
 async-stream = "0.3.6"
@@ -28,7 +28,6 @@ rand.workspace = true
 regex.workspace = true
 redis.workspace = true
 reqwest.workspace = true
-reqwest-rmcp = { package = "reqwest", version = "0.13.5", default-features = false, features = ["json", "stream", "rustls"], optional = true }
 rmcp = { workspace = true, optional = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 rustls = "0.23.46"
 rustls-native-certs = "0.8.3"
