@@ -9,9 +9,9 @@ This middleware automatically captures HTTP requests and responses as observabil
 providing comprehensive visibility into all gateway operations.
 
 Session Management (Issue #3883):
-    This middleware does NOT create or manage request.state.db. Each observability
-    operation (start_trace, start_span, end_span, end_trace) creates its own short-lived
-    independent database session that commits immediately on a best-effort basis.
+    This middleware reuses one observability session, separate from request.state.db.
+    Parent records commit before request processing so independent child writers can see them.
+    Completion updates share a final commit. Each commit releases its database connection.
 
     This separation ensures observability data persists even when main request transactions
     fail, providing visibility into partial failures. SQL query instrumentation is handled
@@ -158,9 +158,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # First-Party
         from mcpgateway.db import SessionLocal
 
-        obs_db = SessionLocal()
+        obs_db = None
         try:
-            # Start trace (reuses the observability session)
+            obs_db = SessionLocal()
+            # Independent child writers require committed parent records before request processing.
             trace_id = self.service.start_trace(
                 name=f"{http_method} {request.url.path}",
                 trace_id=external_trace_id,  # Use external trace ID if provided
@@ -178,7 +179,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     "service.name": "mcp-gateway",
                     "service.version": getattr(settings, "version", "unknown"),
                 },
-                commit=False,
+                commit=True,
                 obs_db=obs_db,
             )
 
@@ -203,7 +204,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 name="http.request",
                 kind="server",
                 attributes={"http.method": http_method, "http.url": http_url},
-                commit=False,
+                commit=True,
                 obs_db=obs_db,
             )
 
@@ -226,10 +227,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 plugins_trace_id.reset(plugins_trace_id_token)
             if trace_id_token is not None:
                 current_trace_id.reset(trace_id_token)
-            try:
-                obs_db.close()
-            except Exception:
-                pass
+            if obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception:
+                    pass
             return await call_next(request)
 
         # Process request (trace is set up at this point)

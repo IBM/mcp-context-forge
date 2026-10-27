@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 Unit tests for observability session reuse optimization (Issue #5072).
 
 Tests verify that ObservabilityService methods accept and reuse database sessions
-to reduce connection pool pressure from 4-6 sessions per traced request to 1 session.
+to reduce HTTP lifecycle session allocation. Real-database checks live in
+tests/integration/test_observability_session_lifecycle.py.
 """
 
 # Standard

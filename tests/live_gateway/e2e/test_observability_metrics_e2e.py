@@ -13,6 +13,7 @@ from __future__ import annotations
 
 # Standard
 from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import secrets
@@ -122,15 +123,16 @@ def _platform_viewer_client(admin_client: httpx.Client, base_url: str) -> httpx.
 
 
 @pytest.fixture(name="isolated_observability_gateway")
-def _isolated_observability_gateway(tmp_path: Path, unused_tcp_port_factory: Callable[[], int]) -> Generator[httpx.Client, None, None]:
+def _isolated_observability_gateway(tmp_path: Path, unused_tcp_port_factory: Callable[[], int], request: pytest.FixtureRequest) -> Generator[httpx.Client, None, None]:
     """Start an observable gateway with a private SQLite database.
 
     Args:
         tmp_path: Temporary directory owned by pytest.
         unused_tcp_port_factory: Factory that selects an available TCP port.
+        request: Fixture request with an optional administrator selection.
 
     Yields:
-        A client authenticated as a global platform viewer.
+        A client authenticated as an administrator or global platform viewer.
     """
     port = unused_tcp_port_factory()
     base_url = f"http://127.0.0.1:{port}"
@@ -170,8 +172,11 @@ def _isolated_observability_gateway(tmp_path: Path, unused_tcp_port_factory: Cal
             try:
                 with httpx.Client(base_url=base_url, headers=make_auth_headers(admin_token), timeout=15, trust_env=False) as admin_client:
                     _wait_for_gateway(process, admin_client, log_path)
-                    with _platform_viewer_client(admin_client, base_url) as viewer_client:
-                        yield viewer_client
+                    if getattr(request, "param", None) == "admin":
+                        yield admin_client
+                    else:
+                        with _platform_viewer_client(admin_client, base_url) as viewer_client:
+                            yield viewer_client
             finally:
                 process.terminate()
                 try:
@@ -223,3 +228,38 @@ def test_observability_timeseries_status_counts(isolated_observability_gateway: 
 
     after = _observability_timeseries_totals(client)
     assert tuple(current - previous for current, previous in zip(after, before, strict=True)) == (2, 1, 1)
+
+
+@pytest.mark.parametrize("isolated_observability_gateway", ["admin"], indirect=True)
+def test_concurrent_request_traces_persist(isolated_observability_gateway: httpx.Client) -> None:
+    """Read completed traces and HTTP spans after concurrent gateway requests."""
+    client = isolated_observability_gateway
+
+    def send_request(index: int) -> tuple[str, int]:
+        """Send a traced request and return its trace ID and response status."""
+        trace_id = uuid.uuid4().hex
+        headers = {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+            "traceparent": f"00-{trace_id}-{uuid.uuid4().hex[:16]}-01",
+        }
+        path = "/mcp/" if index % 2 == 0 else f"/servers/{uuid.uuid4()}/mcp"
+        response = client.post(path, headers=headers, json=_build_initialize(index + 1))
+        expected = 200 if index % 2 == 0 else 404
+        assert response.status_code == expected, response.text
+        return trace_id, expected
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(send_request, range(8)))
+    for trace_id, status_code in results:
+        response = client.get(f"/v1/observability/traces/{trace_id}")
+        assert response.status_code == 200, response.text
+        trace = response.json()
+        expected_status = "ok" if status_code == 200 else "error"
+        assert trace["status"] == expected_status
+        assert trace["http_status_code"] == status_code
+        assert trace["end_time"] is not None
+        http_span = next(span for span in trace["spans"] if span["name"] == "http.request")
+        assert http_span["status"] == expected_status
+        assert http_span["end_time"] is not None
