@@ -170,6 +170,14 @@ class MCPListMethod(Enum):
     RESOURCE_TEMPLATES = ("resource_templates", "resource_templates")
 
 
+_LIST_IDENTITY_ATTRIBUTE = {
+    MCPListMethod.TOOLS: "name",
+    MCPListMethod.PROMPTS: "name",
+    MCPListMethod.RESOURCES: "uri",
+    MCPListMethod.RESOURCE_TEMPLATES: "uri_template",
+}
+
+
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
     """Collect unique MCP list results and stop when pagination ends or repeats.
 
@@ -197,15 +205,10 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
         seen_cursors.add(cursor)
         response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute, []))
-    identity_attribute = {
-        "tools": "name",
-        "prompts": "name",
-        "resources": "uri",
-        "resource_templates": "uri_template",
-    }[response_attribute]
+    identity_attribute = _LIST_IDENTITY_ATTRIBUTE[mcp_method]
     unique_responses = {}
     for item in mcp_responses:
-        unique_responses.setdefault(str(getattr(item, identity_attribute)), item)
+        unique_responses.setdefault(getattr(item, identity_attribute), item)
     if len(unique_responses) < len(mcp_responses):
         logger.warning("Duplicate pagination items from list_%s", method_suffix)
     return list(unique_responses.values())
