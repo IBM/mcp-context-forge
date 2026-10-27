@@ -4,7 +4,7 @@
 #     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
-requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
+requires = ["setuptools>=84.1.0", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 # Custom build hook to generate UI assets before packaging
@@ -26,10 +26,16 @@ cpex-retry-with-backoff = "2026-10-21T23:59:59Z"
 cpex-output-length-guard = "2026-10-21T23:59:59Z"
 cpex-secrets-detection = "2026-10-21T23:59:59Z"
 cpex-sql-sanitizer = "2026-10-21T23:59:59Z"
-certifi = "2026-10-21T23:59:59Z"
-pillow = "2026-10-21T23:59:59Z"
-uv = "2026-10-21T23:59:59Z"
-pip = "2026-10-21T23:59:59Z"
+certifi = "2026-10-27T23:59:59Z"
+pillow = "2026-10-27T23:59:59Z"
+uv = "2026-10-27T23:59:59Z"
+pip = "2026-10-27T23:59:59Z"
+brotli = "2026-10-27T23:59:59Z"
+brotlicffi = "2026-10-27T23:59:59Z"
+filelock = "2026-10-27T23:59:59Z"
+setuptools = "2026-10-27T23:59:59Z"
+virtualenv = "2026-10-27T23:59:59Z"
+opentelemetry-api = "2026-10-27T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -74,14 +80,14 @@ dependencies = [
     "anyio>=4.15.0", # 4.15.0 fixes the _deliver_cancellation CPU spin (anyio#695/#1111); SSE cancel-deadline workarounds removed in #5427
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
-    "brotli>=1.2.0",
+    "brotli>=1.2.1",
     "certifi>=2026.10.19", # Transitive pin (httpx, requests); GHSA-6q48-6c7w-9gw2 fixed in 2026.10.19
     "click>=8.4.2", # Transitive pin
     "cpex>=0.1.4", # first PyPI release built for mcp 2.x
     "certifi>=2026.10.19", # Transitive pin; drops eMudhra/emSign roots removed by Mozilla 2026-10-18
     "cryptography>=50.0.0",
     "fastapi>=0.140.0",
-    "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
+    "filelock>=4.2.1",
     "gunicorn>=26.0.0",
     "h2>=4.4.1", # Transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1
     "httpx>=0.28.1",
@@ -199,7 +205,8 @@ dev = [
     "grpcio-reflection>=1.81.1",
     "grpcio-tools>=1.81.1",
     "pipdeptree>=3.1.0",
-    "setuptools>=83.0.0",
+    "setuptools>=84.1.0",
+    "virtualenv>=21.14.9",
     "debugpy>=1.8.21",
     "maturin>=1.14.1",
     "Pygments>=2.20.0",
@@ -240,7 +247,7 @@ llmchat = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.44.0",
+    "opentelemetry-api>=1.45.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",

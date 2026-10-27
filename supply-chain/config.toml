@@ -4,6 +4,9 @@
 [cargo-vet]
 version = "0.10"
 
+[imports.actix]
+url = "https://raw.githubusercontent.com/actix/supply-chain/main/audits.toml"
+
 [imports.ariel-os]
 url = "https://raw.githubusercontent.com/ariel-os/ariel-os/main/supply-chain/audits.toml"
 
@@ -12,6 +15,9 @@ url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-c
 
 [imports.embark-studios]
 url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
+
+[imports.fermyon]
+url = "https://raw.githubusercontent.com/fermyon/spin/main/supply-chain/audits.toml"
 
 [imports.google]
 url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
@@ -205,6 +211,22 @@ criteria = "safe-to-deploy"
 version = "1.12.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.opentelemetry]]
+version = "0.32.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-http]]
+version = "0.32.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-otlp]]
+version = "0.32.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-proto]]
+version = "0.32.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.pin-project]]
 version = "1.1.13"
 criteria = "safe-to-deploy"
@@ -215,6 +237,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.pin-project-lite]]
 version = "0.2.17"
+criteria = "safe-to-deploy"
+
+[[exemptions.portable-atomic]]
+version = "1.15.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.potential_utf]]
@@ -230,6 +256,10 @@ version = "0.14.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.prost-derive]]
+version = "0.14.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.prost-types]]
 version = "0.14.4"
 criteria = "safe-to-deploy"
 
@@ -301,8 +331,12 @@ criteria = "safe-to-deploy"
 version = "0.13.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.tonic-types]]
+version = "0.14.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.tracing-opentelemetry]]
-version = "0.32.1"
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.typenum]]
@@ -331,10 +365,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro-support]]
 version = "0.2.127"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-streams]]
-version = "0.4.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-streams]]
