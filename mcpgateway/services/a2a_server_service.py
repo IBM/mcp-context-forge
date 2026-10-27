@@ -125,6 +125,7 @@ class A2AServerService:
         *,
         user_email: Optional[str] = None,
         token_teams: Optional[list[str]] = None,
+        caller_version: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard for a virtual server.
 
@@ -138,6 +139,8 @@ class A2AServerService:
             server_name: Name of the virtual server.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
+            caller_version: A2A version the caller speaks (its ``A2A-Version`` header).
+                A pre-1.0 value keeps the legacy card shape.
 
         Returns:
             AgentCard dict, or None if the server does not exist, is disabled,
@@ -162,7 +165,7 @@ class A2AServerService:
         if not interface:
             return None
 
-        return self._build_server_card(server, interface)
+        return self._build_server_card(server, interface, caller_version)
 
     def _aggregate_agent_capabilities(self, server: DbServer) -> _AggregatedCapabilities:
         """Aggregate capability flags, modes, and deduplicated skills from enabled associated agents.
@@ -216,18 +219,20 @@ class A2AServerService:
                         modes.append(mode)
         return _AggregatedCapabilities(streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"])
 
-    def _build_server_card(self, server: DbServer, interface: DbServerInterface) -> Dict[str, Any]:
+    def _build_server_card(self, server: DbServer, interface: DbServerInterface, caller_version: Optional[str] = None) -> Dict[str, Any]:
         """Dispatch card construction by the interface's declared protocol version.
 
         Args:
             server: The visibility-checked virtual server row.
             interface: Its enabled A2A ``ServerInterface`` row.
+            caller_version: A2A version the caller speaks, when it declared one.
+                A pre-1.0 value always gets the legacy shape.
 
         Returns:
             AgentCard dict, shaped per the interface's declared protocol version.
         """
         capabilities = self._aggregate_agent_capabilities(server)
-        if is_v1_a2a_protocol(interface.version):
+        if is_v1_a2a_protocol(interface.version) and (not caller_version or is_v1_a2a_protocol(caller_version)):
             return self._build_v1_server_card(server, interface, capabilities)
         return self._build_legacy_server_card(server, interface, capabilities)
 

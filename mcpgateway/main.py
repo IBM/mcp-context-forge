@@ -9980,6 +9980,8 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
 
     Called by the Rust sidecar to serve GetExtendedAgentCard /
     agent/getExtendedCard / agent/getAuthenticatedExtendedCard requests.
+    The sidecar forwards the caller's ``A2A-Version`` header, and a pre-1.0
+    value keeps the legacy card shape.
     """
     if not _is_trusted_internal_mcp_runtime_request(request):
         return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
@@ -9987,6 +9989,7 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
     db = SessionLocal()
     try:
         user_email, token_teams = _get_internal_a2a_scope_context(request)
+        caller_version = request.headers.get("A2A-Version")
         service = A2AAgentService()
 
         # Layer-1 visibility is enforced inside ``get_agent_card`` (PR #4341):
@@ -9998,12 +10001,12 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
         card = None
         if agent is not None:
-            card = await service.get_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+            card = await service.get_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams, caller_version=caller_version)
             if card is None:
                 logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
         if card is None:
             a2a_server_service = A2AServerService()
-            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
+            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams, caller_version=caller_version)
         if card is None:
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
         return ORJSONResponse(status_code=200, content=card)

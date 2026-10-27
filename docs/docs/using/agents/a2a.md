@@ -248,7 +248,7 @@ Common error codes:
 - `SubscribeToTask` - Subscribe to task updates
 - `GetExtendedAgentCard` - Get agent capabilities
 
-**Agent card shape:** Agents with a stored protocol version of 1.x return the A2A 1.0 card, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. The 1.0 card omits `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `stateTransitionHistory`. Agents with a 0.x version keep the legacy card. The card describes the upstream agent, so `supportedInterfaces` and OAuth flows carry the registered upstream URLs. The card never contains credential values. See [ADR-048](../../architecture/adr/048-a2a-v1-protocol-migration.md).
+**Agent card shape:** Agents with a stored protocol version of 1.x return the A2A 1.0 card, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. The 1.0 card omits `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `stateTransitionHistory`. Agents with a 0.x version keep the legacy card. A caller that sends `A2A-Version: 0.3` also gets the legacy card. The card describes the upstream agent, so `supportedInterfaces` and OAuth flows carry the registered upstream URLs. The card never contains credential values. See [ADR-048](../../architecture/adr/048-a2a-v1-protocol-migration.md).
 
 **Features:**
 - ✅ Full RBAC and token scoping

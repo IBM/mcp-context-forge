@@ -45,6 +45,7 @@ The adapter normalizes between v1 and legacy forms at the gateway boundary, allo
 Agent cards dispatch on the stored protocol version through `is_v1_a2a_protocol()`. Cards for 1.x agents use the A2A 1.0 `AgentCard` shape. Cards for 0.x agents keep the legacy shape.
 
 - The `protocol_version` column defaults to `"1.0"` and an empty value counts as 1.x. Existing agents with the default switch to the 1.0 shape.
+- The internal card endpoint reads the caller's `A2A-Version` header. A pre-1.0 value gets the legacy shape for a 1.x agent. A missing header follows the stored version. The caller version never upgrades a 0.x agent.
 - 1.x cards drop `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`.
 - The card describes the upstream agent. `supportedInterfaces[].url` carries the stored `endpoint_url`, and OAuth flows carry the stored `token_url` and `authorization_url`. Callers reach the agent through the gateway. Layer-1 visibility scopes who can read the card.
 - Server cards report `ServerInterface.binding` as the interface `url`. `resolve_server_agent` treats `binding` as the endpoint, so the card and invocation agree. Issue #7027 asks for the endpoint, not the protocol binding, and this decision follows that request. The protocol binding comes from `ServerInterface.protocol`.

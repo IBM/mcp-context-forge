@@ -859,6 +859,20 @@ class TestAgentCardTrusted:
 
     @patch(_TRUST_PATH, return_value=True)
     @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
+    @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock)
+    @patch("mcpgateway.main.SessionLocal")
+    def test_card_forwards_caller_a2a_version(self, mock_session_local, mock_card, _mock_scope, _mock_trust, client):
+        """The sidecar's A2A-Version header reaches the card builder so legacy callers keep the legacy shape."""
+        mock_card.return_value = {"name": "my-agent"}
+        mock_session_local.return_value = MagicMock()
+
+        resp = client.post("/_internal/a2a/agents/my-agent/card", json={}, headers={"A2A-Version": "0.3"})
+
+        assert resp.status_code == 200
+        assert mock_card.await_args.kwargs["caller_version"] == "0.3"
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._get_internal_a2a_scope_context", return_value=("user@example.com", ["team-a"]))
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card", new_callable=AsyncMock, return_value=None)
     @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
     @patch("mcpgateway.main.SessionLocal")

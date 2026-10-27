@@ -3128,6 +3128,23 @@ class TestInvokeAgentEdgeCases:
 
         assert _build_security_scheme(agent) == (None, None)
 
+    @pytest.mark.parametrize("caller_version,expect_v1", [(None, True), ("", True), ("1.0", True), ("v1.0", True), ("0.3", False)])
+    async def test_get_agent_card_caller_version_selects_shape(self, service, mock_db, caller_version, expect_v1):
+        """A pre-1.0 caller keeps the legacy shape for a 1.x agent; otherwise the stored version decides (#7027)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(protocol_version="1.0")
+
+        result = await service.get_agent_card(mock_db, "ag", caller_version=caller_version)
+
+        assert ("supportedInterfaces" in result) is expect_v1
+        assert ("url" in result) is (not expect_v1)
+
+    async def test_get_agent_card_v1_caller_does_not_upgrade_legacy_agent(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(protocol_version="0.3")
+
+        result = await service.get_agent_card(mock_db, "ag", caller_version="1.0")
+
+        assert "supportedInterfaces" not in result
+
     @pytest.mark.parametrize("scopes", [5, {"a": 1}, True])
     def test_build_security_scheme_oauth_non_list_scopes_coerced_to_empty(self, scopes):
         # First-Party

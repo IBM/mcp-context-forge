@@ -1428,6 +1428,7 @@ class A2AAgentService(BaseService):
         agent_name: str,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        caller_version: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard dict for the named agent.
 
@@ -1446,6 +1447,9 @@ class A2AAgentService(BaseService):
             token_teams: Caller's team scope for visibility filtering. ``None``
                 means unrestricted (admin), ``[]`` means public-only, and
                 ``[team_id, ...]`` means team-scoped. Defaults to None.
+            caller_version: A2A version the caller speaks (its ``A2A-Version``
+                header). A pre-1.0 value keeps the legacy card shape even for an
+                agent stored as 1.x. Defaults to None, which follows the stored version.
 
         Returns:
             AgentCard dict, or None if the agent is not found / disabled / denied.
@@ -1467,9 +1471,9 @@ class A2AAgentService(BaseService):
         if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
-        return self._build_agent_card(agent)
+        return self._build_agent_card(agent, caller_version)
 
-    def _build_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+    def _build_agent_card(self, agent: DbA2AAgent, caller_version: Optional[str] = None) -> Dict[str, Any]:
         """Dispatch card construction by the agent's declared protocol version.
 
         v0.3 agents keep the historical card shape so existing v0.3 callers see
@@ -1478,13 +1482,16 @@ class A2AAgentService(BaseService):
         in ``a2a_protocol.py``, so the card and the wire format agree on which
         agents are v1.
 
+        A caller that declares a pre-1.0 version always gets the legacy shape.
+
         Args:
             agent: The enabled, visibility-checked agent row.
+            caller_version: A2A version the caller speaks, when it declared one.
 
         Returns:
             AgentCard dict, shaped per the agent's declared protocol version.
         """
-        if is_v1_a2a_protocol(agent.protocol_version):
+        if is_v1_a2a_protocol(agent.protocol_version) and (not caller_version or is_v1_a2a_protocol(caller_version)):
             return self._build_v1_agent_card(agent)
         return self._build_legacy_agent_card(agent)
 

@@ -211,6 +211,19 @@ class TestA2AServerService:
         assert card["capabilities"]["streaming"] is True
         assert card["capabilities"]["pushNotifications"] is True
 
+    def test_get_server_agent_card_legacy_caller_gets_legacy_shape_for_v1_interface(self, service, mock_db):
+        """A caller declaring a pre-1.0 A2A version keeps the legacy server card shape (#7027)."""
+        server = _make_server()
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface(version="1.0")}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name, caller_version="0.3")
+
+        assert "supportedInterfaces" not in card
+        assert card["supportsAuthenticatedExtendedCard"] is True
+
     def test_get_server_agent_card_skips_malformed_capabilities(self, service, mock_db):
         """Malformed free-form capabilities on one agent never break the card (#7027)."""
         bad_agents = [
