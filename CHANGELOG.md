@@ -8,7 +8,21 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+
 ### Fixed
+
+- **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
+
+- **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
+
+- **Admin UI A2A edit keeps stored credentials** - The Admin UI form resubmits the mask for an unchanged credential. `update_agent` no longer stores the mask in place of the real credential, for basic, bearer, and multi-header auth.
+
+- **Masked password with a new username** - An update that changes `auth_username` and keeps the masked `auth_password` now pairs the new username with the stored password, for A2A agents and gateways.
+
+- **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
 

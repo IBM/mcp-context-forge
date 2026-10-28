@@ -210,6 +210,22 @@ def test_gateway_update_authheaders_missing_legacy_fields_message():
     assert "authheaders" in str(exc_info.value).lower()
 
 
+@pytest.mark.parametrize("field,value", [("auth_token", "tok"), ("auth_password", "pw"), ("auth_header_value", "hv")])
+def test_gateway_update_credential_field_without_auth_type_rejected(field, value):
+    """issue #6704 follow-up: omitting auth_type while rotating a credential field used to
+    silently wipe the gateway's stored credential (GatewayService.update_gateway decoded a
+    None auth_value to {}). Reject the ambiguous request instead."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(**{field: value})
+    assert "auth_type is required" in str(exc_info.value)
+
+
+def test_gateway_update_credential_rotation_with_auth_type_still_works():
+    """Resubmitting auth_type alongside the credential field must still succeed."""
+    gateway = GatewayUpdate(auth_type="bearer", auth_token="new-token")  # pragma: allowlist secret
+    assert gateway.auth_value is not None
+
+
 def test_a2a_agent_create_invalid_auth_type_message():
     with pytest.raises(ValidationError) as exc_info:
         A2AAgentCreate(name="agent", endpoint_url="https://example.com", auth_type="bogus")
@@ -232,6 +248,22 @@ def test_a2a_agent_update_authheaders_missing_legacy_fields_message():
     with pytest.raises(ValidationError) as exc_info:
         A2AAgentUpdate(auth_type="authheaders")
     assert "authheaders" in str(exc_info.value).lower()
+
+
+@pytest.mark.parametrize("field,value", [("auth_token", "tok"), ("auth_password", "pw"), ("auth_header_value", "hv")])
+def test_a2a_agent_update_credential_field_without_auth_type_rejected(field, value):
+    """issue #6704 follow-up: omitting auth_type while rotating a credential field used to
+    silently no-op (A2AAgentService.update_agent never recomputed auth_value). Reject the
+    ambiguous request instead."""
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentUpdate(**{field: value})
+    assert "auth_type is required" in str(exc_info.value)
+
+
+def test_a2a_agent_update_credential_rotation_with_auth_type_still_works():
+    """Resubmitting auth_type alongside the credential field must still succeed."""
+    agent = A2AAgentUpdate(auth_type="bearer", auth_token="new-token")  # pragma: allowlist secret
+    assert agent.auth_value is not None
 
 
 # =========================================================================
@@ -1064,3 +1096,9 @@ class TestOauthConfigPrivateKeyJwtValidation:
     def test_non_private_key_method_ignores_private_key_requirement(self):
         gateway = GatewayUpdate(oauth_config=_oauth_config(token_endpoint_auth_method="client_secret_post"))
         assert gateway.oauth_config["token_endpoint_auth_method"] == "client_secret_post"
+
+
+@pytest.mark.parametrize("model", [GatewayUpdate, A2AAgentUpdate])
+def test_update_empty_credential_without_auth_type_treated_as_unset(model):
+    """Empty credential strings count as unset, so they do not require auth_type."""
+    assert model(auth_token="", auth_password="", auth_header_value="").auth_type is None

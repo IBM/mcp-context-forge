@@ -7,6 +7,7 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+import base64
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
@@ -25,7 +26,7 @@ from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.encryption_service import get_encryption_service
 
-from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -531,6 +532,108 @@ class TestA2AAgentService:
         persisted = decode_auth(sample_db_agent.auth_value)
         assert persisted["X-API-Key"] == "original-secret", "Unchanged masked header must be preserved"
         assert persisted["X-Client-ID"] == "new-client-value", "Changed header must be updated"
+
+    async def _run_update(self, service, mock_db, agent, **fields):
+        """Run update_agent with the Admin UI form shape (auth_value submitted as an empty string)."""
+        agent.version = 1
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, agent.id, A2AAgentUpdate(auth_value="", **fields))
+
+    @staticmethod
+    def _basic(user, pw):
+        return {"Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
+
+    async def test_update_agent_admin_form_masked_basic_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged basic credential; the stored value stays."""
+        sample_db_agent.auth_type = "basic"
+        stored = encode_auth(self._basic("real", "pw"))  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="real", auth_password=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_bearer_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged bearer token; the stored value stays."""
+        sample_db_agent.auth_type = "bearer"
+        stored = encode_auth({"Authorization": "Bearer real-token"})  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="bearer", auth_token=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_authheader_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged custom header; the stored value stays."""
+        sample_db_agent.auth_type = "authheaders"
+        stored = encode_auth({"X-A": "real-a"})  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="authheaders", auth_header_key="X-A", auth_header_value=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_multi_header_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits masks for multi-header auth; the stored values stay (issue #3637)."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-A": "real-a", "X-B": "real-b"})  # pragma: allowlist secret
+
+        await self._run_update(
+            service,
+            mock_db,
+            sample_db_agent,
+            auth_type="authheaders",
+            auth_headers=[{"key": "X-A", "value": settings.masked_auth_value}, {"key": "X-B", "value": settings.masked_auth_value}],
+        )
+
+        assert decode_auth(sample_db_agent.auth_value) == {"X-A": "real-a", "X-B": "real-b"}
+
+    async def test_update_agent_rotates_basic_credential(self, service, mock_db, sample_db_agent):
+        """A new basic password replaces the stored credential."""
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth(self._basic("real", "old"))  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="real", auth_password="new")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == self._basic("real", "new")
+
+    async def test_update_agent_rotates_bearer_credential(self, service, mock_db, sample_db_agent):
+        """A new bearer token replaces the stored credential."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer old"})  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="bearer", auth_token="new-token")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == {"Authorization": "Bearer new-token"}
+
+    async def test_update_agent_rotates_authheaders_credential(self, service, mock_db, sample_db_agent):
+        """A new custom header value replaces the stored credential."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-A": "old"})  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="authheaders", auth_header_key="X-A", auth_header_value="new-value")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == {"X-A": "new-value"}
+
+    async def test_update_agent_new_username_with_masked_password_keeps_stored_password(self, service, mock_db, sample_db_agent):
+        """A new username with a masked password pairs the new username with the stored password."""
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth(self._basic("old-user", "stored-pw"))  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
+
+        assert decode_auth(sample_db_agent.auth_value) == self._basic("new-user", "stored-pw")  # pragma: allowlist secret
+
+    async def test_update_agent_new_username_with_masked_password_without_stored_basic_rejected(self, service, mock_db, sample_db_agent):
+        """A masked password without stored basic credentials returns a validation error."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer x"})  # pragma: allowlist secret
+
+        with pytest.raises(A2AAgentError, match="auth_password"):
+            await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
 
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
@@ -1068,6 +1171,45 @@ class TestA2AAgentService:
         assert result.metrics.failure_rate == 50.0
         assert result.metrics.avg_response_time == 1.5
         assert result.team == "Test Team"
+
+    def test_convert_agent_to_read_masks_basic_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable basic-auth credential (issue #6704).
+
+        This is the conversion every a2a.read-gated endpoint (get_agent, list_agents,
+        register_agent, update_agent, set_agent_state) routes through before returning
+        an A2AAgentRead, so masking here is the single enforcement point for the
+        contract described in #6704.
+        """
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Basic " + base64.b64encode(b"admin:s3cr3t").decode()})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_password == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_username == "admin"
+
+    def test_convert_agent_to_read_masks_bearer_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable bearer token (issue #6704)."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer top-secret-token"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_token == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_type == "bearer"
+
+    def test_convert_agent_to_read_masks_authheaders_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable custom auth header value (issue #6704)."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "top-secret-key"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_header_value == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_headers == [{"key": "X-API-Key", "value": settings.masked_auth_value}]
 
     def test_get_team_name_and_batch(self, service, mock_db):
         """Test team name lookup helpers."""
