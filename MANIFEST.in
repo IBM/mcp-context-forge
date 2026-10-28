@@ -13,9 +13,6 @@ include __init__
 include alembic.ini
 include tox.ini
 include alembic/README
-include Cargo.lock
-include Cargo.toml
-include rust-toolchain.toml
 
 # Top-level config, examples and helper scripts
 include *.py
@@ -24,7 +21,6 @@ include *.example
 include *.properties
 # Root *.toml files are listed explicitly: a blanket glob also sweeps untracked
 # local tool configs into the sdist, which breaks `make verify` (check-manifest).
-include deny.toml
 include fly.toml
 include license-policy.toml
 include *.yaml
@@ -108,21 +104,6 @@ recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
 recursive-include plugins *.txt
-
-# Supply-chain policy data shipped in sdist for tooling parity
-recursive-include supply-chain *.toml
-recursive-include supply-chain *.lock
-
-# Rust workspace (crates/): plugins, gateway_rs, tools
-recursive-include crates *.lock
-recursive-include crates *.toml
-recursive-include crates *.rs
-recursive-include crates *.md
-recursive-include crates *.py
-recursive-include crates *.pyi
-recursive-include crates *.sh
-recursive-include crates Makefile
-recursive-include crates pyproject.toml
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs

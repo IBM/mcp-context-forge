@@ -8,9 +8,33 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+
 ### Fixed
 
+- **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
+
+- **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
+
+- **Admin UI A2A edit keeps stored credentials** - The Admin UI form resubmits the mask for an unchanged credential. `update_agent` no longer stores the mask in place of the real credential, for basic, bearer, and multi-header auth.
+
+- **Masked password with a new username** - An update that changes `auth_username` and keeps the masked `auth_password` now pairs the new username with the stored password, for A2A agents and gateways.
+
+- **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
+
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
+
+### Changed
+
+- **A2A agent cards follow the 1.0 schema (breaking for card consumers)** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Cards for agents with a stored protocol version of 1.x now use the A2A 1.0 `AgentCard` shape, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. `protocol_version` defaults to `"1.0"`, so most existing agents change shape. These fields leave 1.x cards: `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`. A caller that sends `A2A-Version: 0.3` to the sidecar keeps the legacy shape for a 1.x agent. A caller that sends no version follows the stored version. Agents with a stored version of 0.x keep the legacy shape. Server cards now aggregate `streaming`, `pushNotifications`, and the default input and output modes from enabled associated agents instead of hardcoded values. Server cards skip malformed capability entries. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. Scheme names are `basicAuth`, `bearerAuth`, `apiKeyAuth`, and `oauth2Auth`. OAuth schemes read the stored `scopes` list and always emit the scope map.
+
+### Added
+
+#### **API & Platform**
+
+- **Product-terminology request aliases for `gateway_id` and the virtual-server `server` body key** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt create/update bodies, and the gateway/MCP-server handshake test request, now also accept `mcp_server_id` as an alias of `gateway_id` ("MCP server" is the product term for what the code calls a "gateway"). The tool, resource, and prompt list endpoints and `GET /v1/search` accept `mcp_server_id` as a query alias of `gateway_id`. `POST /servers` and `POST /v1/virtual-servers` also accept a top-level `virtual_server` key as an alias of `server`. Sending two spellings with different values returns 422. Existing field names and body keys keep working, OpenAPI property names are unchanged, and responses keep the existing key names. In OpenAPI, the `Body_create_server_*` request components are replaced by `ServerCreateRequest`. Output-side aliasing, RBAC permission strings, audit `resource_type` values, and config names remain tracked under #6544.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 

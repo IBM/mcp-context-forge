@@ -16,7 +16,7 @@ from __future__ import annotations
 
 # Standard
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NamedTuple, Optional
 import uuid
 
 # Third-Party
@@ -29,8 +29,44 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import server_a2a_association
 from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerTaskMapping as DbServerTaskMapping
+from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol
 
 logger = logging.getLogger(__name__)
+
+
+class _AggregatedCapabilities(NamedTuple):
+    """Capabilities, modes, and skills aggregated across a server's associated agents."""
+
+    streaming: bool
+    push_notifications: bool
+    skills: list[Dict[str, Any]]
+    input_modes: list[str]
+    output_modes: list[str]
+
+
+_A2A_BINDING_PREFIX = "a2a-"
+_DEFAULT_PROTOCOL_BINDING = "JSONRPC"
+
+
+def _derive_protocol_binding(protocol: str) -> str:
+    """Map a stored ``ServerInterface.protocol`` value to an A2A ``protocolBinding``.
+
+    ``protocol`` combines the protocol family and its binding, e.g.
+    ``a2a-jsonrpc`` or ``a2a-grpc`` (see
+    ``uq_server_interfaces_server_protocol_binding``). Falls back to
+    ``JSONRPC``, the only binding ContextForge's A2A invocation path
+    supports today, when no binding suffix is present.
+
+    Args:
+        protocol: The interface's stored ``protocol`` value.
+
+    Returns:
+        An uppercase protocol-binding token, e.g. ``JSONRPC`` or ``GRPC``.
+    """
+    lowered = (protocol or "").lower()
+    if lowered.startswith(_A2A_BINDING_PREFIX) and len(lowered) > len(_A2A_BINDING_PREFIX):
+        return lowered[len(_A2A_BINDING_PREFIX) :].upper()
+    return _DEFAULT_PROTOCOL_BINDING
 
 
 def _check_server_access(server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
@@ -89,6 +125,7 @@ class A2AServerService:
         *,
         user_email: Optional[str] = None,
         token_teams: Optional[list[str]] = None,
+        caller_version: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard for a virtual server.
 
@@ -102,6 +139,8 @@ class A2AServerService:
             server_name: Name of the virtual server.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
+            caller_version: A2A version the caller speaks (its ``A2A-Version`` header).
+                A pre-1.0 value keeps the legacy card shape.
 
         Returns:
             AgentCard dict, or None if the server does not exist, is disabled,
@@ -126,34 +165,146 @@ class A2AServerService:
         if not interface:
             return None
 
-        # Collect skills from associated A2A agents
+        return self._build_server_card(server, interface, caller_version)
+
+    def _aggregate_agent_capabilities(self, server: DbServer) -> _AggregatedCapabilities:
+        """Aggregate capability flags, modes, and deduplicated skills from enabled associated agents.
+
+        Malformed free-form ``capabilities`` entries (a non-list ``skills`` or
+        mode field, a non-string mode, a non-string skill ``id``) are skipped
+        so one bad agent cannot break the server card.
+
+        Args:
+            server: The virtual server whose associated A2A agents to aggregate.
+
+        Returns:
+            An :class:`_AggregatedCapabilities`. ``streaming`` and
+            ``push_notifications`` are ``True`` if any enabled associated agent
+            declares them. ``skills`` keeps only the first occurrence of each
+            skill id, so identical ids from different agents don't collide.
+            ``input_modes`` and ``output_modes`` are the union of
+            ``defaultInputModes``/``defaultOutputModes`` declared by enabled
+            associated agents, in first-seen order, or ``["text"]`` when no
+            agent declares any — Server/ServerInterface have no capabilities
+            column of their own.
+        """
+        streaming = False
+        push_notifications = False
         skills: list[Dict[str, Any]] = []
+        seen_skill_ids: set[str] = set()
+        input_modes: list[str] = []
+        output_modes: list[str] = []
         for agent in server.a2a_agents:
             if not agent.enabled:
                 continue
-            caps = agent.capabilities or {}
-            for skill in caps.get("skills", []):
+            caps = agent.capabilities if isinstance(agent.capabilities, dict) else {}
+            streaming = streaming or bool(caps.get("streaming", False))
+            push_notifications = push_notifications or bool(caps.get("pushNotifications", False))
+            raw_skills = caps.get("skills")
+            for skill in raw_skills if isinstance(raw_skills, list) else []:
+                skill_id = skill.get("id") if isinstance(skill, dict) else None
+                if skill_id is not None:
+                    if not isinstance(skill_id, str):
+                        logger.debug("Skipping skill with non-string id on agent %s", agent.id)
+                        continue
+                    if skill_id in seen_skill_ids:
+                        logger.debug("Dropping duplicate skill id %r from agent %s", skill_id, agent.id)
+                        continue
+                    seen_skill_ids.add(skill_id)
                 skills.append(skill)
+            for key, modes in (("defaultInputModes", input_modes), ("defaultOutputModes", output_modes)):
+                declared = caps.get(key)
+                for mode in declared if isinstance(declared, list) else []:
+                    if isinstance(mode, str) and mode not in modes:
+                        modes.append(mode)
+        return _AggregatedCapabilities(streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"])
 
-        protocol_version = interface.version or "1.0"
+    def _build_server_card(self, server: DbServer, interface: DbServerInterface, caller_version: Optional[str] = None) -> Dict[str, Any]:
+        """Dispatch card construction by the interface's declared protocol version.
 
-        card: Dict[str, Any] = {
+        Args:
+            server: The visibility-checked virtual server row.
+            interface: Its enabled A2A ``ServerInterface`` row.
+            caller_version: A2A version the caller speaks, when it declared one.
+                A pre-1.0 value always gets the legacy shape.
+
+        Returns:
+            AgentCard dict, shaped per the interface's declared protocol version.
+        """
+        capabilities = self._aggregate_agent_capabilities(server)
+        if is_v1_a2a_protocol(interface.version) and (not caller_version or is_v1_a2a_protocol(caller_version)):
+            return self._build_v1_server_card(server, interface, capabilities)
+        return self._build_legacy_server_card(server, interface, capabilities)
+
+    def _build_legacy_server_card(self, server: DbServer, interface: DbServerInterface, capabilities: _AggregatedCapabilities) -> Dict[str, Any]:
+        """Build the pre-1.0 AgentCard shape for a v0.3 interface.
+
+        Preserved unchanged (aside from aggregating capabilities and modes
+        from associated agents instead of hardcoding them) so existing v0.3
+        callers see no shape change.
+
+        Args:
+            server: The visibility-checked virtual server row.
+            interface: Its enabled A2A ``ServerInterface`` row.
+            capabilities: Capabilities, modes, and skills aggregated from associated agents.
+
+        Returns:
+            AgentCard dict in the A2A v0.3 shape.
+        """
+        return {
             "name": server.name,
             "description": server.description or "",
             "url": interface.binding,
             "version": str(server.version),
-            "protocolVersion": protocol_version,
-            "defaultInputModes": ["text"],
-            "defaultOutputModes": ["text"],
+            "protocolVersion": interface.version or "1.0",
+            "defaultInputModes": capabilities.input_modes,
+            "defaultOutputModes": capabilities.output_modes,
             "capabilities": {
-                "streaming": False,
-                "pushNotifications": False,
+                "streaming": capabilities.streaming,
+                "pushNotifications": capabilities.push_notifications,
                 "stateTransitionHistory": False,
             },
-            "skills": skills,
+            "skills": capabilities.skills,
             "supportsAuthenticatedExtendedCard": True,
         }
-        return card
+
+    def _build_v1_server_card(self, server: DbServer, interface: DbServerInterface, capabilities: _AggregatedCapabilities) -> Dict[str, Any]:
+        """Build the A2A 1.0 AgentCard shape for a v1+ interface.
+
+        Transport is reported through ``supportedInterfaces``, with
+        ``protocolBinding`` derived from the interface's ``protocol`` value
+        rather than reusing its endpoint for both roles.
+
+        Args:
+            server: The visibility-checked virtual server row.
+            interface: Its enabled A2A ``ServerInterface`` row.
+            capabilities: Capabilities, modes, and skills aggregated from associated agents.
+
+        Returns:
+            AgentCard dict in the A2A 1.0 shape.
+        """
+        iface: Dict[str, Any] = {
+            "url": interface.binding,
+            "protocolBinding": _derive_protocol_binding(interface.protocol),
+            "protocolVersion": interface.version or "1.0",
+        }
+        if interface.tenant:
+            iface["tenant"] = interface.tenant
+
+        return {
+            "name": server.name,
+            "description": server.description or "",
+            "version": str(server.version),
+            "supportedInterfaces": [iface],
+            "capabilities": {
+                "streaming": capabilities.streaming,
+                "pushNotifications": capabilities.push_notifications,
+                "extendedAgentCard": True,
+            },
+            "defaultInputModes": capabilities.input_modes,
+            "defaultOutputModes": capabilities.output_modes,
+            "skills": capabilities.skills,
+        }
 
     def resolve_server_agent(
         self,
