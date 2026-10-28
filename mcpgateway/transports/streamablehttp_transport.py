@@ -4763,6 +4763,7 @@ class SessionManagerWrapper:
             event_store=event_store,
             json_response=settings.json_response_enabled,
             stateless=stateless,
+            max_request_body_size=settings.mcp_max_request_body_size_bytes,
         )
         self.stack = AsyncExitStack()
 
