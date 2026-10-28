@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/live_gateway/a2a/test_a2a_agent_card_e2e.py
+"""Location: ./tests/live_gateway/a2a/test_a2a_public_card_route_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
