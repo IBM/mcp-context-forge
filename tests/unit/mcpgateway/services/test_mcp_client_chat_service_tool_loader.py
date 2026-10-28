@@ -154,5 +154,5 @@ async def test_get_tools_wraps_each_tool_for_langchain(loader):
     assert tools["echo"].description == "Repeat the text."
     assert tools["echo"].args["text"]["type"] == "string"
     assert await tools["echo"].ainvoke({"text": "ab", "times": 2}) == "abab"
-    with pytest.raises(svc.ToolException, match="fail"):
-        await tools["fail"].ainvoke({})
+    # An error result comes back as text for the model instead of aborting the run
+    assert "fail" in await tools["fail"].ainvoke({})

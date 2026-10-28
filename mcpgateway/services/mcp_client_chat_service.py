@@ -24,6 +24,7 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 # Third-Party
+import httpx2
 from mcp.client import Client as MCPSDKClient
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters
@@ -2136,6 +2137,10 @@ class ChatHistoryManager:
 # ==================== MCP CLIENT ====================
 
 
+#: Connection and read timeouts for tool calls over HTTP transports: a tool may run for minutes.
+_TOOL_CALL_TIMEOUT = httpx2.Timeout(30.0, read=300.0)
+
+
 def _build_transport(connection: Dict[str, Any]) -> Any:
     """Return the MCP SDK transport for one chat server connection.
 
@@ -2159,9 +2164,9 @@ def _build_transport(connection: Dict[str, Any]) -> Any:
     """
     transport = connection.get("transport")
     if transport == "streamable_http":
-        return streamable_http_client(connection["url"], headers=connection.get("headers"))
+        return streamable_http_client(connection["url"], headers=connection.get("headers"), timeout=_TOOL_CALL_TIMEOUT)
     if transport == "sse":
-        return sse_client(connection["url"], headers=connection.get("headers"))
+        return sse_client(connection["url"], headers=connection.get("headers"), timeout=30.0, sse_read_timeout=300.0)
     if transport == "stdio":
         return StdioServerParameters(command=connection["command"], args=connection.get("args") or [])
     raise ValueError(f"Unsupported MCP transport: {transport}")
@@ -2270,7 +2275,8 @@ class MCPToolLoader:
                 raise ToolException(text or f"Tool {tool.name} failed")
             return text
 
-        return StructuredTool(name=tool.name, description=tool.description or "", args_schema=tool.input_schema, coroutine=_call)
+        # handle_tool_error hands a ToolException back to the model as a tool message instead of aborting the run
+        return StructuredTool(name=tool.name, description=tool.description or "", args_schema=tool.input_schema, coroutine=_call, handle_tool_error=True)
 
 
 class MCPClient:
