@@ -6821,7 +6821,7 @@ class TestA2AAgentManagement:
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6835,7 +6835,7 @@ class TestA2AAgentManagement:
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6851,7 +6851,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test generic exception returns 500 with error_type field."""
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6872,7 +6872,7 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6891,7 +6891,7 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with name: private-agent"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6910,7 +6910,7 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("A2A Agent 'test-agent' is disabled"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6931,7 +6931,7 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("HTTP 503: Service Unavailable"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6948,7 +6948,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_validation_error(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test ValidationError returns 422 with validation_error type."""
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         # Simulate validation error during parameter processing
         service.invoke_agent = AsyncMock(side_effect=ValidationError.from_exception_data("test", []))
@@ -6969,7 +6969,7 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
+        service = A2AAgentService()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Failed to invoke A2A agent: Connection refused"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
