@@ -3099,8 +3099,8 @@ class TestInvokeAgentEdgeCases:
                 "grant_type": "client_credentials",
                 "token_url": "https://auth.example.com/token",
                 "scope": "read write",
-                "client_secret": "<should-never-appear>",
-            },  # pragma: allowlist secret
+                "client_secret": "<should-never-appear>",  # pragma: allowlist secret
+            },
         )
 
         schemes, _requirements = _build_security_scheme(agent)
