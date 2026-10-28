@@ -83,7 +83,6 @@ Recommended MCP validation sequence:
 ```bash
 make testing-up
 make test-e2e
-make test-mcp-session-isolation
 make benchmark-mcp-tools-300
 ```
 

@@ -464,8 +464,8 @@ user-login = "lalitb"
 user-name = "Lalit Kumar Bhasin"
 
 [[publisher.opentelemetry_sdk]]
-version = "0.31.0"
-when = "2025-09-25"
+version = "0.32.1"
+when = "2026-05-26"
 user-id = 270607
 user-login = "lalitb"
 user-name = "Lalit Kumar Bhasin"
@@ -1189,6 +1189,8 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[audits.actix.audits]
+
 [audits.ariel-os.audits]
 
 [[audits.bytecode-alliance.wildcard-audits.bumpalo]]
@@ -1472,6 +1474,8 @@ who = "Johan Andersson <opensource@embark-studios.com>"
 criteria = "safe-to-deploy"
 version = "0.1.0"
 notes = "No unsafe usage or ambient capabilities, sane build script"
+
+[audits.fermyon.audits]
 
 [[audits.google.audits.base64]]
 who = "amarjotgill <amarjotgill@google.com>"

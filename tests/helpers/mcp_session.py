@@ -11,8 +11,8 @@ non-initialize call. Replaces the near-identical helpers that lived in
 ``tests/integration/test_rate_limiter_dynamic_behavior.py`` and
 ``tests/integration/test_rate_limiter_multi_tenant.py``.
 
-For ``httpx``-based callers (e.g. ``tests/live_gateway/mcp/...`` and
-``tests/live_gateway/e2e_rust/...``) see the helpers in those files. This
+For ``httpx``-based callers (e.g. ``tests/live_gateway/mcp/...``) see the
+helpers in those files. This
 module uses ``requests`` to match the integration-test convention.
 """
 

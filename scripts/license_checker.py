@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Repository license compliance check for Python, Go, and Rust.
+"""Repository license compliance check for Python and Go.
 
 This script validates:
 - Python project metadata from `pyproject.toml` files
 - Installed Python dependency licenses via `pip-licenses`
 - Go module licenses via `go-licenses`
-- Rust crate licenses via `cargo-license`
 """
 
 # Future
@@ -133,14 +132,13 @@ def _summarize_findings(findings: Sequence[Finding]) -> Dict[str, int]:
         "pip": 0,
         "pip-subvenv": 0,
         "go": 0,
-        "rust": 0,
     }
     for finding in findings:
         if finding.is_warning:
             summary["warnings"] += 1
         else:
             summary["errors"] += 1
-        if finding.scope in {"pyproject", "pip", "pip-subvenv", "go", "rust"}:
+        if finding.scope in {"pyproject", "pip", "pip-subvenv", "go"}:
             summary[finding.scope] += 1
     return summary
 
@@ -204,7 +202,6 @@ def _default_policy() -> Dict[str, Any]:
             "check_pyproject_licenses": True,
             "check_pip_dependencies": True,
             "check_go_dependencies": True,
-            "check_rust_dependencies": True,
             "ignore_unknown_scanners": False,
             "ignore_dev_dependency_group_names": [
                 "dev",
@@ -556,38 +553,6 @@ def _find_repo_spdx(path: Path, root: Path) -> str:
     if path == root or path.parent == path:
         return ""
     return _find_repo_spdx(path.parent, root)
-
-
-def _extract_cargo_license(manifest_path: Path) -> str:
-    try:
-        data = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
-        return ""
-
-    package_section = data.get("package", {})
-    if isinstance(package_section, dict):
-        value = _find_license_in_obj(package_section.get("license"))
-        if value:
-            return value
-        license_file = package_section.get("license-file")
-        if isinstance(license_file, str):
-            result = _find_spdx_from_license_file(manifest_path.parent / license_file)
-            if result:
-                return result
-
-    workspace = data.get("workspace", {})
-    if isinstance(workspace, dict):
-        workspace_package = workspace.get("package", {})
-        if isinstance(workspace_package, dict):
-            value = _find_license_in_obj(workspace_package.get("license"))
-            if value:
-                return value
-            license_file = workspace_package.get("license-file")
-            if isinstance(license_file, str):
-                result = _find_spdx_from_license_file(manifest_path.parent / license_file)
-                if result:
-                    return result
-    return ""
 
 
 def _extract_go_module_name(go_mod_path: Path) -> str:
@@ -1090,104 +1055,6 @@ def scan_go_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optio
     return findings, stats
 
 
-def scan_rust_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None) -> Tuple[List[Finding], Dict[str, int]]:
-    findings: List[Finding] = []
-    stats = {"manifests": 0, "crates": 0}
-
-    if not shutil.which("cargo-license"):
-        return (
-            [
-                Finding(
-                    "rust",
-                    "cargo",
-                    "cargo-license",
-                    "",
-                    "`cargo-license` binary is not available",
-                )
-            ],
-            stats,
-        )
-
-    local_crate_licenses: Dict[str, str] = {}
-    for cargo_file in _iter_files_with_name(root, "Cargo.toml"):
-        crate_root = cargo_file.parent
-        crate_name = str(crate_root.name)
-        license_value = _extract_cargo_license(cargo_file)
-        if not license_value:
-            license_value = _find_repo_spdx(crate_root, root)
-        if not license_value:
-            license_value = "unknown"
-        local_crate_licenses[crate_name] = license_value
-        finding = evaluate_license(
-            "rust",
-            str(crate_root.relative_to(root)),
-            crate_name,
-            license_value,
-            policy,
-            is_local=True,
-            compiled_patterns=compiled_patterns,
-        )
-        if finding:
-            findings.append(finding)
-
-    seen: Set[Tuple[str, str, str]] = set()
-    for cargo_file in _iter_files_with_name(root, "Cargo.toml"):
-        crate_root = cargo_file.parent
-        crate_name = str(crate_root.name)
-        stats["manifests"] += 1
-        result = _run_command(["cargo", "license", "--json", "--avoid-dev-deps"], crate_root)
-        if result.returncode != 0 and not result.stdout:
-            findings.append(
-                Finding(
-                    "rust",
-                    str(crate_root.relative_to(root)),
-                    cargo_file.name,
-                    "",
-                    f"`cargo license` failed: {result.stderr.strip() or 'unknown error'}",
-                )
-            )
-            continue
-
-        try:
-            entries = json.loads(result.stdout or "[]")
-        except json.JSONDecodeError:
-            findings.append(
-                Finding(
-                    "rust",
-                    str(crate_root.relative_to(root)),
-                    "cargo-license",
-                    "",
-                    "failed to parse JSON output from `cargo license`",
-                )
-            )
-            continue
-
-        for entry in entries:
-            name = str(entry.get("name", "")).strip()
-            if not name:
-                continue
-            license_value = str(entry.get("license", "")).strip()
-            is_local_dependency = name in local_crate_licenses
-            key = (str(crate_root), name, license_value)
-            if key in seen:
-                continue
-            seen.add(key)
-            stats["crates"] += 1
-            finding = evaluate_license(
-                "rust",
-                str(crate_root.relative_to(root)),
-                name,
-                license_value,
-                policy,
-                is_local=is_local_dependency,
-                compiled_patterns=compiled_patterns,
-            )
-            if finding:
-                findings.append(finding)
-
-    return findings, stats
-
-
 def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]], root: Path, summary_only: bool = False) -> None:
     warnings = sum(1 for finding in findings if finding.is_warning)
     errors = len(findings) - warnings
@@ -1201,7 +1068,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
     if subvenv_stats.get("venvs", 0):
         print(f"Checked pip sub-venvs: {subvenv_stats['venvs']} venvs, {subvenv_stats['packages']} packages")
     print(f"Checked Go modules: {stats['go']['modules']} modules, {stats['go']['packages']} packages")
-    print(f"Checked Rust manifests: {stats['rust']['manifests']} manifests, {stats['rust']['crates']} crates")
     print(f"Findings: {_color(str(errors), _Palette.BOLD + _Palette.RED)} " f"error(s), {_color(str(warnings), _Palette.BOLD + _Palette.YELLOW)} warning(s)\n")
 
     if summary_only:
@@ -1211,7 +1077,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
         print(f"  pip third-party: {counts['pip']} finding(s)")
         print(f"  pip sub-venvs: {counts['pip-subvenv']} finding(s)")
         print(f"  go modules: {counts['go']} finding(s)")
-        print(f"  rust manifests: {counts['rust']} finding(s)")
         if not findings:
             print(f"\n  {_status_label(False)} no findings")
             return
@@ -1321,25 +1186,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
         print(f"  {_status_label(False)} no go license issues found")
         print("")
 
-    print(_section_banner("# RUST"))
-    rust_findings = [finding for finding in findings if finding.scope == "rust"]
-    rust_by_source: Dict[str, List[Finding]] = defaultdict(list)
-    for finding in rust_findings:
-        rust_by_source[finding.source].append(finding)
-    for source in sorted(rust_by_source.keys()):
-        scope_findings = rust_by_source[source]
-        if not scope_findings:
-            continue
-        for item in scope_findings:
-            label = _status_label(item.is_warning, is_error=not item.is_warning)
-            print(f"  {label} {source} :: {item.package}")
-            print(f"    license: {item.license_value or 'n/a'}")
-            print(f"    reason: {item.reason}")
-        print("")
-    if not rust_by_source:
-        print(f"  {_status_label(False)} no rust license issues found")
-        print("")
-
     ignored_dev = stats.get("pip", {}).get("dependencies_ignored_as_dev", 0)
     if ignored_dev:
         print(_color(f"PyPI dev group dependencies skipped: {ignored_dev}", _Palette.BOLD + _Palette.YELLOW))
@@ -1419,7 +1265,6 @@ def main() -> int:
         "pip": {"dependencies": 0, "dependencies_ignored_as_dev": 0},
         "pip-subvenv": {"venvs": 0, "packages": 0, "dependencies_ignored_as_dev": 0},
         "go": {"modules": 0, "packages": 0},
-        "rust": {"manifests": 0, "crates": 0},
     }
 
     findings: List[Finding] = []
@@ -1453,11 +1298,6 @@ def main() -> int:
         scope_findings, scope_stats = scan_go_modules(ROOT, policy, compiled_patterns=compiled_patterns)
         findings.extend(scope_findings)
         stats["go"].update(scope_stats)
-
-    if scan_cfg.get("check_rust_dependencies", True):
-        scope_findings, scope_stats = scan_rust_modules(ROOT, policy, compiled_patterns=compiled_patterns)
-        findings.extend(scope_findings)
-        stats["rust"].update(scope_stats)
 
     # De-duplicate findings by signature to avoid noisy duplicates from nested workspaces.
     deduped = []

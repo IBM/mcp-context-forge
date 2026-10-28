@@ -6411,6 +6411,8 @@ class TestRpcHandling:
             {"session_id": "sess-1", "protocolVersion": "2025-11-25"},
             session_id="sess-1",
             server_id="srv-1",
+            user_email="user@example.com",
+            token_teams=["team-a"],
         )
 
     async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):
@@ -10838,7 +10840,7 @@ class TestRemainingCoverageGaps:
 
         request = _make_request("/servers")
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
-        server_obj = MagicMock()
+        server_obj = MagicMock(team_id=None, visibility=None)
 
         response = await main_mod.create_server.__wrapped__(
             server_obj,
@@ -12064,7 +12066,7 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(main_mod.resource_service, "register_resource", AsyncMock(side_effect=ResourceError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_resource.__wrapped__(MagicMock(), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
+            await main_mod.create_resource.__wrapped__(MagicMock(team_id=None, visibility=None), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_reraises_unhandled_exception(self, monkeypatch):

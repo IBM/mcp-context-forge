@@ -194,8 +194,11 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 |------|-------|-----------------|
 | `platform_admin` | global | `*` (all) |
 | `team_admin` | team | teams.*, tools.read/execute, resources.read |
-| `developer` | team | tools.read/execute, resources.read |
+| `developer` | team | CRUD on gateways, servers, tools, resources, prompts, and A2A agents; execution/invocation; token self-service; dashboard access; team read/join |
 | `viewer` | team | tools.read/execute, resources.read |
+
+The `developer` role includes gateway registration, update, and deletion.
+See the [complete built-in permission table](docs/docs/manage/rbac.md#built-in-rbac-roles) before assigning this role.
 
 ### Documentation
 
@@ -527,7 +530,7 @@ Run from the worktree root, in order. Each command must pass, or the PR must doc
 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
 | `make test` | Full pytest suite |
 | `make coverage diff-cover` | Coverage of changed lines vs. base |
-| `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
+| `make docker-nuke docker-prod testing-up` | Rebuilds and launches the production-style gateway stack |
 | `make test-e2e` | MCP protocol E2E and RBAC against the live gateway |
 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 

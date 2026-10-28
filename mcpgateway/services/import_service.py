@@ -1434,7 +1434,13 @@ class ImportService:
                     logger.warning("Could not resolve tool reference: %s", tool_ref)
                     # Don't include unresolvable references
 
-        return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=server_data.get("tags", []))
+        return ServerCreate(
+            name=server_data["name"],
+            description=server_data.get("description"),
+            instructions=server_data.get("instructions"),
+            associated_tools=resolved_tool_ids,
+            tags=server_data.get("tags", []),
+        )
 
     async def _convert_to_server_update(self, db: Session, server_data: Dict[str, Any]) -> ServerUpdate:
         """Convert import data to ServerUpdate schema, resolving tool references.
@@ -1465,7 +1471,16 @@ class ImportService:
                 else:
                     logger.warning("Could not resolve tool reference for update: %s", tool_ref)
 
-        return ServerUpdate(name=server_data.get("name"), description=server_data.get("description"), associated_tools=resolved_tool_ids if resolved_tool_ids else None, tags=server_data.get("tags"))
+        update_fields: Dict[str, Any] = {
+            "name": server_data.get("name"),
+            "description": server_data.get("description"),
+            "associated_tools": resolved_tool_ids if resolved_tool_ids else None,
+            "tags": server_data.get("tags"),
+        }
+        # An export that predates this field must not clear a stored override on update.
+        if "instructions" in server_data:
+            update_fields["instructions"] = server_data["instructions"]
+        return ServerUpdate(**update_fields)
 
     def _convert_to_prompt_create(self, prompt_data: Dict[str, Any]) -> PromptCreate:
         """Convert import data to PromptCreate schema.

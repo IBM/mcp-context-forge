@@ -30,14 +30,6 @@ The user-facing control is `RUST_MCP_MODE`:
 | `edge` | Rust | No | Direct public Rust ingress with Python still backing more MCP internals |
 | `full` | Rust | Yes | Fastest public Rust path with Rust-owned MCP session/runtime cores |
 
-Use the testing stack wrappers to bring these up locally:
-
-```bash
-make testing-rebuild-rust-shadow
-make testing-rebuild-rust
-make testing-rebuild-rust-full
-```
-
 ## Runtime Mode Override
 
 !!! warning "Deprecated runtime controls"
@@ -283,12 +275,6 @@ Key invariants:
 - a changed auth binding on the same session is denied rather than reused
 - replay/resume and delete operations preserve the same ownership checks
 
-This model is validated by the dedicated isolation suite:
-
-```bash
-make test-mcp-session-isolation
-```
-
 See the detailed threat model and test matrix in
 `crates/mcp_runtime/TESTING-DESIGN.md` in the repository.
 
@@ -414,9 +400,7 @@ full request to the Python `/_internal/mcp/tools/call` endpoint.
 Recommended stack-backed validation:
 
 ```bash
-make testing-rebuild-rust-full
 make test-e2e
-make test-mcp-session-isolation
 cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml
 ```
 

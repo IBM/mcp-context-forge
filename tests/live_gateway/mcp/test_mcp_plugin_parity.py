@@ -37,7 +37,7 @@ pytestmark = [
     skip_no_gateway,
     pytest.mark.skipif(
         not EXPECTED_RUNTIME,
-        reason=("requires the dedicated plugin parity stack; run via " "MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=<python|rust> make test-mcp-plugin-parity"),
+        reason="requires the dedicated plugin parity stack; run via MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity",
     ),
 ]
 

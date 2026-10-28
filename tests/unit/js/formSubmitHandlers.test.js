@@ -715,6 +715,32 @@ describe("handleEditServerFormSubmit", () => {
 
     expect(globalThis.fetch).toHaveBeenCalled();
   });
+
+  test.each([
+    ["", "", null],
+    ["Keep me", "Keep me", null],
+    ["", "New text", "New text"],
+    ["Old text", "", ""],
+  ])(
+    "submits instructions only when changed (%j -> %j)",
+    async (original, edited, expected) => {
+      const event = createFormEvent(`
+      <form action="/admin/servers/1/edit">
+        <input name="name" value="EditedServer" />
+        <textarea id="edit-server-instructions" name="instructions"></textarea>
+      </form>
+    `);
+      const field = event.target.querySelector("#edit-server-instructions");
+      field.dataset.originalValue = original;
+      field.value = edited;
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+      safeParseJsonResponse.mockResolvedValue({ success: true });
+
+      await handleEditServerFormSubmit(event);
+
+      expect(fetch.mock.calls.at(-1)[1].body.get("instructions")).toBe(expected);
+    }
+  );
 });
 
 // ---------------------------------------------------------------------------

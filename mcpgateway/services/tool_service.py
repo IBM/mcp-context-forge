@@ -2347,12 +2347,6 @@ class ToolService(BaseService):
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
 
-            if team_id is None:
-                team_id = tool.team_id
-
-            if owner_email is None:
-                owner_email = tool.owner_email
-
             if visibility is None:
                 visibility = tool.visibility or "public"
 
@@ -2951,9 +2945,8 @@ class ToolService(BaseService):
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
 
-            # Use provided parameters or schema values
-            tool_team_id = team_id if team_id is not None else getattr(tool, "team_id", None)
-            tool_owner_email = owner_email or getattr(tool, "owner_email", None) or created_by
+            tool_team_id = team_id
+            tool_owner_email = owner_email or created_by
             tool_visibility = visibility if visibility is not None else (getattr(tool, "visibility", None) or "public")
 
             existing_tool = existing_tools_map.get(tool.name)

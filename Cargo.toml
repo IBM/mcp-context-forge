@@ -33,12 +33,12 @@ rmcp = { version = "2.1.0", default-features = false }
 sha2 = "0.10.9"
 ctutils = "0.4.4"
 
-# HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)
-reqwest = { version = "0.12.28", default-features = false, features = [
+# HTTP client
+reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
     "stream",
     "http2",
-    "rustls-tls-native-roots",
+    "rustls",
 ] }
 
 # Async runtime

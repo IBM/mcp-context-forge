@@ -37,8 +37,6 @@ use futures_util::{StreamExt, TryStreamExt};
 use rand::Rng;
 use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
 use reqwest::{Client, Url};
-#[cfg(feature = "rmcp-upstream-client")]
-use reqwest_rmcp::Client as RmcpReqwestClient;
 use rustls::{
     ClientConfig as RustlsClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
@@ -162,11 +160,8 @@ pub struct AppState {
     backend_tools_call_resolve_url: Arc<str>,
     backend_tools_call_metric_url: Arc<str>,
     client: Client,
-    // RMCP currently uses reqwest 0.13 while the direct gateway/runtime path
-    // uses reqwest 0.12, so the runtime keeps a separate shared client for that
-    // transport instead of rebuilding it per upstream session/client.
     #[cfg(feature = "rmcp-upstream-client")]
-    rmcp_client: RmcpReqwestClient,
+    rmcp_client: Client,
     redis_client: Option<redis::Client>,
     redis_manager: Arc<Mutex<Option<RedisConnectionManager>>>,
     protocol_version: Arc<str>,
@@ -728,13 +723,13 @@ impl AppState {
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
         #[cfg(feature = "rmcp-upstream-client")]
-        let rmcp_client = RmcpReqwestClient::builder()
+        let rmcp_client = Client::builder()
             .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
             .pool_idle_timeout(Duration::from_secs(config.client_pool_idle_timeout_seconds))
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
-            .redirect(reqwest_rmcp::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|err| RuntimeError::Config(format!("rmcp http client error: {err}")))?;
         let db_pool = build_db_pool(config)?;
