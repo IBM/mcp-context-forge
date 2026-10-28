@@ -14,9 +14,10 @@ and interactions with A2A-compatible agents.
 # Standard
 import base64
 import binascii
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
@@ -57,7 +58,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_bas
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -329,6 +330,24 @@ class A2AAgentNotFoundError(A2AAgentError):
         ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
         True
     """
+
+
+DEFAULT_A2A_TEST_MESSAGE = "ContextForge A2A agent connectivity test"
+DEFAULT_A2A_TEST_INTERACTION_TYPE = "test"
+
+
+@dataclass(frozen=True)
+class A2ATestOutcome:
+    """Classified result of an A2A agent test invocation.
+
+    Attributes:
+        status_code: HTTP status matching the outcome (200, 404, 502, 422 or 500).
+        body: Response envelope. Success carries ``success``, ``result``, ``agent_name`` and
+            ``test_timestamp``. Failure carries ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+
+    status_code: int
+    body: Dict[str, Any]
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -2190,6 +2209,57 @@ class A2AAgentService(BaseService):
             downstream_headers = whitelisted_headers  # Include sensitive when flag ON
 
         return plugin_headers, downstream_headers
+
+    async def test_agent(
+        self,
+        db: Session,
+        agent_id: str,
+        *,
+        query: Optional[str] = None,
+        interaction_type: str = DEFAULT_A2A_TEST_INTERACTION_TYPE,
+        user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2ATestOutcome:
+        """Invoke an A2A agent with a test message and classify the outcome.
+
+        Error text is sanitized before it reaches the caller. Missing and inaccessible agents
+        both classify as ``not_found`` so agent existence does not leak.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            query: Test message. Falls back to ``DEFAULT_A2A_TEST_MESSAGE`` when empty.
+            interaction_type: Interaction source recorded for the invocation.
+            user_email: Email used for visibility checks. None with ``token_teams`` None means admin bypass.
+            user_id: Identity recorded for the invocation.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+
+        Returns:
+            A2ATestOutcome: HTTP status and response envelope.
+        """
+        try:
+            agent = await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+            message = query or DEFAULT_A2A_TEST_MESSAGE
+            if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+                test_params: Dict[str, Any] = {"query": message}
+            else:
+                test_params = {"query": message, "message": message, "test": True, "timestamp": int(time.time())}
+
+            result = await self.invoke_agent(db, agent.name, test_params, interaction_type, user_email=user_email, user_id=user_id, token_teams=token_teams)
+            return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+        except A2AAgentNotFoundError as e:
+            logger.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
+            return A2ATestOutcome(404, {"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id})
+        except A2AAgentError as e:
+            logger.error(f"A2A agent error for {agent_id}: {e}")
+            return A2ATestOutcome(502, {"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id})
+        except ValidationError as e:
+            logger.warning(f"Validation error testing A2A agent {agent_id}: {e}")
+            return A2ATestOutcome(422, {"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id})
+        except Exception as e:
+            logger.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
+            return A2ATestOutcome(500, {"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id})
 
     async def invoke_agent(
         self,

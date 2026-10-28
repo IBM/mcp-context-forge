@@ -6605,6 +6605,30 @@ class A2AInvocationResponse(BaseModel):
     id: Any = Field(default=None, description="Request id this response correlates to, omitted for notifications")
 
 
+class A2ATestRequest(BaseModel):
+    """Schema for the optional body of ``POST /v1/a2a/{agent_id}/test``."""
+
+    query: Optional[str] = Field(None, description="Test message. A neutral default is used when omitted or empty.")
+
+
+class A2ATestResponse(BaseModel):
+    """Schema for a successful ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    success: bool = Field(True, description="Always true on success")
+    result: Any = Field(..., description="Agent response")
+    agent_name: str = Field(..., description="Name of the tested agent")
+    test_timestamp: float = Field(..., description="Unix timestamp of the test")
+
+
+class A2ATestError(BaseModel):
+    """Schema for the ``detail`` of a failed ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    success: bool = Field(False, description="Always false on failure")
+    error: str = Field(..., description="Sanitized error message")
+    error_type: Literal["not_found", "agent_error", "validation_error", "internal_error"] = Field(..., description="Error classification")
+    agent_id: str = Field(..., description="ID of the agent that was tested")
+
+
 class A2AInvokeResponse(A2AInvocationResponse):
     """Schema for ``POST /v1/a2a/{agent_name}/invoke`` and ``POST /v1/a2a/invoke``.
 

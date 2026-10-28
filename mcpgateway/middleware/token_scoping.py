@@ -199,6 +199,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/test(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
     ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
