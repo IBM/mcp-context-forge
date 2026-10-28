@@ -2697,6 +2697,39 @@ async def test_convert_to_server_update_resolves_tool_references(import_service,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_create_carries_instructions(import_service, mock_db, instructions):
+    """Instructions survive import; an empty string stays an empty override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    create = await import_service._convert_to_server_create(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert create.instructions == instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_update_carries_instructions(import_service, mock_db, instructions):
+    """An exported instructions value, including null and the empty string, reaches the update."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert update.instructions == instructions
+    assert "instructions" in update.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_convert_to_server_update_without_instructions_leaves_override_unchanged(import_service, mock_db):
+    """An export that has no instructions key must not clear a stored override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv"})
+
+    assert "instructions" not in update.model_fields_set
+
+
+@pytest.mark.asyncio
 async def test_analyze_import_item_handles_service_exception(import_service, mock_db):
     import_service.tool_service.list_tools.side_effect = Exception("boom")
     result = await import_service._analyze_import_item(mock_db, "tools", {"name": "tool1"})

@@ -294,6 +294,7 @@ Exports follow a standardized JSON schema:
       {
         "name": "ai-tools-server",
         "description": "AI tools virtual server",
+        "instructions": null,
         "tool_ids": ["weather_api", "translate_text"],
         "capabilities": {"tools": {"list_changed": true}}
       }

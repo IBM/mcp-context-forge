@@ -20,6 +20,8 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 - **Operations** - Added `make container-bump-image-versions`, moved CSS linting from Stylelint to Biome, migrated Tailwind CSS to v4, removed the anyio monkey-patch settings, the Rust MCP config surface, and the in-tree `mcp-servers/` directory.
 - **Testing** - Eliminated pytest warnings and redundant tests, restored OAuth gateway membership coverage, verified resource template federation, and fixed the live-gateway E2E suite.
 
+- **Gateway connect return arity** ([#4693](https://github.com/IBM/mcp-context-forge/issues/4693)) - `GatewayService._initialize_gateway`, `_initialize_gateway_with_timeout`, `connect_to_sse_server`, `connect_to_streamablehttp_server`, and `_connect_to_sse_server_without_validation` now return a 6-tuple `(capabilities, tools, resources, prompts, validation_errors, instructions)`. Previously they returned 5 items. Out-of-tree callers that unpack the return value must add the sixth binding. After upgrade, every single-upstream virtual server sends the upstream `instructions` text to connecting clients; add a per-server `instructions` override or an empty-string override (`""`) to opt out.
+
 ### Added
 
 #### **Protocol & Transport**
@@ -40,6 +42,7 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 
 #### **API & Platform**
 
+- **Server `instructions`** ([#4693](https://github.com/IBM/mcp-context-forge/issues/4693)) - A virtual server now sends `instructions` in the `initialize` result (legacy era) and in the `server/discover` result (modern era). An operator can set `instructions` on the virtual server, in the REST API and in the Admin UI. A virtual server whose tools, resources, and prompts all come from one registered gateway sends the text of that upstream server. Every other virtual server sends the default text, as before. An empty override sends no `instructions` field. A caller who cannot see the upstream gateway receives the default text. The gateway stores the upstream text at connect time and at refresh time. Configuration export and import carry `instructions`. The Admin UI edit form sends `instructions` only when the operator changes it. Two Alembic migrations add the `gateways.upstream_instructions` and `servers.instructions` columns. See [Server Instructions](docs/docs/manage/api-usage.md#server-instructions).
 - **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
 - **Invitee invitations API** ([#6960](https://github.com/IBM/mcp-context-forge/pull/6960)) - Added an API for invitee invitations.
 - **Per-user MCP server rate limiting** ([#7191](https://github.com/IBM/mcp-context-forge/pull/7191)) - Adopted per-user rate limiting for MCP servers.
