@@ -48,7 +48,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalErro
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
+from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
@@ -170,6 +170,19 @@ async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data
             types.ReadResourceResult,
         )
     return await session.read_resource(uri=uri)
+
+
+def _upstream_resource_content(result: types.ReadResourceResult) -> str | types.BlobResourceContents:
+    """Extract text or preserve the upstream binary resource contents.
+
+    Args:
+        result: The upstream resource read result.
+
+    Returns:
+        The first resource's text or binary contents.
+    """
+    content = result.contents[0]
+    return content if isinstance(content, types.BlobResourceContents) else content.text
 
 
 class ResourceError(Exception):
@@ -2147,14 +2160,14 @@ class ResourceService(BaseService):
                             if isinstance(user_identity, UserCtx):
                                 headers.update(build_identity_headers(user_identity))
 
-                        async def _read_resource_text_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str:
+                        async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
                                     resource_response = await _read_resource_with_meta(session, uri, meta_data)
                                     set_upstream_cache_directive(resource_response)
-                                    return getattr(getattr(resource_response, "contents")[0], "text")
+                                    return _upstream_resource_content(resource_response)
                                 except Exception as exc:
                                     if attempt == max_read_attempts:
                                         raise
@@ -2170,22 +2183,18 @@ class ResourceService(BaseService):
                                     await asyncio.sleep(0.05)
                             raise RuntimeError("Resource read retry loop exhausted")
 
-                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | types.BlobResourceContents | None:
                             """
-                            Connect to an SSE-based gateway and retrieve the text content of a resource.
+                            Connect to an SSE-based gateway and retrieve the content of a resource.
 
                             This helper establishes an SSE (Server-Sent Events) session with the remote
                             gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                            given URI, and returns the textual content from the first item in the
+                            given URI, and returns the content from the first item in the
                             response's `contents` list.
 
                             If any error occurs before content is received (network failure,
                             unexpected response format, session initialization failure, etc.),
                             the method logs sanitized detail and raises ``ResourceError``.
-
-                            Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2198,19 +2207,13 @@ class ResourceService(BaseService):
                                     dictionary when not provided.
 
                             Returns:
-                                str | None:
-                                    The text content returned by the remote resource.
+                                str | types.BlobResourceContents | None:
+                                    The content returned by the remote resource.
 
-                            Notes:
-                                - This function assumes the SSE client context manager yields:
-                                    ``(read_stream, write_stream, get_session_id)``.
-                                - The expected response object from `session.read_resource()` must have a
-                                `contents` attribute containing a list, where the first element has a
-                                `text` attribute.
                             """
                             if authentication is None:
                                 authentication = {}
-                            resource_text: Optional[str] = None
+                            resource_content: str | types.BlobResourceContents | None = None
                             resource_received = False
                             try:
                                 # #4205: Registry path is taken when the caller has a downstream
@@ -2234,7 +2237,7 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "SSE")
+                                        resource_content = await _read_resource_content_with_retry(upstream.session, uri, "SSE")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2245,34 +2248,30 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                         transport="sse",
                                     ) as client:
-                                        resource_text = await _read_resource_text_with_retry(client.session, uri, "SSE")
+                                        resource_content = await _read_resource_content_with_retry(client.session, uri, "SSE")
                                         resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
                                     logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
-                                    return resource_text
+                                    return resource_content
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
-                            return resource_text
+                            return resource_content
 
-                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | types.BlobResourceContents | None:
                             """
-                            Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+                            Connect to a StreamableHTTP gateway and retrieve the content of a resource.
 
                             This helper establishes a StreamableHTTP client session with the specified
                             gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                            given URI, and returns the textual content from the first element in the
+                            given URI, and returns the content from the first element in the
                             response's `contents` list.
 
                             If any exception occurs before content is received during connection,
                             session initialization, or resource reading, the function logs sanitized
                             detail and raises ``ResourceError``.
-
-                            Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2284,19 +2283,13 @@ class ResourceService(BaseService):
                                     Bearer tokens). Defaults to an empty dictionary when not provided.
 
                             Returns:
-                                str | None:
-                                    The text content returned by the StreamableHTTP resource.
+                                str | types.BlobResourceContents | None:
+                                    The content returned by the StreamableHTTP resource.
 
-                            Notes:
-                                - The `streamable_http_client` context manager must yield a tuple:
-                                ``(read_stream, write_stream, get_session_id)``.
-                                - The expected `resource_response` returned by ``session.read_resource()``
-                                must contain a `contents` list, whose first element exposes a `text`
-                                attribute.
                             """
                             if authentication is None:
                                 authentication = {}
-                            resource_text: Optional[str] = None
+                            resource_content: str | types.BlobResourceContents | None = None
                             resource_received = False
                             try:
                                 # #4205: see SSE path above; same 1:1 binding rationale.
@@ -2318,7 +2311,7 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "StreamableHTTP")
+                                        resource_content = await _read_resource_content_with_retry(upstream.session, uri, "StreamableHTTP")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2330,29 +2323,29 @@ class ResourceService(BaseService):
                                     ) as client:
                                         resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
                                         set_upstream_cache_directive(resource_response)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        return _upstream_resource_content(resource_response)
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
                                     logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
-                                    return resource_text
+                                    return resource_content
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
-                            return resource_text
+                            return resource_content
 
                         if span:
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
                         if (gateway_transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
+                            resource_content = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
-                        if span and resource_text is not None and is_output_capture_enabled("resource.read"):
-                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
+                            resource_content = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
+                        if span and resource_content is not None and is_output_capture_enabled("resource.read"):
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_content}))
                         success = True  # Mark as successful before returning
-                        return resource_text
+                        return resource_content
                     except Exception as e:
                         success = False
                         error_message = str(e)
@@ -2821,6 +2814,10 @@ class ResourceService(BaseService):
 
                 def _set_gateway_content(content_obj: Any, attr_name: str, resource_response: Any) -> None:
                     """Apply gateway content or keep a valid cached fallback."""
+                    nonlocal content
+                    if isinstance(resource_response, types.BlobResourceContents):
+                        content = BlobResourceContents.model_validate(resource_response.model_dump(by_alias=True, exclude_none=True))
+                        return
                     if resource_response is not None:
                         setattr(content_obj, attr_name, resource_response)
                         return

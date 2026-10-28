@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+import mcp_types as types
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.orm import Session
@@ -674,6 +675,20 @@ class TestResourceListing:
 
 class TestResourceReading:
     """Test resource reading functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    async def test_read_resource_preserves_upstream_binary_content(self, resource_service, mock_db, mock_resource, blob):
+        """Gateway reads preserve binary contents and upstream metadata."""
+        mock_resource.gateway_id = "gw-1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        upstream = types.BlobResourceContents(uri=mock_resource.uri, mimeType="application/octet-stream", blob=blob, _meta={"source": "upstream"})
+
+        with patch.object(resource_service, "invoke_resource", new=AsyncMock(return_value=upstream)):
+            result = await resource_service.read_resource(mock_db, resource_id=mock_resource.id)
+
+        assert result.model_dump(by_alias=True, exclude_none=True) == upstream.model_dump(by_alias=True, exclude_none=True)
+        assert not hasattr(result, "text")
 
     @pytest.mark.asyncio
     async def test_read_resource_with_metadata(self, resource_service, mock_db, mock_resource):
@@ -4077,6 +4092,25 @@ class TestInvokeResourceCoverage:
         gw.oauth_config = None
         gw.auth_query_params = None
         return gw
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["sse", "streamablehttp"])
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    async def test_invoke_binary_resource(self, resource_service, transport, blob):
+        """Remote binary reads preserve the payload without accessing a text field."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport=transport)
+        content = types.BlobResourceContents(uri="test://binary", mimeType="application/octet-stream", blob=blob)
+        session = AsyncMock()
+        session.session = session
+        session.read_resource.return_value = types.ReadResourceResult(contents=[content])
+
+        with patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_client:
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await resource_service.invoke_resource(MagicMock(), resource.id, str(content.uri), resource_obj=resource, gateway_obj=gateway)
+
+        assert result == content
 
     @pytest.mark.asyncio
     async def test_no_resource_found(self, resource_service):

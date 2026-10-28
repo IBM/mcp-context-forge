@@ -5360,7 +5360,8 @@ async def test_read_resource_admin_bypass(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_read_resource_returns_blob(monkeypatch):
+@pytest.mark.parametrize("blob", [b"binary content here", b""])
+async def test_read_resource_returns_blob(monkeypatch, blob):
     """Test read_resource returns blob content when available (line 1053)."""
     # Third-Party
     from pydantic import AnyUrl
@@ -5370,7 +5371,7 @@ async def test_read_resource_returns_blob(monkeypatch):
 
     mock_db = MagicMock()
     mock_result = MagicMock()
-    mock_result.blob = b"binary content here"
+    mock_result.blob = blob
     mock_result.text = None
 
     @asynccontextmanager
@@ -5382,7 +5383,7 @@ async def test_read_resource_returns_blob(monkeypatch):
 
     test_uri = AnyUrl("file:///binary.bin")
     result = await read_resource(test_uri)
-    assert _read_content(result) == b"binary content here"
+    assert _read_content(result) == blob
 
 
 # ---------------------------------------------------------------------------
