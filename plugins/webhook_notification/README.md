@@ -67,6 +67,7 @@ config:
         hmac_secret: "${env.WEBHOOK_HMAC_SECRET}"
         hmac_algorithm: "sha256"
         hmac_header: "X-Hub-Signature-256"
+        hmac_include_timestamp: true   # opt in to replay protection (see "HMAC Signatures")
       retry_attempts: 5
       retry_delay: 2000
       timeout: 30
@@ -156,6 +157,54 @@ The following variables are available in payload templates:
 3. **HMAC Signatures**: Verify webhook authenticity on receiving end
 4. **Network Security**: Use HTTPS endpoints only
 5. **Timeout Configuration**: Prevent hanging requests
+
+## HMAC Signatures
+
+`type: hmac` signs each delivery with `hmac_secret`. The `X-Signature` value (or `hmac_header`) has the form `{hmac_algorithm}={hex}`.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `hmac_algorithm` | `sha256` | Hash algorithm for the HMAC |
+| `hmac_header` | `X-Signature` | Header that carries the signature |
+| `hmac_include_timestamp` | `false` | Bind the signature to a timestamp and delivery ID |
+| `hmac_timestamp_header` | `X-Timestamp` | Header that carries the Unix time in seconds |
+| `hmac_delivery_id_header` | `X-Delivery-Id` | Header that carries the delivery ID |
+
+The three header names must be non-empty and different from each other.
+
+**Legacy scheme** (`hmac_include_timestamp: false`, default). The signed material is the request body. A captured request can be replayed at any time.
+
+**Replay-protected scheme** (`hmac_include_timestamp: true`). The signed material is `{timestamp}.{delivery_id}.{body}`. The plugin signs each retry again with a fresh timestamp. The delivery ID stays the same across retries of one delivery.
+
+Receivers must:
+
+1. Recompute the HMAC over `{timestamp}.{delivery_id}.{body}` and compare with `hmac.compare_digest`.
+2. Reject a timestamp outside a freshness window, for example 300 seconds.
+3. Reject a delivery ID that was already accepted inside the window.
+
+```python
+import hashlib
+import hmac
+import time
+
+FRESHNESS_SECONDS = 300
+seen_delivery_ids: set[str] = set()  # use a shared store with expiry in production
+
+
+def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:
+    timestamp = headers["X-Timestamp"]
+    delivery_id = headers["X-Delivery-Id"]
+    if abs(time.time() - int(timestamp)) > FRESHNESS_SECONDS or delivery_id in seen_delivery_ids:
+        return False
+    material = f"{timestamp}.{delivery_id}.".encode() + body
+    expected = "sha256=" + hmac.new(secret.encode(), material, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, headers["X-Signature"]):
+        return False
+    seen_delivery_ids.add(delivery_id)
+    return True
+```
+
+The default flips to `true` in a later minor release. Set `hmac_include_timestamp: true` and update receivers before then.
 
 ## Example Webhook Payloads
 

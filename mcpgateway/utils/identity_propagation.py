@@ -30,18 +30,22 @@ from mcpgateway.transports.context import UserContext
 logger = logging.getLogger(__name__)
 
 
-def _resolve_config(gateway: Optional[Any] = None) -> Dict[str, Any]:
+def _resolve_config(gateway: Optional[Any] = None, identity_propagation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Resolve identity propagation configuration.
 
     Per-gateway config overrides global settings when present.
 
     Args:
         gateway: Optional gateway DB object with ``identity_propagation`` JSON field.
+        identity_propagation: Optional per-gateway config dict. Takes precedence over ``gateway``.
 
     Returns:
         Resolved configuration dict.
     """
-    gw_cfg = getattr(gateway, "identity_propagation", None) or {} if gateway else {}
+    if identity_propagation is not None:
+        gw_cfg = identity_propagation
+    else:
+        gw_cfg = getattr(gateway, "identity_propagation", None) or {} if gateway else {}
     return {
         "enabled": gw_cfg.get("enabled", settings.identity_propagation_enabled),
         "mode": gw_cfg.get("mode", settings.identity_propagation_mode),
@@ -68,12 +72,14 @@ def _sign_claims(payload: str) -> str:
 def build_identity_headers(
     user_context: UserContext,
     gateway: Optional[Any] = None,
+    identity_propagation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """Build HTTP headers carrying user identity for upstream servers.
 
     Args:
         user_context: The authenticated user's identity.
         gateway: Optional gateway DB object for per-gateway config overrides.
+        identity_propagation: Optional per-gateway config dict. Takes precedence over ``gateway``.
 
     Returns:
         Dict of HTTP headers to merge into the outbound request.
@@ -85,7 +91,7 @@ def build_identity_headers(
         >>> isinstance(h, dict)
         True
     """
-    cfg = _resolve_config(gateway)
+    cfg = _resolve_config(gateway, identity_propagation)
     if not cfg["enabled"]:
         return {}
 
@@ -124,6 +130,7 @@ def build_identity_meta(
     user_context: UserContext,
     existing_meta: Optional[Dict[str, Any]] = None,
     gateway: Optional[Any] = None,
+    identity_propagation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build ``_meta`` dict with user identity for MCP protocol propagation.
 
@@ -133,6 +140,7 @@ def build_identity_meta(
         user_context: The authenticated user's identity.
         existing_meta: Existing _meta dict to merge into.
         gateway: Optional gateway DB object for per-gateway config overrides.
+        identity_propagation: Optional per-gateway config dict. Takes precedence over ``gateway``.
 
     Returns:
         Updated _meta dict with user identity under the ``user`` key.
@@ -144,7 +152,7 @@ def build_identity_meta(
         >>> meta["existing_key"]
         'val'
     """
-    cfg = _resolve_config(gateway)
+    cfg = _resolve_config(gateway, identity_propagation)
     if not cfg["enabled"]:
         return existing_meta or {}
 

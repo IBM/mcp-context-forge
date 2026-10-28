@@ -20,11 +20,12 @@ import hmac
 import logging
 import time
 from typing import Any, Dict, List, Optional
+import uuid
 
 # Third-Party
 import httpx
 import orjson
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # First-Party
 from mcpgateway.config import settings
@@ -83,7 +84,26 @@ class AuthenticationConfig(BaseModel):
     hmac_secret: Optional[str] = None
     hmac_algorithm: str = "sha256"
     hmac_header: str = "X-Signature"
+    hmac_include_timestamp: bool = Field(default=False, description="Bind the signature to a timestamp and delivery ID")
     hmac_timestamp_header: str = "X-Timestamp"
+    hmac_delivery_id_header: str = "X-Delivery-Id"
+
+    @model_validator(mode="after")
+    def _validate_hmac_headers(self) -> "AuthenticationConfig":
+        """Reject empty or colliding HMAC header names.
+
+        Returns:
+            AuthenticationConfig: The validated configuration.
+
+        Raises:
+            ValueError: If a header name is empty or collides with another HMAC header.
+        """
+        names = [self.hmac_header, self.hmac_timestamp_header, self.hmac_delivery_id_header]
+        if any(not name.strip() for name in names):
+            raise ValueError("HMAC header names must not be empty")
+        if len({name.lower() for name in names}) != len(names):
+            raise ValueError("hmac_header, hmac_timestamp_header and hmac_delivery_id_header must differ")
+        return self
 
 
 class WebhookConfig(BaseModel):
@@ -167,24 +187,28 @@ class WebhookNotificationPlugin(Plugin):
                 result = result.replace(placeholder, str(value))
         return result
 
-    def _create_hmac_signature(self, payload: str, secret: str, algorithm: str, timestamp: str) -> str:
-        """Create HMAC signature for the payload, bound to a timestamp.
+    def _create_hmac_signature(self, payload: str, secret: str, algorithm: str, timestamp: Optional[str] = None, delivery_id: Optional[str] = None) -> str:
+        """Create HMAC signature for the payload.
 
-        The signed material is ``{timestamp}.{payload}`` so a captured
-        signature cannot be replayed at a different time.
+        Without ``timestamp`` the signed material is the payload alone (legacy scheme).
+        With ``timestamp`` it is ``{timestamp}.{payload}``, and with ``delivery_id`` it is
+        ``{timestamp}.{delivery_id}.{payload}``, so a captured signature cannot be replayed later.
 
         Args:
             payload: The payload to sign.
             secret: The secret key for HMAC.
             algorithm: The hash algorithm to use.
-            timestamp: Unix epoch seconds as a string, included in the signed material.
+            timestamp: Unix epoch seconds as a string, or None for the legacy scheme.
+            delivery_id: Unique delivery identifier, reused across retries.
 
         Returns:
             str: The HMAC signature string in the form ``{algorithm}={hex}``.
         """
         hash_func = getattr(hashlib, algorithm, hashlib.sha256)
-        signed_material = f"{timestamp}.{payload}".encode("utf-8")
-        signature = hmac.new(secret.encode("utf-8"), signed_material, hash_func).hexdigest()
+        signed_material = payload
+        if timestamp is not None:
+            signed_material = f"{timestamp}.{delivery_id}.{payload}" if delivery_id else f"{timestamp}.{payload}"
+        signature = hmac.new(secret.encode("utf-8"), signed_material.encode("utf-8"), hash_func).hexdigest()
         return f"{algorithm}={signature}"
 
     async def _send_webhook(
@@ -243,20 +267,29 @@ class WebhookNotificationPlugin(Plugin):
 
         # Add authentication
         auth_config = webhook.authentication
+        hmac_signing = False
         if auth_config.type == AuthenticationType.BEARER and auth_config.token:
             headers["Authorization"] = f"Bearer {auth_config.token}"
         elif auth_config.type == AuthenticationType.API_KEY and auth_config.api_key:
             headers[auth_config.api_key_header] = auth_config.api_key
         elif auth_config.type == AuthenticationType.HMAC and auth_config.hmac_secret:
-            timestamp = str(int(time.time()))
-            signature = self._create_hmac_signature(payload_json, auth_config.hmac_secret, auth_config.hmac_algorithm, timestamp)
-            headers[auth_config.hmac_header] = signature
-            headers[auth_config.hmac_timestamp_header] = timestamp
+            hmac_signing = True
+
+        # One delivery ID per delivery, reused across retries so receivers can deduplicate
+        delivery_id = uuid.uuid4().hex
 
         # Attempt delivery with retry logic
         for attempt in range(webhook.retry_attempts + 1):
+            attempt_headers = dict(headers)
+            if hmac_signing:
+                # Sign each attempt so retries carry a fresh timestamp
+                timestamp = str(int(time.time())) if auth_config.hmac_include_timestamp else None
+                attempt_headers[auth_config.hmac_header] = self._create_hmac_signature(payload_json, auth_config.hmac_secret, auth_config.hmac_algorithm, timestamp, delivery_id if timestamp else None)
+                if timestamp:
+                    attempt_headers[auth_config.hmac_timestamp_header] = timestamp
+                    attempt_headers[auth_config.hmac_delivery_id_header] = delivery_id
             try:
-                response = await self._client.post(webhook.url, content=payload_bytes, headers=headers, timeout=webhook.timeout)
+                response = await self._client.post(webhook.url, content=payload_bytes, headers=attempt_headers, timeout=webhook.timeout)
 
                 if 200 <= response.status_code < 300:
                     logger.debug(f"Webhook delivered successfully to {webhook.url} on attempt {attempt + 1}")
