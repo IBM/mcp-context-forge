@@ -156,3 +156,28 @@ async def test_get_tools_wraps_each_tool_for_langchain(loader):
     assert await tools["echo"].ainvoke({"text": "ab", "times": 2}) == "abab"
     # An error result comes back as text for the model instead of aborting the run
     assert "fail" in await tools["fail"].ainvoke({})
+
+
+@needs_langchain
+@pytest.mark.asyncio
+async def test_agent_run_survives_a_failing_tool(loader):
+    """The agent loop hands a tool error back to the model as a tool message instead of aborting the turn."""
+    # Third-Party
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    class _ScriptedModel(FakeMessagesListChatModel):
+        """Scripted answers; the fake base class does not implement bind_tools."""
+
+        def bind_tools(self, tools, **_kwargs):
+            return self
+
+    model = _ScriptedModel(responses=[AIMessage(content="", tool_calls=[{"name": "fail", "args": {}, "id": "call-1"}]), AIMessage(content="The tool failed.")])
+    agent = svc.create_react_agent(model, await loader.get_tools())
+
+    result = await agent.ainvoke({"messages": [HumanMessage(content="run fail")]})
+
+    tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert "fail" in tool_messages[0].content
+    assert result["messages"][-1].content == "The tool failed."
