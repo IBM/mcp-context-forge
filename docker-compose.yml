@@ -1275,6 +1275,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   prometheus_token:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     restart: "no"
     # Gateway image runs as non-root (uid 10001); named volumes are root-owned
@@ -1540,6 +1541,7 @@ services:
   ###############################################################################
   register_fast_time:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     depends_on:
       gateway:
@@ -1920,6 +1922,7 @@ services:
   ###############################################################################
   register_slow_time:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     depends_on:
       gateway:
@@ -2051,6 +2054,7 @@ services:
   ###############################################################################
   register_a2a_echo:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     depends_on:
       gateway:
@@ -2131,6 +2135,7 @@ services:
   ###############################################################################
   locust_token:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     restart: "no"
     # The gateway image runs as non-root (uid 10001). Docker named volumes are
@@ -2314,6 +2319,7 @@ services:
   ###############################################################################
   register_benchmark:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    pull_policy: never  # local-only image, built by this repo
     networks: [mcpnet]
     depends_on:
       gateway:

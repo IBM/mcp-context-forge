@@ -5952,8 +5952,10 @@ compose-build:
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) build
 
 .PHONY: compose-pull
+# gateway, migration and nginx are built locally and have no published image, so
+# skip them; the remaining services are the ones that really come from a registry.
 compose-pull:
-	$(COMPOSE) pull
+	$(COMPOSE) pull --ignore-buildable
 
 .PHONY: compose-logs
 compose-logs:

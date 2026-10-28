@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `make compose-pull` no longer exits non-zero with `pull access denied for mcpgateway/mcpgateway`. The helper services that only consume the locally built gateway image (`prometheus_token`, `register_fast_time`, `register_slow_time`, `register_a2a_echo`, `locust_token`, `register_benchmark`) now declare `pull_policy: never`, and the target passes `--ignore-buildable`, so a pull only fetches images that exist on a registry (#7307).
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
