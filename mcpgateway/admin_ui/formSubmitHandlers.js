@@ -1064,6 +1064,16 @@ export const handleEditServerFormSubmit = async function (e) {
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.set("visibility", formData.get("visibility"));
 
+    // A blank box means both "not set" and "send no instructions". Send the field only
+    // when the operator changed it, so a save never turns an empty override into "not set".
+    const instructionsField = document.getElementById("edit-server-instructions");
+    if (
+      instructionsField &&
+      instructionsField.value === (instructionsField.dataset.originalValue ?? "")
+    ) {
+      formData.delete("instructions");
+    }
+
     // Merge persistent selection store into FormData so off-screen selections are included
     [
       { containerId: "edit-server-tools", fieldName: "associatedTools" },

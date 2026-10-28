@@ -243,8 +243,6 @@ make autoflake isort black pre-commit
 make doctest test htmlcov smoketest
 make bandit interrogate pylint verify
 
-# If Rust code was changed:
-make rust-check
 ```
 
 ### Nginx Cache Management

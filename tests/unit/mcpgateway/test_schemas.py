@@ -55,6 +55,8 @@ def test_root_create_rejects_unknown_fields():
         RootCreate(uri="https://example.com/root", unexpected=True)
 
     assert excinfo.value.errors()[0]["type"] == "extra_forbidden"
+
+
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
@@ -1037,6 +1039,39 @@ class TestServerSchemas:
         assert server_with_objects.associated_prompts == ["13"]
 
 
+class TestServerInstructionsSchema:
+    """The operator ``instructions`` field on the server schemas."""
+
+    def test_defaults_to_not_set(self):
+        """An absent field means "not set"; the field is not in ``model_fields_set``."""
+        assert ServerCreate(name="s").instructions is None
+        assert "instructions" not in ServerUpdate(name="s").model_fields_set
+
+    def test_empty_string_is_kept(self):
+        """An empty string is a real value: "send no instructions"."""
+        assert ServerCreate(name="s", instructions="").instructions == ""
+        assert "instructions" in ServerUpdate(instructions="").model_fields_set
+
+    def test_explicit_null_is_tracked_on_update(self):
+        """An explicit null on update is a supplied field, so it can clear the value."""
+        update = ServerUpdate(instructions=None)
+        assert "instructions" in update.model_fields_set
+        assert update.instructions is None
+
+    def test_text_is_not_sanitized(self):
+        """Markdown and angle brackets pass through unchanged."""
+        text = "Use `now` before <tz> lookups.\n\n- one\n- two"
+        assert ServerCreate(name="s", instructions=text).instructions == text
+
+    @pytest.mark.parametrize("model", [ServerCreate, ServerUpdate])
+    def test_over_length_text_is_rejected(self, model):
+        """Text over the description limit fails validation."""
+        limit = SecurityValidator.MAX_DESCRIPTION_LENGTH
+        assert model(name="s", instructions="x" * limit).instructions == "x" * limit
+        with pytest.raises(ValidationError):
+            model(name="s", instructions="x" * (limit + 1))
+
+
 class TestToggleAndListSchemas:
     """Test status toggle and list filter schemas."""
 
@@ -1597,6 +1632,140 @@ class TestGatewayCreateCamelCase:
         update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
         for key in update_keys:
             assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
+
+
+class TestMcpServerIdProductTerminologyAlias:
+    """`gateway_id` request bodies may additionally spell it `mcp_server_id` (mcp-context-forge#6544).
+
+    The API's internal field name and response key stay `gateway_id` for now — only
+    request-side acceptance changes, so these tests also pin down that the output
+    key is unaffected.
+    """
+
+    def test_tool_create_accepts_mcp_server_id(self):
+        """ToolCreate (no camelCase alias_generator) accepts the new snake_case name."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", mcp_server_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_create_still_accepts_gateway_id(self):
+        """The existing field name keeps working."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", gateway_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_update_accepts_mcp_server_id_and_camel_case(self):
+        """ToolUpdate uses BaseModelWithConfigDict, so the camelCase spelling must also work."""
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        assert ToolUpdate(mcp_server_id="gw-2").gateway_id == "gw-2"
+        assert ToolUpdate(mcpServerId="gw-3").gateway_id == "gw-3"
+        # Pre-existing spellings are unaffected.
+        assert ToolUpdate(gateway_id="gw-4").gateway_id == "gw-4"
+        assert ToolUpdate(gatewayId="gw-5").gateway_id == "gw-5"
+
+    def test_resource_create_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate
+
+        resource = ResourceCreate(uri="file:///x", name="r", content="c", mcp_server_id="gw-6")
+        assert resource.gateway_id == "gw-6"
+
+    def test_prompt_create_accepts_mcp_server_id_and_camel_case(self):
+        # First-Party
+        from mcpgateway.schemas import PromptCreate
+
+        assert PromptCreate(name="p", template="t", mcp_server_id="gw-7").gateway_id == "gw-7"
+        assert PromptCreate(name="p", template="t", mcpServerId="gw-8").gateway_id == "gw-8"
+
+    def test_gateway_handshake_request_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        req = GatewayHandshakeRequest(base_url="https://example.com", mcp_server_id="gw-9")
+        assert req.gateway_id == "gw-9"
+
+    def test_response_still_serializes_under_existing_key(self):
+        """Output aliasing is a documented follow-up, not part of this change.
+
+        Until it lands, the response key stays exactly what it is today
+        regardless of which accepted input spelling populated the field.
+        """
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        data = ToolUpdate(mcp_server_id="gw-10").model_dump(by_alias=True, exclude_unset=True)
+        assert data == {"gatewayId": "gw-10"}
+
+
+class TestServerCreateRequestProductTerminologyAlias:
+    """The virtual-server create body may use `virtual_server` as well as `server` (mcp-context-forge#6544)."""
+
+    def test_accepts_legacy_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"server": {"name": "s1"}, "team_id": None, "visibility": "public"})
+        assert payload.server.name == "s1"
+        assert payload.visibility == "public"
+
+    def test_accepts_virtual_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"virtual_server": {"name": "s2"}, "team_id": "team-1", "visibility": "team"})
+        assert payload.server.name == "s2"
+        assert payload.team_id == "team-1"
+
+
+class TestProductTerminologyAliasConflicts:
+    """Conflicting spellings of one field fail validation (#6544)."""
+
+    @pytest.mark.parametrize(
+        ("factory", "kwargs"),
+        [
+            (ToolCreate, {"name": "t", "url": "http://example.com"}),
+            (ToolUpdate, {}),
+            (ResourceCreate, {"uri": "file:///x", "name": "r", "content": "c"}),
+            (PromptCreate, {"name": "p", "template": "t"}),
+        ],
+    )
+    def test_conflicting_gateway_id_spellings_rejected(self, factory, kwargs):
+        with pytest.raises(ValueError, match="Conflicting values"):
+            factory.model_validate({**kwargs, "gateway_id": "a", "mcp_server_id": "b"})
+
+    def test_matching_spellings_accepted(self):
+        assert ToolUpdate.model_validate({"gatewayId": "a", "mcpServerId": "a"}).gateway_id == "a"
+
+    def test_conflicting_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError, match="Conflicting values"):
+            ServerCreateRequest.model_validate({"server": {"name": "a"}, "virtual_server": {"name": "b"}})
+
+    def test_missing_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError):
+            ServerCreateRequest.model_validate({"team_id": "t"})
+
+    def test_openapi_property_names_unchanged(self):
+        """The first accepted spelling keeps the pre-alias OpenAPI property name."""
+        assert "gatewayId" in ToolUpdate.model_json_schema()["properties"]
+        assert "gatewayId" in PromptCreate.model_json_schema()["properties"]
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        assert "gatewayId" in GatewayHandshakeRequest.model_json_schema()["properties"]
+        assert "gateway_id" in ToolCreate.model_json_schema()["properties"]
+        assert "gateway_id" in ResourceCreate.model_json_schema()["properties"]
 
 
 class TestTitleSchemas:

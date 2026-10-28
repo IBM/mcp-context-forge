@@ -4569,9 +4569,9 @@ class TestRegisterToolBranches:
         db = MagicMock()
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
 
-        # visibility=None => uses tool.visibility="team", team_id defaults from tool.team_id
+        # visibility=None => uses tool.visibility="team"; the team scope comes from the parameter
         with pytest.raises(ToolNameConflictError):
-            await tool_service.register_tool(db, tool, visibility=None, owner_email=None)
+            await tool_service.register_tool(db, tool, visibility=None, team_id="team-99", owner_email=None)
 
 
 # ---------------------------------------------------------------------------

@@ -1055,6 +1055,16 @@ class TestServerEndpoints:
         assert response.status_code == 201
         mock_create.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    @patch("mcpgateway.main.server_service.register_server")
+    def test_create_server_accepts_virtual_server_body_key(self, mock_create, path_prefix, test_client, auth_headers):
+        """`virtual_server` works as a product-terminology alias of the `server` body key (#6544)."""
+        mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
+        req = {"virtual_server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
+        assert response.status_code == 201
+        mock_create.assert_called_once()
+
     def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
         req = {
@@ -1094,6 +1104,18 @@ class TestServerEndpoints:
         req = {"description": "Updated description"}
         response = test_client.put("/servers/1", json=req, headers=auth_headers)
         assert response.status_code == status_code
+
+    @patch("mcpgateway.main.server_service.update_server")
+    def test_update_server_instructions_denied_for_non_owner(self, mock_update, test_client, auth_headers):
+        """A caller who does not own the server gets 403 when setting ``instructions``."""
+        mock_update.side_effect = PermissionError("Only the owner can update this server")
+        response = test_client.put("/servers/1", json={"instructions": "Injected text"}, headers=auth_headers)
+        assert response.status_code == 403
+
+    def test_update_server_instructions_over_limit_rejected(self, test_client, auth_headers):
+        """Instructions over the length limit fail request validation."""
+        response = test_client.put("/servers/1", json={"instructions": "x" * 9000}, headers=auth_headers)
+        assert response.status_code == 422
 
     @patch("mcpgateway.main.server_service.set_server_state")
     def test_set_server_state(self, mock_toggle, test_client, auth_headers):
@@ -3234,7 +3256,6 @@ class TestRootEndpoints:
         assert "Internal error" in response.json()["detail"]
         endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway" and record.levelno >= logging.ERROR]
         assert endpoint_logs == ["Failed to remove root"]
-
 
     @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.subscribe_changes")
@@ -6714,11 +6735,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
 
     # Verify the warning was logged with correct calculation
     # workers=4, pool_size=50, max_overflow=10 -> total_pool=60, total_connections=240
-    warning_found = any(
-        "DATABASE POOL: Running with 4 gunicorn workers" in record.message
-        and "240" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 4 gunicorn workers" in record.message and "240" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
@@ -6791,11 +6808,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
         async with main_mod.lifespan(main_mod.app):
             await asyncio.sleep(0)
 
-    warning_found = any(
-        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
-        and "1560" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 13 gunicorn workers" in record.message and "1560" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
@@ -7009,3 +7022,253 @@ def test_main_vault_router_skipped_when_backend_is_not_vault():
 
     mock_app.include_router.assert_not_called()
     mock_logger.debug.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Create-route scope resolution                                                #
+# --------------------------------------------------------------------------- #
+_PUBLIC_ONLY_DENIAL = "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."
+
+
+def _scope_request(team_id=None, token_teams=None):
+    """Build a request stub carrying the token scope state."""
+    # Standard
+    from types import SimpleNamespace
+
+    return SimpleNamespace(state=SimpleNamespace(team_id=team_id, token_teams=token_teams))
+
+
+def _scope_payload(team_id=None, visibility=None):
+    """Build a create-payload stub carrying nested scope fields."""
+    # Standard
+    from types import SimpleNamespace
+
+    return SimpleNamespace(team_id=team_id, visibility=visibility)
+
+
+class TestResolveCreateScope:
+    """Create routes derive the effective team and visibility from token state."""
+
+    @staticmethod
+    async def _resolve(request, payload, team_id=None, visibility=None, permitted=True):
+        """Run the helper with a patched permission check and return (result, mock)."""
+        # First-Party
+        from mcpgateway.main import _resolve_create_scope
+
+        with patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=permitted)) as perm:
+            result = await _resolve_create_scope(request, {"email": "alice@example.com"}, MagicMock(), "servers.create", payload, team_id, visibility)
+        return result, perm
+
+    async def test_nested_team_differs_from_token_team_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request("team-a", ["team-a"]), _scope_payload(team_id="team-other"))
+
+    async def test_nested_team_conflicts_with_top_level_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request(None, None), _scope_payload(team_id="team-other"), team_id="team-a")
+
+    async def test_team_outside_token_teams_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied):
+            await self._resolve(_scope_request(None, ["team-a"]), _scope_payload(team_id="team-other"))
+
+    async def test_permission_missing_in_final_team_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        request = _scope_request(None, ["team-a", "team-other"])
+        with patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=False)) as perm:
+            # First-Party
+            from mcpgateway.main import _resolve_create_scope
+
+            with pytest.raises(_CreateScopeDenied) as exc_info:
+                await _resolve_create_scope(request, {"email": "alice@example.com"}, MagicMock(), "servers.create", _scope_payload(team_id="team-other"), None, None)
+        assert perm.await_args.kwargs["team_id"] == "team-other"
+        assert str(exc_info.value) == "Missing servers.create in the requested team."
+
+    async def test_nested_team_matching_token_team_is_accepted(self):
+        result, _ = await self._resolve(_scope_request("team-a", ["team-a"]), _scope_payload(team_id="team-a", visibility="team"))
+        assert result == ("team-a", "team")
+
+    async def test_nested_only_team_with_session_token_is_kept(self):
+        result, _ = await self._resolve(_scope_request(None, ["team-a"]), _scope_payload(team_id="team-a"))
+        assert result[0] == "team-a"
+
+    async def test_public_only_token_nested_team_visibility_is_denied(self):
+        # First-Party
+        from mcpgateway.main import _CreateScopeDenied
+
+        with pytest.raises(_CreateScopeDenied) as exc_info:
+            await self._resolve(_scope_request(None, []), _scope_payload(visibility="team"))
+        assert str(exc_info.value) == _PUBLIC_ONLY_DENIAL
+
+    async def test_public_only_token_drops_team(self):
+        result, _ = await self._resolve(_scope_request(None, []), _scope_payload(team_id="team-other", visibility="public"))
+        assert result == (None, "public")
+
+    async def test_admin_bypass_accepts_requested_team(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(team_id="team-other"))
+        assert result[0] == "team-other"
+
+    async def test_top_level_visibility_wins_over_nested(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(visibility="public"), visibility="private")
+        assert result[1] == "private"
+
+    async def test_nested_visibility_used_when_top_level_absent(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload(visibility="team"))
+        assert result[1] == "team"
+
+    async def test_visibility_defaults_to_public(self):
+        result, _ = await self._resolve(_scope_request(None, None), _scope_payload())
+        assert result == (None, "public")
+
+
+_TEAM_A = "11111111-1111-4111-8111-111111111111"
+_TEAM_OTHER = "22222222-2222-4222-8222-222222222222"
+
+
+class TestCreateRoutesRejectForeignNestedTeam:
+    """A nested team outside the token scope is rejected before the service runs."""
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "body", "service_patch"),
+        [
+            ("/servers/", "server", {"name": "test-server"}, "mcpgateway.main.server_service.register_server"),
+            ("/tools/", "tool", {"name": "test_tool", "url": "http://example.com"}, "mcpgateway.main.tool_service.register_tool"),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "Test Resource", "content": "hello"}, "mcpgateway.main.resource_service.register_resource"),
+            ("/prompts/", "prompt", {"name": "test_prompt", "template": "Hello"}, "mcpgateway.main.prompt_service.register_prompt"),
+        ],
+    )
+    def test_nested_team_outside_token_team_returns_403(self, path, body_key, body, service_patch, app_with_temp_db, auth_headers):
+        """A nested team that differs from the token team is denied with the team message."""
+        # First-Party
+        from mcpgateway.main import _CREATE_TEAM_DENIED
+
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=[_TEAM_A], team_id=_TEAM_A)
+        with patch(service_patch, new_callable=AsyncMock) as register:
+            response = client.post(path, json={body_key: {**body, "team_id": _TEAM_OTHER}}, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["message"] == _CREATE_TEAM_DENIED
+        register.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "body", "service_patch"),
+        [
+            ("/servers/", "server", {"name": "test-server"}, "mcpgateway.main.server_service.register_server"),
+            ("/tools/", "tool", {"name": "test_tool", "url": "http://example.com"}, "mcpgateway.main.tool_service.register_tool"),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "Test Resource", "content": "hello"}, "mcpgateway.main.resource_service.register_resource"),
+            ("/prompts/", "prompt", {"name": "test_prompt", "template": "Hello"}, "mcpgateway.main.prompt_service.register_prompt"),
+        ],
+    )
+    def test_nested_team_outside_token_teams_returns_403_with_global_permission(self, path, body_key, body, service_patch, app_with_temp_db, auth_headers):
+        """A nested team outside token_teams is denied even when the permission check passes globally."""
+        # First-Party
+        from mcpgateway.main import _CREATE_TEAM_DENIED
+
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=[_TEAM_A], team_id=None)
+        with patch(service_patch, new_callable=AsyncMock) as register, patch("mcpgateway.main.check_permission_inline", AsyncMock(return_value=True)):
+            response = client.post(path, json={body_key: {**body, "team_id": _TEAM_OTHER}}, headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["message"] == _CREATE_TEAM_DENIED
+        register.assert_not_awaited()
+
+
+class TestMcpServerIdProductTerminologyAlias:
+    """HTTP coverage for the ``mcp_server_id`` alias of ``gateway_id`` (#6544)."""
+
+    @pytest.mark.parametrize(
+        ("path", "service", "body_key", "entity", "read_model", "mock_read"),
+        [
+            ("/tools/", "tool_service", "tool", {"name": "t", "url": "http://example.com"}, None, MOCK_TOOL_READ_SNAKE),
+            ("/resources/", "resource_service", "resource", {"uri": "test/resource", "name": "r", "content": "c"}, ResourceRead, MOCK_RESOURCE_READ),
+            ("/prompts/", "prompt_service", "prompt", {"name": "p", "template": "Hello"}, PromptRead, MOCK_PROMPT_READ),
+        ],
+    )
+    @pytest.mark.parametrize("spelling", ["mcp_server_id", "gateway_id"])
+    def test_create_accepts_alias_and_original(self, path, service, body_key, entity, read_model, mock_read, spelling, test_client, auth_headers):
+        """Create bodies map both spellings onto the ``gateway_id`` field."""
+        register = f"register_{body_key}"
+        with patch(f"mcpgateway.main.{service}.{register}") as mock_register:
+            mock_register.return_value = mock_read if read_model is None else read_model(**mock_read)
+            req = {body_key: {**entity, spelling: "gw-1"}, "team_id": None, "visibility": "private"}
+            response = test_client.post(path, json=req, headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_register.call_args.args[1].gateway_id == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "body_key", "entity"),
+        [
+            ("/tools/", "tool", {"name": "t", "url": "http://example.com"}),
+            ("/resources/", "resource", {"uri": "test/resource", "name": "r", "content": "c"}),
+            ("/prompts/", "prompt", {"name": "p", "template": "Hello"}),
+        ],
+    )
+    def test_create_rejects_conflicting_spellings(self, path, body_key, entity, test_client, auth_headers):
+        """Different values under both spellings return 422."""
+        req = {body_key: {**entity, "gateway_id": "gw-1", "mcp_server_id": "gw-2"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(path, json=req, headers=auth_headers)
+        assert response.status_code == 422
+
+    @patch("mcpgateway.routers.mcp_servers_router.test_gateway_handshake")
+    def test_handshake_accepts_mcp_server_id(self, mock_handshake, test_client, auth_headers):
+        """The gateway handshake body accepts ``mcp_server_id``."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        response = test_client.post("/v1/mcp-servers/test-handshake", json={"base_url": "https://example.com", "mcp_server_id": "gw-1"}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_handshake.call_args.args[0].gateway_id == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "service", "method"),
+        [("/tools/", "tool_service", "list_tools"), ("/resources/", "resource_service", "list_resources"), ("/prompts/", "prompt_service", "list_prompts")],
+    )
+    def test_list_filter_accepts_mcp_server_id(self, path, service, method, test_client, auth_headers):
+        """The list filter accepts ``mcp_server_id`` and forwards it as ``gateway_id``."""
+        with patch(f"mcpgateway.main.{service}.{method}") as mock_list:
+            mock_list.return_value = ([], None)
+            response = test_client.get(f"{path}?mcp_server_id=gw-1", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_list.call_args.kwargs["gateway_id"] == "gw-1"
+
+    @pytest.mark.parametrize(
+        ("path", "service", "method"),
+        [("/tools/", "tool_service", "list_tools"), ("/resources/", "resource_service", "list_resources"), ("/prompts/", "prompt_service", "list_prompts")],
+    )
+    def test_list_filter_rejects_conflicting_spellings(self, path, service, method, test_client, auth_headers):
+        """Different values under both query spellings return 422 without a service call."""
+        with patch(f"mcpgateway.main.{service}.{method}") as mock_list:
+            response = test_client.get(f"{path}?gateway_id=gw-1&mcp_server_id=gw-2", headers=auth_headers)
+        assert response.status_code == 422
+        mock_list.assert_not_called()
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    def test_create_server_rejects_conflicting_keys(self, path_prefix, test_client, auth_headers):
+        """Different values under ``server`` and ``virtual_server`` return 422."""
+        req = {"server": {"name": "a"}, "virtual_server": {"name": "b"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+
+    def test_openapi_documents_aliases(self, test_client):
+        """OpenAPI keeps the original property names and lists the new server key."""
+        schemas = test_client.app.openapi()["components"]["schemas"]
+        assert "gatewayId" in schemas["ToolUpdate"]["properties"]
+        assert "gatewayId" in schemas["PromptCreate"]["properties"]
+        assert "gatewayId" in schemas["GatewayHandshakeRequest"]["properties"]
+        assert "gateway_id" in schemas["ToolCreate"]["properties"]
+        assert "gateway_id" in schemas["ResourceCreate"]["properties"]
+        request = schemas["ServerCreateRequest"]
+        assert "virtual_server" in request["properties"]
+        assert request["anyOf"] == [{"required": ["server"]}, {"required": ["virtual_server"]}]
+        assert "required" not in request

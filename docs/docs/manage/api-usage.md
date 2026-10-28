@@ -27,6 +27,23 @@ The gateway forwards the reference, argument, context, and request `_meta` to th
 owning upstream. Local schema completion remains available for local references.
 An upstream without `completions` returns JSON-RPC `-32601` on MCP routes.
 
+## Terminology aliases
+
+The product calls a registered upstream an "MCP server" and a virtual server a "virtual server". The API keeps the original names and also accepts the product names in requests.
+
+| Original | Alias | Where |
+|----------|-------|-------|
+| `gateway_id` | `mcp_server_id` | Tool, resource, and prompt create and update bodies; the MCP-server handshake test body |
+| `gateway_id` | `mcp_server_id` | Query filter on `GET /tools`, `GET /resources`, `GET /prompts`, and `GET /v1/search` |
+| `server` | `virtual_server` | Top-level key of the `POST /servers` and `POST /v1/virtual-servers` body |
+
+Rules:
+
+- Both spellings work. Responses keep the original key names.
+- Camel-case bodies accept `mcpServerId` where they accept `gatewayId`.
+- A request that sends both spellings with different values returns `422`.
+- A request that sends both spellings with the same value is accepted.
+
 ## Prerequisites
 
 Before using the API, you need to:
@@ -650,7 +667,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Preview a Tool Call (Dry Run)
 
-`POST /tools/preview/{name}` validates and resolves a tool call without executing it — no
+`POST /v1/tools/preview/{name}` (also available as `POST /tools/preview/{name}`) validates
+and resolves a tool call without executing it — no
 REST/MCP/A2A/gRPC call is made, and no `TOOL_POST_INVOKE` hook runs. It shares tool
 resolution, RBAC, and input-schema validation with the live `tools/call` path (via
 `ToolService._resolve_tool_for_invocation`), so a `validated: true` preview is a reliable
@@ -669,6 +687,43 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
 ```
+
+#### Virtual-server-scoped preview
+
+Add `server_id` to preview a tool attached to a specific virtual server. The server must be
+visible to the caller, and the tool must be attached to that server. Omitting `server_id` or
+setting it to `null` keeps the existing global tool lookup. Surrounding whitespace is
+stripped; the resulting ID must contain between 1 and 36 characters.
+
+If several tools on the same server share an upstream name, use the qualified tool name
+shown in the server's Components list; `server_id` alone does not resolve that ambiguity.
+
+```bash
+# SERVER_ID is the virtual server ID; TOOL_NAME is its qualified tool name.
+jq -n --arg server_id "$SERVER_ID" --argjson args '{"param1":"value1"}' \
+  '{"server_id":$server_id,"arguments":$args}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/v1/tools/preview/$TOOL_NAME" | jq
+```
+
+!!! note "Server-scoped API tokens"
+    A `server_id` in the request body scopes tool resolution; it does not change which
+    routes a token may access. Token-scoping middleware currently rejects this REST
+    preview route with `403` for tokens restricted to a server, even when the body names
+    that same server. Use an otherwise authorized token without a server restriction.
+    This applies to both the `/v1` and legacy routes.
+
+#### Preview responses
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Preview completed. Check `validated`; invalid tool arguments return `validated: false` with warnings, without executing the tool. |
+| `400` | Tool resolution failed, for example because an upstream name is ambiguous within the requested server. Use a qualified tool name. |
+| `401` | Authentication is missing or invalid. |
+| `403` | The caller lacks `tools.preview`, or token restrictions deny the request (including server-scoped API tokens). |
+| `404` | Preview is disabled, the tool is missing or inaccessible, or it is not attached to the requested server. Missing and inaccessible servers both return `{"detail":"Server not found: <server_id>"}`. |
+| `422` | The request body is invalid, for example an empty, whitespace-only, or overlong `server_id`. |
 
 Response shape (`pre_hooks_run` lists the names of `preview_safe`-tagged plugins that actually
 ran — not a fixed set of built-in stages, so it's empty on a gateway with no such plugins
@@ -874,6 +929,55 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
+
+### Server Instructions
+
+A virtual server tells each MCP client how to use it. The text is the `instructions` field of the handshake result:
+
+- Legacy era (`2025-11-25` and earlier): the `initialize` result.
+- Modern era (`2026-07-28`): the `server/discover` result.
+
+The gateway chooses the text in this order:
+
+1. **Operator override.** The `instructions` field of the virtual server, when it is not `null`.
+   An empty string (`""`) is an override that sends no `instructions` field.
+2. **Upstream text.** The text of the upstream server, when the virtual server is single-upstream.
+   A virtual server is single-upstream when every tool, resource, and prompt comes from the same registered gateway
+   and the virtual server has no A2A agent. A virtual server that uses only some tools of one gateway is single-upstream.
+   When that upstream server sends no text, the virtual server sends the default text.
+   A caller that cannot see the upstream gateway also receives the default text.
+3. **Default text.** Every other virtual server, and the global `/mcp` endpoint, send the default text.
+
+```bash
+# Set an override
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": "Call get_system_time before any other tool."}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+
+# Send no instructions field
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": ""}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+
+# Remove the override and use the upstream or default text again
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": null}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+```
+
+A request that omits `instructions` leaves the override unchanged. The maximum length is 8192 characters.
+The Admin UI shows the same field as **Instructions** on the create and edit forms. A blank field means `null`.
+
+!!! note "When upstream text changes"
+    The gateway stores the upstream text when it connects to the upstream server and when it refreshes the gateway.
+    A change on the upstream server reaches clients after the next refresh, not on the next request.
+
+!!! warning "Upstream text is untrusted"
+    A client can place `instructions` in the prompt of a model. A malicious or faulty upstream server can use this
+    to steer the model. If you do not trust an upstream server, set an override on each virtual server that uses it.
 
 ### Enable/Disable Server
 

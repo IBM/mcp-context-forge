@@ -114,7 +114,7 @@ from mcpgateway.main import (
     validate_security_configuration,
 )
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
-from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
+from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerCreateRequest, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -662,6 +662,7 @@ class TestMcpSerialization:
 
     def test_serialize_mcp_tool_definition_gets_title_from_object_attr(self):
         """title should be extractable via getattr for non-dict objects."""
+
         class FakeTool:
             name = "fake-tool"
             title = "Fake Tool Title"
@@ -6411,6 +6412,8 @@ class TestRpcHandling:
             {"session_id": "sess-1", "protocolVersion": "2025-11-25"},
             session_id="sess-1",
             server_id="srv-1",
+            user_email="user@example.com",
+            token_teams=["team-a"],
         )
 
     async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):
@@ -10099,9 +10102,7 @@ class TestExportImportEndpoints:
         monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__(
-                MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"}
-            )
+            await main_mod.export_selective_configuration.__wrapped__(MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"})
 
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
@@ -10146,7 +10147,9 @@ class TestExportImportEndpoints:
         import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]}}
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
+            )
 
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
@@ -10163,7 +10166,9 @@ class TestExportImportEndpoints:
         monkeypatch.setattr(main_mod, "import_service", import_service)
         monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
-        result = await main_mod.import_configuration.__wrapped__(import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+        result = await main_mod.import_configuration.__wrapped__(
+            import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
+        )
 
         assert result == {"status": "ok"}
         import_service.import_configuration.assert_awaited_once()
@@ -10838,13 +10843,11 @@ class TestRemainingCoverageGaps:
 
         request = _make_request("/servers")
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
-        server_obj = MagicMock()
+        server_obj = MagicMock(team_id=None, visibility=None)
 
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id=None, visibility="team"),
             request,
-            team_id=None,
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -10852,10 +10855,8 @@ class TestRemainingCoverageGaps:
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id="team-2", visibility="team"),
             request,
-            team_id="team-2",
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -10878,10 +10879,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.server_service, "register_server", register)
         db = MagicMock()
         _ = await main_mod.create_server.__wrapped__(
-            server_obj,
+            ServerCreateRequest(server=ServerCreate(name="s"), team_id="team-1", visibility="public"),
             request,
-            team_id="team-1",
-            visibility="public",
             db=db,
             user={"email": "user@example.com"},
         )
@@ -12064,7 +12063,7 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(main_mod.resource_service, "register_resource", AsyncMock(side_effect=ResourceError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_resource.__wrapped__(MagicMock(), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
+            await main_mod.create_resource.__wrapped__(MagicMock(team_id=None, visibility=None), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_reraises_unhandled_exception(self, monkeypatch):

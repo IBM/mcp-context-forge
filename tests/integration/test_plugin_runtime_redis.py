@@ -366,6 +366,7 @@ class TestTTLCacheExpiryRedis:
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
         factory._managers = {}
         factory._inflight = {}
+        factory._aliases = {}
         factory._lock = asyncio.Lock()
         factory._cache_ttl = 1  # 1 second TTL
         factory._base_config = MagicMock()

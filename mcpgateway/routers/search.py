@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.query_params import QueryEntityTypes, QueryGatewayIdList, QueryTagsFilter
+from mcpgateway.common.query_params import QueryEntityTypes, QueryGatewayIdList, QueryMcpServerIdList, QueryTagsFilter, resolve_gateway_id_filter
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
@@ -49,6 +49,7 @@ async def unified_search(
         description="Optional alias for per-entity result limit",
     ),
     gateway_id: QueryGatewayIdList = None,
+    mcp_server_id: QueryMcpServerIdList = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user: Any = Depends(get_current_user_with_permissions),
@@ -70,6 +71,7 @@ async def unified_search(
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
         gateway_id (Optional[str]): Gateway filter for tools/resources/prompts.
+        mcp_server_id (Optional[str]): Alias of ``gateway_id``.
         team_id (Optional[str]): Team scope filter.
         db (Session): Database session.
         user: Authenticated user context.
@@ -87,6 +89,7 @@ async def unified_search(
     )  # noqa: PLC2701 — reuse admin core, deferred to keep admin off the startup import path  # pylint: disable=import-outside-toplevel
 
     team_id = _validated_team_id_param(team_id)
+    gateway_id = resolve_gateway_id_filter(gateway_id, mcp_server_id)
     return await perform_unified_search(
         request=request,
         q=q,

@@ -10,7 +10,6 @@ tests/
 │   └── mcpgateway/     # Mirrors source structure
 ├── integration/        # Cross-module and service integration tests
 ├── e2e/               # End-to-end flows (slower; may require services)
-├── e2e_rust/          # Rust-mode-specific end-to-end flows (requires Rust MCP path)
 ├── performance/        # Database performance & N+1 detection tests
 ├── playwright/        # UI automation (requires extra setup)
 ├── security/          # Security validation tests
@@ -61,9 +60,7 @@ make test-e2e                     # Consolidated MCP protocol and RBAC E2E (need
 # test-mcp-cli and test-mcp-rbac are plain aliases for test-e2e.
 # test-mcp-protocol-e2e is a deprecated alias for test-e2e (sunsets 2027-01-18).
 make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
-make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels
-make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
-make test-mcp-session-isolation-load  # Rust-only Locust correctness load test
+make test-mcp-session-isolation-load  # Locust MCP session isolation correctness load test
 
 # Selective runs
 pytest -k "fragment"              # By name substring
