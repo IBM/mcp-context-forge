@@ -26,6 +26,10 @@
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
 
+### Changed
+
+- **A2A agent cards follow the 1.0 schema (breaking for card consumers)** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Cards for agents with a stored protocol version of 1.x now use the A2A 1.0 `AgentCard` shape, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. `protocol_version` defaults to `"1.0"`, so most existing agents change shape. These fields leave 1.x cards: `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`. A caller that sends `A2A-Version: 0.3` to the sidecar keeps the legacy shape for a 1.x agent. A caller that sends no version follows the stored version. Agents with a stored version of 0.x keep the legacy shape. Server cards now aggregate `streaming`, `pushNotifications`, and the default input and output modes from enabled associated agents instead of hardcoded values. Server cards skip malformed capability entries. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. Scheme names are `basicAuth`, `bearerAuth`, `apiKeyAuth`, and `oauth2Auth`. OAuth schemes read the stored `scopes` list and always emit the scope map.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview
