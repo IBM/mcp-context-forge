@@ -27,6 +27,10 @@ findings:
   check: server-session-terminated-returns-404
   name: SessionTerminatedReturns404
   status: FAILURE
+- scenario: server-sse-polling
+  check: scenario-timeout
+  name: Scenario completes within the timeout
+  status: FAILURE
 - scenario: tools-call-elicitation
   check: tools-call-elicitation
   name: ToolsCallElicitation

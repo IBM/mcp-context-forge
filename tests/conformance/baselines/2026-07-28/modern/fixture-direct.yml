@@ -63,31 +63,3 @@ findings:
   check: sep-2322-validate-input-responses
   name: ValidateInputResponses
   status: WARNING
-- scenario: tools-call-audio
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-embedded-resource
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-error
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-image
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-mixed-content
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-simple-text
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
-- scenario: tools-call-with-progress
-  check: wire-schema-valid
-  name: WireSchemaValid
-  status: FAILURE
