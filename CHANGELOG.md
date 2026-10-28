@@ -34,6 +34,8 @@
 
 #### **API & Platform**
 
+- **A2A aggregate metrics endpoint** ([#6697](https://github.com/IBM/mcp-context-forge/issues/6697)) - `GET /v1/a2a/metrics` returns `A2AAgentAggregateMetrics` for the agents the caller can see. It requires `a2a.read`, not `admin.metrics`. `A2AAgentService.aggregate_metrics()` now accepts `user_email` and `token_teams` and counts only visible agents, including disabled ones. The unscoped call used by `GET /v1/metrics` is unchanged. The route returns 404 when `MCPGATEWAY_A2A_METRICS_ENABLED` is `false`.
+
 - **Product-terminology request aliases for `gateway_id` and the virtual-server `server` body key** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt create/update bodies, and the gateway/MCP-server handshake test request, now also accept `mcp_server_id` as an alias of `gateway_id` ("MCP server" is the product term for what the code calls a "gateway"). The tool, resource, and prompt list endpoints and `GET /v1/search` accept `mcp_server_id` as a query alias of `gateway_id`. `POST /servers` and `POST /v1/virtual-servers` also accept a top-level `virtual_server` key as an alias of `server`. Sending two spellings with different values returns 422. Existing field names and body keys keep working, OpenAPI property names are unchanged, and responses keep the existing key names. In OpenAPI, the `Body_create_server_*` request components are replaced by `ServerCreateRequest`. Output-side aliasing, RBAC permission strings, audit `resource_type` values, and config names remain tracked under #6544.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination

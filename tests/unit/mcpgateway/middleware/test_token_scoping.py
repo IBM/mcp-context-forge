@@ -614,6 +614,7 @@ class TestTokenScopingMiddleware:
             ("POST", "/a2a/invoke", Permissions.A2A_INVOKE),
             ("POST", "/a2a/my-agent/invoke", Permissions.A2A_INVOKE),
             ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_INVOKE),
+            ("GET", "/a2a/metrics", Permissions.A2A_READ),
         ],
     )
     def test_a2a_routes_map_to_declared_permission(self, middleware, method, path, permission):
@@ -628,6 +629,7 @@ class TestTokenScopingMiddleware:
             ("DELETE", "/a2a/agent-1", Permissions.A2A_UPDATE),
             ("POST", "/a2a/my-agent/invoke", Permissions.A2A_READ),
             ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_UPDATE),
+            ("GET", "/a2a/metrics", Permissions.A2A_INVOKE),
         ],
     )
     def test_a2a_routes_reject_wrong_permission(self, middleware, method, path, permission):

@@ -12,7 +12,7 @@ with historical hourly rollups for complete historical coverage.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Sequence, Type
 
 # Third-Party
 from sqlalchemy import and_, case, func, literal, select, union_all
@@ -273,6 +273,7 @@ def aggregate_metrics_combined(
     db: Session,
     metric_type: str,
     entity_id: Optional[str] = None,
+    entity_ids: Optional[Sequence[str]] = None,
 ) -> AggregatedMetrics:
     """Aggregate metrics combining three data sources for complete coverage.
 
@@ -288,6 +289,7 @@ def aggregate_metrics_combined(
         db: Database session
         metric_type: Type of metric ('tool', 'resource', 'prompt', 'server', 'a2a_agent')
         entity_id: Optional entity ID to filter by (e.g., specific tool_id)
+        entity_ids: Optional entity IDs to filter by. An empty sequence matches no entity.
 
     Returns:
         AggregatedMetrics: Combined metrics from all three sources
@@ -306,6 +308,8 @@ def aggregate_metrics_combined(
     rollup_filters = [hourly_model.hour_start < cutoff]
     if entity_id is not None:
         rollup_filters.append(getattr(hourly_model, id_col) == entity_id)
+    if entity_ids is not None:
+        rollup_filters.append(getattr(hourly_model, id_col).in_(entity_ids))
 
     # pylint: disable=not-callable
     rollup_result = db.execute(
@@ -337,6 +341,8 @@ def aggregate_metrics_combined(
     ]
     if entity_id is not None:
         raw_filters.append(getattr(raw_model, id_col) == entity_id)
+    if entity_ids is not None:
+        raw_filters.append(getattr(raw_model, id_col).in_(entity_ids))
 
     raw_result = db.execute(
         select(
@@ -363,6 +369,8 @@ def aggregate_metrics_combined(
     current_filters = [raw_model.timestamp >= current_hour_start]
     if entity_id is not None:
         current_filters.append(getattr(raw_model, id_col) == entity_id)
+    if entity_ids is not None:
+        current_filters.append(getattr(raw_model, id_col).in_(entity_ids))
 
     current_result = db.execute(
         select(

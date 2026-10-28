@@ -4781,6 +4781,12 @@ class TestMetricsEndpoints:
 # ----------------------------------------------------- #
 # A2A Agent API Tests                                   #
 # ----------------------------------------------------- #
+def _a2a_metrics(**overrides):
+    values = dict(total_agents=0, active_agents=0, total_interactions=0, successful_interactions=0, failed_interactions=0, success_rate=0.0, avg_response_time=0.0, min_response_time=0.0, max_response_time=0.0)
+    values.update(overrides)
+    return A2AAgentAggregateMetrics(**values)
+
+
 class TestA2AAgentEndpoints:
     """Test A2A agent API endpoints."""
 
@@ -4851,6 +4857,37 @@ class TestA2AAgentEndpoints:
         response = test_client.delete("/a2a/agent-1", headers=auth_headers)
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_scoped(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics is not read as an agent ID and passes the Layer-1 scope."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics(total_agents=2))
+        mock_service.get_agent = AsyncMock()
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("u@x.com", ["team-a"])):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["totalAgents"] == 2
+        assert mock_service.aggregate_metrics.call_args.kwargs == {"user_email": "u@x.com", "token_teams": ["team-a"]}
+        mock_service.get_agent.assert_not_called()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_unscoped_context_fails_closed(self, mock_service, test_client, auth_headers):
+        """A (None, None) scope must not select the global aggregate."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics())
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=(None, None)):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_service.aggregate_metrics.call_args.kwargs["token_teams"] == []
+
+    @patch("mcpgateway.main.settings")
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_disabled_returns_404(self, mock_service, mock_settings, test_client, auth_headers):
+        """The route returns 404 when MCPGATEWAY_A2A_METRICS_ENABLED is false."""
+        mock_settings.mcpgateway_a2a_metrics_enabled = False
+        mock_service.aggregate_metrics = AsyncMock()
+        response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 404
+        mock_service.aggregate_metrics.assert_not_called()
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):

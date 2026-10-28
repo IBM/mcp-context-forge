@@ -640,11 +640,13 @@ class A2AAgentService(BaseService):
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        include_inactive: bool = False,
     ) -> List[str]:
         """Return IDs of agents visible to the caller.
 
-        Used by list_tasks and list_push_configs_for_dispatch.
+        Used by list_tasks, list_push_configs_for_dispatch and scoped aggregate_metrics.
         Pushes visibility filtering into SQL to avoid loading all agents.
+        Disabled agents are excluded unless ``include_inactive`` is true.
 
         Note: admin bypass here requires BOTH token_teams=None AND
         user_email=None.  When token_teams=None but user_email is set
@@ -660,10 +662,14 @@ class A2AAgentService(BaseService):
         """
         # Admin bypass: return public + team agents only (exclude private)
         if user_email is None and token_teams is None:
-            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility.in_(["public", "team"]))
+            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.visibility.in_(["public", "team"]))
+            if not include_inactive:
+                query = query.filter(DbA2AAgent.enabled.is_(True))
             return [row[0] for row in query.all()]
 
-        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
+        query = db.query(DbA2AAgent.id)
+        if not include_inactive:
+            query = query.filter(DbA2AAgent.enabled.is_(True))
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
@@ -3259,19 +3265,35 @@ class A2AAgentService(BaseService):
             logger.error("Cross-gateway routing transport failure: %s", e)
             raise A2AAgentError(f"Cross-gateway routing failed: {unexpected_error_detail(e)}")
 
-    async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
-        """Aggregate metrics for all A2A agents.
+    async def aggregate_metrics(
+        self,
+        db: Session,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics for A2A agents visible to the caller.
 
         Combines recent raw metrics (within retention period) with historical
         hourly rollups for complete historical coverage. Uses in-memory caching
         (10s TTL) to reduce database load under high request rates.
 
+        Calling with ``user_email`` and ``token_teams`` both None aggregates every agent
+        and is reserved for callers already gated on ``admin.metrics``. Any other
+        combination counts only the agents ``_visible_agent_ids`` returns for that
+        caller, including disabled ones, and bypasses the shared cache.
+
         Args:
             db: Database session.
+            user_email: Email of the caller for owner matching in visibility checks.
+            token_teams: Teams from the token. [] = public-only, [...] = team-scoped,
+                None with ``user_email`` set = admin context (public, team and own-private).
 
         Returns:
             A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
+        if user_email is not None or token_teams is not None:
+            return self._aggregate_scoped_metrics(db, user_email, token_teams)
+
         # Check cache first (if enabled)
         # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
@@ -3313,6 +3335,38 @@ class A2AAgentService(BaseService):
             metrics_cache.set("a2a", metrics.model_dump())
 
         return metrics
+
+    def _aggregate_scoped_metrics(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics over the agents visible to the caller.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+
+        Returns:
+            A2AAgentAggregateMetrics: Aggregated metrics for the visible agents.
+        """
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
+
+        visible_ids = self._visible_agent_ids(db, user_email, token_teams, include_inactive=True)
+        active_agents = db.query(DbA2AAgent.id).filter(DbA2AAgent.id.in_(visible_ids), DbA2AAgent.enabled.is_(True)).count() if visible_ids else 0
+        result = aggregate_metrics_combined(db, "a2a_agent", entity_ids=visible_ids)
+
+        total_interactions = result.total_executions
+        successful_interactions = result.successful_executions
+        return A2AAgentAggregateMetrics(
+            total_agents=len(visible_ids),
+            active_agents=active_agents,
+            total_interactions=total_interactions,
+            successful_interactions=successful_interactions,
+            failed_interactions=result.failed_executions,
+            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
+            avg_response_time=float(result.avg_response_time or 0.0),
+            min_response_time=float(result.min_response_time or 0.0),
+            max_response_time=float(result.max_response_time or 0.0),
+        )
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
         """Reset metrics for agents (raw + hourly rollups).

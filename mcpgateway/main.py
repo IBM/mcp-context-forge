@@ -132,6 +132,7 @@ from mcpgateway.routers.openapi_schema_router import router as openapi_schema_ro
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
@@ -4975,6 +4976,40 @@ async def list_a2a_agents(
     if include_pagination:
         return CursorPaginatedA2AAgentsResponse.model_construct(agents=data, next_cursor=next_cursor)
     return data
+
+
+@a2a_router.get("/metrics", response_model=A2AAgentAggregateMetrics)
+@require_permission("a2a.read")
+async def get_a2a_agent_metrics(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AAgentAggregateMetrics:
+    """
+    Retrieve aggregate metrics for the A2A agents visible to the caller.
+
+    Registered before ``/{agent_id}`` so ``metrics`` is not read as an agent ID.
+
+    Args:
+        request (Request): The FastAPI request object for scope derivation.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentAggregateMetrics: Counts, success rate, and response times over visible agents.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. 404 when ``MCPGATEWAY_A2A_METRICS_ENABLED`` is false.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    if not settings.mcpgateway_a2a_metrics_enabled:
+        raise HTTPException(status_code=404, detail="A2A metrics are disabled")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if user_email is None and token_teams is None:
+        token_teams = []  # (None, None) selects the unscoped aggregate; fail closed to public-only.
+    return await a2a_service.aggregate_metrics(db, user_email=user_email, token_teams=token_teams)
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
