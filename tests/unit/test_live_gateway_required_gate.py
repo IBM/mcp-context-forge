@@ -12,8 +12,7 @@ the gate that turns that silent skip into a hard failure, and confirm the defaul
 
 This file sits directly under ``tests/unit/`` rather than in the
 ``tests/unit/mcpgateway/`` source mirror because its subject is test
-infrastructure, not a module of the gateway. It follows
-``test_makefile_rust_targets.py``.
+infrastructure, not a module of the gateway.
 
 ``tests.live_gateway.helpers.mcp_test_helpers`` probes ``GET /health`` at import
 time, so it is imported inside each test rather than at module scope. A
