@@ -314,18 +314,30 @@ curl -X POST -H "Authorization: Bearer invalid-token" \
 
 ### Testing HMAC Signatures
 ```python
-import hmac
 import hashlib
+import hmac
+import time
 
-def verify_webhook_signature(payload, signature, secret):
-    expected = hmac.new(
-        secret.encode('utf-8'),
-        payload.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    return f"sha256={expected}" == signature
+FRESHNESS_SECONDS = 300
 
-# Test signature verification in your webhook receiver
+
+def verify_webhook_signature(body: bytes, headers: dict, secret: str, replay_protected: bool = True) -> bool:
+    """Verify a webhook delivery.
+
+    With ``hmac_include_timestamp: true`` the signed material is
+    ``{timestamp}.{delivery_id}.{body}``. Otherwise it is the body alone.
+    """
+    material = body
+    if replay_protected:
+        timestamp = headers["X-Timestamp"]
+        if abs(time.time() - int(timestamp)) > FRESHNESS_SECONDS:
+            return False
+        material = f"{timestamp}.{headers['X-Delivery-Id']}.".encode() + body
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, headers["X-Signature"])
+
+# Test signature verification in your webhook receiver.
+# Also test that a stale timestamp and a repeated X-Delivery-Id are rejected.
 ```
 
 ### Testing Credential Security

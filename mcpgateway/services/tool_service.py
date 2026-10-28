@@ -5087,7 +5087,7 @@ class ToolService(BaseService):
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
                     "gateway_mode": gateway.gateway_mode,
-                    "identity_propagation": gateway.identity_propagation,
+                    "identity_propagation": getattr(gateway, "identity_propagation", None),
                 }
                 # Create minimal tool payload for direct proxy (no DB tool needed)
                 tool_payload = {
@@ -5428,10 +5428,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
-        # Fail closed: a payload without the setting (for example a stale cache entry) shares no identity.
-        gateway_identity_source = None
-        if has_gateway:
-            gateway_identity_source = SimpleNamespace(identity_propagation=gateway_payload.get("identity_propagation", {"enabled": False}))
+        gateway_identity_propagation = gateway_payload.get("identity_propagation") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -5718,7 +5715,7 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, gateway_identity_source))
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -6198,8 +6195,8 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, gateway_identity_source))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data, gateway_identity_source)
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None

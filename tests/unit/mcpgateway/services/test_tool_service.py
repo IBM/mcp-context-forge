@@ -5345,6 +5345,7 @@ class TestToolService:
         [
             ({"enabled": False}, False),
             ({"enabled": True}, True),
+            (None, True),
         ],
     )
     async def test_invoke_tool_mcp_identity_follows_gateway_setting(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db, monkeypatch, gateway_setting, expect_identity):
@@ -10773,6 +10774,60 @@ class TestInvokeToolDirectProxyViaHeader:
 
         # The result should come from the direct proxy path (returned as-is)
         assert result.content[0].text == "direct proxy result"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("gateway_setting", "expect_identity"), [({"enabled": False}, False), ({"enabled": True}, True)])
+    async def test_invoke_tool_direct_proxy_via_header_honours_gateway_identity_setting(self, tool_service, mock_direct_gateway, test_db, monkeypatch, gateway_setting, expect_identity):
+        """The DB gateway's identity_propagation reaches the identity helpers on the header-triggered direct_proxy path."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_direct_gateway.identity_propagation = gateway_setting
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        session_mock.session.call_tool = session_mock.call_tool
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured["headers"] = kwargs.get("headers", {})
+            yield session_mock
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com"))
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.tool_timeout = 60
+            mock_settings.mcp_session_pool_enabled = False
+            mock_settings.default_passthrough_headers = []
+
+            await tool_service.invoke_tool(
+                test_db,
+                "my_remote_tool",
+                {"arg": "value"},
+                request_headers={"x-context-forge-gateway-id": "gw-dp-1"},
+                user_email="alice@example.com",
+                token_teams=["team-1"],
+                plugin_global_context=context,
+            )
+
+        sent_meta = session_mock.call_tool.call_args.kwargs.get("meta") or {}
+        assert any(k.startswith("X-Forwarded-User") for k in captured["headers"]) is expect_identity
+        assert ("user" in sent_meta) is expect_identity
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_proxy_via_header_keeps_the_result_meta(self, tool_service, mock_direct_gateway, test_db):
