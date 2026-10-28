@@ -147,9 +147,16 @@ class SandboxPool:
             workers = self._workers_fn()
             pool = self._build(workers)
             try:
-                # Force worker creation now, while the process has the fewest threads,
-                # rather than mid-request on the first hostile input.
-                pool.submit(_warmup).result(timeout=max(_WARMUP_MIN_SECONDS, self._timeout_fn()))
+                # Force creation of every worker now, while the process has the fewest
+                # threads, rather than mid-request on the first hostile input.  One future
+                # per worker ensures each process has been spawned and has imported its
+                # modules before start() returns; a single future only warms one of the
+                # N workers and leaves the rest to spawn lazily under a tight per-call
+                # timeout, which fails intermittently under heavy parallel load.
+                warmup_timeout = max(_WARMUP_MIN_SECONDS, self._timeout_fn())
+                futures = [pool.submit(_warmup) for _ in range(workers)]
+                for fut in futures:
+                    fut.result(timeout=warmup_timeout)
             except Exception:
                 pool.shutdown(wait=False, cancel_futures=True)
                 raise

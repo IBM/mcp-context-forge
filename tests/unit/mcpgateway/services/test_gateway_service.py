@@ -1462,7 +1462,7 @@ class TestGatewayService:
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
