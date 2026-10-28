@@ -249,9 +249,7 @@ def test_a2a_invoke_continues_incoming_trace(isolated_a2a_gateway):
     assert _hex_id(invoke_span["context"]["trace_id"]) == INBOUND_TRACE_ID
     # a2a.invoke must be a descendant of the request span — FastAPI may insert
     # intermediate spans (e.g. fastapi.endpoint) between them.
-    assert _is_descendant(invoke_span_id, request_span_id, all_spans), (
-        f"a2a.invoke span {invoke_span_id!r} is not a descendant of request span {request_span_id!r}"
-    )
+    assert _is_descendant(invoke_span_id, request_span_id, all_spans), f"a2a.invoke span {invoke_span_id!r} is not a descendant of request span {request_span_id!r}"
     # Inbound, request, and invocation span IDs are distinct.
     assert len({INBOUND_SPAN_ID, request_span_id, invoke_span_id}) == 3
 
