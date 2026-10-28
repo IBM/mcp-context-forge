@@ -1655,6 +1655,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 hook_policies=HOOK_PAYLOAD_POLICIES,
                 observability=None,  # Will be set later if needed
                 db_factory=SessionLocal,
+                cache_ttl=settings.plugin_manager_cache_ttl,
             )
             logger.info("Plugin manager factory initialized")
         except Exception as init_exc:

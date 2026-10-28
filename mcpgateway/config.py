@@ -1392,6 +1392,15 @@ class Settings(BaseSettings):
             "Requires a server restart to take effect."
         ),
     )
+    plugin_manager_cache_ttl: int = Field(
+        default=300,
+        ge=0,
+        description=(
+            "TTL in seconds for per-context plugin manager cache entries. "
+            "The TTL bounds staleness when a Redis invalidation message is missed. "
+            "0 disables expiry; managers then change only through explicit invalidation."
+        ),
+    )
 
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
