@@ -1037,6 +1037,39 @@ class TestServerSchemas:
         assert server_with_objects.associated_prompts == ["13"]
 
 
+class TestServerInstructionsSchema:
+    """The operator ``instructions`` field on the server schemas."""
+
+    def test_defaults_to_not_set(self):
+        """An absent field means "not set"; the field is not in ``model_fields_set``."""
+        assert ServerCreate(name="s").instructions is None
+        assert "instructions" not in ServerUpdate(name="s").model_fields_set
+
+    def test_empty_string_is_kept(self):
+        """An empty string is a real value: "send no instructions"."""
+        assert ServerCreate(name="s", instructions="").instructions == ""
+        assert "instructions" in ServerUpdate(instructions="").model_fields_set
+
+    def test_explicit_null_is_tracked_on_update(self):
+        """An explicit null on update is a supplied field, so it can clear the value."""
+        update = ServerUpdate(instructions=None)
+        assert "instructions" in update.model_fields_set
+        assert update.instructions is None
+
+    def test_text_is_not_sanitized(self):
+        """Markdown and angle brackets pass through unchanged."""
+        text = "Use `now` before <tz> lookups.\n\n- one\n- two"
+        assert ServerCreate(name="s", instructions=text).instructions == text
+
+    @pytest.mark.parametrize("model", [ServerCreate, ServerUpdate])
+    def test_over_length_text_is_rejected(self, model):
+        """Text over the description limit fails validation."""
+        limit = SecurityValidator.MAX_DESCRIPTION_LENGTH
+        assert model(name="s", instructions="x" * limit).instructions == "x" * limit
+        with pytest.raises(ValidationError):
+            model(name="s", instructions="x" * (limit + 1))
+
+
 class TestToggleAndListSchemas:
     """Test status toggle and list filter schemas."""
 
