@@ -1158,6 +1158,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 `MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
+With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`. A body over `MCP_BODY_PEEK_MAX_BYTES` keeps the JSON response, with no progress.
+
 ### Federation
 
 | Setting                    | Description            | Default | Options    |

@@ -7843,6 +7843,63 @@ class TestInvokeResourceCoverageEdges:
         mock_sleep.assert_awaited_once_with(0.05)
 
     @pytest.mark.asyncio
+    async def test_invoke_resource_sse_retry_drops_progress_callback(self):
+        """A retried upstream read gets no progress callback, so progress values never restart on one client token."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
+        )
+
+        session = AsyncMock()
+        session.initialize = AsyncMock(return_value=None)
+        read_with_meta = AsyncMock(
+            side_effect=[
+                RuntimeError("upstream SSE closed"),
+                MagicMock(contents=[MagicMock(text="<html>retry-ok</html>", blob=None)]),
+            ]
+        )
+        progress_callback = AsyncMock()
+
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=False)
+        session.session = session
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.asyncio.sleep", new_callable=AsyncMock),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=session_context),
+            patch("mcpgateway.services.resource_service._read_resource_with_meta", read_with_meta),
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+
+            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway, progress_callback=progress_callback)
+
+        assert out == "<html>retry-ok</html>"
+        assert [call.args[3] for call in read_with_meta.await_args_list] == [progress_callback, None]
+
+    @pytest.mark.asyncio
     async def test_invoke_resource_streamablehttp_uses_registry_when_available(self):
         """Cover StreamableHTTP registry path (#4205)."""
         # First-Party
@@ -8709,6 +8766,47 @@ class TestReadResourceDirectProxy:
         session_mock.read_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_forwards_progress_callback(self, resource_service, mock_direct_proxy_resource):
+        """progress_callback reaches the upstream send_request on the direct-proxy path."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+        first_content = MagicMock()
+        first_content.text = "body"
+        first_content.mime_type = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+        session_mock = self._make_session_mock(result_mock)
+        session_mock.send_request = AsyncMock(return_value=result_mock)
+        callback = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+                progress_callback=callback,
+            )
+
+        assert session_mock.send_request.await_args.kwargs["progress_callback"] is callback
+
+    @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
         """Timeout passed to streamable_http_client matches settings.mcpgateway_direct_proxy_timeout."""
         # Standard
@@ -9406,3 +9504,70 @@ class TestUpstreamReadCacheDirective:
     def test_legacy_upstream_without_the_fields_gives_the_defaults(self):
         """A 2025-era upstream sends neither field: ttlMs 0, private."""
         assert self._directive(SimpleNamespace(contents=[])) == {"ttl_ms": 0, "cache_scope": "private"}
+
+
+class TestReadResourceWithMetaProgress:
+    """_read_resource_with_meta relays upstream progress and never forwards the client token."""
+
+    @staticmethod
+    def _session():
+        session = MagicMock()
+        session.send_request = AsyncMock(return_value="result")
+        session.read_resource = AsyncMock(return_value="plain")
+        return session
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_meta_passes_progress_callback(self):
+        """A callback alone selects send_request and is handed to it."""
+        # First-Party
+        from mcpgateway.services.resource_service import _read_resource_with_meta
+
+        session, cb = self._session(), AsyncMock()
+        assert await _read_resource_with_meta(session, "file:///a", None, cb) == "result"
+        assert session.send_request.await_args.kwargs["progress_callback"] is cb
+        session.read_resource.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_meta_keeps_other_meta(self):
+        """Non-progress _meta survives next to a callback."""
+        # First-Party
+        from mcpgateway.services.resource_service import _read_resource_with_meta
+
+        session = self._session()
+        await _read_resource_with_meta(session, "file:///a", {"traceparent": "00-a-b-01"}, AsyncMock())
+        request = session.send_request.await_args.args[0]
+        assert request.model_dump(by_alias=True)["params"]["_meta"]["traceparent"] == "00-a-b-01"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_meta_strips_client_token(self):
+        """The client's progress token never goes upstream when no callback is set."""
+        # First-Party
+        from mcpgateway.services.resource_service import _read_resource_with_meta
+
+        session = self._session()
+        await _read_resource_with_meta(session, "file:///a", {"progress_token": 7, "traceparent": "t"}, None)
+        meta = session.send_request.await_args.args[0].model_dump(by_alias=True)["params"]["_meta"]
+        assert "progressToken" not in meta and "progress_token" not in meta
+        assert meta["traceparent"] == "t"
+        assert session.send_request.await_args.kwargs["progress_callback"] is None
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_meta_token_only_meta_takes_plain_path(self):
+        """Meta holding only a client token reduces to nothing and uses read_resource."""
+        # First-Party
+        from mcpgateway.services.resource_service import _read_resource_with_meta
+
+        session = self._session()
+        assert await _read_resource_with_meta(session, "file:///a", {"progressToken": "x"}, None) == "plain"
+        session.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_meta_plain_path_unchanged(self):
+        """No meta and no callback keeps the plain SDK call."""
+        # First-Party
+        from mcpgateway.services.resource_service import _read_resource_with_meta
+
+        session = self._session()
+        assert await _read_resource_with_meta(session, "file:///a", None, None) == "plain"
+        session.read_resource.assert_awaited_once_with(uri="file:///a")
+        session.send_request.assert_not_called()
