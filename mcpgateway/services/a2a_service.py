@@ -297,6 +297,9 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
         logger.warning("Failed to publish A2A cache invalidation: %s", e)
 
 
+A2A_DISABLED_DETAIL = {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}
+
+
 class A2AAgentError(Exception):
     """Base class for A2A agent-related errors.
 

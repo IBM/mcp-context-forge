@@ -1612,6 +1612,30 @@ async def test_get_current_user_profile():
     assert result.email == "user@example.com"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("a2a_enabled", [True, False])
+async def test_get_current_user_profile_reports_a2a_feature_flag(monkeypatch, a2a_enabled):
+    """/me exposes the A2A flag to any authenticated user, whether or not they are admin."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+    from mcpgateway.routers.email_auth import get_current_user_profile
+
+    monkeypatch.setattr(email_auth.settings, "mcpgateway_a2a_enabled", a2a_enabled)
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=True)
+
+    result = await get_current_user_profile(current_user=user)
+    assert result.features == {"a2a": a2a_enabled}
+
+
 class TestGetAuthEvents:
     """Tests for get_auth_events endpoint."""
 

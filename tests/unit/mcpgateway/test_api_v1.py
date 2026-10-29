@@ -217,10 +217,11 @@ class TestBuildV1RouterGroupC:
         v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-a2a" in _route_paths(v1)
 
-    def test_a2a_router_excluded_when_disabled(self):
+    def test_a2a_router_still_mounted_when_disabled(self):
+        """The router stays mounted so its dependency can answer with the typed a2a_disabled 404."""
         settings = _settings(mcpgateway_a2a_enabled=False)
         v1 = build_v1_router(settings, **_required_kwargs())
-        assert "/v1/sentinel-a2a" not in _route_paths(v1)
+        assert "/v1/sentinel-a2a" in _route_paths(v1)
 
     # Observability --------------------------------------------------------------
 
