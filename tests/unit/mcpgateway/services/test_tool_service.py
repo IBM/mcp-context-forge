@@ -5383,6 +5383,56 @@ class TestToolService:
         if not expect_identity:
             assert "alice@example.com" not in str(sent_headers) + str(sent_meta)
 
+    async def test_invoke_tool_cache_hit_without_identity_propagation_key_falls_back_to_global(self, tool_service, test_db, monkeypatch):
+        """A cache payload from an older worker lacks the key and must follow the global setting, not disable identity."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-1",
+                "name": "cached_tool",
+                "original_name": "cached_tool",
+                "url": "http://example.com/tool",
+                "integration_type": "REST",
+                "request_type": "POST",
+                "auth_type": None,
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-cache-1",
+            },
+            "gateway": {"id": "gw-cache-1", "name": "cached-gw", "url": "http://example.com/gateway", "auth_type": None, "passthrough_headers": []},
+        }
+        lookup_cache = SimpleNamespace(enabled=True, get=AsyncMock(return_value=cached_payload), set=AsyncMock(), set_negative=AsyncMock())
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "cached_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert any(k.startswith("X-Forwarded-User") for k in headers)
+
     @pytest.mark.parametrize("gateway_id", ["f90870e0-bbbf-4e3c-80c5-69d72a1e6e21", None])
     @pytest.mark.parametrize("reuse_context", [False, True])
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db, gateway_id, reuse_context):
