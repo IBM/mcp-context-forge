@@ -1,11 +1,3 @@
-# Rust projects
-/crates/ @lucarlig @dawid-nowak
-/Cargo.toml @lucarlig @dawid-nowak
-/Cargo.lock @lucarlig @dawid-nowak
-/deny.toml @lucarlig @dawid-nowak
-/rust-toolchain.toml @lucarlig @dawid-nowak
-/supply-chain/ @lucarlig @dawid-nowak
-
 # UI related files
 /mcpgateway/admin_ui/ @gcgoncalves
 /tests/playwright/ @gcgoncalves
