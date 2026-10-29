@@ -15,6 +15,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 import logging
 import ssl
@@ -42,7 +43,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import set_custom_name_and_slug
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate, ToolCreate
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayCatalogSyncResult,
@@ -1454,6 +1455,36 @@ class TestGatewayService:
 
         # Should NOT have changed — masked value preserves existing
         assert mock_gateway.client_key == "existing-encrypted-value"
+
+    async def _update_with_stored_auth(self, gateway_service, mock_gateway, test_db, stored, update):
+        mock_gateway.team_id = 1
+        mock_gateway.auth_value = stored
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], [], None))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, update)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_description_only_keeps_auth_value(self, gateway_service, mock_gateway, test_db):
+        """A description-only update leaves the stored credential untouched."""
+        stored = {"Authorization": "Bearer keep-me"}  # pragma: allowlist secret
+        await self._update_with_stored_auth(gateway_service, mock_gateway, test_db, stored, GatewayUpdate(description="new"))
+
+        assert mock_gateway.auth_value == stored
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_new_username_with_masked_password_keeps_stored_password(self, gateway_service, mock_gateway, test_db):
+        """A new username with a masked password pairs the new username with the stored password."""
+        stored = {"Authorization": "Basic " + base64.b64encode(b"old-user:stored-pw").decode()}  # pragma: allowlist secret
+        update = GatewayUpdate(auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
+        await self._update_with_stored_auth(gateway_service, mock_gateway, test_db, stored, update)
+
+        assert mock_gateway.auth_value == {"Authorization": "Basic " + base64.b64encode(b"new-user:stored-pw").decode()}  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_update_gateway_async_enabled_returns_pending(self, gateway_service, mock_gateway, test_db, monkeypatch):
@@ -6553,6 +6584,73 @@ class TestConvertGatewayToRead:
         mock_gateway.tools = []
         result = gateway_service.convert_gateway_to_read(mock_gateway)
         assert result.tool_count == 0
+
+    @staticmethod
+    def _real_gateway(auth_type, auth_value):
+        """Build a real (non-mock) DbGateway so convert_gateway_to_read runs real Pydantic validation and masking."""
+        return DbGateway(
+            id=str(uuid4()),
+            name="test-gw",
+            slug="test-gw",
+            url="https://api.example.com",
+            description="orig",
+            transport="SSE",
+            capabilities={},
+            auth_type=auth_type,
+            auth_value=auth_value,
+            enabled=True,
+            reachable=True,
+            tags=[],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            tools=[],
+            resources=[],
+            prompts=[],
+        )
+
+    def test_masks_basic_auth_credentials(self, gateway_service, monkeypatch):
+        """convert_gateway_to_read must never return a usable basic-auth credential (issue #6704).
+
+        This is the conversion every gateways.read-gated endpoint routes through
+        before returning a GatewayRead, so masking here is the single enforcement
+        point for the contract described in #6704 (recorded here for GatewayRead,
+        mirroring the decision for A2AAgentRead in test_a2a_service.py). The other
+        tests in this class go through the module-wide ``_bypass_gatewayread_validation``
+        autouse fixture, which stubs out ``GatewayRead.model_validate`` (and therefore
+        ``.masked()``) for MagicMock-friendliness; restore the real implementation here
+        so this test exercises the actual masking logic end to end.
+        """
+        monkeypatch.delattr(GatewayRead, "model_validate", raising=False)
+        gateway = self._real_gateway("basic", {"Authorization": "Basic " + base64.b64encode(b"admin:s3cr3t").decode()})  # pragma: allowlist secret
+
+        result = gateway_service.convert_gateway_to_read(gateway)
+
+        assert result.auth_password == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_username == "admin"
+
+    def test_masks_bearer_auth_credentials(self, gateway_service, monkeypatch):
+        """convert_gateway_to_read must never return a usable bearer token (issue #6704)."""
+        monkeypatch.delattr(GatewayRead, "model_validate", raising=False)
+        gateway = self._real_gateway("bearer", {"Authorization": "Bearer top-secret-token"})  # pragma: allowlist secret
+
+        result = gateway_service.convert_gateway_to_read(gateway)
+
+        assert result.auth_token == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_type == "bearer"
+
+    def test_masks_authheaders_credentials(self, gateway_service, monkeypatch):
+        """convert_gateway_to_read must never return a usable custom auth header value (issue #6704)."""
+        monkeypatch.delattr(GatewayRead, "model_validate", raising=False)
+        gateway = self._real_gateway("authheaders", {"X-API-Key": "top-secret-key"})  # pragma: allowlist secret
+
+        result = gateway_service.convert_gateway_to_read(gateway)
+
+        assert result.auth_header_value == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_headers == [{"key": "X-API-Key", "value": settings.masked_auth_value}]
 
 
 # ---------------------------------------------------------------------------
