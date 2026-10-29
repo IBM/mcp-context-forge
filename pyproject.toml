@@ -397,12 +397,6 @@ ignore = [
     "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
     "mcpgateway/static/catalog-icons/*",
-    "Cargo.lock",
-    "Cargo.toml",
-    "crates/**",
-    "deny.toml",
-    "rust-toolchain.toml",
-    "supply-chain/**",
 ]
 
 [tool.black]
