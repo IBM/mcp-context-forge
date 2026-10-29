@@ -25,6 +25,7 @@
 - **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
+- **LLM Chat loads MCP tools with the MCP SDK client** ([#7090](https://github.com/IBM/mcp-context-forge/issues/7090), [#7332](https://github.com/IBM/mcp-context-forge/pull/7332)) - `langchain-mcp-adapters` has no release compatible with MCP SDK 2.x and is removed from the `llmchat` extra; LLM Chat lists and calls tools through `mcp.client.Client`.
 
 ### Changed
 

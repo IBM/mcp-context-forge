@@ -118,7 +118,7 @@ jobs:
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
-          uv run --extra plugins pytest -n auto \
+          uv run --extra plugins --extra llmchat pytest -n auto \
             --durations=10 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
