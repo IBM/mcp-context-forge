@@ -5458,18 +5458,26 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "bad-prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "bad-prompt"}
 
@@ -5562,18 +5570,26 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "prompt", "template": "Hi"}
 
@@ -5680,18 +5696,26 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "bad-prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "bad-prompt"}
 
