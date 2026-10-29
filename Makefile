@@ -2187,19 +2187,6 @@ LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
 
-# Secrets Detection Benchmark Configuration
-# These values are tuned for focused plugin performance comparison
-SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
-SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
-SECRET_DETECTION_LOADTEST_USERS ?= 100          # Moderate load to isolate plugin overhead
-SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10      # Gradual ramp-up for stable measurements
-SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s       # 1 minute per phase
-SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1    # Single replica for consistent comparison
-SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2    # Minimal workers to highlight plugin impact
-SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1           # 1 core limit to amplify performance differences
-SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5   # Reserve half core for baseline
-SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G          # Generous memory to avoid OOM
-SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G    # Reserve 1GB baseline
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
@@ -2489,29 +2476,6 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 	@echo "✅ Report: reports/loadtest_fasttime.html"
 
 
-.PHONY: load-test-secret-detection-compare
-load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
-	@echo "🔐 Running focused secrets-detection benchmark..."
-	@echo "   Host: $(SECRET_DETECTION_LOADTEST_HOST)"
-	@echo "   Users: $(SECRET_DETECTION_LOADTEST_USERS)"
-	@echo "   Spawn rate: $(SECRET_DETECTION_LOADTEST_SPAWN_RATE)/s"
-	@echo "   Duration: $(SECRET_DETECTION_LOADTEST_RUN_TIME)"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@VENV_DIR="$(VENV_DIR)" \
-	COMPOSE_CMD="$(COMPOSE_CMD)" \
-	IMAGE_LOCAL_NAME="$(call get_image_name)" \
-	SECRET_DETECTION_LOADTEST_HOST="$(SECRET_DETECTION_LOADTEST_HOST)" \
-	SECRET_DETECTION_LOADTEST_USERS="$(SECRET_DETECTION_LOADTEST_USERS)" \
-	SECRET_DETECTION_LOADTEST_SPAWN_RATE="$(SECRET_DETECTION_LOADTEST_SPAWN_RATE)" \
-	SECRET_DETECTION_LOADTEST_RUN_TIME="$(SECRET_DETECTION_LOADTEST_RUN_TIME)" \
-	SECRET_DETECTION_BENCH_GATEWAY_REPLICAS="$(SECRET_DETECTION_BENCH_GATEWAY_REPLICAS)" \
-	SECRET_DETECTION_BENCH_GUNICORN_WORKERS="$(SECRET_DETECTION_BENCH_GUNICORN_WORKERS)" \
-	SECRET_DETECTION_BENCH_CPU_LIMIT="$(SECRET_DETECTION_BENCH_CPU_LIMIT)" \
-	SECRET_DETECTION_BENCH_CPU_RESERVATION="$(SECRET_DETECTION_BENCH_CPU_RESERVATION)" \
-	SECRET_DETECTION_BENCH_MEM_LIMIT="$(SECRET_DETECTION_BENCH_MEM_LIMIT)" \
-	SECRET_DETECTION_BENCH_MEM_RESERVATION="$(SECRET_DETECTION_BENCH_MEM_RESERVATION)" \
-	bash tests/loadtest/run_secret_detection_compare.sh
-
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
 	@echo "   Host: http://localhost:4444"
@@ -2687,7 +2651,6 @@ RL_USERS ?= 100
 RL_SPAWN_RATE ?= 10
 RL_REQS_PER_SECOND ?= 0.25
 RL_PROMPT_ID ?=
-RATE_LIMITER_FORCE_PYTHON ?=
 MCP_PROTOCOL_HOST ?= http://localhost:4444
 MCP_BENCHMARK_HOST ?= http://localhost:8080
 MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
@@ -2953,7 +2916,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=ERROR \
-		RATE_LIMITER_FORCE_PYTHON=$(RATE_LIMITER_FORCE_PYTHON) \
 		RL_USERS=$(RL_USERS) \
 		RL_SPAWN_RATE=$(RL_SPAWN_RATE) \
 		RL_RUN_TIME=$(RL_RUN_TIME) \
@@ -2968,16 +2930,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 			--headless \
 			--only-summary \
 			CapacityPromptUser || true'
-
-# help: benchmark-rate-limiter-capacity-rust  - Capacity test with Rust engine enabled (default)
-.PHONY: benchmark-rate-limiter-capacity-rust
-benchmark-rate-limiter-capacity-rust:       ## Capacity test with Rust engine
-	RATE_LIMITER_FORCE_PYTHON=0 $(MAKE) benchmark-rate-limiter-redis-capacity
-
-# help: benchmark-rate-limiter-capacity-python  - Capacity test with Python fallback (forced)
-.PHONY: benchmark-rate-limiter-capacity-python
-benchmark-rate-limiter-capacity-python:     ## Capacity test with Python fallback
-	RATE_LIMITER_FORCE_PYTHON=1 $(MAKE) benchmark-rate-limiter-redis-capacity
 
 .PHONY: benchmark-mcp-mixed-300
 benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
