@@ -5672,3 +5672,110 @@ class TestEnforceGatewayAccessCacheLayer:
         mock_cache.get_user_role.assert_awaited_once_with("outsider@example.com", "team-1")
         # No DB fallback on a negative cache hit
         mock_db.query.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# RFC 9207 iss validation on the callback (MCP 2026-07-28)
+# --------------------------------------------------------------------------- #
+
+DISCOVER = "mcpgateway.services.oauth_manager.DcrService.discover_as_metadata"
+
+
+def _as_metadata(issuer: str, advertised: bool) -> dict:
+    return {"issuer": issuer, "authorization_response_iss_parameter_supported": advertised}
+
+
+@pytest.fixture
+def issuer_gateway(mock_gateway, mock_db):
+    """A gateway with an issuer, resolved from any state through the real manager."""
+    mock_gateway.oauth_config["issuer"] = "https://as.example.com"
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    with patch("mcpgateway.services.oauth_manager.OAuthManager.resolve_gateway_id_from_state", new=AsyncMock(return_value="gateway123")):
+        yield mock_gateway
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", False))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://attacker.example", db=mock_db)
+
+    body = response.body.decode()
+    assert response.status_code == 400
+    assert "issuer mismatch" in body
+    assert "access_denied" not in body
+    assert "user said no" not in body
+
+
+@pytest.mark.asyncio
+async def test_callback_error_without_iss_from_an_advertising_server_is_refused(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", db=mock_db)
+
+    assert "issuer mismatch" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_matching_iss_shows_provider_error(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://as.example.com", db=mock_db)
+
+    assert response.status_code == 400
+    assert "access_denied" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_without_state_shows_provider_error(mock_db, mock_request):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    response = await oauth_callback(request=mock_request, code=None, state=None, error="access_denied", iss="https://anything.example", db=mock_db)
+
+    assert "access_denied" in response.body.decode()
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_success_path_refuses_wrong_iss_before_the_code_exchange(mock_db, mock_request, issuer_gateway):
+    """Through the real route and the real manager: the state is consumed, the token endpoint is never called."""
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with (
+        patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._validate_and_retrieve_state", new=AsyncMock(return_value={"code_verifier": "v", "app_user_email": "test@example.com"})),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._exchange_code_for_tokens", new=AsyncMock()) as exchange,
+        patch("mcpgateway.services.oauth_manager.get_security_logger"),
+        patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+    ):
+        response = await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://attacker.example", db=mock_db)
+
+    assert response.status_code == 400
+    assert "OAuth Authorization Failed" in response.body.decode()
+    exchange.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_passes_iss_to_the_completion_flow(mock_db, mock_request, mock_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    token_result = {"user_id": "oauth_user_123", "expires_at": None, "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
+    with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
+        manager = Mock()
+        manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+        manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+        manager_class.return_value = manager
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://as.example.com", db=mock_db)
+
+    assert manager.complete_authorization_code_flow.call_args[1]["iss"] == "https://as.example.com"
