@@ -7327,7 +7327,7 @@ class TestOAuthFunctionality:
                 "auth_type": "oauth",
                 "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "client-id",
-                "oauth_client_secret": "client-secret",
+                "oauth_client_secret": "client-secret",  # pragma: allowlist secret
                 "oauth_audience": "api.atlassian.com",
                 "oauth_scopes": "read:jira-work write:jira-work",
             }
@@ -7529,7 +7529,7 @@ class TestOAuthFunctionality:
                 "url": "https://edited.example.com",
                 "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "client-id",
-                "oauth_client_secret": "client-secret",
+                "oauth_client_secret": "client-secret",  # pragma: allowlist secret
                 "oauth_audience": "api.atlassian.com",
                 "oauth_scopes": "read:jira-work write:jira-work",
             }
