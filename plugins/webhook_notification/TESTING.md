@@ -321,7 +321,7 @@ import time
 FRESHNESS_SECONDS = 300
 
 
-def verify_webhook_signature(body: bytes, headers: dict, secret: str, replay_protected: bool = True) -> bool:
+def verify_webhook_signature(body: bytes, headers: dict, secret: str, replay_protected: bool = True) -> bool:  # pragma: allowlist secret
     """Verify a webhook delivery.
 
     With ``hmac_include_timestamp: true`` the signed material is

@@ -191,7 +191,7 @@ FRESHNESS_SECONDS = 300
 seen_delivery_ids: set[str] = set()  # use a shared store with expiry in production
 
 
-def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:
+def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:  # pragma: allowlist secret
     timestamp = headers["X-Timestamp"]
     delivery_id = headers["X-Delivery-Id"]
     if abs(time.time() - int(timestamp)) > FRESHNESS_SECONDS or delivery_id in seen_delivery_ids:
