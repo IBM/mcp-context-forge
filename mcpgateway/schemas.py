@@ -65,9 +65,8 @@ from mcpgateway.validation.tags import validate_tags_field
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Shared validation helpers
-# ============================================================================
+# =====================================================================# Shared validation helpers
+# =====================================================================
 
 
 def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
@@ -105,10 +104,8 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
     return v
 
 
-# ============================================================================
-# Precompiled regex patterns (compiled once at module load for performance)
-# ============================================================================
-# Note: Only truly static patterns are precompiled here. Settings-based patterns
+# =====================================================================# Precompiled regex patterns (compiled once at module load for performance)
+# =====================================================================# Note: Only truly static patterns are precompiled here. Settings-based patterns
 # (e.g., from settings.* or SecurityValidator.*) are NOT precompiled because tests
 # override class/settings attributes at runtime via monkeypatch.
 _HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
@@ -5364,6 +5361,9 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
 
 
+GatewayValidationStage = Literal["gateway", "token", "negotiation", "tools_list"]
+
+
 class GatewayHandshakeRequest(BaseModelWithConfigDict):
     """Request to run an MCP handshake test against a server URL."""
 
@@ -5391,6 +5391,15 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
         """
         return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
 
+    validation_mode: Literal["handshake", "post_authorization"] = Field(
+        "handshake",
+        description=(
+            "'handshake' preserves existing negotiation success semantics. "
+            "'post_authorization' requires an exact enabled OAuth authorization_code gateway, gateways.read and gateways.update, "
+            "and the caller's stored token without refresh. A live tools/list must succeed within ten seconds. "
+            "No tokens or registered components are changed. Legacy Vault records without an exact gateway binding require authorization again."
+        ),
+    )
     credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
         "stored_with_override",
         description=(
@@ -5401,15 +5410,20 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     )
 
     @model_validator(mode="after")
-    def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":
-        """Require exact gateway selection for candidate-only validation.
+    def validate_credential_contract(self) -> "GatewayHandshakeRequest":
+        """Require exact gateway selection and compatible validation credentials.
 
         Returns:
             The validated request.
 
         Raises:
-            ValueError: If candidate-only validation omits the gateway ID.
+            ValueError: If the mode omits its gateway ID or accepts incompatible credential overrides.
         """
+        if self.validation_mode == "post_authorization":
+            if not self.gateway_id:
+                raise ValueError("gateway_id is required for post_authorization validation")
+            if self.credential_mode != "stored_with_override" or self.headers:
+                raise ValueError("post_authorization validation requires stored credentials and does not accept header overrides")
         if self.credential_mode == "candidate_only" and not self.gateway_id:
             raise ValueError("gateway_id is required when credential_mode is candidate_only")
         return self
@@ -5449,6 +5463,21 @@ class GatewayHandshakeResponse(BaseModelWithConfigDict):
     failure_class: Optional[Literal["transport", "protocol", "auth", "invalid_response"]] = None
     error: Optional[str] = None
     raw_preview: Optional[str] = Field(None, description="Size-capped JSON preview of the final handshake payload")
+
+    stages: Optional[Dict[Literal["token", "negotiation", "tools_list"], Literal["ok", "failed", "skipped", "unsupported"]]] = Field(
+        None, description="Post-authorization stage outcomes. Skipped or unsupported listing never proves live tools access."
+    )
+    failed_stage: Optional[GatewayValidationStage] = None
+    error_code: Optional[str] = Field(
+        None,
+        description=(
+            "Stable post-authorization codes: gateway_unavailable, permission_denied, unsupported_auth, authorization_missing, token_expired, "
+            "invalid_token, token_storage_unavailable, insufficient_scope, tools_unsupported, tools_list_failed, "
+            "mcp_handshake_failed, timeout, blocked, validation_failed. Callback codes also include redirect_uri_mismatch, "
+            "token_exchange_failed, token_url_unreachable, invalid_client, oauth_error."
+        ),
+    )
+    reauthorization_required: bool = Field(False, description="Whether the caller must authorize this gateway again")
 
 
 class ServerHandshakeRequest(BaseModelWithConfigDict):
@@ -8554,9 +8583,8 @@ class PermissionListResponse(BaseModel):
     total_count: int = Field(..., description="Total number of permissions")
 
 
-# ==============================================================================
-# SSO Authentication Schemas
-# ==============================================================================
+# =======================================================================# SSO Authentication Schemas
+# =======================================================================
 
 
 class SSOProviderResponse(BaseModelWithConfigDict):
@@ -9144,9 +9172,8 @@ class CatalogBulkRegisterResponse(BaseModel):
     total_successful: int = Field(..., description="Total successful registrations")
 
 
-# ===================================
-# Pagination Schemas
-# ===================================
+# ============================# Pagination Schemas
+# ============================
 
 
 class PaginationMeta(BaseModel):
@@ -9247,9 +9274,8 @@ class PaginatedResponse(BaseModel):
     links: Optional[PaginationLinks] = Field(None, description="Navigation links")
 
 
-# ============================================================================
-# Cursor Pagination Response Schemas (for main API endpoints)
-# ============================================================================
+# =====================================================================# Cursor Pagination Response Schemas (for main API endpoints)
+# =====================================================================
 
 
 class CursorPaginatedToolsResponse(BaseModel):
@@ -9308,9 +9334,8 @@ class CursorPaginatedUsersResponse(BaseModel):
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 
-# ============================================================================
-# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
-# ============================================================================
+# =====================================================================# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
+# =====================================================================
 
 
 class ObservabilityTraceBase(BaseModel):

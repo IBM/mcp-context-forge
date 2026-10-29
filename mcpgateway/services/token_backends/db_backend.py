@@ -25,7 +25,7 @@ from mcpgateway.db import Gateway, OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, TokenRecord
+from .base import AbstractTokenBackend, TokenRecord, ValidationToken
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,27 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         except Exception as e:
             logger.error("Failed to retrieve OAuth token: %s", str(e))
             return None
+
+    async def read_validation_token(self, gateway_id: str, team_id: str | None, app_user_email: str) -> ValidationToken | None:
+        """Read the caller's exact gateway token without refreshing or modifying it.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Unused database backend path context.
+            app_user_email: Authenticated caller identity.
+
+        Returns:
+            Token status and valid access token, or None when authorization is absent.
+        """
+        record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+        if record is None:
+            return None
+        if self._is_token_expired(record, 0):
+            return ValidationToken("expired")
+        if record.token_type and record.token_type.lower() != "bearer":
+            return ValidationToken("invalid")
+        token = await self.encryption.decrypt_secret_async(record.access_token) if self.encryption else record.access_token
+        return ValidationToken("valid", token) if token else ValidationToken("invalid")
 
     async def get_token_info(
         self,

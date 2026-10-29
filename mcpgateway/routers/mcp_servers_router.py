@@ -104,7 +104,17 @@ async def check_mcp_server_connectivity(
     return await test_gateway_connectivity(request, team_id, user, db)
 
 
-@router.post("/test-handshake", response_model=GatewayHandshakeResponse)
+@router.post(
+    "/test-handshake",
+    response_model=GatewayHandshakeResponse,
+    responses={
+        200: {"description": "Handshake or validation outcome. Upstream failures return success=false with safe stage results."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Gateway read permission required; post_authorization also requires gateway update permission."},
+        422: {"description": "Invalid input, missing exact gateway ID, or incompatible post-authorization header overrides."},
+        429: {"description": "Per-user connection-test rate limit exceeded."},
+    },
+)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def check_mcp_server_handshake(
     request: GatewayHandshakeRequest,

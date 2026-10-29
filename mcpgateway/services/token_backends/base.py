@@ -10,9 +10,9 @@ must implement, plus a plain dataclass for token records (no SQLAlchemy).
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 # Re-export canonical normalize_resource from utils.oauth_resource
 # (avoids duplication - refresh_helpers imports from here for backward compat)
@@ -22,6 +22,14 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 __all__ = ["TokenRecord", "AbstractTokenBackend", "normalize_resource_url"]
+
+
+@dataclass
+class ValidationToken:
+    """A stored-token snapshot that never refreshes or exposes tokens through its representation."""
+
+    status: Literal["valid", "expired", "invalid", "unbound"]
+    access_token: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -141,6 +149,22 @@ class AbstractTokenBackend(ABC):
         - If refresh succeeds, store new token and return it
         - If refresh fails, return None (user must re-authorize)
         """
+
+    async def read_validation_token(self, gateway_id: str, team_id: str | None, app_user_email: str) -> ValidationToken | None:
+        """Read a gateway-bound token without refresh, persistence, or cache updates.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Token storage path context.
+            app_user_email: Authenticated caller identity.
+
+        Returns:
+            Token status and valid access token, or None when authorization is absent.
+
+        Raises:
+            NotImplementedError: If the backend cannot guarantee a read-only lookup.
+        """
+        raise NotImplementedError("Read-only token validation is unavailable")
 
     @abstractmethod
     async def get_token_info(
