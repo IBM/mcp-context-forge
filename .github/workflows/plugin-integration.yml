@@ -167,7 +167,7 @@ jobs:
             - name: Setup Python
               uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
               with:
-                  python-version: "3.12"
+                  python-version: "3.14"
 
             - name: Install uv
               uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -312,7 +312,7 @@ jobs:
                   REDIS_URL: ${{ matrix.plugin.redis_url }}
               run: |
                   . .venv/bin/activate
-                  python -m pytest ${{ matrix.plugin.tests }} -v
+                  rstest -n 0 ${{ matrix.plugin.tests }} -v
 
             - name: Verify per-server quotas through both transports and replicas
               env:
@@ -323,7 +323,7 @@ jobs:
                     --publish 127.0.0.1:9081:9080 \
                     ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a
                   . .venv/bin/activate
-                  python -m pytest tests/integration/test_rate_limiter_per_server.py -v --with-integration
+                  rstest -n 0 tests/integration/test_rate_limiter_per_server.py -v --with-integration
 
             - name: Capture fast-time-server logs on failure
               if: failure()

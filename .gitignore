@@ -92,6 +92,7 @@ coverage.xml
 *,cover
 .hypothesis/
 .pytest_cache/
+.rstest_cache/
 mutants
 .mutmut-cache
 test-results/
@@ -243,7 +244,7 @@ celerybeat-schedule
 # ========================================
 # Python Version Management
 # ========================================
-.python-version
+# .python-version is tracked to select the default development interpreter.
 
 # ========================================
 # uv Package Manager

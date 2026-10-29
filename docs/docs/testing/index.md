@@ -8,9 +8,9 @@ This section covers the testing strategy and tools for ContextForge.
 
 | Layer | Tool | Location | Status |
 |-------|------|----------|--------|
-| **Unit tests** | pytest | `tests/unit/` | Implemented |
-| **Integration tests** | pytest | `tests/integration/` | Implemented |
-| **End-to-end tests** | pytest | `tests/e2e/` (in-process), `tests/live_gateway/` (live infrastructure) | Implemented |
+| **Unit tests** | rstest (pytest fixtures) | `tests/unit/` | Implemented |
+| **Integration tests** | rstest (pytest fixtures) | `tests/integration/` | Implemented |
+| **End-to-end tests** | rstest (pytest fixtures) | `tests/e2e/` (in-process), `tests/live_gateway/` (live infrastructure) | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
 | **Security / DAST** | Playwright + OWASP ZAP | `tests/playwright/security/` | Implemented |
 | **Load testing** | Locust | `tests/loadtest/` | Implemented |
@@ -33,16 +33,16 @@ This test is ideal for validating local development environments or freshly depl
 
 ---
 
-## 🐍 Python Testing (pytest)
+## 🐍 Python Testing (rstest)
 
 Run the full test suite or specific categories:
 
 ```bash
 make test                      # full suite
-pytest -k "<name>" tests/unit/ # only tests matching <name>
-pytest tests/unit/             # unit tests only
-pytest tests/integration/      # integration tests
-pytest tests/e2e/              # end-to-end scenarios
+rstest -k "<name>" tests/unit/ # only tests matching <name>
+rstest tests/unit/             # unit tests only
+rstest tests/integration/      # integration tests
+rstest tests/e2e/              # end-to-end scenarios
 ```
 
 Coverage reporting:
@@ -99,10 +99,10 @@ Playwright tests validate the Admin UI interactions:
 playwright install
 
 # Run UI tests
-pytest tests/playwright/
+rstest tests/playwright/
 
 # Run specific admin tests
-pytest tests/playwright/ -k admin
+rstest tests/playwright/ -k admin
 ```
 
 Tests cover login flows, CRUD operations, and UI state management.

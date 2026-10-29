@@ -55,13 +55,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Framework :: FastAPI",
     "Framework :: AsyncIO",
     "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -184,6 +185,7 @@ dev = [
     "redis>=8.0.1",
     "resvg-py>=0.5.0", # SVG-to-PNG rasterizer for scripts/fetch_catalog_icons.py; pure prebuilt wheels, no system cairo/rsvg
     "rich>=15.0.0",
+    "rstest==0.9.0",
     "Pillow>=13.0.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
@@ -679,6 +681,11 @@ exclude = [
 # Plugins to use with mypy
 plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic models
 
+[tool.rstest]
+numprocesses = "auto"
+dist = "loadgroup"
+collect = "full"
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q -p no:playwright -p no:benchmark --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway"
@@ -714,6 +721,7 @@ env = [
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
 # Pytest test markers
 markers = [
+    "serial: runs tests exclusively after parallel workers finish",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "ui: marks tests as UI tests",
     "api: marks tests as API tests",
@@ -793,6 +801,7 @@ ignore_unused = [
   "pytest-md-report",
   "pytest-rerunfailures",
   "pytest-xdist",
+  "rstest",
   "pytype",
   "settings-doc",
   "snakeviz",

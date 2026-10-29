@@ -3148,8 +3148,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
         >>> sig = inspect.signature(read_resource)
         >>> list(sig.parameters.keys())
         ['resource_uri']
-        >>> sig.return_annotation
-        typing.Union[str, bytes, typing.List[typing.Any]]
+        >>> sig.return_annotation == Union[str, bytes, List[Any]]
+        True
     """
     upstream_read_cache_var.set(None)  # only an upstream read made during this call may set it
     server_id, request_headers, user_context = await _get_request_context_or_default()
