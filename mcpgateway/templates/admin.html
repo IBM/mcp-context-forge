@@ -719,6 +719,43 @@
           </div>
         </header>
 
+        {% if ui_deprecation_notice_enabled %}
+        <div
+          id="admin-ui-deprecation-notice"
+          role="note"
+          aria-label="Admin UI deprecation notice"
+          class="flex-shrink-0 border-b border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          <div class="flex items-start gap-3">
+            <p class="flex-1">
+              <strong>Deprecation Notice:</strong>
+              Support for the Admin UI ends on
+              <time datetime="2027-01-27">27 January 2027</time>.
+              Please switch to the new user experience. Visit the
+              <a href="https://github.com/contextforge-org/contextforge-web-ui" target="_blank" rel="noopener noreferrer" class="underline font-semibold">new UI repository</a>
+              and follow the
+              <a href="https://github.com/IBM/mcp-context-forge#optional-web-ui" target="_blank" rel="noopener noreferrer" class="underline font-semibold">getting started documentation</a>.
+              <span class="mt-2 block">
+                To turn off this notice, set
+                <code class="break-all">MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED=false</code>
+                and restart the gateway.
+              </span>
+            </p>
+            <button
+              type="button"
+              aria-label="Dismiss deprecation notice"
+              data-action-click="hideElement"
+              data-arg0="admin-ui-deprecation-notice"
+              class="flex-shrink-0 rounded p-1 focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
         <!-- Admin Non-Member Team Banner -->
         {% if admin_viewing_non_member_team %}
         <div class="bg-red-100 dark:bg-red-900/30 border-b border-red-300 dark:border-red-800">
