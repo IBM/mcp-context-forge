@@ -138,6 +138,7 @@ from mcpgateway.schemas import (
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
+    A2APushNotificationConfigRequest,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -5363,6 +5364,265 @@ def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = N
         return mcp_session_id
     body_session_id = body.get("mcpSessionId") or body.get("mcp_session_id")
     return body_session_id if isinstance(body_session_id, str) and body_session_id else None
+
+
+A2A_TASKS_DEFAULT_PAGE_SIZE = 50
+A2A_TASKS_MAX_PAGE_SIZE = 100
+
+
+def _encode_a2a_page_token(offset: int) -> str:
+    """Encode a list offset as an opaque A2A ``pageToken``."""
+    return base64.urlsafe_b64encode(json.dumps({"o": offset}).encode()).decode()
+
+
+def _decode_a2a_page_token(page_token: Optional[str]) -> int:
+    """Decode an opaque A2A ``pageToken`` into a list offset.
+
+    Raises:
+        HTTPException: If the token is malformed.
+    """
+    if not page_token:
+        return 0
+    try:
+        offset = int(json.loads(base64.urlsafe_b64decode(page_token.encode()))["o"])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid pageToken")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Invalid pageToken")
+    return offset
+
+
+def _require_a2a_service() -> A2AAgentService:
+    """Return the A2A service or raise 503 when A2A is disabled."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    return a2a_service
+
+
+@a2a_router.get("/{agent_id}/tasks")
+@require_permission("a2a.read")
+async def list_a2a_tasks(
+    agent_id: str,
+    request: Request,
+    state: Optional[str] = Query(None, description="Filter by task state"),
+    page_size: int = Query(A2A_TASKS_DEFAULT_PAGE_SIZE, alias="pageSize", ge=1, le=A2A_TASKS_MAX_PAGE_SIZE),
+    page_token: Optional[str] = Query(None, alias="pageToken"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List tasks for an A2A agent with ``pageToken`` pagination.
+
+    Args:
+        agent_id: Owning agent ID.
+        request: The FastAPI request object.
+        state: Optional task state filter.
+        page_size: Maximum tasks per page.
+        page_token: Opaque token returned as ``nextPageToken`` by the previous page.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict with ``tasks`` and ``nextPageToken`` (empty string on the last page).
+    """
+    service = _require_a2a_service()
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    offset = _decode_a2a_page_token(page_token)
+    tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=page_size + 1, offset=offset, user_email=user_email, token_teams=token_teams)
+    next_token = _encode_a2a_page_token(offset + page_size) if len(tasks) > page_size else ""
+    return {"tasks": tasks[:page_size], "nextPageToken": next_token}
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}")
+@require_permission("a2a.read")
+async def get_a2a_task(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get an A2A task.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The task in A2A wire format.
+
+    Raises:
+        HTTPException: 404 if the task does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    task = await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/cancel")
+@require_permission("a2a.invoke")
+async def cancel_a2a_task(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Cancel an A2A task. Tasks already in a terminal state are returned unchanged.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The task in A2A wire format.
+
+    Raises:
+        HTTPException: 404 if the task does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    task = await service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+async def _require_visible_a2a_task(service: A2AAgentService, db: Session, request: Request, user: Any, agent_id: str, task_id: str) -> None:
+    """Raise 404 unless the caller can see the task."""
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams) is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/pushNotificationConfigs", status_code=201)
+@require_permission("a2a.update")
+async def create_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    body: A2APushNotificationConfigRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Create a push notification config for a task.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        body: Webhook configuration.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The stored config. ``auth_token`` is never returned.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    return service.create_push_config(db, {**body.model_dump(), "a2a_agent_id": agent_id, "task_id": task_id})
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}/pushNotificationConfigs")
+@require_permission("a2a.read")
+async def list_a2a_push_configs(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List push notification configs for a task.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict with ``configs``.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    return {"configs": service.list_push_configs(db, agent_id=agent_id, task_id=task_id)}
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}")
+@require_permission("a2a.read")
+async def get_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get one push notification config.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        config_id: Push config ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The stored config.
+
+    Raises:
+        HTTPException: 404 if the config does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    for cfg in service.list_push_configs(db, agent_id=agent_id, task_id=task_id):
+        if cfg["id"] == config_id:
+            return cfg
+    raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
+
+
+@a2a_router.delete("/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}")
+@require_permission("a2a.update")
+async def delete_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Delete a push notification config.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        config_id: Push config ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        ``{"deleted": True}``.
+
+    Raises:
+        HTTPException: 404 if the config does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    if not any(cfg["id"] == config_id for cfg in service.list_push_configs(db, agent_id=agent_id, task_id=task_id)):
+        raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
+    service.delete_push_config(db, config_id)
+    return {"deleted": True}
 
 
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
