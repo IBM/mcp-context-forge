@@ -18,6 +18,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -328,6 +329,50 @@ class TestRefreshExecution:
             include_prompts=True,
         )
         assert notification_service._refreshes_triggered == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_refresh_reaches_invalidate(self, notification_service):
+        """A refresh that adds a tool reaches the registry cache invalidation."""
+        # First-Party
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.services.gateway_service import GatewayService
+
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "gw-1"
+        gateway.name = "gw"
+        gateway.url = "http://example.com"
+        gateway.enabled = True
+        gateway.reachable = True
+        gateway.tools = []
+        gateway.resources = []
+        gateway.prompts = []
+        session = MagicMock()
+        session.dirty = set()
+        session.execute.return_value.scalar_one_or_none.return_value = gateway
+        session_ctx = MagicMock()
+        session_ctx.__enter__.return_value = session
+        session_ctx.__exit__.return_value = None
+        cache = MagicMock()
+        cache.invalidate_tools = AsyncMock()
+        cache.invalidate_resources = AsyncMock()
+        cache.invalidate_prompts = AsyncMock()
+
+        gateway_service = GatewayService()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="tool1")], [], [], []))
+        gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
+        gateway_service._update_or_create_resources = MagicMock(return_value=[])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+        notification_service.set_gateway_service(gateway_service)
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=session_ctx),
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=MagicMock(invalidate_gateway=AsyncMock())),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock())),
+        ):
+            await notification_service._execute_refresh(PendingRefresh(gateway_id="gw-1"))
+
+        cache.invalidate_tools.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_execute_refresh_handles_failure(self, notification_service):
@@ -1625,22 +1670,167 @@ class TestForwardNotificationErrorBranches:
 
 
 class TestEnqueueRefreshDebounceEdge:
-    """Cover the ``debounce window but no pending`` branch (lines 1080-1086)."""
+    """Cover the ``debounce window but no pending`` branch: a trailing refresh replaces the drop."""
+
+    @staticmethod
+    async def _refresh_already_ran(service: NotificationService, gateway_id: str, kind: NotificationType) -> None:
+        """Queue a refresh and take it off the queue as the worker would."""
+        await service._enqueue_refresh(gateway_id, kind)
+        await service._execute_refresh(service._refresh_queue.get_nowait())
 
     @pytest.mark.asyncio
-    async def test_debounce_without_pending_entry_counts_as_debounced(self, notification_service):
-        """When ``_last_refresh_enqueued`` is recent but no ``_pending_refresh_flags`` entry exists,
-        the notification is counted as debounced and the log-debug branch runs.
-        """
-        # Simulate: refresh was recently enqueued and then processed (flags popped),
-        # but debounce window still applies.
+    async def test_debounce_without_pending_entry_schedules_trailing_refresh(self, notification_service):
+        """An event after the refresh ran, inside the window, is deferred rather than dropped."""
         notification_service._last_refresh_enqueued["gw-x"] = time.time()
-        # Deliberately DO NOT add a _pending_refresh_flags entry.
 
         before = notification_service._notifications_debounced
         await notification_service._enqueue_refresh("gw-x", NotificationType.TOOLS_LIST_CHANGED)
         assert notification_service._notifications_debounced == before + 1
         assert notification_service._refresh_queue.qsize() == 0
+        assert "gw-x" in notification_service._trailing_refresh_tasks
+        await notification_service.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_event_after_processed_refresh_gets_one_trailing_refresh_with_merged_flags(self, notification_service):
+        """Events inside the window after the refresh ran yield exactly one later refresh with OR-merged flags."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.PROMPTS_LIST_CHANGED)
+
+        await notification_service._enqueue_refresh("gw-1", NotificationType.RESOURCES_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.PROMPTS_LIST_CHANGED)
+        assert notification_service._refresh_queue.qsize() == 0
+
+        await asyncio.sleep(0.3)
+        assert notification_service._refresh_queue.qsize() == 1
+        trailing = notification_service._refresh_queue.get_nowait()
+        assert (trailing.include_resources, trailing.include_prompts) == (True, True)
+        assert trailing.triggered_by == {NotificationType.RESOURCES_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED}
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_burst_inside_window_yields_one_trailing_refresh(self, notification_service):
+        """A burst after the refresh ran schedules one trailing task and queues one refresh."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+
+        for _ in range(5):
+            await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+            assert len(notification_service._trailing_refresh_tasks) == 1
+
+        await asyncio.sleep(0.3)
+        assert notification_service._refresh_queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_event_outside_window_queues_immediately(self, notification_service):
+        """An event after the window closes takes the immediate path with no trailing task."""
+        notification_service.debounce_seconds = 0.1
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await asyncio.sleep(0.15)
+
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+
+        assert notification_service._refresh_queue.qsize() == 1
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_scheduled_trailing_refresh(self, notification_service):
+        """Shutdown cancels a scheduled trailing refresh before it queues."""
+        notification_service.debounce_seconds = 0.2
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        task = notification_service._trailing_refresh_tasks["gw-1"]
+
+        await notification_service.shutdown()
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert notification_service._trailing_refresh_tasks == {}
+        assert notification_service._refresh_queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_unregister_gateway_cancels_only_its_trailing_refresh(self, notification_service):
+        """Unregister cancels that gateway's trailing refresh and pending flags, and leaves other gateways alone."""
+        notification_service.debounce_seconds = 0.2
+        for gateway_id in ("gw-1", "gw-2"):
+            await self._refresh_already_ran(notification_service, gateway_id, NotificationType.TOOLS_LIST_CHANGED)
+            await notification_service._enqueue_refresh(gateway_id, NotificationType.TOOLS_LIST_CHANGED)
+        task = notification_service._trailing_refresh_tasks["gw-1"]
+
+        notification_service.unregister_gateway("gw-1")
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert "gw-1" not in notification_service._pending_refresh_flags
+        assert [notification_service._refresh_queue.get_nowait().gateway_id] == ["gw-2"]
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @staticmethod
+    async def _drain_backlog_then_schedule_trailing(service: NotificationService) -> asyncio.Task[None]:
+        """Run two refreshes that waited in the queue past the window, then trigger trailing refreshes."""
+        tools = NotificationType.TOOLS_LIST_CHANGED
+        await service._enqueue_refresh("gw-1", tools)
+        await asyncio.sleep(0.25)
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._refresh_queue.qsize() == 2
+        await service._execute_refresh(service._refresh_queue.get_nowait())
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._trailing_refresh_tasks == {}, "the newer queued refresh absorbs this event"
+        await service._execute_refresh(service._refresh_queue.get_nowait())
+        await service._enqueue_refresh("gw-1", tools)
+        task = service._trailing_refresh_tasks["gw-1"]
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._trailing_refresh_tasks == {"gw-1": task}
+        return task
+
+    @pytest.mark.asyncio
+    async def test_queue_backlog_keeps_one_tracked_trailing_refresh(self, notification_service):
+        """Refreshes that wait past the window only clear their own tracking, so one trailing refresh queues."""
+        notification_service.debounce_seconds = 0.2
+        await self._drain_backlog_then_schedule_trailing(notification_service)
+
+        await asyncio.sleep(0.3)
+
+        assert notification_service._refresh_queue.qsize() == 1
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_queue_backlog_trailing_refresh_cancelled_on_shutdown(self, notification_service):
+        """The single tracked trailing refresh after a backlog is the one shutdown cancels."""
+        notification_service.debounce_seconds = 0.2
+        task = await self._drain_backlog_then_schedule_trailing(notification_service)
+
+        await notification_service.shutdown()
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert notification_service._refresh_queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_trailing_refresh_leaves_slot_it_does_not_own(self, notification_service):
+        """A firing trailing task does not untrack a newer task in its gateway slot."""
+        notification_service.debounce_seconds = 0.1
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        newer = asyncio.create_task(asyncio.sleep(10))
+        notification_service._trailing_refresh_tasks["gw-1"] = newer
+
+        await asyncio.sleep(0.2)
+
+        assert notification_service._trailing_refresh_tasks == {"gw-1": newer}
+        await notification_service.shutdown()
+        assert newer.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_execute_refresh_keeps_newer_pending_entry(self, notification_service):
+        """Executing an older refresh leaves the tracking entry of a newer one."""
+        older, newer = PendingRefresh(gateway_id="gw-1"), PendingRefresh(gateway_id="gw-1")
+        notification_service._pending_refresh_flags["gw-1"] = newer
+
+        await notification_service._execute_refresh(older)
+        assert notification_service._pending_refresh_flags["gw-1"] is newer
+
+        await notification_service._execute_refresh(newer)
+        assert "gw-1" not in notification_service._pending_refresh_flags
 
 
 class TestMessageHandlerServerNotification:

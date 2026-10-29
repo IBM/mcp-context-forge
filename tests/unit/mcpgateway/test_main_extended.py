@@ -5144,6 +5144,51 @@ class TestLifespanAdvanced:
         # Legacy mode must suppress modern listener initialization
         mock_init_modern.assert_not_called()
 
+    async def _run_lifespan_with_modern_listeners(self, monkeypatch, *, cache_type, election_backend, events):
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod.settings, "gateway_modern_listeners_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_client_connect_mode", "auto")
+        monkeypatch.setattr(main_mod.settings, "cache_type", cache_type)
+        monkeypatch.setattr(main_mod.settings, "primary_worker_election_backend", election_backend)
+        monkeypatch.setattr("mcpgateway.services.leader_election.start_primary_worker_elector", AsyncMock(side_effect=lambda: events.append("elector")))
+        monkeypatch.setattr("mcpgateway.services.leader_election.stop_primary_worker_elector", AsyncMock())
+
+        listener = MagicMock()
+        listener.initialize = AsyncMock(side_effect=lambda: events.append("listener"))
+        listener.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, "init_modern_listener_service", MagicMock(return_value=listener))
+        monkeypatch.setattr(main_mod, "get_modern_listener_service", MagicMock(return_value=listener))
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_lifespan_warns_when_listeners_use_filelock_with_redis_cache(self, monkeypatch, caplog):
+        events = []
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
+            await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="filelock", events=events)
+
+        assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" in caplog.text
+        assert events == ["listener"]
+
+    @pytest.mark.asyncio
+    async def test_lifespan_starts_listeners_after_redis_elector(self, monkeypatch, caplog):
+        events = []
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
+            await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=events)
+
+        assert events == ["elector", "listener"]
+        assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" not in caplog.text
+
 
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""

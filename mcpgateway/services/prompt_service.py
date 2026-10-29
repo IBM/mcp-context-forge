@@ -1172,6 +1172,7 @@ class PromptService(BaseService):
 
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
+        catalog_changed = False
 
         for chunk_start in range(0, len(prompts), chunk_size):
             chunk = prompts[chunk_start : chunk_start + chunk_size]
@@ -1392,6 +1393,7 @@ class PromptService(BaseService):
 
                 # Commit the chunk
                 db.commit()
+                catalog_changed = catalog_changed or bool(prompts_to_add or prompts_to_update)
 
                 # Refresh prompts for notifications and audit trail
                 for db_prompt in prompts_to_add:
@@ -1428,6 +1430,8 @@ class PromptService(BaseService):
 
             except TemplateValidationError:
                 # Template validation errors should fail fast - re-raise immediately
+                if catalog_changed:
+                    await _get_registry_cache().invalidate_prompts()
                 raise
             except Exception as e:
                 db.rollback()
@@ -1435,6 +1439,9 @@ class PromptService(BaseService):
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
+
+        if catalog_changed:
+            await _get_registry_cache().invalidate_prompts()
 
         # Final structured logging
         structured_logger.log(

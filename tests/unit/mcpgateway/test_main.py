@@ -3626,6 +3626,17 @@ class TestRPCEndpoints:
         mock_subscribe.assert_called_once()
         mock_unsubscribe.assert_called_once()
 
+    @patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock)
+    def test_rpc_subscriptions_listen_method_not_found(self, mock_invoke_tool, test_client, auth_headers):
+        """subscriptions/listen is a streaming MCP method, so /rpc returns -32601 without a tool lookup."""
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "listen-1", "method": "subscriptions/listen", "params": {"notifications": {"toolsListChanged": True}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32601
+        assert body["id"] == "listen-1"
+        mock_invoke_tool.assert_not_called()
+
     @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list(self, mock_list_templates, test_client, auth_headers):
         """Test resources/templates/list JSON-RPC method."""

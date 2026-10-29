@@ -24,11 +24,13 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import time
 from types import SimpleNamespace
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
+import anyio
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
 from fastapi import HTTPException
@@ -38,6 +40,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import PromptArgument
 import orjson
@@ -8152,6 +8155,28 @@ async def test_handle_streamable_http_unknown_method_without_session_returns_326
     payload = json.loads(response_body["body"])
     assert payload["error"]["code"] == -32601
     assert payload["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sessionless_legacy_listen_probe_still_method_not_found(monkeypatch):
+    """A legacy session-less subscriptions/listen probe keeps today's -32601, not the SDK's missing-session -32600."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    body = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "subscriptions/listen", "params": {"notifications": {"toolsListChanged": True}}}).encode()
+
+    await wrapper.handle_streamable_http(_make_scope("/mcp", method="POST"), _make_receive(body), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    response_body = next(m for m in messages if m["type"] == "http.response.body")
+    payload = json.loads(response_body["body"])
+    assert payload["error"]["code"] == -32601
+    assert payload["id"] == 7
 
 
 @pytest.mark.asyncio
@@ -20567,3 +20592,313 @@ class TestRequestMetaLimitsAndUpstreamResourceErrors:
         finally:
             tr._v2_request_ctx.reset(token)
         assert exc_info.value.error.code == types.INVALID_PARAMS
+
+
+# ---------------------------------------------------------------------------
+# subscriptions/listen (MCP 2026-07-28)
+# ---------------------------------------------------------------------------
+
+_MODERN_LISTEN_CTX = SimpleNamespace(protocol_version="2026-07-28", request_id=1)
+_ALL_LIST_KINDS = {"tools_list_changed": True, "prompts_list_changed": True, "resources_list_changed": True}
+
+
+def _listen_params(**flags):
+    """Build listen request params with the given filter flags."""
+    return types.SubscriptionsListenRequestParams(notifications=types.SubscriptionFilter(**flags))
+
+
+def _patch_listen_delegate(monkeypatch, delegate=None):
+    """Replace the shared ListenHandler with a recording fake and return it."""
+    delegate = delegate or AsyncMock(return_value=types.SubscriptionsListenResult())
+    monkeypatch.setattr(tr, "get_listen_handler", lambda: delegate)
+    return delegate
+
+
+def _delegated_filter(delegate):
+    """Return the SubscriptionFilter the adapter handed to the shared handler."""
+    delegate.assert_awaited_once()
+    return delegate.await_args.args[1].notifications
+
+
+@pytest.fixture
+def listen_requires_auth(monkeypatch):
+    """Run listen tests with MCP_REQUIRE_AUTH=true so the OAuth check is skipped."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+
+async def test_listen_legacy_session_method_not_found(monkeypatch):
+    """A handshake-era caller gets -32601 and never reaches scope resolution or the shared handler."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    resolve = AsyncMock(return_value=("server-1", {}, _scoped_user_context(None)))
+    monkeypatch.setattr(tr, "_get_request_context_or_default", resolve)
+
+    with pytest.raises(MCPError) as exc_info:
+        await tr._adapt_subscriptions_listen(SimpleNamespace(protocol_version="2025-11-25", request_id=1), _listen_params(tools_list_changed=True))
+
+    assert exc_info.value.error.code == types.METHOD_NOT_FOUND == -32601
+    delegate.assert_not_awaited()
+    resolve.assert_not_awaited()
+
+
+async def test_listen_drops_kinds_without_permission(monkeypatch, listen_requires_auth):
+    """Only kinds whose */list permission the token scope grants survive narrowing."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(tools_list_changed=True)
+
+
+async def test_listen_all_list_kinds_denied_raises_like_tools_list(monkeypatch, listen_requires_auth):
+    """Every requested kind denied: the same PermissionError tools/list raises, and no stream opens."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError) as listen_exc:
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    with pytest.raises(PermissionError) as list_exc:
+        await tr._list_catalog_page("tools/list", None)
+
+    assert str(listen_exc.value) == str(list_exc.value) == tr._ACCESS_DENIED_MSG
+    delegate.assert_not_awaited()
+
+
+async def test_listen_empty_scope_defers_to_rbac_keeps_all_kinds(monkeypatch, listen_requires_auth):
+    """An empty token scope defers to RBAC, so every requested list kind is kept."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(**_ALL_LIST_KINDS)
+
+
+async def test_listen_drops_resource_subscriptions(monkeypatch, listen_requires_auth):
+    """resourceSubscriptions is never honored; the permitted list kind is."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resources_list_changed=True, resource_subscriptions=["file:///a"]))
+
+    narrowed = _delegated_filter(delegate)
+    assert narrowed == types.SubscriptionFilter(resources_list_changed=True)
+    assert narrowed.resource_subscriptions is None
+
+
+async def test_listen_only_resource_subscriptions_gets_empty_filter(monkeypatch, listen_requires_auth):
+    """A request with only resourceSubscriptions is acked with an empty filter, not an error."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter()
+
+
+async def test_listen_drops_unknown_filter_keys(monkeypatch, listen_requires_auth):
+    """Extension keys in the filter are not forwarded; only gated list kinds reach the shared handler."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, types.SubscriptionsListenRequestParams(notifications={"toolsListChanged": True, "taskIds": ["t1"]}))
+
+    assert _delegated_filter(delegate).model_dump(by_alias=True, exclude_none=True) == {"toolsListChanged": True}
+
+
+async def test_listen_oauth_check_runs_once(monkeypatch):
+    """With MCP_REQUIRE_AUTH=false the OAuth enforcement runs once per listen, not once per kind."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    oauth_check = AsyncMock(return_value=None)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", oauth_check)
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    oauth_check.assert_awaited_once_with("server-1", {"is_authenticated": False})
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(**_ALL_LIST_KINDS)
+
+
+async def test_listen_oauth_server_unauth_rejected(monkeypatch):
+    """An unauthenticated listen on an oauth_enabled server raises OAuthRequiredError, like the list path."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(side_effect=OAuthRequiredError("auth required", server_id="server-1")))
+
+    with pytest.raises(OAuthRequiredError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    with pytest.raises(OAuthRequiredError):
+        await tr._list_catalog_page("tools/list", None)
+    delegate.assert_not_awaited()
+
+
+def _listen_context_with_exp(exp):
+    """Build an authenticated user context carrying a JWT ``exp`` claim."""
+    return {**_scoped_user_context([]), "exp": exp}
+
+
+async def _block_forever(_ctx, _params):
+    """Fake shared handler that never completes on its own."""
+    await anyio.sleep_forever()
+
+
+def _assert_listen_completed(result):
+    """Assert the adapter returned a completion result tagged with the request id."""
+    assert isinstance(result, types.SubscriptionsListenResult)
+    assert result.meta[SUBSCRIPTION_ID_META_KEY] == _MODERN_LISTEN_CTX.request_id
+
+
+async def test_listen_ends_at_token_exp(monkeypatch, listen_requires_auth):
+    """A stream outliving the token exp ends with a completion result tagged with the subscription id."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.25))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_without_exp_ends_at_max_lifetime(monkeypatch, listen_requires_auth):
+    """A token without exp is bounded by MCP_LISTEN_MAX_LIFETIME_SECONDS."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_exp_none_treated_as_missing(monkeypatch, listen_requires_auth):
+    """A JWT-path context with exp=None falls back to the max-lifetime deadline."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(None))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result)
+
+
+async def test_listen_deadline_floor_ack_precedes_result(monkeypatch, listen_requires_auth):
+    """A token about to expire still gets the floor, so the handler can send its ack first."""
+    floor = 0.3
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", floor)
+    started = {}
+
+    async def recording_delegate(_ctx, _params):
+        started["at"] = time.monotonic()
+        await anyio.sleep_forever()
+
+    _patch_listen_delegate(monkeypatch, recording_delegate)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.01))
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert time.monotonic() - started["at"] >= floor - 0.02
+    _assert_listen_completed(result)
+
+
+async def test_listen_delegate_completing_early_returns_its_result(monkeypatch, listen_requires_auth):
+    """A delegate that finishes before the deadline keeps its own result."""
+    expected = types.SubscriptionsListenResult()
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=expected))
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 3600))
+
+    assert await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True)) is expected
+
+
+async def test_listen_does_not_open_db_session(monkeypatch):
+    """Scope resolution closes its DB session before delegating, and the stream never opens one."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    state = {"open": 0, "opened": 0, "delegating": False}
+
+    @asynccontextmanager
+    async def tracking_get_db():
+        if state["delegating"]:
+            raise AssertionError("get_db entered while the listen stream is being served")
+        state["open"] += 1
+        state["opened"] += 1
+        try:
+            db = MagicMock()
+            db.execute.return_value.scalar_one_or_none.return_value = None
+            yield db
+        finally:
+            state["open"] -= 1
+
+    async def delegate(_ctx, params):
+        state["delegating"] = True
+        assert state["open"] == 0, "a DB session is still open while the listen stream is served"
+        return types.SubscriptionsListenResult()
+
+    monkeypatch.setattr(tr, "get_db", tracking_get_db)
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert state["delegating"] is True
+    assert state["opened"] == 1  # the OAuth lookup ran and released its session
+
+
+def test_listen_handler_registered():
+    """subscriptions/listen is served by the ContextForge adapter, not added to the legacy known-method set."""
+    assert "subscriptions/listen" in tr.mcp_app._request_handlers
+    assert "subscriptions/listen" not in tr._MCP_KNOWN_REQUEST_METHODS
+
+
+def test_modern_capabilities_advertise_list_changed_without_subscribe():
+    """2026-07-28 advertises listChanged for all three kinds and omits resources.subscribe."""
+    capabilities = tr.mcp_app.get_capabilities(protocol_version="2026-07-28")
+
+    assert capabilities.tools.list_changed is True
+    assert capabilities.prompts.list_changed is True
+    assert capabilities.resources.list_changed is True
+    assert not capabilities.resources.subscribe
+    assert "subscribe" not in capabilities.model_dump(mode="json", by_alias=True, exclude_none=True)["resources"]
+
+
+def test_legacy_capabilities_unchanged(monkeypatch):
+    """Handshake-era capabilities are identical to the output captured before listen support."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+
+    capabilities = tr.mcp_app.get_capabilities(protocol_version="2025-11-25")
+
+    assert capabilities.model_dump(mode="json", by_alias=True) == {
+        "experimental": None,
+        "logging": {},
+        "prompts": {"listChanged": False},
+        "resources": {"subscribe": False, "listChanged": False},
+        "tools": {"listChanged": False},
+        "completions": {},
+        "extensions": None,
+        "tasks": None,
+    }
+
+
+async def test_listen_over_modern_wire_acks_narrowed_filter_and_delivers_permitted_kind(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: the ack carries only permitted kinds and no resourceSubscriptions."""
+    # Third-Party
+    from mcp.shared.subscriptions import ToolsListChanged  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(tools_list_changed=True, prompts_list_changed=True, resource_subscriptions=["file:///a"]) as sub:
+            assert sub.honored.model_dump(by_alias=True, exclude_none=True) == {"toolsListChanged": True}
+            await get_listen_bus().publish(ToolsListChanged())
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    assert isinstance(event, ToolsListChanged)
