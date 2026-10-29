@@ -20,6 +20,7 @@ from mcpgateway.services import a2a_card_import
 from mcpgateway.services.a2a_card_import import (
     build_candidate_urls,
     CardPathError,
+    CardResponse,
     fetch_agent_card,
     is_agent_card,
     normalize_card,
@@ -67,7 +68,8 @@ def fetch(monkeypatch):
 
     async def _get_json(url, headers):
         seen.append((url, headers))
-        return responses.get(url, (404, None, None))
+        outcome = responses.get(url, (404, None, None))
+        return outcome if isinstance(outcome, CardResponse) else CardResponse(*outcome)
 
     monkeypatch.setattr(a2a_card_import, "_get_json", _get_json)
     return SimpleNamespace(responses=responses, seen=seen)
@@ -425,7 +427,7 @@ class TestGetJson:
         monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(side_effect=ValueError("blocked")))
         client = MagicMock()
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", client)
-        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == CardResponse(None)  # pylint: disable=protected-access
         client.assert_not_called()
 
     async def test_oversized_body_is_discarded(self, monkeypatch):
@@ -439,6 +441,7 @@ class TestGetJson:
 
         class _Resp:
             status_code = 200
+            headers = {"etag": '"v1"', "cache-control": "max-age=60"}
 
             async def aiter_bytes(self):
                 yield b"x" * (a2a_card_import.MAX_CARD_BYTES + 1)
@@ -463,7 +466,7 @@ class TestGetJson:
                 return False
 
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
 
 def _stub_stream(monkeypatch, response=None, error=None):
@@ -515,27 +518,33 @@ class TestGetJsonOutcomes:
     async def test_valid_json_is_returned(self, monkeypatch):
         """A 200 response with a JSON body yields the parsed document."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == (200, {"name": "a"}, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == CardResponse(200, {"name": "a"})  # pylint: disable=protected-access
 
     async def test_non_200_returns_status_only(self, monkeypatch):
         """A non-200 status is reported without reading the body."""
         _stub_stream(monkeypatch, _Resp(404))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (404, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(404)  # pylint: disable=protected-access
 
     async def test_challenge_header_is_returned_on_401(self, monkeypatch):
         """A 401 reports its WWW-Authenticate value."""
         _stub_stream(monkeypatch, _Resp(401, headers={"www-authenticate": "Bearer realm=x"}))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (401, None, "Bearer realm=x")  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(401, challenge="Bearer realm=x")  # pylint: disable=protected-access
 
     async def test_invalid_json_yields_no_document(self, monkeypatch):
         """A 200 response that is not JSON yields no document."""
         _stub_stream(monkeypatch, _Resp(200, b"<html>"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
     async def test_transport_error_returns_no_status(self, monkeypatch):
         """A transport failure is logged and reported as no status."""
         _stub_stream(monkeypatch, error=RuntimeError("boom"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
+
+    async def test_captures_etag_and_max_age(self, monkeypatch):
+        """ETag and Cache-Control max-age travel with a successful card read."""
+        _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}', headers={"etag": '"v1"', "cache-control": "public, max-age=60"}))
+        result = await a2a_card_import._get_json("https://a.example.com/card.json", None)  # pylint: disable=protected-access
+        assert result == CardResponse(200, {"name": "a"}, etag='"v1"', max_age=60)
 
 
 class TestRequestSchema:

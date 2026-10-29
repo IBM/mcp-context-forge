@@ -14,7 +14,7 @@ cannot reveal which hosts the gateway can or cannot reach.
 # Standard
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from urllib.parse import urlparse
 
 # Third-Party
@@ -42,6 +42,40 @@ _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 _DEFAULT_PROTOCOL_BINDING = "JSONRPC"
 
 _AUTH_TYPE_BY_HTTP_SCHEME = {"basic": "basic", "bearer": "bearer"}
+
+
+_MAX_AGE_RE = re.compile(r"(?:^|[,\s])max-age=(\d+)", re.IGNORECASE)
+
+
+class CardResponse(NamedTuple):
+    """Outcome of one guarded card GET."""
+
+    status: Optional[int]
+    document: Any = None
+    challenge: Optional[str] = None
+    etag: Optional[str] = None
+    max_age: Optional[int] = None
+
+
+def parse_max_age(cache_control: Optional[str]) -> Optional[int]:
+    """Extract ``max-age`` seconds from a ``Cache-Control`` header value.
+
+    Args:
+        cache_control: Raw header value, or ``None``.
+
+    Returns:
+        The max-age in seconds, or ``None`` when absent.
+
+    Examples:
+        >>> parse_max_age("public, max-age=300")
+        300
+        >>> parse_max_age("no-store") is None
+        True
+        >>> parse_max_age(None) is None
+        True
+    """
+    match = _MAX_AGE_RE.search(cache_control or "")
+    return int(match.group(1)) if match else None
 
 
 class CardPathError(ValueError):
@@ -413,7 +447,7 @@ def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
     return parts[0] if parts and _AUTH_SCHEME_RE.match(parts[0]) else None
 
 
-async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Optional[int], Any, Optional[str]]:
+async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse:
     """GET one URL under the outbound policy and parse a size-capped JSON body.
 
     Args:
@@ -421,7 +455,7 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         headers: Optional caller headers, sent only to this URL's pinned host.
 
     Returns:
-        ``(status, document, challenge)``. ``status`` is ``None`` when the request was blocked or failed;
+        A ``CardResponse``. ``status`` is ``None`` when the request was blocked or failed;
         ``document`` is ``None`` unless the response was a 200 JSON body; ``challenge`` is the
         ``WWW-Authenticate`` value of a non-200 response.
     """
@@ -429,26 +463,28 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         target = await resolve_pinned_target(url, "A2A card URL")
     except ValueError as exc:
         logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
-        return None, None, None
+        return CardResponse(None)
 
     request_headers = target.apply_headers({"Accept": "application/json", **(headers or {})})
     try:
         async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
             async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
                 if response.status_code != 200:
-                    return response.status_code, None, response.headers.get("www-authenticate")
+                    return CardResponse(response.status_code, challenge=response.headers.get("www-authenticate"))
+                etag = response.headers.get("etag")
+                max_age = parse_max_age(response.headers.get("cache-control"))
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_CARD_BYTES:
                         logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
-                        return 200, None, None
-        return 200, orjson.loads(bytes(body)), None
+                        return CardResponse(200)
+        return CardResponse(200, orjson.loads(bytes(body)), etag=etag, max_age=max_age)
     except orjson.JSONDecodeError:
-        return 200, None, None
+        return CardResponse(200)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("A2A card fetch failed for %s: %s", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(type(exc).__name__))
-        return None, None, None
+        return CardResponse(None)
 
 
 async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
@@ -471,16 +507,28 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
         return not_found()
 
     for url in candidates:
-        status, document, challenge = await _get_json(url, headers)
-        if status is None:
+        fetched = await _get_json(url, headers)
+        if fetched.status is None:
             return unreachable()
-        if status in (401, 403):
-            return auth_required(challenge)
-        if status == 404:
+        if fetched.status in (401, 403):
+            return auth_required(fetched.challenge)
+        if fetched.status == 404:
             continue
+        document = fetched.document
         if document is None or not is_agent_card(document):
             return not_found()
         card, version = normalize_card(document)
         fields, warnings = suggest_agent_fields(card)
-        return A2AFetchCardResponse(found=True, outcome="found", source_url=url, detected_version=version, card=card, raw_card=document, suggested_agent=fields, warnings=warnings)
+        return A2AFetchCardResponse(
+            found=True,
+            outcome="found",
+            source_url=url,
+            detected_version=version,
+            card=card,
+            raw_card=document,
+            suggested_agent=fields,
+            warnings=warnings,
+            etag=fetched.etag,
+            max_age=fetched.max_age,
+        )
     return not_found()

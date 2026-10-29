@@ -135,6 +135,7 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AFetchCardRequest,
     A2AFetchCardResponse,
+    A2AStoredCardRead,
     A2AAgentRead,
     A2AAgentUpdate,
     A2AInvokeResponse,
@@ -5070,6 +5071,40 @@ async def get_a2a_agent_card(
         raise HTTPException(status_code=404, detail="agent not found")
 
     response.headers["Cache-Control"] = "private, no-store"
+    return card
+
+
+@a2a_router.get("/{agent_id}/stored-card", response_model=A2AStoredCardRead)
+@require_permission("a2a.read")
+async def get_a2a_agent_stored_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the Agent Card stored for a registered agent, as fetched.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored card.
+
+    Raises:
+        HTTPException: If the agent is not visible, or has no stored card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored Agent Card for this agent")
     return card
 
 
