@@ -165,7 +165,9 @@ def _normalize_legacy_card(raw: Dict[str, Any]) -> Dict[str, Any]:
     if legacy_caps.get("extensions"):
         capabilities["extensions"] = legacy_caps["extensions"]
 
-    card: Dict[str, Any] = {key: raw[key] for key in ("name", "description", "version", "provider", "documentationUrl", "iconUrl", "defaultInputModes", "defaultOutputModes", "skills", "signatures") if key in raw}
+    card: Dict[str, Any] = {
+        key: raw[key] for key in ("name", "description", "version", "provider", "documentationUrl", "iconUrl", "defaultInputModes", "defaultOutputModes", "skills", "signatures") if key in raw
+    }
     card["supportedInterfaces"] = interfaces
     card["capabilities"] = capabilities
 
