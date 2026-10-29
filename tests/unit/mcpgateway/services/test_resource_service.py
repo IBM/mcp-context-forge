@@ -684,11 +684,20 @@ class TestResourceReading:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         upstream = types.BlobResourceContents(uri=mock_resource.uri, mimeType="application/octet-stream", blob=blob, _meta={"source": "upstream"})
 
-        with patch.object(resource_service, "invoke_resource", new=AsyncMock(return_value=upstream)):
+        with (
+            patch.object(resource_service, "invoke_resource", new=AsyncMock(return_value=upstream)),
+            patch("mcpgateway.services.resource_service.create_span") as mock_span,
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.resource_service.serialize_trace_payload") as mock_serialize,
+            patch("mcpgateway.common.models.BlobResourceContents.__str__", side_effect=AssertionError("Blob representations must not be built")),
+        ):
             result = await resource_service.read_resource(mock_db, resource_id=mock_resource.id)
 
         assert result.model_dump(by_alias=True, exclude_none=True) == upstream.model_dump(by_alias=True, exclude_none=True)
         assert not hasattr(result, "text")
+        mock_serialize.assert_not_called()
+        mock_span.return_value.__enter__.return_value.set_attribute.assert_any_call("content.size", len(blob))
 
     @pytest.mark.asyncio
     async def test_read_resource_with_metadata(self, resource_service, mock_db, mock_resource):
@@ -4105,12 +4114,19 @@ class TestInvokeResourceCoverage:
         session.session = session
         session.read_resource.return_value = types.ReadResourceResult(contents=[content])
 
-        with patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_client:
+        with (
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_client,
+            patch("mcpgateway.services.resource_service.create_span"),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.resource_service.serialize_trace_payload") as mock_serialize,
+        ):
             mock_client.return_value.__aenter__ = AsyncMock(return_value=session)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await resource_service.invoke_resource(MagicMock(), resource.id, str(content.uri), resource_obj=resource, gateway_obj=gateway)
 
         assert result == content
+        mock_serialize.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_resource_found(self, resource_service):

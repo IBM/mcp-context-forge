@@ -14,11 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 import pytest
+import mcp_types as types
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import admin_add_resource
-from mcpgateway.common.models import ResourceContent
+from mcpgateway.common.models import BlobResourceContents, ResourceContent
 from cpex.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError, ResourceHookType
 from cpex.framework.models import PluginResult
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
@@ -444,6 +445,40 @@ class TestResourceServicePluginIntegration:
 
         assert captured["text"] == resolved_sentinel
         assert result.text == resolved_sentinel
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    async def test_read_resource_post_fetch_receives_blob(self, resource_service_with_plugins, mock_db, monkeypatch, blob):
+        """Post-fetch hooks receive resolved blobs and can replace their contents."""
+        monkeypatch.setattr("mcpgateway.services.resource_service.PLUGINS_AVAILABLE", True)
+        service = resource_service_with_plugins
+        manager = await service._get_plugin_manager(None)
+        manager.has_hooks_for.side_effect = lambda hook: hook == ResourceHookType.RESOURCE_POST_FETCH
+        resource = MagicMock(
+            id="binary-1", uri="test://binary", gateway_id="gw-1", visibility="public", owner_email=None, team_id=None, extension_metadata=None,
+            content=ResourceContent(type="resource", id="binary-1", uri="test://binary", text="test://binary"),
+        )
+        mock_db.get.return_value = resource
+        upstream = types.BlobResourceContents(uri=resource.uri, mimeType="application/octet-stream", blob=blob, _meta={"source": "upstream"})
+        service.invoke_resource = AsyncMock(return_value=upstream)
+        seen = []
+
+        def post_fetch(hook, payload, *_args, **_kwargs):
+            assert hook == ResourceHookType.RESOURCE_POST_FETCH
+            assert isinstance(payload.content, BlobResourceContents)
+            seen.append(payload.content.model_dump(by_alias=True, exclude_none=True))
+            replacement = payload.model_copy(update={"content": payload.content.model_copy(update={"meta": {"source": "plugin"}})})
+            return PluginResult(continue_processing=True, modified_payload=replacement), None
+
+        manager.invoke_hook = AsyncMock(side_effect=post_fetch)
+
+        result = await service.read_resource(mock_db, resource_id=resource.id)
+
+        assert seen == [upstream.model_dump(by_alias=True, exclude_none=True)]
+        assert result.blob == blob
+        assert result.mime_type == "application/octet-stream"
+        assert result.meta == {"source": "plugin"}
+        manager.invoke_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_read_resource_plugin_error_handling(self, resource_service_with_plugins, mock_db):

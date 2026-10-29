@@ -54,6 +54,44 @@ make coverage-html             # generate HTML report
 
 ---
 
+## MCP Conformance Matrix
+
+Install the published `cf-integration 0.6.0` binary from
+[ContextForge Dev Tools](https://github.com/contextforge-org/contextforge-dev-tools/releases/tag/v0.6.0).
+Docker must be available to run the conformance stacks.
+
+```bash
+make conformance
+```
+
+The default matrix tests both MCP client versions (`2025-11-25` and `2026-07-28`) against both
+server eras (`legacy` and `modern`). Each of the four combinations runs in two lanes:
+`fixture-direct` and `builtin`. The first lane tests the upstream fixture directly;
+the second tests it through the built-in dataplane.
+
+`make conformance` compares results with committed baselines in `tests/conformance/baselines/`.
+Unexpected findings and stale baseline findings both fail the comparison.
+Baselines describe current failures and warnings; a passing comparison does not mean full protocol compliance.
+
+Use `CONFORMANCE_CLIENT_VERSIONS` and `CONFORMANCE_SERVER_ERAS` to select a focused run:
+
+```bash
+make conformance CONFORMANCE_CLIENT_VERSIONS=2026-07-28 CONFORMANCE_SERVER_ERAS=modern
+```
+
+Inspect the diagnostics in `.integration/reports/` before updating expected findings.
+`make conformance-bless` updates selected baselines atomically after the complete selected matrix finishes.
+It accepts the same selectors. CI runs the full matrix and uploads diagnostics when a run fails.
+
+The `2025-11-25`/`legacy` built-in baseline includes `server-sse-polling` with a `scenario-timeout` finding.
+In the pinned setup, the gateway accepts the SSE connection but does not finish the exchange within 30 seconds.
+Baseline generation and the subsequent strict matrix run reproduce the same finding.
+The comparison records the scenario, check, and status, rather than measured latency.
+A completed exchange makes this finding stale and fails the strict comparison.
+Inspect the diagnostics before blessing that change.
+
+---
+
 ## 🎭 UI Automation (Playwright)
 
 Playwright tests validate the Admin UI interactions:

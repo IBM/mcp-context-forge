@@ -2342,7 +2342,7 @@ class ResourceService(BaseService):
                             resource_content = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
                             resource_content = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
-                        if span and resource_content is not None and is_output_capture_enabled("resource.read"):
+                        if span and resource_content is not None and not isinstance(resource_content, types.BlobResourceContents) and is_output_capture_enabled("resource.read"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_content}))
                         success = True  # Mark as successful before returning
                         return resource_content
@@ -2918,7 +2918,7 @@ class ResourceService(BaseService):
                     if meta_payload.get("_meta"):
                         content.meta = meta_payload["_meta"]
 
-                if span and content is not None and is_output_capture_enabled("resource.read"):
+                if span and content is not None and not isinstance(content, BlobResourceContents) and is_output_capture_enabled("resource.read"):
                     set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
                 # Set success attributes on span only after gateway resolution, hooks,
@@ -2927,7 +2927,7 @@ class ResourceService(BaseService):
                     set_span_attribute(span, "success", True)
                     set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
                     if content is not None:
-                        set_span_attribute(span, "content.size", len(str(content)))
+                        set_span_attribute(span, "content.size", len(content.blob) if isinstance(content, BlobResourceContents) else len(str(content)))
 
                 success = True
                 return content
