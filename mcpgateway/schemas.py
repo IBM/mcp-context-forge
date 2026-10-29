@@ -5526,6 +5526,18 @@ class TopPerformer(BaseModelWithConfigDict):
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
+class A2AStoredCardRead(BaseModelWithConfigDict):
+    """The current stored Agent Card of a registered agent, as fetched."""
+
+    version: int = Field(..., description="Stored card version, starting at 1")
+    card: Dict[str, Any] = Field(..., description="Card document as fetched")
+    detected_version: str = Field(..., description="Card format version detected at fetch time: 1.0 or 0.3")
+    source_url: str = Field(..., description="URL the card was fetched from")
+    etag: Optional[str] = Field(None, description="ETag returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds returned with the card")
+    fetched_at: datetime = Field(..., description="When the card was fetched")
+
+
 class A2AFetchCardRequest(BaseModelWithConfigDict):
     """Request to fetch an A2A Agent Card from an endpoint that is not yet registered."""
 
@@ -5571,6 +5583,8 @@ class A2AFetchCardResponse(BaseModelWithConfigDict):
     raw_card: Optional[Dict[str, Any]] = Field(None, description="Card as fetched")
     suggested_agent: Optional[Dict[str, Any]] = Field(None, description="Suggested A2AAgentCreate fields derived from the card")
     warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
+    etag: Optional[str] = Field(None, description="ETag the agent returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds the agent returned with the card")
 
 
 class A2AAgentCreate(BaseModel):
@@ -5670,6 +5684,10 @@ class A2AAgentCreate(BaseModel):
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+    card_url: Optional[str] = Field(
+        None,
+        description="Agent Card endpoint or card URL. The gateway fetches the card itself and stores it as fetched; a card supplied by the client is never accepted. Registration fails when no card is found",
+    )
 
     @field_validator("passthrough_headers")
     @classmethod
