@@ -133,6 +133,8 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
     A2AAgentRead,
     A2AAgentUpdate,
     A2AInvokeResponse,
@@ -178,6 +180,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
+from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -5103,6 +5106,28 @@ async def create_a2a_agent(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating A2A agent: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
+@require_permission("a2a.create")
+async def fetch_a2a_agent_card(
+    request: A2AFetchCardRequest,
+    user=Depends(get_current_user_with_permissions),
+) -> A2AFetchCardResponse:
+    """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
+
+    Every failure returns the same ``found: false`` response, so the route cannot be
+    used to probe which hosts the gateway can reach.
+
+    Args:
+        request (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        user: The authenticated user making the request.
+
+    Returns:
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a not-found result.
+    """
+    logger.debug(f"User {safe_log_user(user)} is fetching an A2A agent card")
+    return await fetch_agent_card(str(request.base_url), request.path, request.headers)
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)

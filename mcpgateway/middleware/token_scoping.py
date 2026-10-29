@@ -193,6 +193,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # collection route is listed before the {agent_name}-scoped POST routes.
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
     ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    # Card fetch makes the gateway issue an outbound request to a caller-chosen URL,
+    # so it needs a2a.create rather than a2a.read.
+    ("POST", re.compile(r"^/a2a/fetch-card/?$"), Permissions.A2A_CREATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
