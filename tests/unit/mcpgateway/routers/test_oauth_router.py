@@ -2829,6 +2829,100 @@ class TestRecoverTokenTeamsFromJwt:
         assert _recover_token_teams_from_jwt(request) is None
 
 
+_DCR_ISSUER = "https://issuer.example.com"
+
+
+async def _run_dcr_initiate(mock_db, mock_request, mock_current_user, oauth_config, metadata):
+    """Run initiate_oauth_flow through the DCR branch with the given config and AS metadata.
+
+    Returns:
+        Tuple of the gateway mock and the initiate_oauth_flow result.
+    """
+    mock_gateway = Mock(spec=Gateway)
+    mock_gateway.id = "gateway123"
+    mock_gateway.name = "Gateway"
+    mock_gateway.url = "https://mcp.example.com"
+    mock_gateway.visibility = "public"
+    mock_gateway.team_id = None
+    mock_gateway.auth_type = None
+    mock_gateway.oauth_config = {
+        "grant_type": "authorization_code",
+        "issuer": _DCR_ISSUER,
+        "redirect_uri": "https://gateway.example.com/oauth/callback",
+        **oauth_config,
+    }
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+    class _Registered:
+        client_id = "client-123"
+        client_secret_encrypted = None
+        token_endpoint_auth_method = "client_secret_post"
+
+    class _FakeDcrService:
+        async def get_or_register_client(self, **_kwargs):
+            return _Registered()
+
+        async def discover_as_metadata(self, _issuer):
+            return metadata
+
+    with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                # First-Party
+                from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                    mock_settings.dcr_enabled = True
+                    mock_settings.dcr_auto_register_on_missing_credentials = True
+                    mock_settings.dcr_default_scopes = ["openid"]
+
+                    result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+    return mock_gateway, result
+
+
+class TestDcrDiscoveredEndpointGate:
+    """Authorize-time DCR must gate AS metadata endpoints to the issuer origin."""
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_rejects_cross_origin_token_endpoint(self, mock_db, mock_request, mock_current_user):
+        """A cross-origin token_endpoint aborts DCR and is not persisted."""
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {}, metadata)
+
+        assert exc_info.value.status_code == 500
+        mock_db.commit.assert_not_called()
+        assert "token_url" not in mock_db.execute.return_value.scalar_one_or_none.return_value.oauth_config
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_rejects_cross_origin_authorization_endpoint(self, mock_db, mock_request, mock_current_user):
+        """A cross-origin authorization_endpoint aborts DCR and is not persisted."""
+        metadata = {"authorization_endpoint": "https://evil.example.net/auth", "token_endpoint": f"{_DCR_ISSUER}/token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {}, metadata)
+
+        assert exc_info.value.status_code == 500
+        mock_db.commit.assert_not_called()
+        assert "authorization_url" not in mock_db.execute.return_value.scalar_one_or_none.return_value.oauth_config
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_keeps_admin_configured_token_url(self, mock_db, mock_request, mock_current_user):
+        """An admin-configured token_url is neither validated against metadata nor overwritten."""
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"}
+
+        mock_gateway, result = await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {"token_url": f"{_DCR_ISSUER}/admin-token"}, metadata)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/admin-token"
+        assert mock_gateway.oauth_config["authorization_url"] == f"{_DCR_ISSUER}/auth"
+
+
 class TestOAuthRouterAdditionalCoverage:
     """Additional coverage for OAuth router branches."""
 

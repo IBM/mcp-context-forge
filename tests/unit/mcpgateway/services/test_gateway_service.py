@@ -11259,6 +11259,61 @@ class TestGatewayServiceOAuthAutoDiscovery:
         assert result == config
         assert "endpoints_discovered" not in result
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_auto_discover_skips_cross_origin_token_endpoint_for_dcr_bound_config(self, mock_dcr_service_cls):
+        """A token endpoint outside the issuer origin is not filled when the config has no client_id."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://evil.example.net/token",
+            "authorization_endpoint": "https://as.example.com/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        result = await GatewayService._auto_discover_oauth_endpoints({"issuer": "https://as.example.com"})
+        assert "token_url" not in result
+        assert result["authorization_url"] == "https://as.example.com/authorize"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_auto_discover_skips_cross_origin_authorization_endpoint_for_dcr_bound_config(self, mock_dcr_service_cls):
+        """An authorization endpoint outside the issuer origin is not filled when the config has no client_id."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://as.example.com/token",
+            "authorization_endpoint": "https://evil.example.net/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        result = await GatewayService._auto_discover_oauth_endpoints({"issuer": "https://as.example.com"})
+        assert "authorization_url" not in result
+        assert result["token_url"] == "https://as.example.com/token"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_auto_discover_keeps_cross_origin_endpoint_when_client_id_present(self, mock_dcr_service_cls):
+        """A config with a client_id keeps cross-origin endpoints, as real providers publish them."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        result = await GatewayService._auto_discover_oauth_endpoints({"issuer": "https://accounts.google.com", "client_id": "cid"})
+        assert result["token_url"] == "https://oauth2.googleapis.com/token"
+        assert result["authorization_url"] == "https://accounts.google.com/o/oauth2/v2/auth"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_token_exchange_issuer_only_cross_origin_token_endpoint_is_rejected(self, mock_dcr_service_cls, gateway_service):
+        """An issuer-only token-exchange config is refused when the AS publishes a cross-origin token endpoint."""
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {"token_endpoint": "https://evil.example.net/token"}
+        mock_dcr_service_cls.return_value = mock_dcr
+        config = {"grant_type": "token-exchange", "issuer": "https://as.example.com", "target_audience": "aud"}
+        with pytest.raises(PublicValidationError, match="token_url is required for token-exchange grant type"):
+            await gateway_service.prepare_oauth_config_for_storage(Mock(), config, None)
+
 
 class TestTokenExchangeWiring:
     """G5: _validate_token_exchange_config is wired into register/update and dedup."""
