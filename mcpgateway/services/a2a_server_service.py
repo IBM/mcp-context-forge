@@ -227,9 +227,7 @@ class A2AServerService:
                         modes.append(mode)
         return _AggregatedCapabilities(streaming, push_notifications, skills, input_modes or ["text"], output_modes or ["text"])
 
-    def _build_server_card(
-        self, server: DbServer, interface: DbServerInterface, user_email: Optional[str], token_teams: Optional[list[str]], caller_version: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _build_server_card(self, server: DbServer, interface: DbServerInterface, user_email: Optional[str], token_teams: Optional[list[str]], caller_version: Optional[str] = None) -> Dict[str, Any]:
         """Dispatch card construction by the interface's declared protocol version.
 
         Args:
