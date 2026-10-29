@@ -15,7 +15,14 @@ from pydantic import BaseModel, ValidationError
 import pytest
 
 # First-Party
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError, A2AAgentService, DEFAULT_A2A_TEST_MESSAGE
+from mcpgateway.services.a2a_service import (
+    A2A_TEST_AGENT_ERROR_MESSAGE,
+    A2A_TEST_NOT_FOUND_MESSAGE,
+    A2AAgentError,
+    A2AAgentNotFoundError,
+    A2AAgentService,
+    DEFAULT_A2A_TEST_MESSAGE,
+)
 
 
 def _service(agent_type="custom", endpoint="http://agent.example.com/api", invoke=None):
@@ -63,14 +70,28 @@ async def test_not_found_classified_404():
     service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
     outcome = await service.test_agent(MagicMock(), "a1")
     assert outcome.status_code == 404
-    assert outcome.body == {"success": False, "error": "missing", "error_type": "not_found", "agent_id": "a1"}
+    assert outcome.body == {"success": False, "error": A2A_TEST_NOT_FOUND_MESSAGE, "error_type": "not_found", "agent_id": "a1"}
 
 
 @pytest.mark.asyncio
-async def test_agent_error_classified_502():
-    service = _service(invoke=AsyncMock(side_effect=A2AAgentError("down")))
+async def test_missing_and_inaccessible_agents_return_identical_404_body():
+    missing = _service()
+    missing.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
+    inaccessible = _service()
+    inaccessible.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+    missing_outcome = await missing.test_agent(MagicMock(), "a1")
+    inaccessible_outcome = await inaccessible.test_agent(MagicMock(), "a1")
+    assert missing_outcome == inaccessible_outcome
+    assert missing_outcome.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_agent_error_classified_502_without_upstream_detail():
+    service = _service(invoke=AsyncMock(side_effect=A2AAgentError("HTTP 503: connect to internal-host.corp:8443 refused")))
     outcome = await service.test_agent(MagicMock(), "a1")
     assert (outcome.status_code, outcome.body["error_type"]) == (502, "agent_error")
+    assert outcome.body["error"] == A2A_TEST_AGENT_ERROR_MESSAGE
+    assert "internal-host" not in outcome.body["error"]
 
 
 @pytest.mark.asyncio
