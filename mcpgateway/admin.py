@@ -161,7 +161,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2A_DISABLED_DETAIL, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -16362,6 +16362,7 @@ async def admin_list_a2a_agents(
             - links: Pagination links (optional)
 
     Raises:
+        HTTPException (404): ``detail.error == "a2a_disabled"`` when A2A is disabled.
         HTTPException (500): If an error occurs while retrieving the agent list.
 
     Examples:
@@ -16371,14 +16372,7 @@ async def admin_list_a2a_agents(
         'admin_list_a2a_agents'
     """
     if a2a_service is None:
-        LOGGER.warning("A2A features are disabled, returning empty paginated response")
-        # First-Party
-
-        return {
-            "data": [],
-            "pagination": PaginationMeta(page=page, per_page=per_page, total_items=0, total_pages=0, has_next=False, has_prev=False).model_dump(),
-            "links": None,
-        }
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
@@ -16426,10 +16420,7 @@ async def admin_add_a2a_agent(
 
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        return ORJSONResponse(
-            content={"message": "A2A features are disabled!", "success": False},
-            status_code=403,
-        )
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
 
     form = await request.form()
     team_id = _form_team_id(form)
@@ -16952,14 +16943,14 @@ async def admin_test_a2a_agent(
         - agent_id: ID of the agent that was tested
 
     Raises:
-        HTTPException: If A2A features are disabled (403)
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` if A2A is disabled
 
     Note:
         Error messages are sanitized by a2a_service to prevent credential leakage.
         Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
 
     try:
         user_email = get_user_email(user)

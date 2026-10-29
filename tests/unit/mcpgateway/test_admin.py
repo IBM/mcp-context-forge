@@ -6500,11 +6500,11 @@ class TestA2AAgentManagement:
         mock_request.state = MagicMock()
         mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
-        assert isinstance(result, dict)
-        assert "data" in result
-        assert len(result["data"]) == 0
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @patch("mcpgateway.admin.a2a_service")
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
@@ -6814,10 +6814,10 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert result.status_code == 403
-        body = json.loads(result.body)
-        assert body["success"] is False
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -19236,10 +19236,10 @@ async def test_admin_add_a2a_agent_disabled_features(monkeypatch, mock_db, allow
     monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 403
-    payload = json.loads(response.body)
-    assert payload["success"] is False
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
 
 
 @pytest.mark.asyncio
