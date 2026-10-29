@@ -334,6 +334,8 @@ class A2AAgentNotFoundError(A2AAgentError):
 
 DEFAULT_A2A_TEST_MESSAGE = "ContextForge A2A agent connectivity test"
 DEFAULT_A2A_TEST_INTERACTION_TYPE = "test"
+A2A_TEST_NOT_FOUND_MESSAGE = "A2A agent not found"
+A2A_TEST_AGENT_ERROR_MESSAGE = "A2A agent invocation failed"
 
 
 @dataclass(frozen=True)
@@ -2223,8 +2225,9 @@ class A2AAgentService(BaseService):
     ) -> A2ATestOutcome:
         """Invoke an A2A agent with a test message and classify the outcome.
 
-        Error text is sanitized before it reaches the caller. Missing and inaccessible agents
-        both classify as ``not_found`` so agent existence does not leak.
+        The 404 and 502 responses carry fixed messages. The service logs the exception detail
+        and never returns it. Missing and inaccessible agents both classify as ``not_found``
+        so agent existence does not leak.
 
         Args:
             db: Database session.
@@ -2250,10 +2253,10 @@ class A2AAgentService(BaseService):
             return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
         except A2AAgentNotFoundError as e:
             logger.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
-            return A2ATestOutcome(404, {"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id})
+            return A2ATestOutcome(404, {"success": False, "error": A2A_TEST_NOT_FOUND_MESSAGE, "error_type": "not_found", "agent_id": agent_id})
         except A2AAgentError as e:
             logger.error(f"A2A agent error for {agent_id}: {e}")
-            return A2ATestOutcome(502, {"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id})
+            return A2ATestOutcome(502, {"success": False, "error": A2A_TEST_AGENT_ERROR_MESSAGE, "error_type": "agent_error", "agent_id": agent_id})
         except ValidationError as e:
             logger.warning(f"Validation error testing A2A agent {agent_id}: {e}")
             return A2ATestOutcome(422, {"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id})
