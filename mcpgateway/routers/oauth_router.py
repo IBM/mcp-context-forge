@@ -37,7 +37,7 @@ from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
-from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -774,8 +774,9 @@ async def initiate_oauth_flow(
                     # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
                     if not oauth_config.get("authorization_url") or not oauth_config.get("token_url"):
                         metadata = await dcr_service.discover_as_metadata(issuer)
-                        oauth_config["authorization_url"] = metadata.get("authorization_endpoint")
-                        oauth_config["token_url"] = metadata.get("token_endpoint")
+                        for config_key, metadata_key in (("authorization_url", "authorization_endpoint"), ("token_url", "token_endpoint")):
+                            if not oauth_config.get(config_key):
+                                oauth_config[config_key] = await validate_issuer_scoped_endpoint(metadata.get(metadata_key), issuer, metadata_key)
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
                     # Persist only DCR-derived fields (client credentials + AS metadata) —
