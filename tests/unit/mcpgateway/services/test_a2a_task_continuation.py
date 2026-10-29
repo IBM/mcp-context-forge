@@ -75,11 +75,63 @@ class TestContinueTask:
         assert kwargs["agent_id"] == "agent-1" and kwargs["token_teams"] == ["team"]
 
     @pytest.mark.asyncio
-    async def test_caller_message_fields_win(self, service):
-        """A caller-supplied messageId, role and contextId are kept."""
-        await service.continue_task(MagicMock(), "agent-1", "t1", {"messageId": "m1", "role": "ROLE_USER", "contextId": "mine", "parts": [{"text": "x"}]})
+    async def test_gateway_replaces_caller_message_id(self, service):
+        """A caller messageId never reaches the agent or the event log."""
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"messageId": "attacker-id", "parts": [{"text": "x"}]})
         message = service.invoke_agent.call_args.args[2]["message"]
-        assert (message["messageId"], message["role"], message["contextId"]) == ("m1", "ROLE_USER", "mine")
+        assert message["messageId"] != "attacker-id" and message["messageId"].startswith("contextforge-")
+        assert service._record_task_event.call_args.args[4]["message"]["messageId"] == message["messageId"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["user", "ROLE_USER", "Role_User"])
+    async def test_user_role_spellings_are_normalized(self, service, role):
+        """Either user-role spelling is accepted and sent as the user role."""
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"role": role, "parts": [{"text": "x"}]})
+        assert service.invoke_agent.call_args.args[2]["message"]["role"] == "user"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["agent", "ROLE_AGENT", "system", "", "ROLE_UNSPECIFIED"])
+    async def test_non_user_role_rejected(self, service, role):
+        """A message that claims an agent or other role is refused before the agent is called."""
+        with pytest.raises(A2AAgentError, match="role"):
+            await service.continue_task(MagicMock(), "agent-1", "t1", {"role": role, "parts": [{"text": "x"}]})
+        service.invoke_agent.assert_not_called()
+        service._record_task_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mismatched_context_id_rejected(self, service):
+        """A contextId that differs from the stored task is refused and not forwarded."""
+        with pytest.raises(A2AAgentError, match="contextId does not match"):
+            await service.continue_task(MagicMock(), "agent-1", "t1", {"contextId": "someone-elses", "parts": [{"text": "x"}]})
+        service.invoke_agent.assert_not_called()
+        service._record_task_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_matching_context_id_is_accepted(self, service):
+        """A contextId equal to the stored one passes and is bound from the stored task."""
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"contextId": "ctx-1", "parts": [{"text": "x"}]})
+        assert service.invoke_agent.call_args.args[2]["message"]["contextId"] == "ctx-1"
+
+    @pytest.mark.asyncio
+    async def test_context_id_rejected_when_task_has_none(self, service):
+        """A caller cannot attach a context to a task that has none."""
+        service.get_task.return_value = {"id": "t1", "status": {"state": "input-required"}}
+        with pytest.raises(A2AAgentError, match="contextId does not match"):
+            await service.continue_task(MagicMock(), "agent-1", "t1", {"contextId": "invented", "parts": [{"text": "x"}]})
+        service.invoke_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_task_without_context_sends_none(self, service):
+        """A task with no stored context produces a message without contextId."""
+        service.get_task.return_value = {"id": "t1", "status": {"state": "input-required"}}
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"parts": [{"text": "x"}]})
+        assert "contextId" not in service.invoke_agent.call_args.args[2]["message"]
+
+    @pytest.mark.asyncio
+    async def test_matching_task_id_is_accepted(self, service):
+        """A taskId equal to the path task passes."""
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"taskId": "t1", "parts": [{"text": "x"}]})
+        service.invoke_agent.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_unknown_or_invisible_task(self, service):

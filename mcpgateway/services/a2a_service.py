@@ -3593,7 +3593,7 @@ class A2AAgentService(BaseService):
             db: Database session.
             agent_id: ID of the agent that owns the task.
             task_id: Agent-side task ID.
-            message: A2A message object. ``messageId`` and ``role`` get defaults.
+            message: A2A message object. The gateway sets ``taskId``, ``contextId``, ``role`` and ``messageId``.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
             token_teams: Caller's teams for visibility scoping.
@@ -3608,7 +3608,8 @@ class A2AAgentService(BaseService):
         Raises:
             A2AAgentNotFoundError: If the task does not exist or is not visible.
             A2ATaskStateError: If the task is in a terminal state.
-            A2AAgentError: If ``message.taskId`` names a different task.
+            A2AAgentError: If ``message.taskId`` or ``message.contextId`` differs from the stored task,
+                or ``message.role`` is not a user role.
         """
         task = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
         if task is None:
@@ -3616,12 +3617,7 @@ class A2AAgentService(BaseService):
         previous_state = task["status"]["state"]
         if is_terminal_task_state(previous_state):
             raise A2ATaskStateError(f"Task '{task_id}' is in terminal state '{previous_state}' and cannot accept follow-up messages")
-        if message.get("taskId", task_id) != task_id:
-            raise A2AAgentError(f"message.taskId '{message['taskId']}' does not match task '{task_id}'")
-
-        follow_up = {"messageId": f"contextforge-{uuid.uuid4().hex}", "role": "user", **message, "taskId": task_id}
-        if task.get("contextId") and not follow_up.get("contextId"):
-            follow_up["contextId"] = task["contextId"]
+        follow_up = self._bind_follow_up_message(task, task_id, message)
 
         response = await self.invoke_agent(
             db,
@@ -3645,6 +3641,40 @@ class A2AAgentService(BaseService):
             db.rollback()
             logger.warning("Failed to record task_continued event for task_id=%s", task_id, exc_info=True)
         return response
+
+    @staticmethod
+    def _bind_follow_up_message(task: Dict[str, Any], task_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the follow-up message from the caller's message and the stored task.
+
+        The gateway owns the identity fields. The stored task supplies ``taskId`` and ``contextId``,
+        the gateway generates ``messageId``, and ``role`` is always the user role. A caller value
+        for ``taskId`` or ``contextId`` that differs from the stored task, or a ``role`` other than
+        the user role, is rejected. A caller ``messageId`` is replaced.
+
+        Args:
+            task: The stored task in wire format.
+            task_id: Agent-side task ID from the request path.
+            message: A2A message object from the caller.
+
+        Returns:
+            The message to send to the agent.
+
+        Raises:
+            A2AAgentError: If a caller value contradicts the stored task or the user role.
+        """
+        context_id = task.get("contextId")
+        for field, expected in (("taskId", task_id), ("contextId", context_id)):
+            supplied = message.get(field)
+            if supplied is not None and supplied != expected:
+                raise A2AAgentError(f"message.{field} does not match task '{task_id}'")
+        role = message.get("role")
+        if role is not None and str(role).strip().lower().removeprefix("role_") != "user":
+            raise A2AAgentError("message.role must be the user role")
+
+        follow_up = {**message, "messageId": f"contextforge-{uuid.uuid4().hex}", "role": "user", "taskId": task_id}
+        if context_id:
+            follow_up["contextId"] = context_id
+        return follow_up
 
     @staticmethod
     def _record_task_event(db: Session, agent_id: str, task_id: str, event_type: str, payload: Dict[str, Any]) -> None:
