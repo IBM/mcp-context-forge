@@ -196,6 +196,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Card fetch makes the gateway issue an outbound request to a caller-chosen URL,
     # so it needs a2a.create rather than a2a.read.
     ("POST", re.compile(r"^/a2a/fetch-card/?$"), Permissions.A2A_CREATE),
+    # Re-sync and the apply/decline decision change the stored card and the agent it drives.
+    ("POST", re.compile(r"^/a2a/[^/]+/card/(?:resync|drift)/?$"), Permissions.A2A_UPDATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),

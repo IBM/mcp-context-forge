@@ -133,6 +133,8 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2ACardDriftDecision,
+    A2ACardResyncResult,
     A2AFetchCardRequest,
     A2AFetchCardResponse,
     A2AStoredCardRead,
@@ -5054,6 +5056,75 @@ async def get_a2a_agent_stored_card(
     if card is None:
         raise HTTPException(status_code=404, detail="No stored Agent Card for this agent")
     return card
+
+
+@a2a_router.post("/{agent_id}/card/resync", response_model=A2ACardResyncResult)
+@require_permission("a2a.update")
+async def resync_a2a_agent_card(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardResyncResult:
+    """Re-fetch the stored Agent Card and apply or hold what changed.
+
+    Descriptive changes apply at once. Changes that alter how the gateway calls the agent
+    wait for a decision, and the current card keeps serving.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardResyncResult: The outcome and the change report.
+
+    Raises:
+        HTTPException: If the agent is not found, the caller does not own it, or the card cannot be re-fetched.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    try:
+        return await a2a_service.resync_agent_card(db, agent_id, user_email=get_user_email(user))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_id}/card/drift", response_model=A2ACardResyncResult)
+@require_permission("a2a.update")
+async def decide_a2a_agent_card_drift(
+    agent_id: str,
+    decision: A2ACardDriftDecision,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardResyncResult:
+    """Apply or decline a drifted Agent Card.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        decision (A2ACardDriftDecision): ``apply`` or ``decline``.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardResyncResult: The outcome after the decision.
+
+    Raises:
+        HTTPException: If the agent is not found, the caller does not own it, or no change awaits a decision.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    try:
+        return await a2a_service.decide_card_drift(db, agent_id, decision.decision, user_email=get_user_email(user))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)

@@ -5185,7 +5185,9 @@ class A2AAgentCard(Base):
     """An Agent Card stored as fetched, one row per fetched version.
 
     The card document stays separate from the deployment settings on ``A2AAgent``.
-    The highest ``version`` of an agent is its current card.
+    The current card of an agent is its highest ``version`` with status ``applied``.
+    A fetched card that changes gateway behaviour waits as ``pending`` until confirmed,
+    and stays as ``declined`` when refused; an agent with such a row is drifted.
     """
 
     __tablename__ = "a2a_agent_cards"
@@ -5199,6 +5201,8 @@ class A2AAgentCard(Base):
     etag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     max_age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="applied", server_default="applied")
+    drift: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (UniqueConstraint("a2a_agent_id", "version", name="uq_a2a_agent_cards_agent_version"),)
 

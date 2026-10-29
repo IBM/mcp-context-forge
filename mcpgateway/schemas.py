@@ -5526,6 +5526,16 @@ class TopPerformer(BaseModelWithConfigDict):
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
+class A2ACardDriftRead(BaseModelWithConfigDict):
+    """A fetched card that differs from the applied card and awaits a decision."""
+
+    version: int = Field(..., description="Version of the drifted card")
+    status: Literal["pending", "declined"] = Field(..., description="pending until decided; declined when refused")
+    card: Dict[str, Any] = Field(..., description="Drifted card document as fetched")
+    report: Dict[str, Any] = Field(..., description="Changes against the applied card, and deployment settings that apply never rewrites")
+    fetched_at: datetime = Field(..., description="When the drifted card was fetched")
+
+
 class A2AStoredCardRead(BaseModelWithConfigDict):
     """The current stored Agent Card of a registered agent, as fetched."""
 
@@ -5536,6 +5546,23 @@ class A2AStoredCardRead(BaseModelWithConfigDict):
     etag: Optional[str] = Field(None, description="ETag returned with the card")
     max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds returned with the card")
     fetched_at: datetime = Field(..., description="When the card was fetched")
+    drifted: bool = Field(False, description="Whether the remote card differs from this card in a way that awaits a decision")
+    drift: Optional[A2ACardDriftRead] = Field(None, description="The drifted card, when drifted")
+
+
+class A2ACardResyncResult(BaseModelWithConfigDict):
+    """Outcome of re-fetching a stored card."""
+
+    outcome: Literal["unchanged", "applied", "drifted"] = Field(..., description="unchanged: no difference; applied: descriptive changes applied; drifted: behaviour-affecting changes await a decision")
+    version: int = Field(..., description="Current applied card version after the re-sync")
+    report: Optional[Dict[str, Any]] = Field(None, description="Changes found, when any")
+    drifted: bool = Field(False, description="Whether the agent is drifted after the re-sync")
+
+
+class A2ACardDriftDecision(BaseModelWithConfigDict):
+    """Decision on a drifted card."""
+
+    decision: Literal["apply", "decline"] = Field(..., description="apply makes the drifted card current; decline keeps the current card and leaves the agent marked drifted")
 
 
 class A2AFetchCardRequest(BaseModelWithConfigDict):

@@ -39,8 +39,9 @@ from mcpgateway.db import fresh_db_session, get_for_update, server_tool_associat
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardResponse, A2AStoredCardRead
-from mcpgateway.services.a2a_card_import import fetch_agent_card
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2ACardDriftRead, A2ACardResyncResult, A2AAgentUpdate, A2AFetchCardResponse, A2AStoredCardRead
+from mcpgateway.services.a2a_card_drift import diff_cards
+from mcpgateway.services.a2a_card_import import fetch_agent_card, normalize_card, refetch_card, suggest_agent_fields
 from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -1069,6 +1070,23 @@ class A2AAgentService(BaseService):
             db.rollback()
             logger.warning("Failed to store Agent Card for A2A agent %s", agent.id, exc_info=True)
 
+    @staticmethod
+    def _card_rows(db: Session, agent_id: str) -> tuple[Optional[A2AAgentCard], Optional[A2AAgentCard]]:
+        """Return the current applied card row and the open drift row of an agent.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+
+        Returns:
+            ``(current, drift)``. ``current`` is the highest applied version. ``drift`` is a pending or
+            declined row newer than ``current``. Either can be ``None``.
+        """
+        rows = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id).order_by(A2AAgentCard.version.desc())).scalars().all()
+        current = next((row for row in rows if row.status == "applied"), None)
+        drift = next((row for row in rows if row.status in ("pending", "declined") and (current is None or row.version > current.version)), None)
+        return current, drift
+
     async def get_stored_card(
         self,
         db: Session,
@@ -1085,11 +1103,176 @@ class A2AAgentService(BaseService):
             token_teams: Token team scope for visibility checks.
 
         Returns:
-            The highest stored card version, or ``None`` when the agent has no stored card.
+            The current applied card with its open drift, or ``None`` when the agent has no stored card.
         """
         await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
-        row = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
-        return A2AStoredCardRead.model_validate(row) if row else None
+        current, drift = self._card_rows(db, agent_id)
+        if current is None:
+            return None
+        card = A2AStoredCardRead.model_validate(current)
+        if drift is not None:
+            card.drifted = True
+            card.drift = A2ACardDriftRead(version=drift.version, status=drift.status, card=drift.card, report=drift.drift or {}, fetched_at=drift.fetched_at)
+        return card
+
+    async def _load_owned_agent_with_card(self, db: Session, agent_id: str, user_email: Optional[str]) -> tuple[DbA2AAgent, A2AAgentCard, Optional[A2AAgentCard]]:
+        """Load an agent the caller owns, with its current and drift card rows.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Requester email for the ownership check.
+
+        Returns:
+            ``(agent, current, drift)``.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent does not exist.
+            PermissionError: If the caller does not own the agent.
+            A2AAgentError: If the agent has no stored card.
+        """
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+        if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+        if user_email:
+            # First-Party
+            from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+            if not await PermissionService(db).check_resource_ownership(user_email, agent):
+                raise PermissionError("Only the owner can re-sync the Agent Card")
+        current, drift = self._card_rows(db, agent_id)
+        if current is None:
+            raise A2AAgentError("The agent has no stored Agent Card")
+        return agent, current, drift
+
+    @staticmethod
+    def _sync_agent_from_card(agent: DbA2AAgent, card_document: Dict[str, Any]) -> None:
+        """Copy the card-owned fields onto the agent row.
+
+        Only ``protocol_version`` and the card-owned ``capabilities`` change. The ``endpoint_url``,
+        credentials, name, team and visibility never change here.
+
+        Args:
+            agent: The agent row to update.
+            card_document: The card to apply.
+        """
+        fields, _ = suggest_agent_fields(normalize_card(card_document)[0])
+        managed = {"streaming", "pushNotifications", "skills", "extensions", "defaultInputModes", "defaultOutputModes"}
+        kept = {key: value for key, value in (agent.capabilities or {}).items() if key not in managed}
+        agent.protocol_version = fields["protocol_version"]
+        agent.capabilities = {**kept, **fields["capabilities"]}
+
+    async def resync_agent_card(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> A2ACardResyncResult:
+        """Re-fetch the stored card and apply or hold what changed.
+
+        Descriptive changes apply at once. A change to the supported interfaces, the security
+        schemes or requirements, or ``capabilities.streaming`` is held as a pending drift until
+        ``decide_card_drift`` confirms it. The current card keeps serving in the meantime.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Requester email for the ownership check.
+
+        Returns:
+            The outcome and the change report.
+
+        Raises:
+            A2AAgentError: If the agent has no stored card, or the card cannot be re-fetched.
+        """
+        agent, current, drift = await self._load_owned_agent_with_card(db, agent_id, user_email)
+        fetched = await refetch_card(current.source_url, current.etag)
+        now = datetime.now(timezone.utc)
+
+        if fetched.status == 304:
+            current.fetched_at = now
+            db.commit()
+            return A2ACardResyncResult(outcome="unchanged", version=current.version, drifted=drift is not None)
+        if fetched.status != 200 or not isinstance(fetched.document, dict):
+            raise A2AAgentError("The Agent Card could not be re-fetched")
+
+        report = diff_cards(current.card, fetched.document, agent.endpoint_url)
+        latest = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+
+        if report["behaviourAffecting"]:
+            if drift is not None and drift.card == fetched.document:
+                drift.fetched_at = now
+                db.commit()
+                return A2ACardResyncResult(outcome="drifted", version=current.version, report=drift.drift, drifted=True)
+            if drift is not None:
+                db.delete(drift)
+            db.add(
+                A2AAgentCard(
+                    a2a_agent_id=agent_id,
+                    version=latest + 1,
+                    card=fetched.document,
+                    detected_version=normalize_card(fetched.document)[1],
+                    source_url=current.source_url,
+                    etag=fetched.etag,
+                    max_age=fetched.max_age,
+                    status="pending",
+                    drift=report,
+                )
+            )
+            db.commit()
+            return A2ACardResyncResult(outcome="drifted", version=current.version, report=report, drifted=True)
+
+        if drift is not None:
+            db.delete(drift)
+        if not report["changes"]:
+            current.etag, current.max_age, current.fetched_at = fetched.etag, fetched.max_age, now
+            db.commit()
+            return A2ACardResyncResult(outcome="unchanged", version=current.version, drifted=False)
+
+        db.add(
+            A2AAgentCard(
+                a2a_agent_id=agent_id,
+                version=latest + 1,
+                card=fetched.document,
+                detected_version=normalize_card(fetched.document)[1],
+                source_url=current.source_url,
+                etag=fetched.etag,
+                max_age=fetched.max_age,
+                drift=report,
+            )
+        )
+        self._sync_agent_from_card(agent, fetched.document)
+        db.commit()
+        await _get_registry_cache().invalidate_agents()
+        return A2ACardResyncResult(outcome="applied", version=latest + 1, report=report, drifted=False)
+
+    async def decide_card_drift(self, db: Session, agent_id: str, decision: str, user_email: Optional[str] = None) -> A2ACardResyncResult:
+        """Apply or decline the drifted card of an agent.
+
+        Applying makes the drifted card current and copies the card-owned fields onto the agent.
+        Declining keeps the current card and leaves the agent marked drifted.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            decision: ``apply`` or ``decline``.
+            user_email: Requester email for the ownership check.
+
+        Returns:
+            The outcome and the change report.
+
+        Raises:
+            A2AAgentError: If the agent has no drifted card.
+        """
+        agent, current, drift = await self._load_owned_agent_with_card(db, agent_id, user_email)
+        if drift is None:
+            raise A2AAgentError("The agent has no Agent Card change awaiting a decision")
+
+        if decision == "decline":
+            drift.status = "declined"
+            db.commit()
+            return A2ACardResyncResult(outcome="drifted", version=current.version, report=drift.drift, drifted=True)
+
+        drift.status = "applied"
+        self._sync_agent_from_card(agent, drift.card)
+        db.commit()
+        await _get_registry_cache().invalidate_agents()
+        return A2ACardResyncResult(outcome="applied", version=drift.version, report=drift.drift, drifted=False)
 
     async def list_agents(
         self,

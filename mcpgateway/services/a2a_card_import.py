@@ -443,6 +443,19 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse
         return CardResponse(None)
 
 
+async def refetch_card(url: str, etag: Optional[str]) -> CardResponse:
+    """Re-fetch a stored card from its source URL, conditionally on its ``ETag``.
+
+    Args:
+        url: Source URL the card was stored from.
+        etag: Stored ``ETag``, sent as ``If-None-Match``, or ``None``.
+
+    Returns:
+        The guarded response. ``status`` 304 means the card is unchanged.
+    """
+    return await _get_json(url, {"If-None-Match": etag} if etag else None)
+
+
 async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Fetch, validate and normalize an Agent Card from an unregistered endpoint.
 
