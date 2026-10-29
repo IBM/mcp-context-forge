@@ -33,7 +33,7 @@ output=${2:?"usage: $0 %O %A %B %P (invoked by git as a merge driver)"}
 
 UV_BIN=${UV_BIN:-$(type -p uv 2>/dev/null || echo "$HOME/.local/bin/uv")}
 DETECT_SECRETS_SPEC=${DETECT_SECRETS_SPEC:-git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976}
-DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |Cargo\.lock$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
+DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
 # Scan scope: files the branch changes relative to its upstream, mirroring
 # the Makefile's `git diff $(GIT_DIFF_TARGET)`. During a rebase, both
 # endpoints are recorded in the state dir (onto = upstream tip, orig-head =

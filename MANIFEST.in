@@ -127,7 +127,6 @@ prune deployment
 prune a2a-agents
 prune agent_runtimes
 prune llms
-prune crates/tools
 
 # Development and CI/CD artifacts
 prune .github

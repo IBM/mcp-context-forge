@@ -7,7 +7,6 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `plugins/AGENTS.md` - Plugin framework and development
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
-- `crates/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory holds LLM guidance of two kinds: end-user runtime guidance for using ContextForge, and work prompts for agents changing this repository. Where `llms/` guidance overlaps an `AGENTS.md` file, the `AGENTS.md` file is authoritative.
 
@@ -36,7 +35,6 @@ plugins_rust/               # Rust plugin implementations for performance-sensit
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
-crates/                     # Direct Rust crate folders (runtime)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -65,10 +63,6 @@ make pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
-
-# Before committing Rust changes (crates/mcp_runtime/):
-# Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## PR Review
