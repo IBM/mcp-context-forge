@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================# Shared validation helpers
 # =====================================================================
 
+
 def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
     """Validate and normalize server association IDs (tools, resources, prompts, agents).
 
@@ -8585,6 +8586,7 @@ class PermissionListResponse(BaseModel):
 # =======================================================================# SSO Authentication Schemas
 # =======================================================================
 
+
 class SSOProviderResponse(BaseModelWithConfigDict):
     """Response schema for SSO provider information.
 
@@ -9173,6 +9175,7 @@ class CatalogBulkRegisterResponse(BaseModel):
 # ============================# Pagination Schemas
 # ============================
 
+
 class PaginationMeta(BaseModel):
     """Pagination metadata.
 
@@ -9274,6 +9277,7 @@ class PaginatedResponse(BaseModel):
 # =====================================================================# Cursor Pagination Response Schemas (for main API endpoints)
 # =====================================================================
 
+
 class CursorPaginatedToolsResponse(BaseModel):
     """Cursor-paginated response for tools list endpoint."""
 
@@ -9332,6 +9336,7 @@ class CursorPaginatedUsersResponse(BaseModel):
 
 # =====================================================================# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
 # =====================================================================
+
 
 class ObservabilityTraceBase(BaseModel):
     """Base schema for observability traces."""
