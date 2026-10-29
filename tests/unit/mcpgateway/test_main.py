@@ -6821,11 +6821,19 @@ class TestA2AInvokeBodyEndpoint:
     """Test coverage for /a2a/invoke endpoint with agent_id in request body."""
 
     @patch("mcpgateway.main.a2a_service", None)
-    def test_invoke_returns_503_when_service_unavailable(self, test_client, auth_headers):
-        """Test /a2a/invoke returns 503 when A2A service is None. Covers: main.py lines 5166-5167"""
+    def test_invoke_returns_typed_404_when_a2a_disabled(self, test_client, auth_headers):
+        """/a2a/invoke answers with the typed a2a_disabled 404 when the A2A service is None."""
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
-        assert response.status_code == 503
-        assert "A2A service not available" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"]["error"] == "a2a_disabled"
+
+    @patch("mcpgateway.main.a2a_service", None)
+    @pytest.mark.parametrize("method,path", [("get", "/a2a"), ("get", "/a2a/agent-1"), ("post", "/a2a/agent-1/invoke"), ("delete", "/a2a/agent-1")])
+    def test_every_a2a_route_returns_same_typed_404_when_disabled(self, method, path, test_client, auth_headers):
+        """All A2A routes share one status code and body shape when A2A is disabled."""
+        response = getattr(test_client, method)(path, headers=auth_headers)
+        assert response.status_code == 404
+        assert response.json() == {"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):

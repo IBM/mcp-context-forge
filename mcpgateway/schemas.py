@@ -7111,6 +7111,18 @@ class EmailUserResponse(BaseModel):
         )
 
 
+class CurrentUserResponse(EmailUserResponse):
+    """Response schema for ``GET /auth/email/me``.
+
+    Adds deployment feature flags that any authenticated user may read.
+
+    Attributes:
+        features: Feature name to enabled flag, for example ``{"a2a": True}``.
+    """
+
+    features: Dict[str, bool] = Field(default_factory=dict, description="Deployment feature flags readable by any authenticated user")
+
+
 class AuthenticationResponse(BaseModel):
     """Response schema for successful authentication.
 
