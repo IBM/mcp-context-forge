@@ -1215,3 +1215,18 @@ async def test_validation_token_storage_failure_propagates(backend_with_encrypti
     backend_with_encryption.db.execute.side_effect = RuntimeError("storage unavailable")
     with pytest.raises(RuntimeError):
         await backend_with_encryption.read_validation_token("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_type,token", [("Basic", "encrypted_access"), ("Bearer", "")])
+async def test_validation_token_rejects_unusable_credentials(backend_with_encryption, token_type, token):
+    """Invalid token types and empty decrypted tokens cannot authorize validation."""
+    backend = backend_with_encryption
+    backend.db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type=token_type)
+    backend.encryption.decrypt_secret_async.return_value = token
+    result = await backend.read_validation_token("gw-1", None, "user@test.com")
+    assert result.status == "invalid"
+    assert result.access_token is None
+    if token_type == "Basic":
+        backend.encryption.decrypt_secret_async.assert_not_called()
+    backend.db.commit.assert_not_called()
