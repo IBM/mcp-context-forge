@@ -1896,6 +1896,9 @@
             "DCR_TOKEN_ENDPOINT_AUTH_METHOD": {
               "type": "string"
             },
+            "DCR_APPLICATION_TYPE": {
+              "type": "string"
+            },
             "DEFAULT_ADMIN_ROLE": {
               "type": "string"
             },

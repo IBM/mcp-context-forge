@@ -40,6 +40,7 @@ DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true # Auto-register when gateway has i
 DCR_DEFAULT_SCOPES='["mcp:read"]'                        # Default scopes to request
 DCR_ALLOWED_ISSUERS=[]                                   # Optional issuer URL allowlist; empty allows any issuer
 DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic"     # Auth method: client_secret_basic, client_secret_post, or none
+DCR_APPLICATION_TYPE=auto                                # application_type sent to OIDC servers: auto (native for a loopback redirect URI, web otherwise), web, native
 DCR_METADATA_CACHE_TTL=3600                              # AS metadata cache TTL in seconds (default: 1 hour)
 DCR_CLIENT_NAME_TEMPLATE="ContextForge ({gateway_name})" # Client name template for registration
 DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=false         # Request refresh_token when AS omits grant_types_supported

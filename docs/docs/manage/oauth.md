@@ -264,6 +264,18 @@ OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
 
 ---
 
+## MCP 2026-07-28 Authorization Profile
+
+What the gateway does as an OAuth client toward upstream servers, per the `2026-07-28` authorization specification:
+
+- **Issuer validation (RFC 9207).** When the authorization server sends `iss` on the callback, it must equal the `issuer` of that server's validated metadata, compared as plain strings. A server that advertises `authorization_response_iss_parameter_supported` and then omits `iss` is refused. A mismatch is refused before the code is redeemed and before any provider error text is shown, and raises a security event. When metadata discovery fails, the configured issuer is compared instead, without its trailing slash, and a warning names the gateway. A metadata issuer that is a template, such as a multi-tenant placeholder, cannot be validated and is skipped with a warning. Gateways configured with only `authorization_url` and `token_url` have nothing to compare against.
+- **Dynamic Client Registration.** Requests carry `application_type`: `native` for a loopback redirect URI and `web` otherwise, or the value of `DCR_APPLICATION_TYPE`. The specification deprecates DCR in favour of Client ID Metadata Documents but keeps it for authorization servers without that support.
+- **Credentials bound to their issuer.** Dynamically registered clients are stored and looked up per gateway and issuer. A static `client_id` carried over an issuer change is flagged in the log and as a security event, because the new authorization server did not issue it.
+- **Client ID Metadata Documents.** Not implemented. The gateway registers dynamically or uses pre-registered credentials.
+- **Client tokens toward upstreams.** An upstream with its own credentials never receives the caller's token. An upstream registered with auth type `none` receives the caller's `Authorization` header, which deployments rely on when the upstream validates the same token as the gateway. `X-Upstream-Authorization` always carries a credential the caller chose for the upstream.
+
+Protected resource metadata (RFC 9728), the `resource` parameter (RFC 8707) and audience checks on inbound tokens were already in place; see the sections above and [OAuth Resource Configuration](oauth-resource-configuration.md).
+
 ## Redirect URI and Callback
 
 - Default callback path: `/oauth/callback`

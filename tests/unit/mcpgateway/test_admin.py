@@ -3050,6 +3050,25 @@ class TestAdminResourceUriConflictMessage:
         request.form = AsyncMock(return_value=FakeForm({"uri": uri, "name": name, "content": "body", "mimeType": "text/plain", "visibility": visibility, "team_id": "team-1"}))
         return request
 
+    @pytest.mark.parametrize("missing_field", ["uri", "name", "content"])
+    async def test_add_resource_missing_required_field_returns_422(self, real_db, missing_field):
+        """Missing required resource fields reach model validation instead of raising KeyError."""
+        form = {
+            "uri": "file://required-field-test",
+            "name": "Required Field Test",
+            "content": "body",
+            "mimeType": "text/plain",
+            "visibility": "private",
+            "team_id": "team-1",
+        }
+        form.pop(missing_field)
+        request = self._request("file://required-field-test", "Required Field Test", "private")
+        request.form = AsyncMock(return_value=FakeForm(form))
+
+        response = await admin_add_resource(request, real_db, user={"email": "owner@example.com", "db": real_db})
+
+        assert response.status_code == 422
+
     @pytest.mark.parametrize("visibility", ["public", "team", "private"])
     async def test_duplicate_uri_returns_specific_409_message(self, real_db, visibility):
         """A duplicate URI must return 409 with the URI-specific message for every visibility."""
@@ -3225,6 +3244,42 @@ class TestAdminResourceUriConflictMessage:
 
 class TestAdminPromptRoutes:
     """Test admin routes for prompt management with enhanced coverage."""
+
+    @pytest.mark.parametrize("missing_field", ["name", "template"])
+    @patch.object(PromptService, "register_prompt")
+    async def test_admin_add_prompt_missing_required_field_returns_422(self, mock_register_prompt, mock_request, mock_db, monkeypatch, missing_field):
+        """A missing prompt name or template is returned as validation, not a server error."""
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        form = {"name": "Required Field Prompt", "template": "Hello", "arguments": "[]"}
+        form.pop(missing_field)
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+
+        response = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 422
+        mock_register_prompt.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "form_data",
+        [
+            {"name": "Existing prompt"},
+            {"name": "Existing prompt", "template": ""},
+            {"name": "Existing prompt", "template": "   "},
+        ],
+    )
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_missing_template_returns_422(self, mock_update_prompt, mock_request, mock_db, form_data):
+        """Editing an existing prompt without a non-empty template returns validation."""
+        mock_request.form = AsyncMock(return_value=FakeForm(form_data))
+
+        response = await admin_edit_prompt("existing-prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 422
+        assert response.body == b'{"detail":"Prompt template is required."}'
+        mock_update_prompt.assert_not_called()
 
     @patch("mcpgateway.admin.prompt_service")
     @patch("mcpgateway.admin.TeamManagementService")
@@ -3764,6 +3819,28 @@ class TestAdminGatewayRoutes:
         assert body["success"] is False
 
     @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_missing_url_returns_validation_error(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """An omitted gateway URL returns validation instead of raising a key error."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "Updated Gateway"}))
+        existing_gateway = MagicMock()
+        existing_gateway.team_id = None
+        mock_db.get.return_value = existing_gateway
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 422
+        mock_update_gateway.assert_not_called()
+
+    @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_preserves_team_id_when_not_in_form(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Editing a gateway without team_id in form should preserve the existing team."""
         gateway_id = "gateway-99"
@@ -3954,6 +4031,42 @@ class TestAdminGatewayRoutes:
         assert body["authorization_endpoint"] is None  # None input filtered
         assert body["jwks_uri"] == "https://example.com/jwks"  # valid kept
         assert body["registration_endpoint"] is None  # empty string filtered
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_nulls_cross_origin_token_endpoint(self, mock_dcr_service_cls, mock_request):
+        """A token endpoint outside the issuer origin is returned as None."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://evil.example.net/token",
+            "authorization_endpoint": "https://as.example.com/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] is None
+        assert body["authorization_endpoint"] == "https://as.example.com/authorize"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_nulls_cross_origin_authorization_endpoint(self, mock_dcr_service_cls, mock_request):
+        """An authorization endpoint outside the issuer origin is returned as None."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://as.example.com/token",
+            "authorization_endpoint": "https://evil.example.net/authorize",
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] == "https://as.example.com/token"
+        assert body["authorization_endpoint"] is None
 
 
 class TestAdminRootRoutes:
@@ -5013,7 +5126,8 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
+    @pytest.mark.parametrize("notice_enabled", [True, False])
+    async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db, notice_enabled):
         """Test admin UI template context is properly populated."""
         # Mock all services to return empty lists
         mock_servers.return_value = []
@@ -5027,6 +5141,7 @@ class TestAdminUIRoute:
         with (
             patch.object(settings, "app_root_path", "/custom/root"),
             patch.object(settings, "gateway_tool_name_separator", "__"),
+            patch.object(settings, "mcpgateway_ui_deprecation_notice_enabled", notice_enabled),
             patch.object(settings, "jwt_secret_key", "test-secret-key-with-minimum-32-bytes"),
         ):
             await admin_ui(
@@ -5044,12 +5159,26 @@ class TestAdminUIRoute:
             assert context["include_inactive"] is True
             assert context["root_path"] == "/custom/root"
             assert context["gateway_tool_name_separator"] == "__"
+            assert context["ui_deprecation_notice_enabled"] is notice_enabled
             assert "servers" in context
             assert "tools" in context
             assert "resources" in context
             assert "prompts" in context
             assert "gateways" in context
             assert "roots" in context
+
+            # First-Party
+            from mcpgateway.main import jinja_env
+
+            rendered = jinja_env.get_template("admin.html").render(context)
+            assert ('id="admin-ui-deprecation-notice"' in rendered) is notice_enabled
+            assert ('datetime="2027-01-27"' in rendered) is notice_enabled
+            assert ("27 January 2027" in rendered) is notice_enabled
+            assert ('aria-label="Dismiss deprecation notice"' in rendered) is notice_enabled
+            if notice_enabled:
+                assert "Support for the Admin UI ends on" in rendered
+                assert 'href="https://github.com/contextforge-org/contextforge-web-ui"' in rendered
+                assert 'href="https://github.com/IBM/mcp-context-forge#optional-web-ui"' in rendered
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -7275,7 +7404,7 @@ class TestOAuthFunctionality:
                 "auth_type": "oauth",
                 "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "client-id",
-                "oauth_client_secret": "client-secret",
+                "oauth_client_secret": "client-secret",  # pragma: allowlist secret
                 "oauth_audience": "api.atlassian.com",
                 "oauth_scopes": "read:jira-work write:jira-work",
             }
@@ -7477,7 +7606,7 @@ class TestOAuthFunctionality:
                 "url": "https://edited.example.com",
                 "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "client-id",
-                "oauth_client_secret": "client-secret",
+                "oauth_client_secret": "client-secret",  # pragma: allowlist secret
                 "oauth_audience": "api.atlassian.com",
                 "oauth_scopes": "read:jira-work write:jira-work",
             }
@@ -15418,6 +15547,27 @@ class TestAdminAdditionalCoverage:
         response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.register_agent.assert_called_once()
+
+    @pytest.mark.parametrize("missing_field", ["name", "endpoint_url"])
+    async def test_admin_add_a2a_agent_missing_required_field_returns_422(self, monkeypatch, mock_request, mock_db, missing_field):
+        """Missing A2A identity fields are reported as validation errors."""
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+        mock_service = MagicMock()
+        mock_service.register_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        form = {"name": "Agent One", "endpoint_url": "http://example.com/agent"}
+        form.pop(missing_field)
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+        assert response.status_code == 422
+        mock_service.register_agent.assert_not_called()
 
     async def test_admin_add_a2a_agent_protocol_version_defaults_to_1_0(self, monkeypatch, mock_request, mock_db):
         """Omitting protocol_version in the form should fall back to '1.0'."""
@@ -25710,7 +25860,7 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_edit_prompt_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
-        form_data = FakeForm({"name": "P", "visibility": "public", "team_id": "team-abc"})
+        form_data = FakeForm({"name": "P", "template": "Hello", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:
             await admin_edit_prompt("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
@@ -25798,7 +25948,7 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_add_resource_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
-        form_data = FakeForm({"name": "R", "uri": "http://r", "visibility": "public"})
+        form_data = FakeForm({"name": "R", "uri": "http://r", "content": "resource body", "visibility": "public"})
         mock_request.form = AsyncMock(return_value=form_data)
         result = await admin_add_resource(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code != 422
@@ -25806,7 +25956,7 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_add_prompt_allows_public_when_flag_false_no_team_id(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
-        form_data = FakeForm({"name": "P", "visibility": "public"})
+        form_data = FakeForm({"name": "P", "template": "prompt body", "visibility": "public"})
         mock_request.form = AsyncMock(return_value=form_data)
         result = await admin_add_prompt(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code != 422
