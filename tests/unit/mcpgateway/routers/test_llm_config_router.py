@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 # Third-Party
 import pytest
 from fastapi import HTTPException
+from fastapi.routing import APIRoute
 
 # First-Party
 from mcpgateway.llm_schemas import (
@@ -442,7 +443,9 @@ async def test_get_gateway_models_denies_without_llm_read(monkeypatch: pytest.Mo
     with pytest.raises(HTTPException) as excinfo:
         await llm_config_router.get_gateway_models(db=mock_db, current_user_ctx=ctx)
     assert excinfo.value.status_code == 403
-    assert mock_permission_service.check_permission.await_args.kwargs["permission"] == "llm.read"
+    await_args = mock_permission_service.check_permission.await_args
+    assert await_args is not None
+    assert await_args.kwargs["permission"] == "llm.read"
     service_call.assert_not_called()
 
 
@@ -454,5 +457,7 @@ async def test_get_gateway_models_rejects_missing_user(mock_db):
 
 
 def test_every_llm_config_route_declares_permission():
-    unguarded = [route.path for route in llm_config_router.llm_config_router.routes if not getattr(route.endpoint, "_required_permission", None)]
+    api_routes = [route for route in llm_config_router.llm_config_router.routes if isinstance(route, APIRoute)]
+    assert api_routes
+    unguarded = [route.path for route in api_routes if not getattr(route.endpoint, "_required_permission", None)]
     assert unguarded == []
