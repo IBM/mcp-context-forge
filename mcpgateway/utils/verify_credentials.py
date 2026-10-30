@@ -1059,21 +1059,18 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
                 )
             return "anonymous"
 
-    # Standard JWT authentication flow - the Authorization header takes precedence over cookies
+    # Standard JWT authentication flow - the configured auth header takes precedence over cookies
     token = None
 
-    # 1. Authorization header
     header_token = getattr(credentials, "credentials", None)
     if header_token:
         token = header_token
 
-    # 2. Manual cookie reading
     if not token and hasattr(request, "cookies") and request.cookies:
         manual_token = request.cookies.get("jwt_token")
         if manual_token:
             token = manual_token
 
-    # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
 
@@ -1526,10 +1523,10 @@ async def require_auth_header_first(
     jwt_token: str | None = None,
     request: Request | None = None,
 ) -> str | dict:
-    """Like require_auth_override but Authorization header takes precedence over cookies.
+    """Authenticate with the configured auth header first, then the cookie, then ``jwt_token``.
 
     Token resolution order (matches streamable_http_auth middleware):
-    1. Authorization Bearer header (highest priority)
+    1. Bearer token from the configured auth header (highest priority)
     2. Cookie ``jwt_token`` from ``request.cookies``
     3. ``jwt_token`` keyword argument
 
