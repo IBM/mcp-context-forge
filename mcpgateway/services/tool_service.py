@@ -5783,7 +5783,6 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path and query parameter substitution (using local variable)
                     final_url = _substitute_url_template(tool_url, payload)
 
                     # --- Extract query params from URL if query_mapping or header_mapping is used ---
