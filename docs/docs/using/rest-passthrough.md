@@ -252,6 +252,16 @@ curl -X POST /tools \
   }'
 ```
 
+### URL template parameters
+
+The gateway percent-encodes every value that fills a `{param}` placeholder. The value stays one path segment or one query value.
+
+- The characters `/`, `?`, `#`, `&`, `=`, `+`, space, and a bare `%` reach the backend encoded.
+- The gateway rejects a value with a `.` or `..` segment.
+- The gateway rejects a value that already holds a `%XX` sequence.
+- To send a raw `/`, split the value into two parameters.
+- A strict `pattern`, `enum`, or `format` in `input_schema` remains the recommended control.
+
 ### Minimal Example (Defaults Applied)
 
 ```bash
