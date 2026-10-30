@@ -23,7 +23,6 @@ from mcpgateway.services.a2a_card_import import (
     fetch_agent_card,
     is_agent_card,
     normalize_card,
-    NOT_FOUND_REASON,
     suggest_agent_fields,
 )
 from mcpgateway.services.a2a_service import A2AAgentService
@@ -68,7 +67,7 @@ def fetch(monkeypatch):
 
     async def _get_json(url, headers):
         seen.append((url, headers))
-        return responses.get(url, (404, None))
+        return responses.get(url, (404, None, None))
 
     monkeypatch.setattr(a2a_card_import, "_get_json", _get_json)
     return SimpleNamespace(responses=responses, seen=seen)
@@ -332,7 +331,7 @@ class TestFetch:
 
     async def test_fetches_v1_card(self, fetch):
         """A 1.0 card at the first well-known path is normalized and mapped."""
-        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, V1_CARD)
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, V1_CARD, None)
         result = await fetch_agent_card("https://agent.example.com", None, None)
         assert result.found and result.detected_version == "1.0"
         assert result.source_url == "https://agent.example.com/.well-known/agent-card.json"
@@ -341,41 +340,77 @@ class TestFetch:
 
     async def test_falls_back_to_legacy_path_on_404(self, fetch):
         """A 404 on the 1.0 path retries the pre-1.0 path."""
-        fetch.responses["https://old.example.com/.well-known/agent.json"] = (200, LEGACY_CARD)
+        fetch.responses["https://old.example.com/.well-known/agent.json"] = (200, LEGACY_CARD, None)
         result = await fetch_agent_card("https://old.example.com", None, None)
         assert result.found and result.detected_version == "0.3"
         assert [url for url, _ in fetch.seen] == ["https://old.example.com/.well-known/agent-card.json", "https://old.example.com/.well-known/agent.json"]
 
     async def test_no_fallback_when_1_0_path_returns_non_card(self, fetch):
         """Only a 404 triggers fallback; a non-card 200 stops the search."""
-        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, {"hello": "world"})
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, {"hello": "world"}, None)
         result = await fetch_agent_card("https://agent.example.com", None, None)
         assert result.found is False and len(fetch.seen) == 1
 
     async def test_forwards_headers(self, fetch):
         """Caller headers reach the fetch for authenticated cards."""
-        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, V1_CARD)
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, V1_CARD, None)
         await fetch_agent_card("https://agent.example.com", None, {"Authorization": "Bearer t"})
         assert fetch.seen[0][1] == {"Authorization": "Bearer t"}
 
-    @pytest.mark.parametrize("outcome", [(None, None), (500, None), (403, None), (404, None), (200, None), (200, {"x": 1})])
-    async def test_every_failure_returns_identical_response(self, fetch, outcome):
-        """Blocked, unreachable, forbidden, missing and non-card results are indistinguishable."""
-        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = outcome
-        fetch.responses["https://agent.example.com/.well-known/agent.json"] = outcome
+    @pytest.mark.parametrize(
+        "result_tuple, outcome",
+        [
+            ((None, None, None), "unreachable"),
+            ((500, None, None), "no_card"),
+            ((404, None, None), "no_card"),
+            ((200, None, None), "no_card"),
+            ((200, {"x": 1}, None), "no_card"),
+            ((401, None, "Bearer realm=x"), "auth_required"),
+            ((403, None, None), "auth_required"),
+        ],
+    )
+    async def test_failure_names_its_outcome(self, fetch, result_tuple, outcome):
+        """Each failure maps to one outcome code the client can branch on."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = result_tuple
+        fetch.responses["https://agent.example.com/.well-known/agent.json"] = result_tuple
         result = await fetch_agent_card("https://agent.example.com", None, None)
-        assert result.model_dump() == {
-            "found": False,
-            "reason": NOT_FOUND_REASON,
-            "source_url": None,
-            "detected_version": None,
-            "card": None,
-            "raw_card": None,
-            "suggested_agent": None,
-            "warnings": [],
-        }
+        assert result.found is False and result.outcome == outcome
+        assert result.card is None and result.suggested_agent is None
 
-    async def test_unsafe_path_returns_uniform_not_found(self, fetch):
+    async def test_auth_required_carries_scheme_name(self, fetch):
+        """The WWW-Authenticate scheme is returned without its parameters."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (401, None, 'Bearer realm="a2a", scope="x"')
+        result = await fetch_agent_card("https://agent.example.com", None, None)
+        assert result.outcome == "auth_required" and result.auth_scheme == "Bearer"
+        assert "realm" not in result.model_dump_json()
+
+    @pytest.mark.parametrize("challenge", [None, "", "b@d scheme", "x" * 40])
+    async def test_auth_required_drops_malformed_scheme(self, fetch, challenge):
+        """A missing or malformed challenge yields no scheme name."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (403, None, challenge)
+        result = await fetch_agent_card("https://agent.example.com", None, None)
+        assert result.outcome == "auth_required" and result.auth_scheme is None
+
+    async def test_auth_required_stops_search(self, fetch):
+        """A 401 on the 1.0 path does not try the legacy path."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (401, None, "Basic")
+        await fetch_agent_card("https://agent.example.com", None, None)
+        assert len(fetch.seen) == 1
+
+    async def test_blocked_and_failed_hosts_are_indistinguishable(self, fetch):
+        """A blocked address and a network failure return the same body, hiding reachability."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (None, None, None)
+        first = await fetch_agent_card("https://agent.example.com", None, None)
+        second = await fetch_agent_card("https://agent.example.com", None, None)
+        assert first.model_dump() == second.model_dump() == a2a_card_import.unreachable().model_dump()
+
+    async def test_unreachable_on_legacy_path_after_404(self, fetch):
+        """A 404 on the 1.0 path followed by a failure on the legacy path reports unreachable."""
+        fetch.responses["https://agent.example.com/.well-known/agent.json"] = (None, None, None)
+        result = await fetch_agent_card("https://agent.example.com", None, None)
+        assert result.outcome == "unreachable"
+
+    async def test_unsafe_path_returns_no_card(self, fetch):
         """A rejected path never reaches the network."""
         result = await fetch_agent_card("https://agent.example.com", "/../x", None)
         assert result.found is False and fetch.seen == []
@@ -390,7 +425,7 @@ class TestGetJson:
         monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(side_effect=ValueError("blocked")))
         client = MagicMock()
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", client)
-        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == (None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == (None, None, None)  # pylint: disable=protected-access
         client.assert_not_called()
 
     async def test_oversized_body_is_discarded(self, monkeypatch):
@@ -428,7 +463,7 @@ class TestGetJson:
                 return False
 
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
 
 
 def _stub_stream(monkeypatch, response=None, error=None):
@@ -464,9 +499,10 @@ def _stub_stream(monkeypatch, response=None, error=None):
 
 
 class _Resp:
-    def __init__(self, status_code, body=b""):
+    def __init__(self, status_code, body=b"", headers=None):
         self.status_code = status_code
         self._body = body
+        self.headers = headers or {}
 
     async def aiter_bytes(self):
         yield self._body
@@ -479,22 +515,27 @@ class TestGetJsonOutcomes:
     async def test_valid_json_is_returned(self, monkeypatch):
         """A 200 response with a JSON body yields the parsed document."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == (200, {"name": "a"})  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == (200, {"name": "a"}, None)  # pylint: disable=protected-access
 
     async def test_non_200_returns_status_only(self, monkeypatch):
         """A non-200 status is reported without reading the body."""
         _stub_stream(monkeypatch, _Resp(404))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (404, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (404, None, None)  # pylint: disable=protected-access
+
+    async def test_challenge_header_is_returned_on_401(self, monkeypatch):
+        """A 401 reports its WWW-Authenticate value."""
+        _stub_stream(monkeypatch, _Resp(401, headers={"www-authenticate": "Bearer realm=x"}))
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (401, None, "Bearer realm=x")  # pylint: disable=protected-access
 
     async def test_invalid_json_yields_no_document(self, monkeypatch):
         """A 200 response that is not JSON yields no document."""
         _stub_stream(monkeypatch, _Resp(200, b"<html>"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
 
     async def test_transport_error_returns_no_status(self, monkeypatch):
         """A transport failure is logged and reported as no status."""
         _stub_stream(monkeypatch, error=RuntimeError("boom"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
 
 
 class TestRequestSchema:
