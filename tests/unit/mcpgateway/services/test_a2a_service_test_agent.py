@@ -95,6 +95,14 @@ async def test_agent_error_classified_502_without_upstream_detail():
 
 
 @pytest.mark.asyncio
+async def test_agent_error_detail_returned_when_requested():
+    service = _service(invoke=AsyncMock(side_effect=A2AAgentError("HTTP 503: Service Unavailable")))
+    outcome = await service.test_agent(MagicMock(), "a1", include_agent_error_detail=True)
+    assert (outcome.status_code, outcome.body["error_type"]) == (502, "agent_error")
+    assert outcome.body["error"] == "HTTP 503: Service Unavailable"
+
+
+@pytest.mark.asyncio
 async def test_validation_error_classified_422():
     class M(BaseModel):
         x: int

@@ -2222,12 +2222,13 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         user_id: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        include_agent_error_detail: bool = False,
     ) -> A2ATestOutcome:
         """Invoke an A2A agent with a test message and classify the outcome.
 
-        The 404 and 502 responses carry fixed messages. The service logs the exception detail
-        and never returns it. Missing and inaccessible agents both classify as ``not_found``
-        so agent existence does not leak.
+        The 404 response carries a fixed message. Missing and inaccessible agents both classify
+        as ``not_found`` so agent existence does not leak. The 502 response carries a fixed message
+        unless ``include_agent_error_detail`` is true. The service always logs the exception detail.
 
         Args:
             db: Database session.
@@ -2237,6 +2238,7 @@ class A2AAgentService(BaseService):
             user_email: Email used for visibility checks. None with ``token_teams`` None means admin bypass.
             user_id: Identity recorded for the invocation.
             token_teams: Teams from the token. None means admin bypass, [] means public-only.
+            include_agent_error_detail: Return the agent error text in the 502 response. The Admin UI sets this so operators see the cause.
 
         Returns:
             A2ATestOutcome: HTTP status and response envelope.
@@ -2256,7 +2258,8 @@ class A2AAgentService(BaseService):
             return A2ATestOutcome(404, {"success": False, "error": A2A_TEST_NOT_FOUND_MESSAGE, "error_type": "not_found", "agent_id": agent_id})
         except A2AAgentError as e:
             logger.error(f"A2A agent error for {agent_id}: {e}")
-            return A2ATestOutcome(502, {"success": False, "error": A2A_TEST_AGENT_ERROR_MESSAGE, "error_type": "agent_error", "agent_id": agent_id})
+            error = str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE
+            return A2ATestOutcome(502, {"success": False, "error": error, "error_type": "agent_error", "agent_id": agent_id})
         except ValidationError as e:
             logger.warning(f"Validation error testing A2A agent {agent_id}: {e}")
             return A2ATestOutcome(422, {"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id})
