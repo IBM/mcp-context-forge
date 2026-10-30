@@ -217,13 +217,21 @@ class TestWebhookNotificationPlugin:
         with pytest.raises(ValueError, match="hmac_secret must not be empty"):
             _create_plugin(config)
 
-    @pytest.mark.parametrize("algorithm", ["sha256", "sha384", "sha512", "SHA256", "SHA512"])
-    def test_hmac_validation_accepts_valid_algorithms(self, algorithm):
-        """Supported HMAC algorithms are accepted."""
+    @pytest.mark.parametrize("algorithm,stored", [("sha256", "sha256"), ("sha384", "sha384"), ("sha512", "sha512"), ("SHA256", "sha256"), ("SHA512", "sha512")])
+    def test_hmac_validation_accepts_valid_algorithms(self, algorithm, stored):
+        """Supported algorithms are accepted and stored lowercase."""
         config = self._hmac_config(True)
         config["webhooks"][0]["authentication"]["hmac_algorithm"] = algorithm
         plugin = _create_plugin(config)
-        assert plugin._cfg.webhooks[0].authentication.hmac_algorithm == algorithm
+        assert plugin._cfg.webhooks[0].authentication.hmac_algorithm == stored
+
+    def test_hmac_signature_sha512_known_answer(self):
+        """sha512 produces a 128-character hex digest, not a sha256 64-character one."""
+        plugin = _create_plugin(self._hmac_config(True))
+        sig = plugin._create_hmac_signature("body", "key", "sha512")
+        algo, digest = sig.split("=", 1)
+        assert algo == "sha512"
+        assert len(digest) == 128  # sha512 hex is 128 chars; sha256 would be 64
 
     @pytest.mark.asyncio
     @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
