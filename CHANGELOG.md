@@ -11,7 +11,7 @@
 ### Breaking Changes
 
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
-- **Gateway test endpoints require `gateways.update` for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` can send the stored credential of a registered MCP server. That credential can be basic, bearer, custom-header, or OAuth client-credentials. These endpoints now return 403 for this case unless the caller has `gateways.update` and owns the MCP server. A team owner of a team MCP server and a platform admin also pass. This is the same rule as `PUT /gateways/{gateway_id}`. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
+- **Gateway test endpoints require `gateways.update` and ownership for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` return 403 when the target MCP server has a stored basic, bearer, custom-header, or OAuth credential. An OAuth authorization-code token is the caller's own and is not affected. To pass, the caller needs `gateways.update` in the MCP server's team and must pass the ownership check of `PUT /gateways/{gateway_id}`. The owner, a team owner of a team MCP server, and a platform admin pass that check. For an MCP server without a team, `gateways.update` must come from a global role. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
 ### Fixed
 
@@ -39,7 +39,7 @@
 
 ### Security
 
-- **Gateway connectivity test credential gate** - Gateway connectivity tests no longer send stored MCP server credentials for callers without `gateways.update`.
+- **Gateway connectivity test credential gate** - Gateway connectivity tests send stored MCP server credentials only for callers with `gateways.update` who pass the MCP server ownership check.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
