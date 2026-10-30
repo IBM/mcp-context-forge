@@ -76,6 +76,14 @@ _V1_TASK_STATE_TO_LEGACY = {
     "TASK_STATE_REJECTED": "rejected",
 }
 
+_TERMINAL_TASK_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
+
+
+def is_terminal_task_state(state: Any) -> bool:
+    """Return True when ``state`` is a terminal A2A task state in the 0.3 or 1.0 spelling."""
+    normalized = str(state or "").strip().lower().removeprefix("task_state_").replace("-", "_")
+    return normalized.replace("cancelled", "canceled") in _TERMINAL_TASK_STATES
+
 
 @dataclass(frozen=True)
 class PreparedA2AInvocation:

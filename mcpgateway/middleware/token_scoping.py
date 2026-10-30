@@ -195,6 +195,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/[^/]+/?$"), Permissions.A2A_UPDATE),
+    ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/messages/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),

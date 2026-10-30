@@ -139,6 +139,7 @@ from mcpgateway.schemas import (
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
+    A2ATaskMessageRequest,
     A2ATaskState,
     AgentCard,
     CursorPaginatedA2AAgentsResponse,
@@ -181,7 +182,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -5730,6 +5731,45 @@ async def delete_a2a_push_config(
         raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
     _audit_a2a_task_action(request, user, "delete_a2a_push_config", agent_id, task_id, {"config_id": config_id})
     return {"deleted": True}
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/messages", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@require_permission("a2a.invoke")
+async def send_a2a_task_message(
+    agent_id: str,
+    task_id: str,
+    body: A2ATaskMessageRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Send a follow-up message to an existing task, such as the answer to an input-required task.
+
+    Args:
+        agent_id: Owning agent ID (UUID).
+        task_id: Agent-side task ID.
+        body: The follow-up message, as ``message`` or ``text``.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The agent response, unchanged.
+
+    Raises:
+        HTTPException: 503 if A2A is unavailable, 404 if the task does not exist or is not visible,
+            409 if the task is in a terminal state, 400 if the message names a different task or the agent fails.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    try:
+        return await a2a_service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ATaskStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
