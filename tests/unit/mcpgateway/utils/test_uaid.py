@@ -116,8 +116,6 @@ class TestParseUaid:
     def test_parse_uaid_rejects_ascii_control_characters(self, injected):
         """Control characters turn UAIDs into log-injection vectors; the
         parser must reject them wholesale before any downstream formatting.
-        Rust's `parse_uaid` enforces the same contract in
-        `crates/a2a_runtime/src/uaid.rs` — this parity is security-critical.
         Without the check a malicious UAID carrying CRLF could forge log
         lines or HTTP headers downstream."""
         uaid = f"uaid:aid:HASH{injected};uid=0;registry=cf;proto=a2a;nativeId=agent.example.com"
@@ -547,11 +545,9 @@ class TestUaidDoSProtection:
 class TestHopCounter:
     """Tests for the federation-loop hop counter parse/stamp helpers.
 
-    These are the security-critical API that both Python and Rust
-    runtimes must agree on byte-for-byte — a lenient parser on one side
-    creates a split-brain where an attacker-controlled intermediate can
-    pad header values to reset the counter on one runtime but not the
-    other.
+    These are security-critical: a lenient parser lets an
+    attacker-controlled intermediate pad header values to reset the
+    counter.
     """
 
     def test_parse_hop_count_missing_returns_zero(self):
@@ -601,13 +597,12 @@ class TestHopCounter:
     def test_parse_hop_count_rejects_malformed_to_zero(self, bad):
         """Strict parse: anything that is not pure ASCII digits → 0.
 
-        Matches the Rust `parse_hop_count` in `crates/a2a_runtime/src/server.rs`
-        (`bytes().all(|b| b.is_ascii_digit())`).  Python `str.isdigit()`
+        Python `str.isdigit()`
         alone is too permissive — it returns True for fullwidth,
         Arabic-Indic, and other Unicode digit characters that `int()`
         also parses.  Without the `raw.isascii()` gate an attacker
-        could send `"１"` and have Python count it as hop 1 while Rust
-        treats it as 0, defeating the federation guard.
+        could send `"１"` and have it counted as hop 1, defeating the
+        federation guard.
         """
         assert parse_hop_count(bad) == 0
 

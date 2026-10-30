@@ -471,11 +471,9 @@ def test_sso_entra_graph_timeout_and_max_groups_validation():
 def test_uaid_max_federation_hops_rejects_out_of_range(bad_value):
     """`uaid_max_federation_hops` must stay within `1..=10`.
 
-    Parity guard with the Rust sidecar's `validate_cross_field` check
-    in `crates/a2a_runtime/src/config.rs` (rejects 0 and >10).  Without
-    this test a future edit that raised the Python ceiling or relaxed
-    the floor would silently diverge from Rust and let an operator
-    configure a range the sidecar will then refuse at startup.
+    Without this test a future edit that raised the ceiling or relaxed
+    the floor would silently let an operator configure an unsafe
+    federation hop range.
     """
     # Third-Party
     from pydantic import ValidationError
