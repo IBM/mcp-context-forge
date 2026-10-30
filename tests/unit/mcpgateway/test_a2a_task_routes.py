@@ -146,10 +146,12 @@ class TestTasks:
         service.cancel_task.return_value = None
         assert client.post(f"{BASE}/t1/cancel", headers=HEADERS).status_code == 404
 
-    def test_service_disabled_503(self, client):
-        """A disabled A2A service returns 503."""
+    def test_service_disabled_404(self, client):
+        """A disabled A2A service returns the typed a2a_disabled 404."""
         with patch("mcpgateway.main.a2a_service", None):
-            assert client.get(BASE, headers=HEADERS).status_code == 503
+            response = client.get(BASE, headers=HEADERS)
+        assert response.status_code == 404
+        assert response.json()["detail"]["error"] == "a2a_disabled"
 
 
 class TestPushConfigs:
