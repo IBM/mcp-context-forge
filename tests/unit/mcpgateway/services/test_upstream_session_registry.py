@@ -2408,3 +2408,108 @@ async def test_default_session_factory_timeout_structured_logging_failure(monkey
     debug_logs = [rec for rec in caplog.records if rec.levelname == "DEBUG" and "Structured logging failed" in rec.getMessage()]
     assert len(debug_logs) >= 1, f"Expected DEBUG log for structured logging failure, got logs: {[r.getMessage() for r in caplog.records]}"
     assert any("timeout" in log.getMessage().lower() for log in debug_logs)
+
+
+# ---------------------------------------------------------------------------
+# Regression: McpError eviction (fix/dead-upstream-sessions-mcperror)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        # Bare HTTP 404 for a pinned session id: the v2 SDK streamable-HTTP
+        # client synthesizes this client-side (mcp/client/streamable_http.py).
+        (-32600, "Session terminated"),
+        # SDK server answers unknown/expired session ids with 404 + this JSON
+        # body; the v2 client forwards peer error bodies verbatim.
+        (-32600, "Session not found"),
+        # v2 dispatcher raises CONNECTION_CLOSED when the transport tore down
+        # mid-request or the dispatcher shut down (mcp/shared/jsonrpc_dispatcher.py).
+        (-32000, "Connection closed"),
+    ],
+    ids=["session-terminated", "session-not-found", "connection-closed"],
+)
+async def test_acquire_evicts_session_on_dead_session_mcperror(registry, factory_and_records, code, message):
+    """A dead-session MCPError raised inside acquire() must evict the cached session.
+
+    Regression: only OSError / ClosedResourceError / BrokenResourceError
+    were caught; a dead-session MCPError left the session cached so every
+    subsequent acquire() failed immediately.
+    """
+    from mcp import MCPError
+    from mcp.types import ErrorData
+
+    _, _ = factory_and_records
+
+    error = MCPError.from_error_data(ErrorData(code=code, message=message))
+
+    with pytest.raises(MCPError):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise error
+
+    # Session must have been evicted.
+    snapshot = registry.snapshot()
+    assert snapshot.active_sessions == 0
+    assert snapshot.evictions == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        # Ordinary server-returned JSON-RPC tool error.
+        (-32602, "Invalid params: unknown tool 'frobnicate'"),
+        # Generic INVALID_REQUEST that is not about session death.
+        (-32600, "Invalid Request"),
+        # v2 dispatcher's per-request timeout (REQUEST_TIMEOUT): a slow
+        # upstream does not imply a dead session.
+        (-32001, "Request 'tools/call' timed out"),
+    ],
+    ids=["tool-error", "generic-invalid-request", "request-timeout"],
+)
+async def test_acquire_keeps_session_on_nonfatal_mcperror(registry, factory_and_records, code, message):
+    """A non-fatal MCPError must NOT evict the session.
+
+    send_request() raises MCPError for any peer JSONRPCError and for
+    per-request timeouts; the transport is healthy, so the session must stay
+    cached and the next acquire() must reuse it.
+    """
+    from mcp import MCPError
+    from mcp.types import ErrorData
+
+    _, _ = factory_and_records
+
+    error = MCPError.from_error_data(ErrorData(code=code, message=message))
+
+    with pytest.raises(MCPError):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise error
+
+    snapshot = registry.snapshot()
+    assert snapshot.active_sessions == 1
+    assert snapshot.evictions == 0
+
+    # Next acquire reuses the cached session instead of rebuilding.
+    async with registry.acquire(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        headers=None,
+        transport_type=TransportType.STREAMABLE_HTTP,
+    ):
+        pass
+    assert registry.snapshot().reuses == 1
