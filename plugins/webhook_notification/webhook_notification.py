@@ -25,7 +25,7 @@ import uuid
 # Third-Party
 import httpx
 import orjson
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
 from mcpgateway.config import settings
@@ -87,6 +87,12 @@ class AuthenticationConfig(BaseModel):
     hmac_include_timestamp: bool = Field(default=False, description="Bind the signature to a timestamp and delivery ID")
     hmac_timestamp_header: str = "X-Timestamp"
     hmac_delivery_id_header: str = "X-Delivery-Id"
+
+    @field_validator("hmac_algorithm", mode="before")
+    @classmethod
+    def _normalize_hmac_algorithm(cls, v: str) -> str:
+        """Lowercase the algorithm name so the stored value is always canonical."""
+        return v.lower() if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _validate_hmac_headers(self) -> "AuthenticationConfig":
@@ -210,7 +216,9 @@ class WebhookNotificationPlugin(Plugin):
         Returns:
             str: The HMAC signature string in the form ``{algorithm}={hex}``.
         """
-        hash_func = getattr(hashlib, algorithm, hashlib.sha256)
+        hash_func = hashlib.__dict__.get(algorithm)
+        if hash_func is None:
+            raise ValueError(f"Unsupported HMAC algorithm: {algorithm!r}")
         signed_material = payload
         if timestamp is not None:
             signed_material = f"{timestamp}.{delivery_id}.{payload}" if delivery_id else f"{timestamp}.{payload}"
