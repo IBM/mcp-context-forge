@@ -172,10 +172,16 @@ class Env:
 def env(monkeypatch, tmp_path):
     # First-Party
     from mcpgateway.bootstrap_db import bootstrap_default_roles
+    from mcpgateway.cache.auth_cache import auth_cache
     from mcpgateway.config import settings
     from mcpgateway.db import EmailTeam, Gateway as DbGateway, Role, UserRole
     import mcpgateway.main as main_mod
+    import mcpgateway.middleware.auth_middleware as auth_middleware_mod
+    import mcpgateway.services.audit_trail_service as audit_trail_mod
     from mcpgateway.services.email_auth_service import EmailAuthService
+    import mcpgateway.services.log_aggregator as log_aggregator_mod
+    import mcpgateway.services.security_logger as sec_logger_mod
+    import mcpgateway.services.structured_logger as struct_logger_mod
     from mcpgateway.services.role_service import RoleService
 
     engine = create_engine(f"sqlite:///{tmp_path / 'authz.db'}", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -189,6 +195,10 @@ def env(monkeypatch, tmp_path):
                 monkeypatch.setattr(mod, "SessionLocal", factory)
             if getattr(mod, "engine", None) is original_engine:
                 monkeypatch.setattr(mod, "engine", engine)
+    # Earlier tests can leave these bound to another factory, so the identity check above misses them.
+    for mod in (db_mod, main_mod, auth_middleware_mod, sec_logger_mod, struct_logger_mod, audit_trail_mod, log_aggregator_mod):
+        monkeypatch.setattr(mod, "SessionLocal", factory, raising=False)
+    monkeypatch.setattr(db_mod, "engine", engine)
     db_mod.Base.metadata.create_all(bind=engine)
 
     # tests/unit/mcpgateway/conftest.py has an autouse fixture that swaps rbac.PermissionService for an
@@ -255,14 +265,7 @@ def env(monkeypatch, tmp_path):
             db.commit()
 
     asyncio.run(seed())
-    # drop RBAC permission caches populated during seeding
-    try:
-        # First-Party
-        from mcpgateway.cache.auth_cache import auth_cache  # noqa: F401
-
-        auth_cache.invalidate_all() if hasattr(auth_cache, "invalidate_all") else None
-    except Exception:  # noqa: BLE001  # nosec B110
-        pass
+    auth_cache.invalidate_all()
 
     yield Env(TestClient(main_mod.app, raise_server_exceptions=False), factory, recorder, team_ids)
     engine.dispose()
