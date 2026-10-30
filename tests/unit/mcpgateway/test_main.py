@@ -7272,3 +7272,26 @@ class TestMcpServerIdProductTerminologyAlias:
         assert "virtual_server" in request["properties"]
         assert request["anyOf"] == [{"required": ["server"]}, {"required": ["virtual_server"]}]
         assert "required" not in request
+
+
+class TestOauthCallbackRouteValidation:
+    """Route-level query validation for the OAuth callback endpoint (#7068)."""
+
+    def test_oauth_callback_accepts_long_authorization_code(self, test_client):
+        """A 2049-char authorization code must reach the callback handler, not 422.
+
+        Real providers (e.g. Atlassian 3LO with ~8 scopes) issue codes around
+        2100 chars. The bound must not reject codes that authorization servers
+        issue; with an invalid dummy state the handler still fails safe with a
+        client error after query validation.
+        """
+        long_code = "a" * 2049
+        response = test_client.get(f"/oauth/callback?state=x&code={long_code}")
+
+        assert response.status_code != 422, response.text
+
+    def test_oauth_callback_short_authorization_code(self, test_client):
+        """Codes inside the previous 2048 bound are unaffected."""
+        response = test_client.get("/oauth/callback?state=x&code=" + "a" * 16)
+
+        assert response.status_code != 422, response.text
