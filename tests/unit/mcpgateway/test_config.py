@@ -2280,7 +2280,7 @@ def test_placeholder_auth_encryption_secret_raises_in_development():
 
     with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
         Settings(
-            auth_encryption_secret="__REPLACE_ME__padding-to-reach-32-chars-x",  # nosec B106
+            auth_encryption_secret="__REPLACE_ME__padding-to-reach-32-chars-x",  # nosec B106  # pragma: allowlist secret
             environment="development",
             _env_file=None,
         )

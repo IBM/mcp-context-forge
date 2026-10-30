@@ -3015,3 +3015,130 @@ class TestRefreshClientAssertionNormalization:
             )
             assert decoded["iss"] == "test-client"
         assert first["client_assertion"] != second["client_assertion"]
+
+
+# --------------------------------------------------------------------------- #
+# RFC 9207 issuer validation of authorization responses (MCP 2026-07-28)
+# --------------------------------------------------------------------------- #
+
+DISCOVER = "mcpgateway.services.oauth_manager.DcrService.discover_as_metadata"
+SECURITY = "mcpgateway.services.oauth_manager.get_security_logger"
+
+
+def _metadata(issuer: str, advertised: bool) -> Dict:
+    return {"issuer": issuer, "authorization_response_iss_parameter_supported": advertised}
+
+
+@pytest.mark.asyncio
+async def test_iss_matching_metadata_issuer_passes(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", True))):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com/"}, "https://as.example.com", gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_iss_mismatch_is_rejected_with_a_security_event(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", False))), patch(SECURITY) as security:
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://attacker.example", gateway_id="gw")
+    event = security.return_value.log_suspicious_activity.call_args[1]
+    assert event["activity_type"] == "oauth_issuer_mismatch"
+    assert event["threat_indicators"] == {"gateway_id": "gw", "expected_issuer": "https://as.example.com", "received_issuer": "https://attacker.example"}
+
+
+@pytest.mark.asyncio
+async def test_iss_from_metadata_is_compared_without_normalisation(oauth_manager):
+    """With validated metadata the comparison is exact: a trailing slash is a mismatch."""
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", False))), patch(SECURITY):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/", gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_empty_iss_counts_as_present_and_mismatches(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", False))), patch(SECURITY):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "", gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_missing_iss_is_rejected_when_advertised(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", True))), patch(SECURITY) as security:
+        with pytest.raises(OAuthError, match="missing the iss parameter"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, None, gateway_id="gw")
+    assert security.return_value.log_suspicious_activity.call_args[1]["threat_indicators"]["received_issuer"] is None
+
+
+@pytest.mark.asyncio
+async def test_missing_iss_passes_when_not_advertised(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", False))):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, None, gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_iss_without_configured_issuer_is_not_compared(oauth_manager):
+    with patch(DISCOVER, new=AsyncMock()) as discover:
+        await oauth_manager.validate_authorization_response_issuer({"authorization_url": "https://as.example.com/authorize"}, "https://anything.example", gateway_id="gw")
+    discover.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_discovery_failure_falls_back_to_configured_issuer_without_trailing_slash(oauth_manager):
+    """Without validated metadata a trailing slash is ignored on both sides; a different issuer is still refused."""
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrError
+
+    with patch(DISCOVER, new=AsyncMock(side_effect=DcrError("down"))), patch("mcpgateway.services.oauth_manager.logger") as logger:
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com/"}, "https://as.example.com", gateway_id="gw")
+        # Discovery failure drops the advertised flag, so an absent iss passes, and is logged at warning
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com/"}, None, gateway_id="gw")
+    assert any("AS metadata unavailable" in call.args[0] for call in logger.warning.call_args_list)
+    with patch(DISCOVER, new=AsyncMock(side_effect=DcrError("down"))), patch(SECURITY):
+        # A server whose issuer ends in a slash, such as Auth0, sends iss with the slash
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://tenant.auth0.com/"}, "https://tenant.auth0.com/", gateway_id="gw")
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com/", gateway_id="gw")
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://other.example.com/", gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_templated_metadata_issuer_skips_validation(oauth_manager):
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrIssuerMismatchError
+
+    error = DcrIssuerMismatchError("AS metadata issuer mismatch", "https://login.example.com/{tenantid}/v2.0")
+    with patch(DISCOVER, new=AsyncMock(side_effect=error)), patch("mcpgateway.services.oauth_manager.logger") as logger:
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://login.example.com/common/v2.0"}, "https://login.example.com/1234/v2.0", gateway_id="gw")
+    assert any("template" in call.args[0] for call in logger.warning.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_non_templated_metadata_issuer_mismatch_falls_back_to_configured(oauth_manager):
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrIssuerMismatchError
+
+    error = DcrIssuerMismatchError("AS metadata issuer mismatch", "https://other.example.com")
+    with patch(DISCOVER, new=AsyncMock(side_effect=error)), patch(SECURITY):
+        await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://as.example.com", gateway_id="gw")
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.validate_authorization_response_issuer({"issuer": "https://as.example.com"}, "https://other.example.com", gateway_id="gw")
+
+
+@pytest.mark.asyncio
+async def test_complete_flow_refuses_code_exchange_on_iss_mismatch(oauth_manager):
+    """The state is consumed, but the code never reaches the token endpoint."""
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}) as retrieve,
+        patch.object(oauth_manager, "_exchange_code_for_tokens") as exchange,
+        patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", True))),
+        patch(SECURITY),
+    ):
+        with pytest.raises(OAuthError, match="issuer mismatch"):
+            await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "issuer": "https://as.example.com"},
+                iss="https://attacker.example",
+            )
+    retrieve.assert_awaited_once()
+    exchange.assert_not_called()

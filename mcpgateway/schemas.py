@@ -4888,15 +4888,6 @@ class ServerCreate(BaseModel):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerCreate
-            >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerCreate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
@@ -5127,15 +5118,6 @@ class ServerUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerUpdate
-            >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerUpdate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
@@ -6835,6 +6817,24 @@ class A2APushNotificationConfigCreate(BaseModel):
 
     a2a_agent_id: str
     task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
+
+class A2APushNotificationConfigRequest(BaseModel):
+    """Schema for the client-facing push notification config body.
+
+    The agent and task identifiers come from the URL path, not the body.
+    """
+
     webhook_url: str
     auth_token: Optional[str] = None
     events: Optional[List[str]] = None

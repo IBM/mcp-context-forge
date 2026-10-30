@@ -356,7 +356,7 @@ def test_gateway_provider_openai(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai", config={"default_headers": {"x": "y"}}, api_base="https://api")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -377,7 +377,7 @@ def test_gateway_provider_openai_completion_branch(monkeypatch):
     monkeypatch.setattr(svc, "OpenAI", DummyCompletion)
     model, provider = _make_model_and_provider("openai", config={}, api_base="https://api")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -399,7 +399,7 @@ def test_gateway_provider_azure_openai(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep"}, api_base="https://azure")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -410,7 +410,7 @@ def test_gateway_provider_anthropic(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("anthropic")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -421,7 +421,7 @@ def test_gateway_provider_bedrock(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("bedrock", config={"region": "us-east-1"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -432,7 +432,7 @@ def test_gateway_provider_ollama(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("ollama", api_base=None, config={"num_ctx": 32})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -443,7 +443,7 @@ def test_gateway_provider_watsonx(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -454,7 +454,7 @@ def test_gateway_provider_disabled_raises(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai", enabled=False)
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -465,7 +465,7 @@ def test_gateway_provider_missing_model_raises(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai")
     _patch_gateway_session(monkeypatch, None, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="missing"))
     with pytest.raises(ValueError):
@@ -493,7 +493,7 @@ def test_gateway_provider_azure_missing_base_url(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("azure_openai", api_base=None)
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -504,7 +504,7 @@ def test_gateway_provider_watsonx_missing_project(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("watsonx", config={})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -515,7 +515,7 @@ def test_gateway_provider_openai_compatible_missing_base(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai_compatible", api_base=None)
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -526,7 +526,7 @@ def test_gateway_provider_model_disabled(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai", model_enabled=False)
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -537,7 +537,7 @@ def test_gateway_provider_missing_provider_record(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, _provider = _make_model_and_provider("openai")
     _patch_gateway_session(monkeypatch, model, None)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError):
@@ -1352,7 +1352,7 @@ def test_gateway_provider_bedrock_completion(monkeypatch):
         config={"region": "eu-west-1", "access_key_id": "AKID", "secret_access_key": "SECRET", "session_token": "TOK"},
     )
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -1368,7 +1368,7 @@ def test_gateway_provider_anthropic_completion_with_helper_patches(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("anthropic")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -1381,7 +1381,7 @@ def test_gateway_provider_anthropic_completion_no_anthropic_llm(monkeypatch):
     monkeypatch.setattr(svc, "AnthropicLLM", None)  # Override to None
     model, provider = _make_model_and_provider("anthropic")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ImportError, match="AnthropicLLM"):
@@ -1393,7 +1393,7 @@ def test_gateway_provider_ollama_completion(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("ollama", api_base="http://ollama:11434", config={"num_ctx": 8192})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")

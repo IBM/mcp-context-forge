@@ -72,7 +72,7 @@ async def test_discover_tool_counts_reads_rest_visibility(monkeypatch):
 
 
 def test_generate_token_includes_jti():
-    token = _SCRIPT_MODULE.generate_token("admin@example.com", is_admin=True, secret="test-secret-that-is-long-enough-32")
+    token = _SCRIPT_MODULE.generate_token("admin@example.com", is_admin=True, secret="test-secret-that-is-long-enough-32")  # pragma: allowlist secret
 
     payload = jwt.decode(token, options={"verify_signature": False})
 

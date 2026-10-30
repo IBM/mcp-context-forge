@@ -5458,18 +5458,26 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "bad-prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "bad-prompt"}
 
@@ -5562,18 +5570,26 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "prompt", "template": "Hi"}
 
@@ -5680,18 +5696,26 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             self.__dict__.update(kwargs)
 
     class DummyTool:
+        name = "tool-1"
+
         def model_dump(self, **_kwargs):
             return {"name": "tool-1", "description": "tool"}
 
     class DummyResource:
+        uri = DummyUrl("https://example.com/resource.txt")
+
         def model_dump(self, **_kwargs):
-            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+            return {"uri": self.uri, "name": "bad-resource"}
 
     class DummyTemplate:
+        uri_template = DummyUrl("https://example.com/{id}")
+
         def model_dump(self, **_kwargs):
-            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+            return {"uriTemplate": self.uri_template, "name": "tmpl"}
 
     class DummyPrompt:
+        name = "bad-prompt"
+
         def model_dump(self, **_kwargs):
             return {"name": "bad-prompt"}
 
@@ -7658,7 +7682,7 @@ class TestHandleGatewayFailureThreshold:
     @pytest.mark.asyncio
     async def test_threshold_prefers_decrypted_params_over_ciphertext(self, gateway_service, monkeypatch):
         """Ciphertext at rest must never weaken URL redaction (review B-1)."""
-        gw = SimpleNamespace(id="gw-enc", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "ENCRYPTED_BLOB_FIXTURE"})
+        gw = SimpleNamespace(id="gw-enc", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "ENCRYPTED_BLOB_FIXTURE"})  # pragma: allowlist secret
         gateway_service._gateway_failure_counts = {}
         monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
         gateway_service.set_gateway_state = AsyncMock()
@@ -7668,9 +7692,9 @@ class TestHandleGatewayFailureThreshold:
         db.__exit__ = MagicMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
 
-        error = RuntimeError("connection failed for https://gateway.test?api_key=live-secret-123")
+        error = RuntimeError("connection failed for https://gateway.test?api_key=live-secret-123")  # pragma: allowlist secret
         # Health-check call sites pass the decrypted dict explicitly:
-        await gateway_service._handle_gateway_failure(gw, error, {"api_key": "live-secret-123"})
+        await gateway_service._handle_gateway_failure(gw, error, {"api_key": "live-secret-123"})  # pragma: allowlist secret
         _, kwargs = gateway_service.set_gateway_state.await_args
         assert kwargs["last_error"].startswith("An unexpected error occurred")
         assert "live-secret-123" not in kwargs["last_error"]

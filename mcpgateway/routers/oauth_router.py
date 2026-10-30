@@ -858,6 +858,7 @@ async def oauth_callback(
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
+    iss: Annotated[str | None, Query(max_length=2048, description="Authorization server issuer identifier (RFC 9207)")] = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
@@ -871,6 +872,8 @@ async def oauth_callback(
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
         error (str): OAuth provider error code from error callback (RFC 6749 Section 4.1.2.1).
         error_description (str): OAuth provider error description.
+        iss (str): Issuer identifier sent by the authorization server (RFC 9207); checked
+            against the gateway's issuer before the code is redeemed or an error is shown.
         request (Request): The incoming HTTP request object.
         db (Session): The database session dependency.
 
@@ -898,7 +901,18 @@ async def oauth_callback(
         safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        # Resolve the gateway behind the state without consuming it. The error branch needs it
+        # for the issuer check and the code exchange below reuses it.
+        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False) if state else None
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+
         if error:
+            if gateway and gateway.oauth_config:
+                try:
+                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
+                except OAuthError:
+                    # RFC 9207: never act on or show the provider's error when the issuer does not match
+                    error, error_description = "issuer_mismatch", "Authorization response issuer mismatch."
             error_text = escape(error)
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
             # Sanitize untrusted query parameters before logging to prevent log injection
@@ -975,19 +989,11 @@ async def oauth_callback(
             logger.warning("OAuth callback missing state parameter")
             return _invalid_state_response()
 
-        # SECURITY: Extract gateway_id without consuming state (no TOCTOU risk - just for lookup)
-        # complete_authorization_code_flow will atomically validate/consume state and return state_data
-        temp_user_context = _build_user_context(getattr(request.state, "user", None)) if request and hasattr(request, "state") else {}
-        temp_oauth_manager = OAuthManager(token_storage=TokenStorageService(db, temp_user_context))
-
-        # Extract gateway_id without consuming state
-        gateway_id = await temp_oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        # The state was only resolved above, not consumed: complete_authorization_code_flow
+        # validates and consumes it atomically and returns state_data.
         if not gateway_id:
             logger.warning("OAuth callback received invalid or unknown state token")
             return _invalid_state_response()
-
-        # Get gateway configuration (before consuming state, to validate OAuth config exists)
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
             logger.warning("OAuth callback state resolved to unknown gateway id")
@@ -1027,6 +1033,7 @@ async def oauth_callback(
             client_cert=gateway.client_cert,
             client_key=gateway.client_key,
             default_redirect_uri=_default_redirect_uri(request),
+            iss=iss,
         )
 
         # Extract state_data from result (was atomically consumed and returned)

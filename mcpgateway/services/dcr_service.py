@@ -14,6 +14,7 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 # Standard
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import ipaddress
 import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -187,7 +188,7 @@ class DcrService:
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
                     if metadata_issuer != normalized_issuer:
-                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                        raise DcrIssuerMismatchError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}", metadata.get("issuer"))
 
                     # Cache the metadata
                     _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
@@ -222,7 +223,7 @@ class DcrService:
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
                     if metadata_issuer != normalized_issuer:
-                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                        raise DcrIssuerMismatchError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}", metadata.get("issuer"))
 
                     # Cache the metadata
                     _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
@@ -233,6 +234,33 @@ class DcrService:
                 raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {unexpected_error_detail(e)}")
+
+    def _application_type(self, redirect_uri: str) -> str:
+        """Pick the OpenID Connect ``application_type`` for a registration request.
+
+        Args:
+            redirect_uri: The callback URL the gateway registers.
+
+        Returns:
+            str: The configured value, or with ``auto`` ``native`` for a loopback callback and ``web`` otherwise.
+
+        Examples:
+            >>> service = DcrService()
+            >>> service._application_type("http://localhost:4444/oauth/callback")
+            'native'
+            >>> service._application_type("https://gateway.example.com/oauth/callback")
+            'web'
+        """
+        configured = self.settings.dcr_application_type
+        if configured != "auto":
+            return configured
+        host = (urlsplit(redirect_uri).hostname or "").lower()
+        if host == "localhost" or host.endswith(".localhost"):
+            return "native"
+        try:
+            return "native" if ipaddress.ip_address(host).is_loopback else "web"
+        except ValueError:
+            return "web"
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
@@ -290,6 +318,7 @@ class DcrService:
             "grant_types": requested_grant_types,
             "response_types": ["code"],
             "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
+            "application_type": self._application_type(redirect_uri),
             "scope": " ".join(scopes),
         }
 
@@ -536,6 +565,24 @@ class DcrService:
 
 class DcrError(Exception):
     """DCR-related errors."""
+
+
+class DcrIssuerMismatchError(DcrError):
+    """The metadata document names a different issuer than the one it was fetched for.
+
+    Attributes:
+        metadata_issuer: The ``issuer`` value the document carried.
+    """
+
+    def __init__(self, message: str, metadata_issuer: Optional[str] = None):
+        """Keep the issuer the document named.
+
+        Args:
+            message: The error message.
+            metadata_issuer: The ``issuer`` value found in the metadata document.
+        """
+        super().__init__(message)
+        self.metadata_issuer = metadata_issuer
 
 
 async def validate_issuer_scoped_endpoint(url: Any, issuer: Optional[str], field_name: str) -> str:
