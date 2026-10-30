@@ -441,6 +441,7 @@ def _make_gateway(**overrides):
         "transport": "sse",
         "tags": [],
         "passthrough_headers": None,
+        "requires_user_credentials": None,
         "auth_type": None,
         "auth_value": None,
         "auth_headers": None,
