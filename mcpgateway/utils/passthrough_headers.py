@@ -77,6 +77,10 @@ _INBOUND_PASSTHROUGH_DENYLIST: frozenset[str] = frozenset(
     }
 )
 
+# Gateway auth types whose upstream Authorization credential is owned by the gateway.
+# A caller-supplied X-Upstream-Authorization must never replace it.
+_GATEWAY_MANAGED_AUTH_TYPES: frozenset[str] = frozenset({"oauth", "bearer", "basic", "authheaders"})
+
 
 class PassthroughHeadersError(Exception):
     """Base class for passthrough headers-related errors.
@@ -244,22 +248,29 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     """
     passthrough_headers = base_headers.copy()
 
-    # Special handling for X-Upstream-Authorization header (always enabled)
-    # If gateway uses auth and client wants to pass Authorization to upstream,
-    # client can use X-Upstream-Authorization which gets renamed to Authorization
+    # X-Upstream-Authorization is renamed to Authorization for upstream, independent of
+    # ENABLE_HEADER_PASSTHROUGH. A gateway-managed credential (oauth, bearer, basic,
+    # authheaders) must never be replaced by a caller: the audit trail would record only
+    # the caller's ContextForge identity while the upstream acts with another credential.
     request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
     upstream_auth = request_headers_lower.get("x-upstream-authorization")
 
-    if upstream_auth:
+    _gateway_manages_auth = gateway is not None and (gateway.auth_type or "") in _GATEWAY_MANAGED_AUTH_TYPES
+
+    if upstream_auth and not _gateway_manages_auth:
         try:
             sanitized_value = sanitize_header_value(upstream_auth)
             if sanitized_value:
-                # Always rename X-Upstream-Authorization to Authorization for upstream
-                # This works for both auth and no-auth gateways
                 passthrough_headers["Authorization"] = sanitized_value
                 logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
         except Exception as e:
             logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
+    elif upstream_auth and _gateway_manages_auth:
+        logger.warning(
+            "Blocked X-Upstream-Authorization rename: gateway '%s' (auth_type=%r) manages its own upstream credential. Callers must not override gateway-managed authorization.",
+            getattr(gateway, "name", "<unknown>"),
+            getattr(gateway, "auth_type", None),
+        )
     elif gateway and gateway.auth_type == "none":
         # When gateway has no auth, pass through client's Authorization if present
         client_auth = request_headers_lower.get("authorization")
@@ -394,11 +405,15 @@ def compute_passthrough_headers_cached(
     """
     passthrough_headers = base_headers.copy()
 
-    # Special handling for X-Upstream-Authorization header (always enabled)
+    # X-Upstream-Authorization is renamed to Authorization for upstream, independent of
+    # ENABLE_HEADER_PASSTHROUGH. Token-exchange and gateway-managed credentials must never
+    # be replaced by a caller (see _GATEWAY_MANAGED_AUTH_TYPES).
     request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
     upstream_auth = request_headers_lower.get("x-upstream-authorization")
 
-    if upstream_auth and not is_token_exchange:
+    _cached_gateway_manages_auth = (gateway_auth_type or "") in _GATEWAY_MANAGED_AUTH_TYPES
+
+    if upstream_auth and not is_token_exchange and not _cached_gateway_manages_auth:
         try:
             sanitized_value = sanitize_header_value(upstream_auth)
             if sanitized_value:
@@ -406,6 +421,12 @@ def compute_passthrough_headers_cached(
                 logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
         except Exception as e:
             logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
+    elif upstream_auth and (is_token_exchange or _cached_gateway_manages_auth):
+        logger.warning(
+            "Blocked X-Upstream-Authorization rename: gateway (auth_type=%r, is_token_exchange=%r) manages its own upstream credential. Callers must not override gateway-managed authorization.",
+            gateway_auth_type,
+            is_token_exchange,
+        )
     elif gateway_auth_type == "none" and not is_token_exchange:
         # When gateway has no auth, pass through client's Authorization if present
         client_auth = request_headers_lower.get("authorization")
@@ -832,7 +853,9 @@ def extract_headers_for_loopback(request_headers: Dict[str, str]) -> Dict[str, s
 
     headers_lower = {k.lower(): v for k, v in request_headers.items()}
 
-    # Always forward x-upstream-authorization (always-enabled passthrough header).
+    # Always forward x-upstream-authorization; the managed-credential guard in
+    # get_passthrough_headers() / compute_passthrough_headers_cached() enforces
+    # the block for oauth/bearer/basic/authheaders gateways at the /rpc handler.
     # On sanitization failure, drop the header rather than forwarding an unsanitized value —
     # sanitization prevents CRLF/control-character injection, so bypassing it is unsafe.
     upstream_auth = headers_lower.get("x-upstream-authorization")

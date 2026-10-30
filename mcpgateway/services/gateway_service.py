@@ -7654,7 +7654,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except Exception as e:
                     token_exchange_error = str(e)
             elif request_headers:
-                # Get passthrough headers if request headers provided
+                # Pass the full gateway object so get_passthrough_headers() can enforce
+                # the managed-credential guard (oauth, bearer, basic, authheaders).
                 pre_auth_headers = get_passthrough_headers(request_headers, {}, db, gateway)
 
         if token_exchange_error is not None:
