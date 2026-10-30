@@ -15,10 +15,6 @@ findings:
   check: prompts-get-embedded-resource
   name: PromptsGetEmbeddedResource
   status: FAILURE
-- scenario: resources-read-binary
-  check: resources-read-binary
-  name: ResourcesReadBinary
-  status: FAILURE
 - scenario: resources-templates-read
   check: resources-templates-read
   name: ResourcesTemplateRead
