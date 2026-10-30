@@ -1200,6 +1200,41 @@ async def test_require_admin_auth_header_overrides_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_admin_auth_non_admin_header_with_admin_cookie_denied(monkeypatch):
+    """A non-admin Bearer principal must be denied even when the jwt_token cookie names an admin."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=email.startswith("admin"))
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    subjects = {"header-tok": "user@example.com", "cookie-tok": "admin@example.com"}
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=lambda token, *_a, **_k: {"sub": subjects[token]}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="header-tok")  # pragma: allowlist secret
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=creds, jwt_token="cookie-tok", basic_credentials=None)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
 async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(monkeypatch):
     """When jwt_token cookie is absent, token should be taken from Authorization credentials."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)

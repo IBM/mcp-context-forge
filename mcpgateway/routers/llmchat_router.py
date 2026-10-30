@@ -1018,8 +1018,8 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
     connections to both the MCP server and the configured LLM provider. If a session
     already exists for the user, it is gracefully shutdown before creating a new one.
 
-    Authentication is handled via JWT token from cookies if not explicitly provided
-    in the request body.
+    Authentication uses the Bearer token from the configured auth header, else the
+    `jwt_token` / `access_token` cookie, if not explicitly provided in the request body.
 
     Args:
         input_data: ConnectInput containing user_id, optional server/LLM config, and streaming preference.

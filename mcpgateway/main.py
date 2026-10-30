@@ -2953,7 +2953,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            raw_token = None
             auth_user_email = None
             auth_user_is_admin = False
 
