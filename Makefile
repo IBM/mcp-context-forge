@@ -5677,8 +5677,7 @@ gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway
 # help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
 .PHONY: create-token
 create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
-	@SECRET="$(gateway_jwt_secret)"; \
-	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
+	@SECRET="$(gateway_jwt_secret)"; env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null # pragma: allowlist secret
 
 perf-down: compose-validate                ## Stop the pinned benchmark stack
 	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \

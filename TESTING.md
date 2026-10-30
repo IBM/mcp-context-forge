@@ -361,7 +361,7 @@ def test_name_validation(name):
 make test
 
 # PostgreSQL
-DATABASE_URL=postgresql://user:pass@localhost/test_mcp make test
+DATABASE_URL=postgresql://user:pass@localhost/test_mcp make test # pragma: allowlist secret
 ```
 
 ### Testing with Different Configurations
