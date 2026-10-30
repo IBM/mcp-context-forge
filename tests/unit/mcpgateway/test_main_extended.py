@@ -12477,8 +12477,9 @@ class TestRemainingCoverageGaps:
 
         captured = {}
 
-        def capture_registry(*, message_handler_factory):  # noqa: ANN001
+        def capture_registry(*, message_handler_factory, **_overrides):  # noqa: ANN001
             captured["factory"] = message_handler_factory
+            return MagicMock()  # stands in for the UpstreamSessionRegistry; lifespan calls .start_idle_reaper() on it
 
         monkeypatch.setattr(
             "mcpgateway.services.upstream_session_registry.init_upstream_session_registry",

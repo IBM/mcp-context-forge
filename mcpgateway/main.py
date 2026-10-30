@@ -1602,8 +1602,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             downstream_session_id=downstream_session_id,
         )
 
-    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
-    logger.info("Upstream session registry initialized (notification fanout enabled)")
+    _upstream_registry = init_upstream_session_registry(message_handler_factory=_notification_handler_factory, idle_eviction_seconds=settings.upstream_session_idle_timeout)
+    # Backstop for downstream Streamable HTTP sessions that end without DELETE
+    # /mcp (idle timeout, dropped client, killed container) — see #7214.
+    _upstream_registry.start_idle_reaper()
+    logger.info("Upstream session registry initialized (notification fanout enabled, idle reaper started)")
 
     # Standing subscriptions/listen streams to modern (2026-07-28) servers
     if settings.gateway_modern_listeners_enabled:

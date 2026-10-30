@@ -3136,6 +3136,16 @@ class Settings(BaseSettings):
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
+    upstream_session_idle_timeout: int = Field(
+        default=1800,
+        ge=60,
+        description=(
+            "Seconds an UpstreamSessionRegistry session may sit idle before the gateway evicts it. Backstop for "
+            "downstream Streamable HTTP sessions that end without DELETE /mcp (idle timeout, dropped client, "
+            "killed container), which would otherwise leave the upstream connection open indefinitely (#7214)."
+        ),
+    )
+
     # MCP Origin allowlist — present-but-unlisted Origin returns HTTP 403 (MCP §transport-security).
     # Empty (default) disables enforcement. Set via MCP_ALLOWED_ORIGINS.
     mcp_allowed_origins: Annotated[Set[str], NoDecode] = set()

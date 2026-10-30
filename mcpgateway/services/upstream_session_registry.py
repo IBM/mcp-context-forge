@@ -61,6 +61,18 @@ _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS = 30.0
 _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 _HEALTH_CHECK_CHAIN = ("ping", "list_tools", "list_prompts", "list_resources", "skip")
 
+# Idle-reaper backstop (#7214). A downstream Streamable HTTP session that ends
+# without DELETE /mcp (idle timeout, dropped client, killed container) never
+# calls evict_session(), so its 1:1-bound upstream session would otherwise sit
+# in self._sessions forever — the owner task blocks on shutdown_event.wait()
+# and the upstream socket leaks into CLOSE_WAIT. The reaper sweeps for
+# sessions idle longer than _DEFAULT_IDLE_EVICTION_SECONDS and evicts them,
+# independent of whatever happened downstream. Matches the MCP SDK's own
+# StreamableHTTPSessionManager default (mcp.server.streamable_http_manager.
+# DEFAULT_SESSION_IDLE_TIMEOUT) so the two idle windows line up.
+_DEFAULT_IDLE_EVICTION_SECONDS = 1800.0
+_DEFAULT_IDLE_REAPER_INTERVAL_SECONDS = 60.0
+
 
 class TransportType(str, Enum):
     """Supported upstream MCP transports."""
@@ -899,9 +911,11 @@ class UpstreamSessionRegistry:
     underlying MCP ClientSession — connection reuse stays intact.
 
     Lifetime of an upstream session follows the downstream session: callers
-    evict via evict_session() on DELETE /mcp (or session expiry). There is no
-    wall-clock TTL; staleness is handled by a health probe on reuse after the
-    idle validation window.
+    evict via evict_session() on DELETE /mcp. Staleness on reuse is handled
+    by a health probe after the idle validation window. A background idle
+    reaper (see ``idle_eviction_seconds``) is the backstop for downstream
+    sessions that end without DELETE — it evicts any upstream session idle
+    longer than that window regardless of what the downstream side did.
 
     Calls through one reused MCP SDK ClientSession are serialized. The SDK
     request-id counter is not locked, so concurrent send_request() calls can
@@ -922,14 +936,24 @@ class UpstreamSessionRegistry:
         health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
         session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
         shutdown_timeout_seconds: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+        idle_eviction_seconds: Optional[float] = _DEFAULT_IDLE_EVICTION_SECONDS,
     ) -> None:
-        """Build a registry. ``session_factory`` is injectable for tests."""
+        """Build a registry. ``session_factory`` is injectable for tests.
+
+        ``idle_eviction_seconds`` is the idle-reaper backstop window (#7214);
+        pass ``None`` to disable the reaper entirely. The reaper task itself
+        is only started by ``start_idle_reaper()`` — construction alone never
+        touches the event loop, so the registry stays safely constructible
+        outside an async context (as the existing test suite does).
+        """
         self._session_factory: SessionFactory = session_factory or _default_session_factory
         self._message_handler_factory = message_handler_factory
         self._idle_validation_seconds = idle_validation_seconds
         self._health_check_timeout_seconds = health_check_timeout_seconds
         self._session_create_timeout_seconds = session_create_timeout_seconds
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
+        self._idle_eviction_seconds = idle_eviction_seconds
+        self._reaper_task: Optional[asyncio.Task] = None
 
         self._sessions: dict[tuple[str, str], UpstreamSession] = {}
         self._key_locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -1023,6 +1047,52 @@ class UpstreamSessionRegistry:
         # application errors) intentionally leave the session in place — the
         # transport is fine, the caller just didn't like the result.
 
+    def start_idle_reaper(self) -> None:
+        """Start the background idle-eviction sweep (#7214). Safe to call more than once.
+
+        No-ops when ``idle_eviction_seconds`` is ``None`` (reaper disabled), the
+        reaper is already running, or there is no running event loop — the
+        latter keeps this safe to call from sync construction paths/tests.
+        """
+        if self._idle_eviction_seconds is None:
+            return
+        if self._reaper_task is not None and not self._reaper_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("No running event loop; upstream session idle reaper not started")
+            return
+        self._reaper_task = loop.create_task(self._idle_reaper_loop(), name="upstream-session-idle-reaper")
+
+    async def _idle_reaper_loop(self) -> None:
+        """Periodically evict upstream sessions idle longer than ``idle_eviction_seconds``.
+
+        Catches every downstream Streamable HTTP session that ends without
+        DELETE /mcp — idle timeout, dropped client, killed container — none of
+        which ever call ``evict_session()``. ``last_used`` only advances on
+        ``acquire()``, so an abandoned session's ``idle_seconds`` keeps growing
+        until this sweep reaps it; an active session is never touched.
+        """
+        assert self._idle_eviction_seconds is not None  # start_idle_reaper() guards this
+        interval = min(self._idle_eviction_seconds, _DEFAULT_IDLE_REAPER_INTERVAL_SECONDS)
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                async with self._global_lock:
+                    stale_keys = [key for key, session in self._sessions.items() if session.idle_seconds > self._idle_eviction_seconds]
+                if stale_keys:
+                    logger.info(
+                        "Upstream session idle reaper evicting %d session(s) idle > %.0fs",
+                        len(stale_keys),
+                        self._idle_eviction_seconds,
+                    )
+                    await self._evict_keys_in_parallel(stale_keys)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a reaper crash must not silently stop future sweeps
+                logger.warning("Upstream session idle reaper iteration failed: %s: %s", type(exc).__name__, exc)
+
     async def evict_session(self, downstream_session_id: str) -> int:
         """Close and remove every upstream session owned by this downstream session id.
 
@@ -1061,7 +1131,15 @@ class UpstreamSessionRegistry:
         dozens of downstream sessions would turn shutdown into a multi-minute
         stall. ``asyncio.gather`` caps the total drain at roughly
         ``shutdown_timeout_seconds`` plus a small constant.
+
+        Stops the idle reaper first so it can't race the drain below.
         """
+        if self._reaper_task is not None:
+            self._reaper_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reaper_task
+            self._reaper_task = None
+
         async with self._global_lock:
             keys = list(self._sessions.keys())
         if not keys:
@@ -1292,7 +1370,14 @@ def init_upstream_session_registry(
     message_handler_factory: Optional[MessageHandlerFactory] = None,
     **overrides: Any,
 ) -> UpstreamSessionRegistry:
-    """Install the process-wide registry. Call once at app startup."""
+    """Install the process-wide registry. Call once at app startup.
+
+    Does NOT start the idle reaper — callers that want the #7214 backstop
+    running must call ``.start_idle_reaper()`` on the returned instance
+    (``mcpgateway.main`` does this at app startup). Left to the caller so
+    constructing/initializing a registry in tests never spawns a background
+    task that outlives the test.
+    """
     global _registry
     _registry = UpstreamSessionRegistry(message_handler_factory=message_handler_factory, **overrides)
     return _registry
