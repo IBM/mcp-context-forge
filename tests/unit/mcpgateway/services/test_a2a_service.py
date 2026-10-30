@@ -23,7 +23,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import _A2A_OAUTH_TOKEN_CACHE, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, resolve_a2a_oauth_authorization
 from mcpgateway.services.encryption_service import get_encryption_service
 
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -1040,6 +1040,90 @@ class TestA2AAgentService:
         headers_used = mock_client.post.call_args.kwargs.get("headers", {})
         for header_name, header_value in auth_headers.items():
             assert headers_used[header_name] == header_value
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_agent_oauth_sends_bearer_token(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+        """An agent with auth_type oauth is invoked with a token from its configured token URL (#7382)."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "ok", "status": "success"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        oauth_config = {"grant_type": "client_credentials", "client_id": "cid", "client_secret": "s", "token_url": "https://idp.example.com/token"}  # pragma: allowlist secret
+        agent = MagicMock(
+            id=sample_db_agent.id,
+            name="oauth-agent",
+            enabled=True,
+            endpoint_url="https://api.example.com/secure-agent",
+            auth_type="oauth",
+            auth_value=None,
+            oauth_config=oauth_config,
+            protocol_version="1.0",
+            agent_type="generic",
+        )
+        service.get_agent_by_name = AsyncMock(return_value=agent)
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_fn.return_value = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+                mock_manager_cls.return_value.get_client_credentials_token = AsyncMock(return_value=("tok-123", 3600))
+                result = await service.invoke_agent(mock_db, "oauth-agent", {"test": "data"}, request_headers={"Authorization": "Bearer caller-token"})
+
+        assert result["response"] == "ok"
+        mock_manager_cls.return_value.get_client_credentials_token.assert_awaited_once_with(oauth_config)
+        assert mock_client.post.call_args.kwargs["headers"]["Authorization"] == "Bearer tok-123"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_caches_until_expiry(self):
+        """The token is reused until expiry rather than requested per invocation."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=[("tok-1", 3600), ("tok-2", 3600)])
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-1"
+            assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-1"
+            assert fetch.await_count == 1
+            # A changed config never reuses the old token.
+            assert await resolve_a2a_oauth_authorization("a1", "agent", {**config, "scopes": ["x"]}) == "Bearer tok-2"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_refetches_after_expiry(self):
+        """An expired cached token is replaced."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=[("tok-1", 3600), ("tok-2", 3600)])
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            with patch("mcpgateway.services.a2a_service.time.monotonic", return_value=1000.0):
+                await resolve_a2a_oauth_authorization("a1", "agent", config)
+            with patch("mcpgateway.services.a2a_service.time.monotonic", return_value=1000.0 + 3600):
+                assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-2"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_token_failure_names_agent(self):
+        """Token acquisition failure surfaces as A2AAgentError, not an unauthenticated request."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            mock_manager_cls.return_value.get_client_credentials_token = AsyncMock(side_effect=RuntimeError("boom"))
+            with pytest.raises(A2AAgentError, match="oauth-agent"):
+                await resolve_a2a_oauth_authorization("a1", "oauth-agent", config)
+
+    @pytest.mark.parametrize("config", [None, {}, {"grant_type": "authorization_code"}])
+    async def test_resolve_a2a_oauth_authorization_rejects_unsupported(self, config):
+        """Missing config or a non-client-credentials grant fails closed."""
+        with pytest.raises(A2AAgentError, match="oauth-agent"):
+            await resolve_a2a_oauth_authorization("a1", "oauth-agent", config)
 
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""

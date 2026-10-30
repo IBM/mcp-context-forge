@@ -16,6 +16,8 @@
 
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
+- **A2A agents with OAuth 2.0 send a token** ([#7382](https://github.com/IBM/mcp-context-forge/issues/7382)) - An A2A agent registered with `auth_type` `oauth` now gets a client-credentials token from its configured token URL. Each invocation sends the token as `Authorization: Bearer`. The gateway caches the token until 30 seconds before it expires. Before this fix, the invocation went out without credentials. A token failure, a missing OAuth config, or a grant type other than client credentials now raises an `A2AAgentError` that names the agent. The gateway never sends an unauthenticated request in these cases. The authorization-code grant is not supported for A2A agents.
+
 - **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
 
 - **Admin UI A2A edit keeps stored credentials** - The Admin UI form resubmits the mask for an unchanged credential. `update_agent` no longer stores the mask in place of the real credential, for basic, bearer, and multi-header auth.
