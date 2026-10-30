@@ -879,6 +879,7 @@ class CacheInvalidationSubscriber:
         - admin:{prefix} - Invalidate admin stats cache
         - user:{email} - Invalidate auth user cache
         - revoke:{jti} - Invalidate auth revocation cache
+        - token:{jti} - Invalidate auth context after an active-state change
         - team:{email} - Invalidate auth team cache
         - role:{email}:{team_id} - Invalidate auth role cache
         - team_roles:{team_id} - Invalidate all roles for a team
@@ -1033,7 +1034,7 @@ class CacheInvalidationSubscriber:
         finally:
             logger.debug("CacheInvalidationSubscriber listen loop exited")
 
-    _AUTH_PREFIXES = ("user:", "revoke:", "team_roles:", "teams:", "team:", "role:", "membership:")
+    _AUTH_PREFIXES = ("user:", "revoke:", "token:", "team_roles:", "teams:", "team:", "role:", "membership:")
     """Message prefixes that belong exclusively to the auth invalidation channel."""
 
     async def _process_invalidation(self, message: str, *, channel: str = "") -> None:  # pylint: disable=too-many-branches
@@ -1212,6 +1213,13 @@ class CacheInvalidationSubscriber:
                 auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
                 self._evict_keys(auth_cache._context_cache, lambda k: k.endswith(f":{jti}"))  # pyright: ignore[reportPrivateUsage]
             logger.debug("CacheInvalidationSubscriber: Cleared local auth revocation cache for jti=%s", jti[:8])
+
+        elif message.startswith("token:"):
+            jti = message[len("token:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.endswith(f":{jti}"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth token context for jti=%s", jti[:8])
 
         elif message.startswith("team_roles:"):
             team_id = message[len("team_roles:") :]
