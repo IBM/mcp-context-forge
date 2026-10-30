@@ -39,7 +39,7 @@ from mcpgateway.db import fresh_db_session, get_for_update, server_tool_associat
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardResponse, A2AStoredCardRead
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardRequest, A2AFetchCardResponse, A2AStoredCardRead
 from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
@@ -746,7 +746,7 @@ class A2AAgentService(BaseService):
         Examples:
             # TODO
         """
-        fetched_card = await self._fetch_registration_card(agent_data.card_url)
+        fetched_card = await self._fetch_registration_card(agent_data.card_url, getattr(agent_data, "auth_type", None), getattr(agent_data, "auth_value", None))
         with create_span(
             "a2a.register",
             {
@@ -1021,11 +1021,16 @@ class A2AAgentService(BaseService):
                 raise A2AAgentError(f"Failed to register A2A agent: {unexpected_error_detail(e)}")
 
     @staticmethod
-    async def _fetch_registration_card(card_url: Optional[str]) -> Optional[A2AFetchCardResponse]:
+    async def _fetch_registration_card(card_url: Optional[str], auth_type: Optional[str] = None, auth_value: Optional[str] = None) -> Optional[A2AFetchCardResponse]:
         """Fetch the Agent Card named by ``card_url`` before any write happens.
+
+        The registration credentials of types ``basic``, ``bearer`` and ``authheaders`` go to the
+        card URL host, so an agent that publishes its card behind a key can still register.
 
         Args:
             card_url: Agent endpoint or card URL from the registration request, or ``None``.
+            auth_type: Authentication type of the registration request.
+            auth_value: Encoded authentication value of the registration request.
 
         Returns:
             The fetched card, or ``None`` when registration names no card.
@@ -1035,10 +1040,18 @@ class A2AAgentService(BaseService):
         """
         if not card_url:
             return None
-        fetched = await fetch_agent_card(card_url, None, None)
-        if not fetched.found:
-            raise A2AAgentError("No A2A Agent Card was found at the given card URL")
-        return fetched
+        headers: Optional[Dict[str, str]] = None
+        if auth_type in ("basic", "bearer", "authheaders") and auth_value:
+            headers = {str(key): str(value) for key, value in decode_auth(auth_value).items()}
+        request = A2AFetchCardRequest(base_url=card_url, headers=headers)
+        fetched = await fetch_agent_card(str(request.base_url), None, request.headers)
+        if fetched.found:
+            return fetched
+        if fetched.outcome == "auth_required":
+            raise A2AAgentError("The Agent Card requires credentials. Supply valid credentials for the card URL.")
+        if fetched.outcome == "unreachable":
+            raise A2AAgentError("The Agent Card URL could not be reached")
+        raise A2AAgentError("No A2A Agent Card was found at the given card URL")
 
     @staticmethod
     def _store_agent_card(db: Session, agent: DbA2AAgent, fetched: A2AFetchCardResponse) -> None:

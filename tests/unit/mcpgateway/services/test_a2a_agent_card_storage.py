@@ -27,7 +27,7 @@ RAW_CARD = {"name": "weather", "supportedInterfaces": [{"url": "https://agent.ex
 
 def _fetched(**overrides) -> A2AFetchCardResponse:
     """Build a successful fetch result."""
-    values = dict(found=True, source_url="https://agent.example.com/.well-known/agent-card.json", detected_version="1.0", card=RAW_CARD, raw_card=RAW_CARD, etag='"v1"', max_age=300)
+    values = dict(found=True, outcome="found", source_url="https://agent.example.com/.well-known/agent-card.json", detected_version="1.0", card=RAW_CARD, raw_card=RAW_CARD, etag='"v1"', max_age=300)
     values.update(overrides)
     return A2AFetchCardResponse(**values)
 
@@ -107,9 +107,43 @@ class TestRegistrationFetch:
 
     async def test_missing_card_fails_before_any_write(self, service, monkeypatch):
         """A card URL with no card fails registration with a generic error."""
-        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", AsyncMock(return_value=A2AFetchCardResponse(found=False, reason="x")))
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", AsyncMock(return_value=A2AFetchCardResponse(found=False, outcome="no_card", reason="x")))
         with pytest.raises(A2AAgentError, match="No A2A Agent Card"):
             await service.register_agent(MagicMock(), A2AAgentCreate(name="a", endpoint_url="https://agent.example.com/rpc", card_url="https://nowhere.example.com"))
+
+    @pytest.mark.parametrize(
+        "outcome, message",
+        [("auth_required", "requires credentials"), ("unreachable", "could not be reached"), ("no_card", "No A2A Agent Card")],
+    )
+    async def test_failure_outcome_names_its_error(self, service, monkeypatch, outcome, message):
+        """Each fetch outcome gives the caller a specific registration error."""
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", AsyncMock(return_value=A2AFetchCardResponse(found=False, outcome=outcome, reason="x")))
+        with pytest.raises(A2AAgentError, match=message):
+            await service._fetch_registration_card("https://agent.example.com")  # pylint: disable=protected-access
+
+    async def test_registration_credentials_reach_the_card_fetch(self, service, monkeypatch):
+        """A bearer credential is sent to the card URL so a keyed card can be read."""
+        fetch = AsyncMock(return_value=_fetched())
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        auth_value = a2a_service_module.encode_auth({"Authorization": "Bearer t0k"})  # pragma: allowlist secret
+        await service._fetch_registration_card("https://agent.example.com", "bearer", auth_value)  # pylint: disable=protected-access
+        assert fetch.await_args.args[2] == {"Authorization": "Bearer t0k"}
+
+    async def test_no_credentials_sends_no_headers(self, service, monkeypatch):
+        """A registration without auth fetches the card without headers."""
+        fetch = AsyncMock(return_value=_fetched())
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        await service._fetch_registration_card("https://agent.example.com")  # pylint: disable=protected-access
+        assert fetch.await_args.args[2] is None
+
+    async def test_unsafe_credential_header_is_rejected(self, service, monkeypatch):
+        """A Host override in the stored header set never reaches the fetch."""
+        fetch = AsyncMock()
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        auth_value = a2a_service_module.encode_auth({"Host": "evil.example"})
+        with pytest.raises(ValueError):
+            await service._fetch_registration_card("https://agent.example.com", "authheaders", auth_value)  # pylint: disable=protected-access
+        fetch.assert_not_awaited()
 
 
 def test_client_cannot_supply_card_document():
