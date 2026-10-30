@@ -645,6 +645,11 @@ export const initializePasswordValidation = function (root = document) {
   }
 };
 
+export const validatePassword = function () {
+  validatePasswordRequirements();
+  validatePasswordMatch();
+};
+
 export const validatePasswordMatch = function () {
   const passwordField = safeGetElement("password-field", true);
   const confirmPasswordField = safeGetElement("confirm-password-field", true);

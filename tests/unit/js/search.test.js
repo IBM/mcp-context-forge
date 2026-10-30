@@ -1283,6 +1283,25 @@ describe("debouncedMemberSearch", () => {
     expect(fetchWithAuth).toHaveBeenCalledTimes(1);
     expect(fetchWithAuth).toHaveBeenCalledWith(expect.stringContaining("search=bob"));
   });
+
+  test("handles delegated input with target.value and defaults non-number delay to 300ms", async () => {
+    const { fetchWithAuth } = await import("../../../mcpgateway/admin_ui/tokens.js");
+    fetchWithAuth.mockResolvedValue({ ok: true, text: () => Promise.resolve("<div>Members</div>") });
+
+    const container = document.createElement("div");
+    container.id = "team-members-container-team1";
+    document.body.appendChild(container);
+
+    const mockEvent = { target: { value: "charlie" } };
+    debouncedMemberSearch("team1", mockEvent, new Event("input"));
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(fetchWithAuth).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchWithAuth).toHaveBeenCalledTimes(1);
+    expect(fetchWithAuth).toHaveBeenCalledWith(expect.stringContaining("search=charlie"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1332,6 +1351,25 @@ describe("debouncedNonMemberSearch", () => {
 
     expect(fetchWithAuth).toHaveBeenCalledTimes(1);
     expect(fetchWithAuth).toHaveBeenCalledWith(expect.stringContaining("search=bob"));
+  });
+
+  test("handles delegated input with target.value and defaults non-number delay to 300ms", async () => {
+    const { fetchWithAuth } = await import("../../../mcpgateway/admin_ui/tokens.js");
+    fetchWithAuth.mockResolvedValue({ ok: true, text: () => Promise.resolve("<div>Non-members</div>") });
+
+    const container = document.createElement("div");
+    container.id = "team-non-members-container-team1";
+    document.body.appendChild(container);
+
+    const mockEvent = { target: { value: "charlie" } };
+    debouncedNonMemberSearch("team1", mockEvent, new Event("input"));
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(fetchWithAuth).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchWithAuth).toHaveBeenCalledTimes(1);
+    expect(fetchWithAuth).toHaveBeenCalledWith(expect.stringContaining("search=charlie"));
   });
 });
 
