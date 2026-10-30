@@ -308,18 +308,27 @@ a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
-# Wait for redis to be ready
-if settings.cache_type == "redis" and settings.redis_url is not None:
-    # First-Party
-    from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
-    wait_for_redis_ready(
-        redis_url=settings.redis_url,
-        max_retries=int(settings.redis_max_retries),
-        retry_interval_ms=int(settings.redis_retry_interval_ms),
-        ssl_kwargs=_build_ssl_kwargs(settings),
-        sync=True,
-    )
+def _wait_for_redis_at_startup() -> None:
+    """Block until Redis answers when the redis cache backend is configured.
+
+    Runs at module load; a no-op for non-redis backends.
+    """
+    if settings.cache_type == "redis" and settings.redis_url is not None:
+        # First-Party
+        from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+        wait_for_redis_ready(
+            redis_url=settings.redis_url,
+            max_retries=int(settings.redis_max_retries),
+            retry_interval_ms=int(settings.redis_retry_interval_ms),
+            ssl_kwargs=_build_ssl_kwargs(settings),
+            sync=True,
+        )
+
+
+# Wait for redis to be ready
+_wait_for_redis_at_startup()
 
 # Initialize session registry
 session_registry = SessionRegistry(
