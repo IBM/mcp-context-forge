@@ -140,6 +140,9 @@ from mcpgateway.schemas import (
     A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
     A2ATaskState,
+    A2ATestError,
+    A2ATestRequest,
+    A2ATestResponse,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -5731,6 +5734,57 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post(
+    "/{agent_id}/test",
+    response_model=A2ATestResponse,
+    responses={
+        404: {"model": A2ATestError, "description": "Agent not found or not accessible (detail is an A2ATestError)"},
+        422: {"model": A2ATestError, "description": "Invalid test parameters (detail is an A2ATestError)"},
+        500: {"model": A2ATestError, "description": "Unexpected error (detail is an A2ATestError)"},
+        502: {"model": A2ATestError, "description": "Agent disabled, unreachable or returned an error (detail is an A2ATestError)"},
+    },
+)
+@require_permission("a2a.invoke")
+async def test_a2a_agent(
+    agent_id: str,
+    request: Request,
+    payload: Optional[A2ATestRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Invoke an A2A agent with a test message and return a sanitized result.
+
+    Args:
+        agent_id: Agent ID.
+        request: The FastAPI request object for scope derivation.
+        payload: Optional body carrying a custom test ``query``.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict[str, Any]: ``success``, ``result``, ``agent_name`` and ``test_timestamp``.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. Otherwise 404, 502, 422 or 500 with a
+            ``detail`` object holding ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    outcome = await a2a_service.test_agent(
+        db,
+        agent_id,
+        query=payload.query if payload else None,
+        user_email=user_email,
+        user_id=user_email,
+        token_teams=token_teams,
+    )
+    if outcome.status_code != 200:
+        raise HTTPException(status_code=outcome.status_code, detail=outcome.body)
+    return outcome.body
 
 
 @a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
