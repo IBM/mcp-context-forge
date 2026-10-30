@@ -263,9 +263,9 @@ def _create_viewer(client: httpx.Client, signing_key: str) -> tuple[str, httpx.C
     return email, viewer
 
 
-def _has_stored_auth(recorded: list[_RecordedRequest]) -> bool:
-    """Return whether any recorded upstream request carried the stored credential."""
-    return any(headers.get("Authorization") == _STORED_AUTH for _method, _path, headers in recorded)
+def _mutate_requests(recorded: list[_RecordedRequest]) -> list[dict[str, str]]:
+    """Return the headers of recorded ``POST /mutate`` requests, which only the test endpoint sends."""
+    return [headers for method, path, headers in recorded if (method, path) == ("POST", "/mutate")]
 
 
 _TEST_PAYLOAD = {"method": "POST", "path": "/mutate", "body": {"op": "x"}}
@@ -285,10 +285,11 @@ def registered_gateway(isolated_gateway: _GatewayFixture) -> Iterator[tuple[str,
             viewer.close()
             with contextlib.suppress(Exception):
                 client.delete(f"/gateways/{gw_id}", timeout=10)
+            with contextlib.suppress(Exception):
                 client.delete(f"/auth/email/admin/users/{email}", timeout=10)
 
 
-def test_platform_viewer_cannot_send_credentialed_post(isolated_gateway: _GatewayFixture, registered_gateway) -> None:
+def test_platform_viewer_cannot_send_credentialed_post(registered_gateway) -> None:
     """A caller without gateways.update gets 403 and the stored credential is never sent."""
     upstream_url, recorded, viewer = registered_gateway
 
@@ -296,7 +297,7 @@ def test_platform_viewer_cannot_send_credentialed_post(isolated_gateway: _Gatewa
 
     assert resp.status_code == 403, resp.text[:500]
     assert "gateways.update" in resp.text
-    assert not _has_stored_auth(recorded)
+    assert _mutate_requests(recorded) == []
 
 
 def test_admin_can_still_send_credentialed_post(isolated_gateway: _GatewayFixture, registered_gateway) -> None:
@@ -307,11 +308,10 @@ def test_admin_can_still_send_credentialed_post(isolated_gateway: _GatewayFixtur
     resp = client.post("/v1/mcp-servers/test", json={**_TEST_PAYLOAD, "base_url": upstream_url})
 
     assert resp.status_code == 200, resp.text[:500]
-    assert ("POST", "/mutate") in [(method, path) for method, path, _headers in recorded]
-    assert _has_stored_auth(recorded)
+    assert any(headers.get("Authorization") == _STORED_AUTH for headers in _mutate_requests(recorded)), recorded
 
 
-def test_platform_viewer_bare_handshake_still_works(isolated_gateway: _GatewayFixture, registered_gateway) -> None:
+def test_platform_viewer_bare_handshake_still_works(registered_gateway) -> None:
     """A bare handshake needs only gateways.read."""
     upstream_url, _recorded, viewer = registered_gateway
 
