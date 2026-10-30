@@ -327,7 +327,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 | Create Resource (Form) | `curl -X POST $GW_URL/admin/resources -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/x-www-form-urlencoded" -d 'uri=admin/test&name=admin_resource&description=Created via admin&mimeType=text/plain&content=Admin content'` | Create via form | 303 redirect | ☐ | Admin form endpoint |
 | Test Gateway Connectivity | `curl -X POST $GW_URL/admin/gateways/test -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"base_url": "https://api.example.com", "path": "/health", "method": "GET", "headers": {}, "body": null}'` | Test connection | Returns status_code, latency_ms, and body | ☐ | Connectivity test |
 
-`/admin/gateways/test` enforces SSRF URL validation. Under strict defaults, localhost/private targets are blocked unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local dev overrides).
+`/admin/gateways/test` enforces SSRF URL validation. Under strict defaults, localhost/private targets are blocked unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local dev overrides). It attaches the registered MCP server's stored credential only for callers with `gateways.update` who own the MCP server.
 
 ???+ info "📖 Understanding Test Gateway Connectivity"
 

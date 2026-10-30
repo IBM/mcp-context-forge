@@ -11,6 +11,7 @@
 ### Breaking Changes
 
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+- **Gateway test endpoints require `gateways.update` for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` can send the stored credential of a registered MCP server. That credential can be basic, bearer, custom-header, or OAuth client-credentials. These endpoints now return 403 for this case unless the caller has `gateways.update` and owns the MCP server. A team owner of a team MCP server and a platform admin also pass. This is the same rule as `PUT /gateways/{gateway_id}`. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
 ### Fixed
 
@@ -35,6 +36,10 @@
 #### **API & Platform**
 
 - **Product-terminology request aliases for `gateway_id` and the virtual-server `server` body key** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt create/update bodies, and the gateway/MCP-server handshake test request, now also accept `mcp_server_id` as an alias of `gateway_id` ("MCP server" is the product term for what the code calls a "gateway"). The tool, resource, and prompt list endpoints and `GET /v1/search` accept `mcp_server_id` as a query alias of `gateway_id`. `POST /servers` and `POST /v1/virtual-servers` also accept a top-level `virtual_server` key as an alias of `server`. Sending two spellings with different values returns 422. Existing field names and body keys keep working, OpenAPI property names are unchanged, and responses keep the existing key names. In OpenAPI, the `Body_create_server_*` request components are replaced by `ServerCreateRequest`. Output-side aliasing, RBAC permission strings, audit `resource_type` values, and config names remain tracked under #6544.
+
+### Security
+
+- **Gateway connectivity test credential gate** - Gateway connectivity tests no longer send stored MCP server credentials for callers without `gateways.update`.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
