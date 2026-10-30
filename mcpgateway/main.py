@@ -140,7 +140,6 @@ from mcpgateway.schemas import (
     A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
     A2ATaskState,
-
     A2ATestError,
     A2ATestRequest,
     A2ATestResponse,
