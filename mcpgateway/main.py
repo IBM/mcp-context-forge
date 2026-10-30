@@ -133,6 +133,9 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
+    A2AStoredCardRead,
     A2AAgentRead,
     A2AAgentUpdate,
     A2AInvokeResponse,
@@ -181,6 +184,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
+from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
@@ -5070,6 +5074,40 @@ async def get_a2a_agent_card(
     return card
 
 
+@a2a_router.get("/{agent_id}/stored-card", response_model=A2AStoredCardRead)
+@require_permission("a2a.read")
+async def get_a2a_agent_stored_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the Agent Card stored for a registered agent, as fetched.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored card.
+
+    Raises:
+        HTTPException: If the agent is not visible, or has no stored card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored Agent Card for this agent")
+    return card
+
+
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
 @require_permission("a2a.create")
@@ -5155,6 +5193,29 @@ async def create_a2a_agent(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating A2A agent: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
+@require_permission("a2a.create")
+async def fetch_a2a_agent_card(
+    request: A2AFetchCardRequest,
+    user=Depends(get_current_user_with_permissions),
+) -> A2AFetchCardResponse:
+    """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
+
+    A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
+    ``auth_required`` or ``unreachable``. A blocked address and a network failure both
+    return ``unreachable``, so the route cannot be used to probe which hosts the gateway can reach.
+
+    Args:
+        request (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        user: The authenticated user making the request.
+
+    Returns:
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
+    """
+    logger.debug(f"User {safe_log_user(user)} is fetching an A2A agent card")
+    return await fetch_agent_card(str(request.base_url), request.path, request.headers)
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
