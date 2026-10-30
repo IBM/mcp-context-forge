@@ -1808,7 +1808,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -2138,7 +2138,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},  # pragma: allowlist secret
         )
         request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
@@ -2182,7 +2182,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "00000000000000000000000000000099"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2212,7 +2212,7 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 403
         # team_id was not in token_teams, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
@@ -2222,7 +2222,7 @@ class TestAdminAuthMiddleware:
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2251,7 +2251,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # No team_id in request, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
