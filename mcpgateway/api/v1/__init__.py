@@ -131,11 +131,10 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     # -------------------------------------------------------------------------
     # Group C — feature-flagged conditional routers
     # -------------------------------------------------------------------------
-    if settings.mcpgateway_a2a_enabled:
-        target_router.include_router(a2a_router)
-        logger.info("A2A router included - A2A features enabled")
-    else:
-        logger.info("A2A router not included - A2A features disabled")
+    # The A2A router is always mounted. When A2A is disabled its router dependency
+    # answers every route with a typed 404 (detail.error == "a2a_disabled").
+    target_router.include_router(a2a_router)
+    logger.info("A2A router included - A2A %s", "enabled" if settings.mcpgateway_a2a_enabled else "disabled (routes return a2a_disabled)")
 
     if settings.observability_enabled:
         # First-Party

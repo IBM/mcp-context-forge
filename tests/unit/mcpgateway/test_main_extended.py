@@ -11705,6 +11705,13 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
+
+        monkeypatch.setattr(main_mod, "a2a_service", a2a)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_metrics_enabled", False)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_no_args_not_found_and_permission(self, monkeypatch):

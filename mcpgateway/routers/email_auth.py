@@ -40,6 +40,7 @@ from mcpgateway.schemas import (
     AuthenticationResponse,
     AuthEventResponse,
     ChangePasswordRequest,
+    CurrentUserResponse,
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
     EmailUserResponse,
@@ -550,7 +551,7 @@ async def complete_password_reset(token: str, reset_request: ResetPasswordReques
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@email_auth_router.get("/me", response_model=EmailUserResponse)
+@email_auth_router.get("/me", response_model=CurrentUserResponse)
 async def get_current_user_profile(current_user: EmailUser = Depends(get_current_user)):
     """Get current user's profile information.
 
@@ -558,7 +559,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         current_user: Currently authenticated user
 
     Returns:
-        EmailUserResponse: User profile information
+        CurrentUserResponse: User profile information and deployment feature flags
 
     Raises:
         HTTPException: If user authentication fails
@@ -567,7 +568,8 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         >>> # GET /auth/email/me
         >>> # Headers: Authorization: Bearer <token>
     """
-    return EmailUserResponse.from_email_user(current_user)
+    profile = EmailUserResponse.from_email_user(current_user)
+    return CurrentUserResponse(**profile.model_dump(), features={"a2a": settings.mcpgateway_a2a_enabled})
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])

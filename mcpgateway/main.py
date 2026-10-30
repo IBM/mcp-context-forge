@@ -180,7 +180,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2A_DISABLED_DETAIL, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -3620,7 +3620,24 @@ server_router = APIRouter(tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
-a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
+
+
+async def require_a2a_enabled(_user=Depends(get_current_user_with_permissions)) -> None:
+    """Reject A2A requests with a typed 404 when A2A is disabled.
+
+    Authentication runs first, so only authenticated callers learn that A2A is off.
+
+    Args:
+        _user: Authenticated user; resolved to enforce authentication before the flag check.
+
+    Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` when A2A is disabled.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+
+
+a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"], dependencies=[Depends(require_a2a_enabled)])
 
 # Basic Auth setup
 
@@ -12571,10 +12588,11 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     elif entity.lower() == "prompt":
         await prompt_service.reset_metrics(db)
     elif entity.lower() in ("a2a_agent", "a2a"):
-        if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-            await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
-        else:
-            raise HTTPException(status_code=400, detail="A2A features are disabled")
+        if a2a_service is None:
+            raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+        if not settings.mcpgateway_a2a_metrics_enabled:
+            raise HTTPException(status_code=400, detail="A2A metrics are disabled")
+        await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
