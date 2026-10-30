@@ -6814,6 +6814,7 @@ class A2APushNotificationConfigRequest(BaseModel):
         """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
         return validate_core_url(v, "Webhook URL")
 
+
 class A2ATaskMessageRequest(BaseModel):
     """Schema for a follow-up message sent to an existing A2A task.
 
