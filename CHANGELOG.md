@@ -10,6 +10,7 @@
 
 ### Breaking Changes
 
+- **LLM gateway models authorization** - `GET /llm/gateway/models` and `GET /v1/llm/gateway/models` now require the `llm.read` RBAC permission. Previously, authentication alone passed this route. It now matches `GET /llmchat/gateway/models` and `GET /v1/models`. All built-in roles hold `llm.read`. Principals on custom roles without `llm.read` now receive `403`.
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
 
 ### Fixed
