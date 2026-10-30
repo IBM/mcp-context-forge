@@ -16987,6 +16987,7 @@ async def admin_test_a2a_agent(
         user_email=invoke_user_email,
         user_id=user_email,
         token_teams=token_teams,
+        include_agent_error_detail=True,
     )
     return ORJSONResponse(content=outcome.body, status_code=outcome.status_code)
 
