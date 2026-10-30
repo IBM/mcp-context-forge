@@ -90,14 +90,20 @@ class AuthenticationConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_hmac_headers(self) -> "AuthenticationConfig":
-        """Reject empty or colliding HMAC header names.
+        """Reject empty or colliding HMAC header names, missing secrets, and unsupported algorithms.
 
         Returns:
             AuthenticationConfig: The validated configuration.
 
         Raises:
-            ValueError: If a header name is empty or collides with another HMAC header.
+            ValueError: If HMAC configuration or header names are invalid.
         """
+        if self.type == AuthenticationType.HMAC:
+            if not self.hmac_secret or not self.hmac_secret.strip():
+                raise ValueError("hmac_secret must not be empty for HMAC authentication")
+            if self.hmac_algorithm.lower() not in {"sha256", "sha384", "sha512"}:
+                raise ValueError("hmac_algorithm must be one of: sha256, sha384, sha512")
+
         names = [self.hmac_header, self.hmac_timestamp_header, self.hmac_delivery_id_header]
         if any(not name.strip() for name in names):
             raise ValueError("HMAC header names must not be empty")
