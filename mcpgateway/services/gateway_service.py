@@ -8322,7 +8322,7 @@ _HANDSHAKE_PROTOCOL_COPY = (
     "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
 )
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
-STORED_CREDENTIAL_DENIED = "Testing an MCP server with its stored credentials requires gateways.update"
+STORED_CREDENTIAL_DENIED = "Testing an MCP server with its stored credentials requires gateways.update and ownership of the MCP server"
 
 
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
