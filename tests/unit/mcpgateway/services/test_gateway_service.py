@@ -41,11 +41,14 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import set_custom_name_and_slug
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import ToolMetric
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
+    _build_gateway_tool_invocation_name,
     GatewayCatalogSyncResult,
     GatewayConnectionError,
     GatewayCredentialError,
@@ -55,13 +58,11 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
-    MCP_SYNC_CREATED_VIA_VALUES,
     GatewayToolNameConflictError,
+    MCP_SYNC_CREATED_VIA_VALUES,
     OAuthToolValidationError,
-    _build_gateway_tool_invocation_name,
 )
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
-from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth
 
 # ---------------------------------------------------------------------------
@@ -6119,9 +6120,20 @@ async def test_fetch_tools_after_oauth_replaces_stale_discovered_alias(gateway_s
     await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
 
     persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
-    assert len(persisted) == 1
-    assert persisted[0].id != stale_id
-    assert (persisted[0].original_name, persisted[0].name, persisted[0].created_via) == ("search", invocation_name, "oauth")
+    assert len(persisted) == 2
+    stale_tool = db.get(DbTool, stale_id)
+    assert stale_tool is not None
+    assert stale_tool.deprecated is True
+    assert stale_tool.catalog_stale is True
+    assert stale_tool.custom_name == stale_tool.original_name
+    assert stale_tool.name != invocation_name
+    replacement = next(tool for tool in persisted if tool.id != stale_id)
+    assert (replacement.original_name, replacement.name, replacement.created_via) == ("search", invocation_name, "oauth")
+    assert len({tool.name for tool in persisted}) == 2
+
+    stale_tool.description = "stale tool metadata updated"
+    db.commit()
+    assert db.get(DbTool, stale_id).name != invocation_name
 
 
 @pytest.mark.asyncio
@@ -6336,19 +6348,19 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
         result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
-    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
+    assert {tool.original_name for tool in gateway.tools} == {"old-tool", "keep-tool", "ui-tool", "notify-tool"}
+    stale_tools = [tool for tool in gateway.tools if tool.original_name in {"old-tool", "notify-tool"}]
+    assert all(tool.deprecated is True and tool.catalog_stale is True for tool in stale_tools)
     assert {resource.uri for resource in gateway.resources} == ({"api://res"} if partial_catalog else {"keep://res", "api://res"})
     assert {prompt.original_name for prompt in gateway.prompts} == ({"ui-prompt"} if partial_catalog else {"keep-prompt", "ui-prompt"})
     assert "preserving existing items" not in caplog.text
 
     deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
     deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
-    # notify-tool carries created_via="notification_service", which MCP_SYNC_CREATED_VIA_VALUES
-    # treats as MCP-discovered, so a stale one is pruned like any other discovered entry.
-    assert deleted_ids[DbTool.__tablename__] == {1, 10}
+    assert DbTool.__tablename__ not in deleted_ids
     assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
     assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
-    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6, 10} if partial_catalog else {1, 3, 5, 10})
+    assert set().union(*deleted_ids.values()) == ({3, 4, 5, 6} if partial_catalog else {3, 5})
 
 
 # ---------------------------------------------------------------------------
@@ -11660,15 +11672,17 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
 
 class TestStaleCatalogPruning:
-    """Prune safelist: rows created by automated MCP sync paths are removable, user-created rows are not."""
+    """MCP-synced tools remain recoverable when they disappear from a catalog."""
 
-    def test_notification_service_rows_are_prunable(self):
-        """A stale tool ingested via a change notification must be pruned; user-created rows must survive."""
+    def test_notification_service_rows_are_marked_stale_and_retained(self):
+        """A stale change-notification tool is deprecated without deleting durable state."""
         assert "notification_service" in MCP_SYNC_CREATED_VIA_VALUES
         assert "api" not in MCP_SYNC_CREATED_VIA_VALUES
         assert "ui" not in MCP_SYNC_CREATED_VIA_VALUES
 
         stale_notif = MagicMock(id="t-notif", original_name="gone_tool", created_via="notification_service")
+        stale_notif.catalog_stale = False
+        stale_notif.deprecated = False
         user_made = MagicMock(id="t-ui", original_name="user_tool", created_via="ui")
         gateway = MagicMock()
         gateway.tools = [stale_notif, user_made]
@@ -11694,7 +11708,108 @@ class TestStaleCatalogPruning:
         )
 
         assert result.tools_removed == 1
-        assert gateway.tools == [user_made]  # ui-created row survives the prune
+        assert gateway.tools == [stale_notif, user_made]
+        assert stale_notif.deprecated is True
+        assert stale_notif.catalog_stale is True
+
+        repeated_result = service._reconcile_gateway_catalog(
+            MagicMock(),
+            gateway=gateway,
+            catalog_sync=catalog_sync,
+            log_context="repeated unit test",
+            stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+        )
+
+        assert repeated_result.tools_removed == 0
+        assert gateway.tools == [stale_notif, user_made]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("initially_deprecated", [False, True])
+    async def test_refresh_reappearance_preserves_tool_identity_and_related_state(self, gateway_service, oauth_catalog_db, initially_deprecated):
+        """A returning tool reuses its row and retains associations, metrics, and admin state."""
+        db, gateway, add_tool = oauth_catalog_db
+        tool = add_tool(original_name="recoverable_tool", created_via="oauth")
+        tool.deprecated = initially_deprecated
+        tool.enabled = False
+
+        server = DbServer(name=f"stale-tool-server-{uuid4().hex}", visibility="public")
+        server.tools = [tool]
+        metric = ToolMetric(tool=tool, response_time=0.125, is_success=True)
+        db.add_all([server, metric])
+        db.commit()
+        server_id = server.id
+        tool_id = tool.id
+
+        try:
+            missing_catalog = gateway_service._sync_gateway_catalog(
+                db,
+                gateway=gateway,
+                tools=[],
+                resources=[],
+                prompts=[],
+                created_via="health_check",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+            )
+            first_result = gateway_service._reconcile_gateway_catalog(
+                db,
+                gateway=gateway,
+                catalog_sync=missing_catalog,
+                log_context="missing tool regression",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+            )
+            db.commit()
+
+            assert first_result.tools_removed == (0 if initially_deprecated else 1)
+            stale_tool = db.get(DbTool, tool_id)
+            assert stale_tool is not None
+            assert stale_tool.catalog_stale is (not initially_deprecated)
+            assert stale_tool.deprecated is True
+            assert stale_tool.enabled is False
+            assert [associated.id for associated in db.get(DbServer, server_id).tools] == [tool_id]
+            assert len(db.execute(select(ToolMetric).where(ToolMetric.tool_id == tool_id)).scalars().all()) == 1
+
+            repeated_result = gateway_service._reconcile_gateway_catalog(
+                db,
+                gateway=gateway,
+                catalog_sync=missing_catalog,
+                log_context="repeated missing tool regression",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+            )
+            assert repeated_result.tools_removed == 0
+
+            returned_tool = ToolCreate.model_validate({"name": "recoverable_tool", "description": "original", "input_schema": {"type": "object"}})
+            returned_catalog = gateway_service._sync_gateway_catalog(
+                db,
+                gateway=gateway,
+                tools=[returned_tool],
+                resources=[],
+                prompts=[],
+                created_via="health_check",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+            )
+            gateway_service._reconcile_gateway_catalog(
+                db,
+                gateway=gateway,
+                catalog_sync=returned_catalog,
+                log_context="returned tool regression",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+            )
+            db.commit()
+
+            recovered_tool = db.get(DbTool, tool_id)
+            assert recovered_tool is not None
+            assert recovered_tool.id == tool_id
+            assert recovered_tool.deprecated is initially_deprecated
+            assert recovered_tool.catalog_stale is False
+            assert recovered_tool.enabled is False
+            assert [associated.id for associated in db.get(DbServer, server_id).tools] == [tool_id]
+            assert len(db.execute(select(ToolMetric).where(ToolMetric.tool_id == tool_id)).scalars().all()) == 1
+        finally:
+            db.rollback()
+            db.execute(delete(DbServer).where(DbServer.id == server_id))
+            db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
+            db.execute(delete(DbTool).where(DbTool.id == tool_id))
+            db.commit()
 
 
 class TestGatewayImpactPreviewTeamResolution:
