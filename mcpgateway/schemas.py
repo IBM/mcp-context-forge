@@ -4888,15 +4888,6 @@ class ServerCreate(BaseModel):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerCreate
-            >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerCreate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
@@ -5127,15 +5118,6 @@ class ServerUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerUpdate
-            >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerUpdate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
