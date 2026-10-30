@@ -396,6 +396,26 @@ A2A agents provide comprehensive metrics:
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
 
+## Task and Push Notification Routes
+
+ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks`.
+
+| Method | Path | Permission |
+|--------|------|------------|
+| GET | `/v1/a2a/{agent_id}/tasks` | `a2a.read` |
+| GET | `/v1/a2a/{agent_id}/tasks/{task_id}` | `a2a.read` |
+| POST | `/v1/a2a/{agent_id}/tasks/{task_id}/cancel` | `a2a.invoke` |
+| POST, GET | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs` | `a2a.update`, `a2a.read` |
+| GET, DELETE | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}` | `a2a.read`, `a2a.update` |
+
+- Tasks have no owner of their own. Access follows the agent: the agent owner, a team owner for team agents, or a platform admin. Other callers receive `404`.
+- The list route returns task summaries without `history` and `artifacts`. Use the single-task route for those fields.
+- The list route accepts `pageSize` (1-100) and `pageToken`. Pass `nextPageToken` from one response as `pageToken` in the next request. An empty `nextPageToken` marks the last page. A malformed `pageToken` returns `400`.
+- The `state` filter accepts the A2A task states: `submitted`, `working`, `input-required`, `auth-required`, `completed`, `canceled`, `failed`, `rejected`.
+- The cancel route changes the task state in the gateway only. It does not signal the remote agent. A task in a terminal state is returned unchanged.
+- Creating a push notification config returns `201`. Posting the same `webhook_url` again updates the config and returns `200`. Responses never include `auth_token`.
+- Cancel and push config writes create audit trail entries.
+
 ## Lifecycle Management
 
 ### Agent-Tool State Cascade
