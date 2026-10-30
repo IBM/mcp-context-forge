@@ -5,9 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Fetch an A2A Agent Card from an unregistered endpoint and map it onto agent fields.
 
-The fetch applies the outbound URL policy and DNS pinning before any I/O. Every
-failure collapses into one uniform "no card found" result, so the response cannot
-reveal which hosts the gateway can or cannot reach.
+The fetch applies the outbound URL policy and DNS pinning before any I/O. The result
+names one outcome: ``found``, ``no_card``, ``auth_required`` or ``unreachable``. A
+blocked address and a network failure both report ``unreachable``, so the response
+cannot reveal which hosts the gateway can or cannot reach.
 """
 
 # Standard
@@ -33,7 +34,10 @@ CARD_PATH_V1 = "/.well-known/agent-card.json"
 CARD_PATH_LEGACY = "/.well-known/agent.json"
 MAX_CARD_BYTES = 1024 * 1024
 NOT_FOUND_REASON = "No A2A Agent Card was found at the given location."
+AUTH_REQUIRED_REASON = "The agent requires credentials to return its Agent Card."
+UNREACHABLE_REASON = "The agent could not be reached."
 
+_AUTH_SCHEME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,32}$")
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 _DEFAULT_PROTOCOL_BINDING = "JSONRPC"
 
@@ -365,15 +369,51 @@ def suggest_agent_fields(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str
 
 
 def not_found() -> A2AFetchCardResponse:
-    """Build the uniform response for every failed or non-card fetch.
+    """Build the response for a reachable host that serves no Agent Card.
 
     Returns:
-        A response with ``found`` false and a fixed reason.
+        A response with outcome ``no_card`` and a fixed reason.
     """
-    return A2AFetchCardResponse(found=False, reason=NOT_FOUND_REASON)
+    return A2AFetchCardResponse(found=False, outcome="no_card", reason=NOT_FOUND_REASON)
 
 
-async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Optional[int], Any]:
+def unreachable() -> A2AFetchCardResponse:
+    """Build the response for a blocked address or a failed connection.
+
+    Both causes share this response, so the route cannot probe which hosts the gateway reaches.
+
+    Returns:
+        A response with outcome ``unreachable`` and a fixed reason.
+    """
+    return A2AFetchCardResponse(found=False, outcome="unreachable", reason=UNREACHABLE_REASON)
+
+
+def auth_required(challenge: Optional[str]) -> A2AFetchCardResponse:
+    """Build the response for a card endpoint that answered 401 or 403.
+
+    Args:
+        challenge: Value of the ``WWW-Authenticate`` header, if any.
+
+    Returns:
+        A response with outcome ``auth_required`` and the challenge scheme name.
+    """
+    return A2AFetchCardResponse(found=False, outcome="auth_required", reason=AUTH_REQUIRED_REASON, auth_scheme=_challenge_scheme(challenge))
+
+
+def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
+    """Extract the scheme name from a ``WWW-Authenticate`` value.
+
+    Args:
+        challenge: Raw header value.
+
+    Returns:
+        The scheme token, or ``None`` when the header is absent or malformed.
+    """
+    parts = (challenge or "").split(None, 1)
+    return parts[0] if parts and _AUTH_SCHEME_RE.match(parts[0]) else None
+
+
+async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Optional[int], Any, Optional[str]]:
     """GET one URL under the outbound policy and parse a size-capped JSON body.
 
     Args:
@@ -381,39 +421,41 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         headers: Optional caller headers, sent only to this URL's pinned host.
 
     Returns:
-        ``(status, document)``. ``status`` is ``None`` when the request was blocked or failed;
-        ``document`` is ``None`` unless the response was a 200 JSON body.
+        ``(status, document, challenge)``. ``status`` is ``None`` when the request was blocked or failed;
+        ``document`` is ``None`` unless the response was a 200 JSON body; ``challenge`` is the
+        ``WWW-Authenticate`` value of a non-200 response.
     """
     try:
         target = await resolve_pinned_target(url, "A2A card URL")
     except ValueError as exc:
         logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
-        return None, None
+        return None, None, None
 
     request_headers = target.apply_headers({"Accept": "application/json", **(headers or {})})
     try:
         async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
             async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
                 if response.status_code != 200:
-                    return response.status_code, None
+                    return response.status_code, None, response.headers.get("www-authenticate")
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_CARD_BYTES:
                         logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
-                        return 200, None
-        return 200, orjson.loads(bytes(body))
+                        return 200, None, None
+        return 200, orjson.loads(bytes(body)), None
     except orjson.JSONDecodeError:
-        return 200, None
+        return 200, None, None
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("A2A card fetch failed for %s: %s", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(type(exc).__name__))
-        return None, None
+        return None, None, None
 
 
 async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Fetch, validate and normalize an Agent Card from an unregistered endpoint.
 
-    Falls back to the pre-1.0 well-known path only on a 404 from the 1.0 path.
+    Falls back to the pre-1.0 well-known path only on a 404 from the 1.0 path. A 401 or 403
+    stops the search with ``auth_required`` so the caller can retry with credentials.
 
     Args:
         base_url: Endpoint or direct card URL.
@@ -421,7 +463,7 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
         headers: Optional headers, for example credentials for an authenticated card.
 
     Returns:
-        The normalized card with a suggested agent mapping, or a uniform not-found response.
+        The normalized card with a suggested agent mapping, or a response naming why no card was returned.
     """
     try:
         candidates = build_candidate_urls(base_url, path)
@@ -429,12 +471,16 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
         return not_found()
 
     for url in candidates:
-        status, document = await _get_json(url, headers)
+        status, document, challenge = await _get_json(url, headers)
+        if status is None:
+            return unreachable()
+        if status in (401, 403):
+            return auth_required(challenge)
         if status == 404:
             continue
         if document is None or not is_agent_card(document):
             return not_found()
         card, version = normalize_card(document)
         fields, warnings = suggest_agent_fields(card)
-        return A2AFetchCardResponse(found=True, source_url=url, detected_version=version, card=card, raw_card=document, suggested_agent=fields, warnings=warnings)
+        return A2AFetchCardResponse(found=True, outcome="found", source_url=url, detected_version=version, card=card, raw_card=document, suggested_agent=fields, warnings=warnings)
     return not_found()
