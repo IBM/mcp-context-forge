@@ -40,6 +40,8 @@
 
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
+- **A2A agents with OAuth 2.0 send a token** ([#7382](https://github.com/IBM/mcp-context-forge/issues/7382)) - An A2A agent registered with `auth_type` `oauth` now gets a client-credentials token from its configured token URL. Each invocation sends the token as `Authorization: Bearer`. The gateway caches the token until 30 seconds before it expires. Before this fix, the invocation went out without credentials. A token failure, a missing OAuth config, or a grant type other than client credentials now raises an `A2AAgentError` that names the agent. The gateway never sends an unauthenticated request in these cases. The authorization-code grant is not supported for A2A agents.
+
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
 
 - **Stale catalog lists after writes** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Resource, prompt, and server create, gateway update, delete, and ownership transfer, import team assignment, and gRPC service tool changes now invalidate the registry cache. Before, lists stayed stale for up to the cache TTL.
