@@ -14,6 +14,7 @@ import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, call, MagicMock, patch
@@ -3104,8 +3105,9 @@ class TestCallA2AAgent:
         assert mock_client.post.call_args.args[0] == "http://agent.example.com/"
 
     @pytest.mark.asyncio
-    async def test_call_a2a_agent_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service):
+    async def test_call_a2a_agent_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service, caplog):
         """If preparing/logging JSONRPC request_data fails, error is logged and re-raised."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.services.tool_service")
 
         class BadRepr:
             def __repr__(self):

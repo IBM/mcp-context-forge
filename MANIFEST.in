@@ -39,6 +39,7 @@ recursive-include mcpgateway *.proto
 
 # Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
+include .python-version
 include .env.example
 include .interrogaterc
 include .jshintrc

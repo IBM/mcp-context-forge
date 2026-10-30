@@ -41,7 +41,7 @@ uv pip install --group dev '.[plugins]'
 This installs:
 
 * Core app dependencies
-* Dev dependencies (`pytest`, `coverage`, `mypy`, `bandit`, etc.)
+* Dev dependencies (`rstest`, `pytest`, `coverage`, `mypy`, `bandit`, etc.)
 * Plugin framework extras
 
 Formatters and linters (`ruff`, `pylint`, `vulture`,
@@ -177,13 +177,13 @@ make format-web    # format with Prettier
 ```bash
 # Playwright (UI automation)
 playwright install              # one-time browser setup
-pytest tests/playwright/        # run UI tests
+rstest tests/playwright/        # run UI tests
 
 # Locust (load testing)
 locust -f tests/loadtest/locustfile.py --host=http://localhost:4444
 ```
 
-Note: JavaScript unit tests are not yet implemented. Testing efforts focus on the Python backend (pytest) and UI automation (Playwright).
+Note: JavaScript unit tests are not yet implemented. Testing efforts focus on the Python backend (rstest with pytest fixtures) and UI automation (Playwright).
 
 ### Air-Gapped Mode (Local Development)
 

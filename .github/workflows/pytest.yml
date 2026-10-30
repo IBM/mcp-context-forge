@@ -1,12 +1,12 @@
 # ===============================================================
-# 🧪  PyTest & Coverage - Quality Gate
+# 🧪  rstest & Coverage - Quality Gate
 # ===============================================================
 #
-#   - runs the full test-suite across three Python versions
-#   - measures branch + line coverage (fails < 90% main, < 35% doctest)
-#   - uploads the XML/HTML coverage reports as build artifacts
+#   - runs the full test-suite on Python 3.14
+#   - measures branch + line coverage (fails < 90% main, < 30% doctest)
+#   - writes XML coverage for changed-line checks
 #   - (optionally) generates / commits an SVG badge - kept disabled
-#   - posts a concise per-file coverage table to the job summary
+#   - retains the total and changed-line coverage gates
 #   - executes on every push / PR to *main*  ➕  a weekly cron
 # ---------------------------------------------------------------
 
@@ -62,14 +62,14 @@ jobs:
   test:
     needs: ci-decision
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
-    name: pytest (py${{ matrix.python }})
+    name: rstest (py${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12"]
+        python: ["3.14"]
 
     env:
       PYTHONUNBUFFERED: "1"
@@ -116,22 +116,20 @@ jobs:
       # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 90% total coverage)
       # -----------------------------------------------------------
-      - name: 🧪  Run pytest
+      - name: 🧪  Run rstest
         run: |
-          uv run --extra plugins pytest -n auto \
+          uv run --extra plugins rstest -n auto \
             --durations=10 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
             --cov-config=.github/pytest-branch-coverage.coveragerc \
             --cov-report=xml \
-            --cov-report=html \
-            --cov-report=term \
             --cov-branch \
             --cov-fail-under=90
 
       - name: 📊 Append observability unit-test coverage
         run: |
-          uv run --extra plugins --extra observability pytest \
+          uv run --extra plugins --extra observability rstest -n 0 \
             tests/unit/mcpgateway/test_observability.py \
             tests/unit/mcpgateway/test_observability_trace_policy.py \
             tests/unit/mcpgateway/test_observability_imports.py \
@@ -139,8 +137,6 @@ jobs:
             --cov-config=.github/pytest-branch-coverage.coveragerc \
             --cov-append \
             --cov-report=xml \
-            --cov-report=html \
-            --cov-report=term \
             --cov-branch \
             --cov-fail-under=90
 
@@ -162,11 +158,10 @@ jobs:
       - name: 📊  Doctest coverage with threshold
         run: |
           # Run doctests with coverage measurement
-          uv run pytest -n auto \
+          uv run rstest -n auto \
             --doctest-modules mcpgateway/ \
             --cov=mcpgateway \
-            --cov-report=term \
-            --cov-report=json:doctest-coverage.json \
+            --cov-report=xml:doctest-coverage.xml \
             --cov-fail-under=30 \
             --tb=short
 
@@ -177,7 +172,7 @@ jobs:
         run: |
           uv run python3 -c "
           import subprocess, sys
-          result = subprocess.run(['uv', 'run', 'python3', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
+          result = subprocess.run(['uv', 'run', 'rstest', '-n', '0', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
           if result.returncode == 0:
               print('✅ All doctests passing')
           else:
@@ -198,7 +193,7 @@ jobs:
   test-observability:
     needs: ci-decision
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
-    name: pytest (observability extra)
+    name: rstest (observability extra)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -216,21 +211,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 🐍  Setup Python 3.12
+      - name: 🐍  Setup Python 3.14
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
 
       - name: ⚡ Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.11"
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: 🧪  Run observability-dependent tests
         run: |
-          uv run --extra plugins --extra observability pytest \
+          uv run --extra plugins --extra observability rstest -n 0 \
             tests/unit/mcpgateway/test_observability.py \
             tests/unit/mcpgateway/test_observability_trace_policy.py \
             tests/unit/mcpgateway/test_observability_imports.py \
@@ -238,7 +233,7 @@ jobs:
             tests/unit/mcpgateway/services/test_a2a_service.py \
             tests/live_gateway/a2a/test_a2a_trace_context_e2e.py \
             --basetemp="${RUNNER_TEMP}/observability-tests" -v --tb=short
-          uv run --extra plugins --extra observability pytest \
+          uv run --extra plugins --extra observability rstest -n 0 \
             tests/unit/mcpgateway/services/test_gateway_service.py \
             -k health_completion_metrics -v --tb=short
 
