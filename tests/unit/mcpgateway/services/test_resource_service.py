@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+import mcp_types as types
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.orm import Session
@@ -87,7 +88,7 @@ def mock_resource():
     resource = MagicMock()
 
     # core attributes
-    resource.id = "39334ce0ed2644d79ede8913a66930c9"
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
     resource.uri = "http://example.com/resource"
     resource.gateway_id = None
     resource.name = "Test Resource"
@@ -127,7 +128,7 @@ def mock_resource_template():
     resource = MagicMock()
 
     # core attributes
-    resource.id = "39334ce0ed2644d79ede8913a66930c9"
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
     resource.uri = "http://example.com/resource/{name}"
     resource.gateway_id = None
     resource.name = "Test Resource"
@@ -272,7 +273,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=sample_resource_create.uri,
                 name=sample_resource_create.name,
                 description=sample_resource_create.description or "",
@@ -434,7 +435,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=binary_resource.uri,
                 name=binary_resource.name,
                 description=binary_resource.description or "",
@@ -674,6 +675,29 @@ class TestResourceListing:
 
 class TestResourceReading:
     """Test resource reading functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    async def test_read_resource_preserves_upstream_binary_content(self, resource_service, mock_db, mock_resource, blob):
+        """Gateway reads preserve binary contents and upstream metadata."""
+        mock_resource.gateway_id = "gw-1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        upstream = types.BlobResourceContents(uri=mock_resource.uri, mimeType="application/octet-stream", blob=blob, _meta={"source": "upstream"})
+
+        with (
+            patch.object(resource_service, "invoke_resource", new=AsyncMock(return_value=upstream)),
+            patch("mcpgateway.services.resource_service.create_span") as mock_span,
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.resource_service.serialize_trace_payload") as mock_serialize,
+            patch("mcpgateway.common.models.BlobResourceContents.__str__", side_effect=AssertionError("Blob representations must not be built")),
+        ):
+            result = await resource_service.read_resource(mock_db, resource_id=mock_resource.id)
+
+        assert result.model_dump(by_alias=True, exclude_none=True) == upstream.model_dump(by_alias=True, exclude_none=True)
+        assert not hasattr(result, "text")
+        mock_serialize.assert_not_called()
+        mock_span.return_value.__enter__.return_value.set_attribute.assert_any_call("content.size", len(blob))
 
     @pytest.mark.asyncio
     async def test_read_resource_with_metadata(self, resource_service, mock_db, mock_resource):
@@ -4077,6 +4101,32 @@ class TestInvokeResourceCoverage:
         gw.oauth_config = None
         gw.auth_query_params = None
         return gw
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["sse", "streamablehttp"])
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    async def test_invoke_binary_resource(self, resource_service, transport, blob):
+        """Remote binary reads preserve the payload without accessing a text field."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport=transport)
+        content = types.BlobResourceContents(uri="test://binary", mimeType="application/octet-stream", blob=blob)
+        session = AsyncMock()
+        session.session = session
+        session.read_resource.return_value = types.ReadResourceResult(contents=[content])
+
+        with (
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_client,
+            patch("mcpgateway.services.resource_service.create_span"),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.resource_service.serialize_trace_payload") as mock_serialize,
+        ):
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await resource_service.invoke_resource(MagicMock(), resource.id, str(content.uri), resource_obj=resource, gateway_obj=gateway)
+
+        assert result == content
+        mock_serialize.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_resource_found(self, resource_service):

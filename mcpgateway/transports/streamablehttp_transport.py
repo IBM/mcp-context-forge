@@ -3254,7 +3254,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                 return ""
 
             # Return blob content if available (binary resources)
-            if result and getattr(result, "blob", None):
+            if result and getattr(result, "blob", None) is not None:
                 return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)

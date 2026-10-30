@@ -40,7 +40,7 @@ from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
 
 # First-Party
-from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.common.models import BlobResourceContents, InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
@@ -1800,6 +1800,20 @@ class TestResourceEndpoints:
         body = response.json()
         assert body["uri"] == "test/resource" and body["text"] == "This is test content"
         mock_read_resource.assert_called_once()
+
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    @pytest.mark.parametrize("meta", [None, {"source": "upstream"}])
+    @patch("mcpgateway.main.resource_service.read_resource")
+    def test_read_resource_endpoint_preserves_blob(self, mock_read_resource, test_client, auth_headers, blob, meta):
+        """REST reads preserve binary payloads, MIME types, and metadata."""
+        content = BlobResourceContents(uri="test://binary", mimeType="application/octet-stream", blob=blob, _meta=meta)
+        mock_read_resource.return_value = content
+
+        response = test_client.get("/resources/1", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {"type": "resource", "id": "1", **content.model_dump(by_alias=True, exclude_none=True)}
+        assert "text" not in response.json()
 
     @patch("mcpgateway.main.resource_service.read_resource")
     def test_read_resource_endpoint_fetch_error_returns_bad_request(self, mock_read_resource, test_client, auth_headers):

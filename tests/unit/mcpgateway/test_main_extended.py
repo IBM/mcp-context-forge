@@ -1808,7 +1808,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -2138,7 +2138,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},  # pragma: allowlist secret
         )
         request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
@@ -2182,7 +2182,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "00000000000000000000000000000099"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2212,7 +2212,7 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 403
         # team_id was not in token_teams, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
@@ -2222,7 +2222,7 @@ class TestAdminAuthMiddleware:
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2251,7 +2251,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # No team_id in request, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
@@ -12042,6 +12042,78 @@ class TestRemainingCoverageGaps:
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.get_a2a_agent.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 503
+
+    async def test_get_a2a_agent_card_service_unavailable(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/a1/card")
+        monkeypatch.setattr(main_mod, "a2a_service", None)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_a2a_agent_card.__wrapped__("a1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 503
+
+    async def test_get_a2a_agent_card_resolves_standalone_agent(self, monkeypatch):
+        """A standalone agent's card is returned without consulting the virtual-server fallback (#6700)."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/a1/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value={"name": "ag"})
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
+
+        response = FastAPIResponse()
+        result = await main_mod.get_a2a_agent_card.__wrapped__("a1", request, response, db=MagicMock(), user={"email": "u"})
+
+        assert result == {"name": "ag"}
+        mock_server_service.get_server_agent_card.assert_not_called()
+        assert response.headers["cache-control"] == "private, no-store"
+
+    async def test_get_a2a_agent_card_falls_back_to_virtual_server(self, monkeypatch):
+        """No standalone agent matches the ID, so the virtual-server fallback resolves the card (#6700)."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/srv-1/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value=None)
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        mock_server_service.get_server_agent_card.return_value = {"name": "srv-as-agent"}
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
+
+        result = await main_mod.get_a2a_agent_card.__wrapped__("srv-1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
+
+        assert result == {"name": "srv-as-agent"}
+
+    async def test_get_a2a_agent_card_not_found_anywhere_raises_404(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/missing/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value=None)
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        mock_server_service.get_server_agent_card.return_value = None
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_a2a_agent_card.__wrapped__("missing", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 404
 
     async def test_create_a2a_agent_public_only_sets_team_id_none(self, monkeypatch):
         # First-Party

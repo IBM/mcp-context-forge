@@ -17,7 +17,7 @@ import binascii
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 # Third-Party
@@ -1425,22 +1425,24 @@ class A2AAgentService(BaseService):
     async def get_agent_card(
         self,
         db: Session,
-        agent_name: str,
+        agent_name: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         caller_version: Optional[str] = None,
+        *,
+        agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Build an A2A v1 AgentCard dict for the named agent.
+        """Build an A2A v1 AgentCard dict for the named or identified agent.
 
-        Queries the database for an enabled agent with the given name and
-        returns a dict that conforms to the A2A AgentCard schema. Returns
+        Queries the database for an enabled agent with the given name, or the
+        given ID when ``agent_id`` is set, and returns a dict that conforms to the A2A AgentCard schema. Returns
         None when no matching enabled agent is found OR when the caller's
         scope cannot see the agent (PR #4341 invariant: admin bypass cannot
         read another user's private agent card).
 
         Args:
             db: Database session.
-            agent_name: Name of the agent to look up.
+            agent_name: Name of the agent to look up. Ignored when ``agent_id`` is set.
             user_email: Caller's email for visibility scoping. Defaults to None,
                 which combines with ``token_teams=None`` for anonymous admin
                 bypass and denies private agents.
@@ -1450,6 +1452,7 @@ class A2AAgentService(BaseService):
             caller_version: A2A version the caller speaks (its ``A2A-Version``
                 header). A pre-1.0 value keeps the legacy card shape even for an
                 agent stored as 1.x. Defaults to None, which follows the stored version.
+            agent_id: ID of the agent to look up instead of ``agent_name``.
 
         Returns:
             AgentCard dict, or None if the agent is not found / disabled / denied.
@@ -1463,8 +1466,11 @@ class A2AAgentService(BaseService):
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> asyncio.run(service.get_agent_card(db, "missing")) is None
             True
+            >>> asyncio.run(service.get_agent_card(db, agent_id="missing")) is None
+            True
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
+        match = DbA2AAgent.id == agent_id if agent_id is not None else DbA2AAgent.name == agent_name
+        query = select(DbA2AAgent).where(match, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
             return None
@@ -3431,11 +3437,12 @@ class A2AAgentService(BaseService):
         return validated_agent.masked()
 
     @staticmethod
-    def _task_to_wire(task: "A2ATask") -> Dict[str, Any]:
+    def _task_to_wire(task: "A2ATask", include_details: bool = True) -> Dict[str, Any]:
         """Convert an A2ATask ORM row to the A2A v1 task wire format.
 
         The wire format uses ``id`` (not ``task_id``), ``status.state``
         (not a top-level ``state``), and optional ``history``/``artifacts``.
+        ``include_details=False`` omits ``history`` and ``artifacts``.
         """
         wire: Dict[str, Any] = {
             "id": task.task_id,
@@ -3446,7 +3453,7 @@ class A2AAgentService(BaseService):
             wire["status"]["message"] = task.latest_message
         if task.last_error and task.state == "failed":
             wire["status"]["message"] = {"role": "agent", "parts": [{"text": task.last_error}]}
-        if task.payload and isinstance(task.payload, dict):
+        if include_details and task.payload and isinstance(task.payload, dict):
             if "history" in task.payload:
                 wire["history"] = task.payload["history"]
             if "artifacts" in task.payload:
@@ -3614,9 +3621,73 @@ class A2AAgentService(BaseService):
         if not visible_agent_ids:
             return []
         query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
-        query = query.order_by(desc(A2ATask.updated_at))
+        query = query.order_by(desc(A2ATask.updated_at), desc(A2ATask.id))
         query = query.limit(limit).offset(offset)
         return [self._task_to_wire(t) for t in query.all()]
+
+    def list_tasks_page(
+        self,
+        db: Session,
+        agent_id: str,
+        state: Optional[str] = None,
+        limit: int = 50,
+        after: Optional[Tuple[datetime, str]] = None,
+    ) -> List[Tuple[Dict[str, Any], datetime, str]]:
+        """List one agent's tasks with keyset pagination, newest first.
+
+        Rows order by ``(updated_at DESC, id DESC)``. The caller must have
+        authorized access to ``agent_id`` before calling.
+
+        Args:
+            db: Database session.
+            agent_id: Agent whose tasks are listed.
+            state: Optional task state filter.
+            limit: Maximum number of rows to return.
+            after: ``(updated_at, id)`` of the last row of the previous page.
+
+        Returns:
+            Tuples of ``(summary wire dict, updated_at, row id)``. The wire dict omits ``history`` and ``artifacts``.
+        """
+        query = db.query(A2ATask).filter(A2ATask.a2a_agent_id == agent_id)
+        if state is not None:
+            query = query.filter(A2ATask.state == state)
+        if after is not None:
+            after_updated_at, after_id = after
+            query = query.filter(or_(A2ATask.updated_at < after_updated_at, and_(A2ATask.updated_at == after_updated_at, A2ATask.id < after_id)))
+        rows = query.order_by(desc(A2ATask.updated_at), desc(A2ATask.id)).limit(limit).all()
+        return [(self._task_to_wire(t, include_details=False), t.updated_at, t.id) for t in rows]
+
+    async def check_agent_manage_access(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check that the caller can see the agent and may manage its tasks and webhooks.
+
+        Tasks carry no owner of their own, so task and push config access
+        follows agent ownership: the agent owner, a team owner for team
+        agents, or a platform admin.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Caller's email.
+            token_teams: Caller's token teams (Layer 1 visibility scope).
+
+        Returns:
+            True when the agent exists, is visible, and the caller may manage it.
+        """
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_id).first()
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
+            return False
+        if not user_email:
+            return token_teams is None
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        return await PermissionService(db).check_resource_ownership(user_email, agent)
 
     # ---------------------------------------------------------------------------
     # Push notification config CRUD
@@ -3893,12 +3964,43 @@ class A2AAgentService(BaseService):
             )
         return results
 
-    def delete_push_config(self, db: Session, config_id: str) -> bool:
+    def has_push_config(self, db: Session, agent_id: str, task_id: str, webhook_url: str) -> bool:
+        """Return True when a config exists for the ``(agent, task, webhook_url)`` unique key."""
+        return self._find_push_config_by_unique_key(db, {"a2a_agent_id": agent_id, "task_id": task_id, "webhook_url": webhook_url}) is not None
+
+    def find_push_config(self, db: Session, agent_id: str, task_id: str, config_id: str) -> Optional[Dict[str, Any]]:
+        """Look up one push config scoped by agent, task, and config ID.
+
+        Args:
+            db: Database session.
+            agent_id: Owning agent ID.
+            task_id: Agent-side task ID.
+            config_id: Config record ID.
+
+        Returns:
+            The config dict (without ``auth_token``), or None if no config matches all three IDs.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        cfg = (
+            db.query(A2APushNotificationConfig)
+            .filter(A2APushNotificationConfig.id == config_id, A2APushNotificationConfig.a2a_agent_id == agent_id, A2APushNotificationConfig.task_id == task_id)
+            .first()
+        )
+        if cfg is None:
+            return None
+        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+
+    def delete_push_config(self, db: Session, config_id: str, agent_id: Optional[str] = None, task_id: Optional[str] = None) -> bool:
         """Delete a push notification config by ID.
 
         Args:
             db: Database session.
             config_id: The config record ID to delete.
+            agent_id: When set, the config must belong to this agent.
+            task_id: When set, the config must belong to this task.
 
         Returns:
             True if deleted, False if not found.
@@ -3906,7 +4008,12 @@ class A2AAgentService(BaseService):
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
 
-        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        query = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id)
+        if agent_id is not None:
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
+        if task_id is not None:
+            query = query.filter(A2APushNotificationConfig.task_id == task_id)
+        cfg = query.first()
         if cfg is None:
             return False
         db.delete(cfg)

@@ -324,6 +324,37 @@ curl -X POST "http://localhost:4444/rpc" \
 - Need tool discovery via `tools/list`
 - Want unified interface for both MCP and A2A tools
 
+## Fetching an Agent Card
+
+`GET /v1/a2a/{agent_id}/card` returns the A2A AgentCard for an agent. `agent_id` is the agent's ID, the same
+identifier used by `GET /v1/a2a/{agent_id}`. If no standalone agent matches, the route falls back to a virtual
+server with that ID that exposes an A2A interface. The caller needs the `a2a.read` permission.
+
+```bash
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  http://localhost:4444/v1/a2a/$AGENT_ID/card
+```
+
+```json
+{
+  "name": "demo-agent",
+  "description": "Demo agent",
+  "url": "http://localhost:9999/",
+  "version": "1",
+  "protocolVersion": "1.0",
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "capabilities": {"streaming": false, "pushNotifications": false, "stateTransitionHistory": false},
+  "skills": [],
+  "supportsAuthenticatedExtendedCard": true
+}
+```
+
+- A missing ID, a disabled agent, and an agent the caller cannot see all return the same `404`. The response never confirms that a private agent exists.
+- A virtual server card lists only the skills of attached agents that the caller can see.
+- The response carries `Cache-Control: private, no-store` because its content depends on the caller.
+- `supportsAuthenticatedExtendedCard` is `true`, but the gateway does not serve an extended card yet.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents
@@ -396,6 +427,26 @@ A2A agents provide comprehensive metrics:
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
 
+## Task and Push Notification Routes
+
+ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks`.
+
+| Method | Path | Permission |
+|--------|------|------------|
+| GET | `/v1/a2a/{agent_id}/tasks` | `a2a.read` |
+| GET | `/v1/a2a/{agent_id}/tasks/{task_id}` | `a2a.read` |
+| POST | `/v1/a2a/{agent_id}/tasks/{task_id}/cancel` | `a2a.invoke` |
+| POST, GET | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs` | `a2a.update`, `a2a.read` |
+| GET, DELETE | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}` | `a2a.read`, `a2a.update` |
+
+- Tasks have no owner of their own. Access follows the agent: the agent owner, a team owner for team agents, or a platform admin. Other callers receive `404`.
+- The list route returns task summaries without `history` and `artifacts`. Use the single-task route for those fields.
+- The list route accepts `pageSize` (1-100) and `pageToken`. Pass `nextPageToken` from one response as `pageToken` in the next request. An empty `nextPageToken` marks the last page. A malformed `pageToken` returns `400`.
+- The `state` filter accepts the A2A task states: `submitted`, `working`, `input-required`, `auth-required`, `completed`, `canceled`, `failed`, `rejected`.
+- The cancel route changes the task state in the gateway only. It does not signal the remote agent. A task in a terminal state is returned unchanged.
+- Creating a push notification config returns `201`. Posting the same `webhook_url` again updates the config and returns `200`. Responses never include `auth_token`.
+- Cancel and push config writes create audit trail entries.
+
 ## Lifecycle Management
 
 ### Agent-Tool State Cascade
@@ -440,6 +491,7 @@ the `a2a.read` role.
 |----------|--------|------------|
 | `/a2a` | GET | `a2a.read` |
 | `/a2a/{agent_id}` | GET | `a2a.read` |
+| `/a2a/{agent_id}/card` | GET | `a2a.read` |
 | `/a2a` | POST | `a2a.create` |
 | `/a2a/{agent_id}` | PUT | `a2a.update` |
 | `/a2a/{agent_id}/state` | POST | `a2a.update` |
