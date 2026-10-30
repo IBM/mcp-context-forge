@@ -3594,7 +3594,7 @@ jinja_env.filters["tojson_attr"] = tojson_attr
 
 
 jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
-
+jinja_env.globals["csrf_cookie_name"] = settings.csrf_cookie_name
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")

@@ -1733,7 +1733,7 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
             return False, str(e)
 
 
-ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_COOKIE_NAME = settings.csrf_cookie_name
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
