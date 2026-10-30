@@ -5546,7 +5546,11 @@ class A2AFetchCardResponse(BaseModelWithConfigDict):
     """
 
     found: bool = Field(..., description="Whether a valid A2A Agent Card was found")
-    reason: Optional[str] = Field(None, description="Uniform explanation when no card was found")
+    outcome: Literal["found", "no_card", "auth_required", "unreachable"] = Field(
+        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, or host blocked or unreachable"
+    )
+    reason: Optional[str] = Field(None, description="Fixed explanation when no card was found")
+    auth_scheme: Optional[str] = Field(None, description="Scheme name from the WWW-Authenticate header when outcome is auth_required")
     source_url: Optional[str] = Field(None, description="URL the card was fetched from")
     detected_version: Optional[str] = Field(None, description="Card format version detected: 1.0 or 0.3")
     card: Optional[Dict[str, Any]] = Field(None, description="Card normalized to the A2A 1.0 shape")

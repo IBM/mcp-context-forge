@@ -5168,15 +5168,16 @@ async def fetch_a2a_agent_card(
 ) -> A2AFetchCardResponse:
     """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
 
-    Every failure returns the same ``found: false`` response, so the route cannot be
-    used to probe which hosts the gateway can reach.
+    A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
+    ``auth_required`` or ``unreachable``. A blocked address and a network failure both
+    return ``unreachable``, so the route cannot be used to probe which hosts the gateway can reach.
 
     Args:
         request (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
         user: The authenticated user making the request.
 
     Returns:
-        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a not-found result.
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
     """
     logger.debug(f"User {safe_log_user(user)} is fetching an A2A agent card")
     return await fetch_agent_card(str(request.base_url), request.path, request.headers)
