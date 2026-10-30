@@ -17554,6 +17554,20 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
     assert "details" not in response.body
 
 
+@pytest.fixture
+def grant_stored_credential_authority(monkeypatch):
+    """Grant the caller ``gateways.update`` and gateway ownership for stored-credential gateway tests.
+
+    Returns:
+        Tuple of the ``check_permission_inline`` and ``check_resource_ownership`` mocks.
+    """
+    permission = AsyncMock(return_value=True)
+    ownership = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.check_permission_inline", permission)
+    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", ownership)
+    return permission, ownership
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
@@ -17650,7 +17664,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, mock_db):
     """Cover client-credentials OAuth branch in admin_test_gateway."""
 
@@ -17677,7 +17691,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
             captured.update(kwargs)
             return MockResponse()
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, ca_certificate=None, client_cert=None, client_key=None)
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, ca_certificate=None, client_cert=None, client_key=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
@@ -17697,7 +17711,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypatch, mock_db):
     """Cover OAuthManager exception path in client-credentials flow."""
     # Third-Party
@@ -17713,7 +17727,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
         async def request(self, **_kwargs):
             raise httpx.RequestError("boom", request=httpx.Request("GET", "https://api.example.com/test"))
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
@@ -17785,7 +17799,7 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a dict (raw DbGateway)."""
 
@@ -17815,7 +17829,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None)
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -17828,7 +17842,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a str (decode_auth path)."""
 
@@ -17859,7 +17873,7 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
     monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda val: {"Authorization": "Basic decoded"})
 
-    gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None)
+    gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -17915,7 +17929,7 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db):
     """Stored gateway auth merges with (and overrides) caller-supplied headers."""
 
@@ -17945,7 +17959,7 @@ async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db)
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None)
+    gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(

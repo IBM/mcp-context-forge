@@ -747,7 +747,7 @@ describe("handleGatewayTestSubmit", () => {
     fetchWithTimeout.mockResolvedValue({
       ok: false,
       status: 403,
-      json: () => Promise.resolve({ detail: "Testing an MCP server with its stored credentials requires gateways.update" }),
+      json: () => Promise.resolve({ detail: "Testing an MCP server with its stored credentials requires gateways.update and ownership of the MCP server" }),
     });
 
     const { testGateway } = await import("../../../mcpgateway/admin_ui/gateways.js");
@@ -761,7 +761,7 @@ describe("handleGatewayTestSubmit", () => {
 
     const responseDiv = document.getElementById("gateway-test-response-json");
     expect(responseDiv.textContent).toContain("HTTP 403");
-    expect(responseDiv.textContent).toContain("requires gateways.update");
+    expect(responseDiv.textContent).toContain("requires gateways.update and ownership of the MCP server");
     expect(responseDiv.textContent).not.toContain("Unknown");
   });
 
