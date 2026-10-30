@@ -22,10 +22,8 @@ from cpex.framework import (
     ToolHookType,
     PromptPrehookPayload,
     ToolPostInvokePayload,
-    ToolPreInvokePayload,
 )
 from plugins.webhook_notification.webhook_notification import (
-    AuthenticationType,
     EventType,
     WebhookNotificationPlugin,
 )
@@ -203,6 +201,30 @@ class TestWebhookNotificationPlugin:
         with pytest.raises(ValueError):
             _create_plugin(config)
 
+    @pytest.mark.parametrize("algorithm", ["md5", "sha1", "sha224", "invalid", "ripemd160"])
+    def test_hmac_validation_rejects_invalid_algorithm(self, algorithm):
+        """Unsupported HMAC algorithms are rejected at configuration time."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_algorithm"] = algorithm
+        with pytest.raises(ValueError, match="hmac_algorithm must be one of"):
+            _create_plugin(config)
+
+    @pytest.mark.parametrize("secret", ["", "   ", None])
+    def test_hmac_validation_rejects_empty_secret(self, secret):
+        """HMAC authentication without a non-empty secret is rejected at configuration time."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_secret"] = secret
+        with pytest.raises(ValueError, match="hmac_secret must not be empty"):
+            _create_plugin(config)
+
+    @pytest.mark.parametrize("algorithm", ["sha256", "sha384", "sha512", "SHA256", "SHA512"])
+    def test_hmac_validation_accepts_valid_algorithms(self, algorithm):
+        """Supported HMAC algorithms are accepted."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_algorithm"] = algorithm
+        plugin = _create_plugin(config)
+        assert plugin._cfg.webhooks[0].authentication.hmac_algorithm == algorithm
+
     @pytest.mark.asyncio
     @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
     async def test_webhook_delivery_success(self, mock_client_class):
@@ -366,7 +388,7 @@ class TestWebhookNotificationPlugin:
 
         payload = ToolPostInvokePayload(name="test_tool", result={"success": True, "data": "test result"})
 
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Verify notification was triggered
         mock_notify.assert_called_once()
