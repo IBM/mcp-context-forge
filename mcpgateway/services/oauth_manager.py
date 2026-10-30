@@ -18,7 +18,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
@@ -779,6 +779,39 @@ class OAuthManager:
 
         Returns:
             Access token string
+        """
+        token_response = await self._client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        return token_response["access_token"]
+
+    async def get_client_credentials_token(self, credentials: Dict[str, Any]) -> Tuple[str, Optional[int]]:
+        """Fetch a client-credentials access token together with its lifetime.
+
+        Args:
+            credentials: Stored OAuth configuration (``grant_type`` must be ``client_credentials``).
+
+        Returns:
+            Tuple of the access token and ``expires_in`` seconds (``None`` when the provider omitted it).
+        """
+        token_response = await self._client_credentials_token_response(credentials)
+        return token_response["access_token"], parse_expires_in(token_response)
+
+    async def _client_credentials_token_response(
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Machine-to-machine authentication using client credentials, returning the full token response.
+
+        Args:
+            credentials: OAuth configuration with client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
+
+        Returns:
+            Parsed token endpoint response containing ``access_token`` and, when the provider sent it, ``expires_in``
 
         Raises:
             OAuthError: If token acquisition fails after all retries
@@ -817,7 +850,7 @@ class OAuthManager:
                     raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
-                return token_response["access_token"]
+                return token_response
 
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
