@@ -9049,6 +9049,10 @@ async def test_gateway_handshake(
         GatewayHandshakeResponse: The handshake outcome, including negotiation path,
             server identity, capabilities, component counts, and failure classification.
 
+    Raises:
+        PermissionError: If the request shapes the path or headers while carrying a stored credential
+            and the caller lacks ``gateways.update`` on the gateway's team or does not own the gateway.
+
     Examples:
         >>> import asyncio
         >>> callable(test_gateway_handshake)
@@ -9112,6 +9116,17 @@ async def test_gateway_handshake(
     # pinned address, and a differently-cased key would be sent as a second Host header.
     form_headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
     candidate_only = request.credential_mode == "candidate_only"
+    uses_stored_credential = (
+        not candidate_only
+        and gateway is not None
+        and (
+            (gateway.auth_type == "oauth" and gateway.oauth_config and gateway.oauth_config.get("grant_type", "client_credentials") != "authorization_code")
+            or (gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value)
+            or gateway.client_cert
+        )
+    )
+    if uses_stored_credential and (path_suffix or form_headers):
+        await _require_stored_credential_authority(user, gateway, db)
     # A form-supplied Authorization header replaces stored credentials, so don't fail the
     # handshake on an unobtainable stored OAuth token the caller is not going to use.
     form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)

@@ -135,6 +135,10 @@ async def check_mcp_server_handshake(
         GatewayHandshakeResponse: The handshake outcome, including negotiation path,
             server identity, capabilities, component counts, and failure classification.
 
+    Raises:
+        HTTPException: 403 if the team is out of scope, or the request shapes the path or headers
+            while carrying a stored credential the caller may not use.
+
     Examples:
         >>> callable(check_mcp_server_handshake)
         True
@@ -149,4 +153,7 @@ async def check_mcp_server_handshake(
         if token_teams is not None and team_id not in token_teams:
             raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
 
-    return await test_gateway_handshake(request, team_id, user, db)
+    try:
+        return await test_gateway_handshake(request, team_id, user, db)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc

@@ -68,6 +68,8 @@ DOC_IP = "93.184.215.14"
 UPSTREAM_BODY = {"upstream": "reached", "marker": "UPSTREAM-RESPONSE"}
 ENDPOINT = "/v1/mcp-servers/test"
 ADMIN_ENDPOINT = "/admin/gateways/test"
+HANDSHAKE = "/v1/mcp-servers/test-handshake"
+DISCOVER_BODY = {"jsonrpc": "2.0", "id": 1, "result": {"supportedVersions": ["2026-07-28"]}}
 
 
 def _redact(value: str) -> str:
@@ -79,6 +81,7 @@ class Recorder:
     """Captures every request that would have left the gateway."""
 
     calls: List[Dict[str, Any]] = field(default_factory=list)
+    response_body: Dict[str, Any] = field(default_factory=lambda: UPSTREAM_BODY)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(
@@ -89,7 +92,7 @@ class Recorder:
                 "body": request.content.decode("utf-8", "replace"),
             }
         )
-        return httpx.Response(200, json=UPSTREAM_BODY)
+        return httpx.Response(200, json=self.response_body)
 
     def credentialed(self) -> List[Dict[str, Any]]:
         return [c for c in self.calls if c["headers"].get("authorization") == STORED_AUTH]
@@ -474,3 +477,53 @@ def test_unrelated_team_developer_denied_for_no_team_gateway(env, teams):
 def test_admin_route_returns_real_403(main_app_with_admin_api, env):
     r = env.post_test(env.token("viewer@example.com"), endpoint=ADMIN_ENDPOINT)
     _assert_denied(env, r)
+
+
+# --------------------------------------------------------------------------- handshake
+
+
+def _handshake(env: Env, auth: Dict[str, str], **payload: Any) -> httpx.Response:
+    """Post a handshake whose upstream answers ``server/discover``, so the SDK fallback never dials out."""
+    env.recorder.response_body = DISCOVER_BODY
+    return env.client.post(HANDSHAKE, headers=auth, json={"base_url": GATEWAY_URL, **payload})
+
+
+def test_viewer_handshake_with_path_suffix_denied(env):
+    _assert_denied(env, _handshake(env, env.token("viewer@example.com"), path="admin/x"))
+
+
+def test_viewer_handshake_with_caller_headers_denied(env):
+    _assert_denied(env, _handshake(env, env.token("viewer@example.com"), headers={"X-HTTP-Method-Override": "DELETE"}))
+
+
+def test_viewer_bare_handshake_still_allowed(env):
+    r = _handshake(env, env.token("viewer@example.com"))
+    assert r.status_code == 200, r.text
+    assert r.json()["success"] is True, r.text
+
+
+def test_viewer_candidate_only_handshake_not_gated(env):
+    r = _handshake(env, env.token("viewer@example.com"), credential_mode="candidate_only", gateway_id="gw-public-1", headers={"Authorization": "Bearer cand"}, path="x")
+    assert r.status_code == 200, r.text
+    assert env.recorder.calls and env.recorder.credentialed() == [], env.recorder.describe()
+
+
+def test_owner_handshake_with_path_suffix_allowed(env):
+    url = env.add_gateway("gw-updater-owned", owner_email="updater@example.com")
+    r = _handshake(env, env.token("updater@example.com"), base_url=url, path="admin/x")
+    assert r.status_code == 200, r.text
+    assert r.json()["success"] is True, r.text
+    assert env.recorder.credentialed(), env.recorder.describe()
+
+
+def test_viewer_handshake_oauth_client_credentials_with_path_denied(env, monkeypatch):
+    env.set_gateway("gw-public-1", auth_type="oauth", auth_value=None, oauth_config={"grant_type": "client_credentials", "client_id": "cid", "token_url": f"https://{HOST}/token"})
+    get_access_token = AsyncMock(return_value="client-credentials-token")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.OAuthManager.get_access_token", get_access_token)
+    _assert_denied(env, _handshake(env, env.token("viewer@example.com"), path="x"))
+    get_access_token.assert_not_awaited()
+
+
+def test_viewer_handshake_client_cert_only_with_path_denied(env):
+    env.set_gateway("gw-public-1", auth_type=None, auth_value=None, ca_certificate="CA-PEM", client_cert="CERT-PEM", client_key="KEY-PEM")
+    _assert_denied(env, _handshake(env, env.token("viewer@example.com"), path="x"))
