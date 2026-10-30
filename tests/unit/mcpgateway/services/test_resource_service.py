@@ -7218,6 +7218,88 @@ class TestInvokeResourceCoverageEdges:
         mock_apply.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("gateway_setting", "expect_identity"),
+        [
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+        ],
+    )
+    async def test_invoke_resource_identity_follows_gateway_setting(self, monkeypatch, gateway_setting, expect_identity):
+        """Resource reads honour the gateway's identity setting over the global one."""
+        # Third-Party
+        from cpex.framework import UserContext
+
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+
+        svc = ResourceService()
+        db = MagicMock()
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.name = "GW"
+        gateway.url = "http://gw.test"
+        gateway.transport = "sse"
+        gateway.ca_certificate = None
+        gateway.ca_certificate_sig = None
+        gateway.auth_type = None
+        gateway.auth_value = {}
+        gateway.oauth_config = None
+        gateway.auth_query_params = None
+        gateway.identity_propagation = gateway_setting
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+        cs_session.session = cs_session
+
+        captured_headers: dict[str, object] = {}
+
+        def _capture_headers(*_a, **kw):
+            captured_headers.update(kw.get("headers") or {})
+            return mock_sse.return_value
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_sse.side_effect = _capture_headers
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(
+                db,
+                "res-1",
+                "http://ignored",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                user_identity=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]),
+            )
+
+        assert out == "ok"
+        assert any(k.startswith("X-Forwarded-User") for k in captured_headers) is expect_identity
+        if not expect_identity:
+            assert "alice@example.com" not in captured_headers.values()
+
+    @pytest.mark.asyncio
     async def test_invoke_resource_oauth_authorization_code_token_sets_authorization_header(self):
         """Cover auth_code token present branch (1712)."""
         # First-Party
