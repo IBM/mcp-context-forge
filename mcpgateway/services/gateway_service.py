@@ -8322,6 +8322,7 @@ _HANDSHAKE_PROTOCOL_COPY = (
     "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
 )
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
+STORED_CREDENTIAL_DENIED = "Testing an MCP server with its stored credentials requires gateways.update"
 
 
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
@@ -8365,6 +8366,32 @@ def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
         visibility_filters.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(token_teams)))
     visibility_filters.append(and_(DbGateway.visibility == "private", DbGateway.owner_email == scoped_user_email))
     return visibility_filters
+
+
+async def _require_stored_credential_authority(user: Any, gateway: DbGateway, db: Session) -> None:
+    """Require update authority over a gateway before a test request uses its stored credential.
+
+    The test endpoints need only ``gateways.read``, but the caller chooses the method, path,
+    body, and headers of the outbound request. Attaching a stored credential therefore needs
+    ``gateways.update`` on the gateway's own team (token scopes deny first) and ownership of the gateway.
+
+    Args:
+        user: Authenticated user context dict.
+        gateway: The registered gateway whose stored credential the request would carry.
+        db: Database session.
+
+    Raises:
+        PermissionError: If the caller lacks ``gateways.update`` on the gateway's team or does not own the gateway.
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+    from mcpgateway.middleware.rbac import check_permission_inline  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+    if not await check_permission_inline(user, "gateways.update", team_id=gateway.team_id, check_any_team=False, db=db, allow_admin_bypass=False):
+        raise PermissionError(STORED_CREDENTIAL_DENIED)
+    if not await PermissionService(db).check_resource_ownership(get_user_email(user), gateway):
+        raise PermissionError(STORED_CREDENTIAL_DENIED)
 
 
 def _gateway_test_endpoint_url(base_url: str, path_suffix: str) -> str:
@@ -8788,6 +8815,10 @@ async def test_gateway_connectivity(
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body.
 
+    Raises:
+        PermissionError: If the request would carry a stored credential the caller may not use.
+            Raised before any outbound request or OAuth token fetch.
+
     Examples:
         >>> import asyncio
         >>> callable(test_gateway_connectivity)
@@ -8880,6 +8911,7 @@ async def test_gateway_connectivity(
                     )
             else:
                 # For Client Credentials flow, get token directly
+                await _require_stored_credential_authority(user, gateway, db)
                 try:
                     oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
                     access_token: str = await oauth_manager.get_access_token(
@@ -8895,6 +8927,7 @@ async def test_gateway_connectivity(
                         body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            await _require_stored_credential_authority(user, gateway, db)
             if isinstance(gateway.auth_value, dict):
                 headers.update({key: value for key, value in gateway.auth_value.items() if not caller_supplies_accept or key.lower() != "accept"})
             elif isinstance(gateway.auth_value, str):
