@@ -876,6 +876,7 @@ class TimeseriesResponse(BaseModel):
     values: list[int]
     success_count: list[int]
     error_count: list[int]
+    enabled: bool = True
 
 
 class PercentilesResponse(BaseModel):
@@ -885,6 +886,7 @@ class PercentilesResponse(BaseModel):
     p50: list[float]
     p95: list[float]
     p99: list[float]
+    enabled: bool = True
 
 
 @observability_metrics_router.get("/timeseries", response_model=TimeseriesResponse)
@@ -913,7 +915,7 @@ async def get_metrics_timeseries(
         HTTPException: 500 if aggregation fails
     """
     if not settings.observability_enabled:
-        return TimeseriesResponse(buckets=[], values=[], success_count=[], error_count=[])
+        return TimeseriesResponse(buckets=[], values=[], success_count=[], error_count=[], enabled=False)
 
     try:
         service = ObservabilityService()
@@ -951,7 +953,7 @@ async def get_metrics_percentiles(
         HTTPException: 500 if aggregation fails
     """
     if not settings.observability_enabled:
-        return PercentilesResponse(buckets=[], p50=[], p95=[], p99=[])
+        return PercentilesResponse(buckets=[], p50=[], p95=[], p99=[], enabled=False)
 
     try:
         service = ObservabilityService()
