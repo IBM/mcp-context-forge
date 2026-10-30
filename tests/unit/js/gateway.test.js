@@ -765,6 +765,43 @@ describe("handleGatewayTestSubmit", () => {
     expect(responseDiv.textContent).not.toContain("Unknown");
   });
 
+  test("shows HTTP status and status text when the error response is not JSON", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <form id="gateway-test-form" action="/admin/gateways/test">
+        <input name="url" value="http://localhost:8080" />
+        <input name="method" value="POST" />
+        <input name="path" value="/" />
+      </form>
+      <div id="gateway-test-loading" class="hidden"></div>
+      <div id="gateway-test-response-json"></div>
+      <div id="gateway-test-result" class="hidden"></div>
+      <button id="gateway-test-submit">Test</button>
+    `;
+
+    global.gatewayTestHeadersEditor = { getValue: vi.fn(() => "{}") };
+    global.gatewayTestBodyEditor = { getValue: vi.fn(() => "{}") };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      json: () => Promise.reject(new SyntaxError("Unexpected token '<'")),
+    });
+
+    const { testGateway } = await import("../../../mcpgateway/admin_ui/gateways.js");
+    await testGateway("http://localhost:8080");
+
+    const form = document.getElementById("gateway-test-form");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const responseDiv = document.getElementById("gateway-test-response-json");
+    expect(responseDiv.textContent).toContain("HTTP 502: Bad Gateway");
+    expect(responseDiv.textContent).not.toContain("Unexpected token");
+  });
+
   test("restores button state in finally block", async () => {
     window.ROOT_PATH = "";
     document.body.innerHTML = `
