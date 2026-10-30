@@ -630,7 +630,7 @@ class TestReencryptServicesAuthValue:
 
     def test_idempotent_already_new_key(self):
         """A blob already encrypted under the new key is skipped."""
-        payload = {"X-API-Key": "already-rotated"}
+        payload = {"X-API-Key": "already-rotated"}  # pragma: allowlist secret
         new_blob = encode_auth(payload, secret=NEW_KEY)
 
         result, status = _reencrypt_services_auth_value(new_blob, OLD_KEY, NEW_KEY)
@@ -1566,7 +1566,7 @@ def test_reencrypt_oauth_config_sensitive_key_plaintext_skipped(old_svc, new_svc
     """A sensitive key whose value is plaintext (not encrypted) is counted as skipped."""
     from mcpgateway.scripts.migrate_enc_secret import _reencrypt_oauth_config  # pylint: disable=import-outside-toplevel
 
-    config = {"client_secret": "not-encrypted-value"}
+    config = {"client_secret": "not-encrypted-value"}  # pragma: allowlist secret
     _new_config, migrated, _skipped, errors = _reencrypt_oauth_config(config, old_svc, new_svc)
     assert errors == 0
     assert migrated == 0

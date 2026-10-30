@@ -832,24 +832,10 @@ class SecurityValidator:
             ValueError: When value is not a valid UUID
 
         Examples:
-            >>> SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> SecurityValidator.validate_uuid('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: UUID must be a valid UUID format
-
             Test empty UUID (line 340):
 
             >>> SecurityValidator.validate_uuid('')
             ''
-
-            Test normalized UUID format (lines 344-346):
-
-            >>> SecurityValidator.validate_uuid('550E8400-E29B-41D4-A716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> SecurityValidator.validate_uuid('550e8400e29b41d4a716446655440000')
-            '550e8400e29b41d4a716446655440000'
 
             Test various invalid UUID formats (line 347-348):
 

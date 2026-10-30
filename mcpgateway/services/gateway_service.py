@@ -129,6 +129,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -170,17 +171,27 @@ class MCPListMethod(Enum):
     RESOURCE_TEMPLATES = ("resource_templates", "resource_templates")
 
 
+_LIST_IDENTITY_ATTRIBUTE = {
+    MCPListMethod.TOOLS: "name",
+    MCPListMethod.PROMPTS: "name",
+    MCPListMethod.RESOURCES: "uri",
+    MCPListMethod.RESOURCE_TEMPLATES: "uri_template",
+}
+
+
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
-    """Collect MCP list results until the server returns no next cursor.
+    """Collect unique MCP list results and stop when pagination ends or repeats.
 
     A repeated pagination cursor stops pagination with a warning and returns the results collected so far.
 
     Args:
-        session: MCP client session
-        mcp_method: MCPListMethod Enum for list_* method and response
+        session: MCP client session.
+        mcp_method: MCP list method and response collection.
 
     Returns:
-        list of MCP objects across all pages
+        Objects in encounter order, retaining the first object for each protocol identity.
+        Repeated cursors produce a warning and preserve collected unique objects.
+        Upstream exceptions propagate to the caller.
     """
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
@@ -195,7 +206,13 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
         seen_cursors.add(cursor)
         response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute, []))
-    return mcp_responses
+    identity_attribute = _LIST_IDENTITY_ATTRIBUTE[mcp_method]
+    unique_responses = {}
+    for item in mcp_responses:
+        unique_responses.setdefault(getattr(item, identity_attribute), item)
+    if len(unique_responses) < len(mcp_responses):
+        logger.warning("Duplicate pagination items from list_%s", method_suffix)
+    return list(unique_responses.values())
 
 
 def _safe_connection_error_text(exc: BaseException) -> str:
@@ -3034,6 +3051,51 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result.append(self.convert_gateway_to_read(g))
         return result
 
+    @staticmethod
+    def _flag_credentials_kept_across_issuer_change(gateway: DbGateway, original_oauth_config: Any, user_email: Optional[str]) -> None:
+        """Warn when a gateway's issuer changes but its static OAuth client id does not.
+
+        Client credentials belong to the authorization server that issued them, so a
+        ``client_id`` carried over to a new issuer is flagged in the log and as a security
+        event (MCP 2026-07-28, Authorization Server Binding). Dynamically registered
+        clients need nothing here: they are looked up per issuer.
+
+        Args:
+            gateway: The gateway whose ``oauth_config`` was just updated.
+            original_oauth_config: The OAuth configuration before the update.
+            user_email: Who made the update, for the security event.
+        """
+        new_config = gateway.oauth_config if isinstance(gateway.oauth_config, dict) else {}
+        old_config = original_oauth_config if isinstance(original_oauth_config, dict) else {}
+        new_issuer = new_config.get("issuer")
+        old_issuer = old_config.get("issuer")
+        if not isinstance(new_issuer, str) or not new_issuer or not isinstance(old_issuer, str) or old_issuer.rstrip("/") == new_issuer.rstrip("/"):
+            return
+        if not new_config.get("client_id") or new_config.get("client_id") != old_config.get("client_id"):
+            return
+        logger.warning(
+            "Gateway %s: OAuth issuer changed from %s to %s but client_id is unchanged; credentials issued by one authorization server must not be reused with another. "
+            "Register the client with the new issuer or clear client_id so DCR registers one.",
+            SecurityValidator.sanitize_log_message(gateway.id),
+            SecurityValidator.sanitize_log_message(old_issuer),
+            SecurityValidator.sanitize_log_message(new_issuer),
+        )
+        try:
+            get_security_logger().log_suspicious_activity(
+                activity_type="oauth_client_id_kept_across_issuer_change",
+                description=f"Gateway {gateway.id}: OAuth issuer changed but client_id was carried over",
+                user_id=None,
+                user_email=user_email,
+                client_ip="internal",
+                user_agent=None,
+                threat_score=0.4,
+                severity=SecuritySeverity.MEDIUM,
+                threat_indicators={"gateway_id": gateway.id, "old_issuer": old_issuer, "new_issuer": new_issuer},
+                action_taken="warned",
+            )
+        except Exception as exc:  # noqa: BLE001 - a logging failure must not change the outcome
+            logger.debug("Security event for issuer change not recorded: %s", exc)
+
     async def update_gateway(
         self,
         db: Session,
@@ -3354,6 +3416,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     self._validate_private_key_jwt_config(raw_oauth_update, existing_oauth_config=original_oauth_config)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
+                    self._flag_credentials_kept_across_issuer_change(gateway, original_oauth_config, user_email)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token

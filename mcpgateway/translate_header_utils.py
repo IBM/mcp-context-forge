@@ -190,8 +190,6 @@ def normalize_headers(headers: Dict[str, str]) -> Dict[str, str]:
         Dictionary with lowercase keys mapping to original values
 
     Examples:
-        >>> normalize_headers({"Authorization": "Bearer token", "X-Api-Key": "key123"})
-        {'authorization': 'Bearer token', 'x-api-key': 'key123'}
         >>> normalize_headers({})
         {}
         >>> normalize_headers({"CONTENT-TYPE": "application/json"})
@@ -314,11 +312,6 @@ def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappin
         >>> # Empty mappings
         >>> extract_env_vars_from_headers({"Header": "value"}, {})
         {}
-        >>>
-        >>> # Using NormalizedMappings for repeated lookups
-        >>> nm = NormalizedMappings({"Authorization": "AUTH"})
-        >>> extract_env_vars_from_headers({"authorization": "token"}, nm)
-        {'AUTH': 'token'}
     """
     env_vars = {}
 

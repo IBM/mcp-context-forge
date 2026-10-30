@@ -34,7 +34,7 @@ Usage::
     # Override database URL
     python -m mcpgateway.scripts.migrate_enc_secret \\
         --old-key <old> --new-key <new> \\
-        --database-url postgresql+psycopg://user:pass@host/db
+        --database-url postgresql+psycopg://user:pass@host/db  # pragma: allowlist secret
 
 Affected columns (all encrypted under ``AUTH_ENCRYPTION_SECRET``):
 
@@ -212,7 +212,7 @@ def _is_services_auth_blob(value: str) -> bool:
     if not value or len(value) < 18:  # shortest plausible: ceil((12+1)*4/3)=18 chars
         return False
     # base64url alphabet: A-Z a-z 0-9 - _   (no + / or whitespace, no = padding)
-    b64url_chars = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+    b64url_chars = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")  # pragma: allowlist secret
     if not all(c in b64url_chars for c in value):
         return False
     try:

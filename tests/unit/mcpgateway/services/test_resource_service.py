@@ -88,7 +88,7 @@ def mock_resource():
     resource = MagicMock()
 
     # core attributes
-    resource.id = "39334ce0ed2644d79ede8913a66930c9"
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
     resource.uri = "http://example.com/resource"
     resource.gateway_id = None
     resource.name = "Test Resource"
@@ -128,7 +128,7 @@ def mock_resource_template():
     resource = MagicMock()
 
     # core attributes
-    resource.id = "39334ce0ed2644d79ede8913a66930c9"
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
     resource.uri = "http://example.com/resource/{name}"
     resource.gateway_id = None
     resource.name = "Test Resource"
@@ -273,7 +273,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=sample_resource_create.uri,
                 name=sample_resource_create.name,
                 description=sample_resource_create.description or "",
@@ -435,7 +435,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=binary_resource.uri,
                 name=binary_resource.name,
                 description=binary_resource.description or "",

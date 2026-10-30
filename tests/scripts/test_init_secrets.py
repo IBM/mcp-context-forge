@@ -461,11 +461,11 @@ class TestEnsureEnvFileSecrets:
         """Regression: lowercase key in .env must be replaced in-place, not duplicated."""
         env = tmp_path / ".env"
         env.write_text("auth_encryption_secret=weak\nOTHER=keep\n", encoding="utf-8")
-        _merge_env_file(str(env), {"AUTH_ENCRYPTION_SECRET": "strong-new-value-here-long-enough"})
+        _merge_env_file(str(env), {"AUTH_ENCRYPTION_SECRET": "strong-new-value-here-long-enough"})  # pragma: allowlist secret
         content = env.read_text(encoding="utf-8")
         # The weak lowercase line must be gone; the strong value written with canonical casing
         assert "weak" not in content
-        assert "AUTH_ENCRYPTION_SECRET=strong-new-value-here-long-enough" in content
+        assert "AUTH_ENCRYPTION_SECRET=strong-new-value-here-long-enough" in content  # pragma: allowlist secret
         # No duplication: key must appear exactly once
         assert content.count("ENCRYPTION_SECRET=") == 1
         assert "OTHER=keep" in content
