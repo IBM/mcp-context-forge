@@ -6775,6 +6775,24 @@ class A2APushNotificationConfigCreate(BaseModel):
         return validate_core_url(v, "Webhook URL")
 
 
+class A2APushNotificationConfigRequest(BaseModel):
+    """Schema for the client-facing push notification config body.
+
+    The agent and task identifiers come from the URL path, not the body.
+    """
+
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
+
 class A2APushNotificationConfigRead(BaseModel):
     """Schema for reading a push notification webhook configuration."""
 
