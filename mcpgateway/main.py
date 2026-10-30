@@ -5732,6 +5732,7 @@ async def delete_a2a_push_config(
     _audit_a2a_task_action(request, user, "delete_a2a_push_config", agent_id, task_id, {"config_id": config_id})
     return {"deleted": True}
 
+
 @a2a_router.post("/{agent_id}/tasks/{task_id}/messages", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
 @require_permission("a2a.invoke")
 async def send_a2a_task_message(
