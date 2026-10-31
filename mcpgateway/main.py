@@ -266,6 +266,7 @@ from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
     get_auth_header_value,
+    get_request_auth_token,
     is_proxy_auth_trust_active,
     require_admin_auth,
     require_docs_auth_override,
@@ -2956,20 +2957,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            raw_token = None
             auth_user_email = None
             auth_user_is_admin = False
 
-            auth_header = get_auth_header_value(request.headers)
-            cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-
-            # Preserve existing precedence: cookie first, then Authorization bearer.
-            if cookie_token:
-                raw_token = cookie_token
-            elif auth_header:
-                scheme, _, credentials_value = auth_header.partition(" ")
-                if scheme.lower() == "bearer" and credentials_value:
-                    raw_token = credentials_value.strip() or None
+            raw_token = get_request_auth_token(request)
 
             if raw_token:
                 try:

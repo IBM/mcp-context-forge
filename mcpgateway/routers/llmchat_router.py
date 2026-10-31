@@ -53,6 +53,7 @@ from mcpgateway.services.mcp_client_chat_service import (
 )
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.verify_credentials import get_request_auth_token
 
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
@@ -1017,8 +1018,8 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
     connections to both the MCP server and the configured LLM provider. If a session
     already exists for the user, it is gracefully shutdown before creating a new one.
 
-    Authentication is handled via JWT token from cookies if not explicitly provided
-    in the request body.
+    Authentication uses the Bearer token from the configured auth header, else the
+    `jwt_token` / `access_token` cookie, if not explicitly provided in the request body.
 
     Args:
         input_data: ConnectInput containing user_id, optional server/LLM config, and streaming preference.
@@ -1089,7 +1090,7 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         # Handle authentication token
         empty_token = ""  # nosec B105
         if input_data.server and (input_data.server.auth_token is None or input_data.server.auth_token == empty_token):
-            jwt_token = request.cookies.get("jwt_token")
+            jwt_token = get_request_auth_token(request)
             if not jwt_token:
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
             input_data.server.auth_token = jwt_token

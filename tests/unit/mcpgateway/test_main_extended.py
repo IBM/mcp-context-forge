@@ -1978,6 +1978,44 @@ class TestAdminAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_admin_auth_bearer_principal_wins_over_cookie(self, monkeypatch):
+        """The Authorization bearer principal is authorized, not the cookie principal."""
+        middleware = AdminAuthMiddleware(None)
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        users = {
+            "admin-tok": MagicMock(email="admin@example.com", is_admin=True, full_name="Admin"),
+            "user-tok": MagicMock(email="user@example.com", is_admin=False, full_name="User"),
+        }
+
+        async def _validate(_request, token):
+            return users[token]
+
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
+
+        for bearer, cookie, expect_allowed in (("user-tok", "admin-tok", False), ("admin-tok", "user-tok", True)):
+            request = _make_request(
+                "/admin/tools",
+                headers={"accept": "application/json", "authorization": f"Bearer {bearer}"},
+                cookies={"jwt_token": cookie},
+            )
+            call_next = AsyncMock(return_value="ok")
+            with (
+                patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=_validate)),
+                patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
+                patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+            ):
+                response = await middleware.dispatch(request, call_next)
+
+            if expect_allowed:
+                assert response == "ok"
+                call_next.assert_called_once()
+            else:
+                assert response.status_code == 403
+                call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_admin_auth_api_token_revoked_and_success(self, monkeypatch):
         """Cover API token revoked and valid branches (when JWT validation fails)."""
         middleware = AdminAuthMiddleware(None)

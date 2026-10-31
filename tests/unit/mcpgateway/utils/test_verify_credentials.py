@@ -26,6 +26,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import uuid
 
@@ -322,8 +323,8 @@ async def test_require_auth_rejects_missing_user_when_required_in_db(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_require_auth_manual_cookie_overrides_header(monkeypatch):
-    """Manual cookie reading should take precedence over the Authorization header."""
+async def test_require_auth_header_overrides_manual_cookie(monkeypatch):
+    """The Authorization header should take precedence over the jwt_token cookie."""
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
@@ -338,8 +339,8 @@ async def test_require_auth_manual_cookie_overrides_header(monkeypatch):
     mock_request.cookies = {"jwt_token": cookie_token}
 
     payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
-    assert payload["c"] == 2
-    assert "h" not in payload
+    assert payload["h"] == 1
+    assert "c" not in payload
 
 
 @pytest.mark.asyncio
@@ -1162,6 +1163,75 @@ async def test_require_admin_auth_email_auth_success_admin_user(monkeypatch):
 
     result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
     assert result == "admin@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_header_overrides_cookie(monkeypatch):
+    """The Authorization header identity must win over the jwt_token cookie identity."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=email.startswith("admin"))
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    subjects = {"header-tok": "admin@example.com", "cookie-tok": "user@example.com"}
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=lambda token, *_a, **_k: {"sub": subjects[token]}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="header-tok")  # pragma: allowlist secret
+    result = await vc.require_admin_auth(request=mock_request, credentials=creds, jwt_token="cookie-tok", basic_credentials=None)
+    assert result == "admin@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_non_admin_header_with_admin_cookie_denied(monkeypatch):
+    """A non-admin Bearer principal must be denied even when the jwt_token cookie names an admin."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=email.startswith("admin"))
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    subjects = {"header-tok": "user@example.com", "cookie-tok": "admin@example.com"}
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=lambda token, *_a, **_k: {"sub": subjects[token]}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="header-tok")  # pragma: allowlist secret
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=creds, jwt_token="cookie-tok", basic_credentials=None)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
 
 @pytest.mark.asyncio
@@ -2024,3 +2094,31 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     # Must be 403 Forbidden, NOT 200/success from basic auth fallback
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
     assert "Admin privileges required" in exc.value.detail
+
+
+def test_get_request_auth_token_prefers_bearer_over_cookie():
+    req = SimpleNamespace(headers={"Authorization": "Bearer header-tok"}, cookies={"jwt_token": "cookie-tok"})
+    assert vc.get_request_auth_token(req) == "header-tok"
+
+
+def test_get_request_auth_token_cookie_fallback_order():
+    assert vc.get_request_auth_token(SimpleNamespace(headers={}, cookies={"access_token": "a", "jwt_token": "j"})) == "j"
+    assert vc.get_request_auth_token(SimpleNamespace(headers={}, cookies={"jwt_token": "  ", "access_token": "a"})) == "a"
+
+
+def test_get_request_auth_token_ignores_basic_scheme():
+    req = SimpleNamespace(headers={"Authorization": "Basic dXNlcjpwYXNz"}, cookies={"jwt_token": "cookie-tok"})  # pragma: allowlist secret
+    assert vc.get_request_auth_token(req) == "cookie-tok"
+
+
+def test_get_request_auth_token_custom_header(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_header_name", "X-Gateway-Auth", raising=False)
+    req = SimpleNamespace(headers={"X-Gateway-Auth": "Bearer custom", "Authorization": "Bearer other"}, cookies={"jwt_token": "c"})
+    assert vc.get_request_auth_token(req) == "custom"
+
+
+def test_get_request_auth_token_none_cases():
+    assert vc.get_request_auth_token(None) is None
+    assert vc.get_request_auth_token(SimpleNamespace(headers={}, cookies={})) is None
+    assert vc.get_request_auth_token(SimpleNamespace(headers={})) is None
+    assert vc.get_request_auth_token(SimpleNamespace(headers={}, cookies={"jwt_token": 123})) is None
