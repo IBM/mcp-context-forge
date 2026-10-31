@@ -153,16 +153,21 @@ def sanitize_url_for_logging(
 # Regex to match URLs in text (http:// or https://)
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
 
+# Short configured values are too likely to occur as ordinary text to replace safely.
+_MIN_AUTH_SECRET_LENGTH = 4
+
 
 def sanitize_exception_message(
     message: str,
     auth_query_params: Optional[Dict[str, str]] = None,
 ) -> str:
-    """Sanitize URLs embedded within exception messages.
+    """Sanitize URLs and configured secret values in exception messages.
 
     Exception messages from HTTP libraries (httpx, aiohttp, etc.) often include
     the full URL, which may contain sensitive query parameters. This function
-    finds and sanitizes all URLs in the message.
+    finds and sanitizes all URLs, then redacts configured secret values wherever
+    they occur in the message. Values shorter than four characters are skipped
+    to avoid replacing common text accidentally.
 
     Args:
         message: The exception message (str(e)) to sanitize.
@@ -198,4 +203,15 @@ def sanitize_exception_message(
         url = match.group(0)
         return sanitize_url_for_logging(url, auth_query_params)
 
-    return _URL_PATTERN.sub(replace_url, message)
+    sanitized_message = _URL_PATTERN.sub(replace_url, message)
+
+    if not auth_query_params:
+        return sanitized_message
+
+    secret_values = {value for value in auth_query_params.values() if isinstance(value, str) and len(value) >= _MIN_AUTH_SECRET_LENGTH}
+    # Replace longer values first so an overlapping shorter value cannot expose
+    # the suffix of a longer configured secret.
+    for secret in sorted(secret_values, key=len, reverse=True):
+        sanitized_message = sanitized_message.replace(secret, "REDACTED")
+
+    return sanitized_message
