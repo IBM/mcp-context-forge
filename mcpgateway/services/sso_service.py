@@ -38,6 +38,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.http_client_service import get_default_verify
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Logger
@@ -53,13 +54,16 @@ class _NoRedirectPyJWKClient(jwt.PyJWKClient):
     PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
     redirects transparently, bypassing the same-origin check on jwks_uri.
     Overriding with httpx (follow_redirects=False) closes the SSRF redirect bypass.
+    TLS verification follows get_default_verify(), so SKIP_SSL_VERIFY applies.
     """
 
     def fetch_data(self) -> Any:
         """Fetch JWKS data without following redirects."""
         try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout, verify=get_default_verify()) as _client:
                 resp = _client.get(self.uri, headers=self.headers)
+                if resp.is_redirect:
+                    raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "redirect status {resp.status_code}"')
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
