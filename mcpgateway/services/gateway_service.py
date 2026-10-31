@@ -3898,7 +3898,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to update gateway: {unexpected_error_detail(e)}")
+            raise GatewayError(f"Failed to update gateway: {unexpected_error_detail(e)}") from e
 
     async def _check_gateway_access(
         self,
