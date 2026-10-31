@@ -9,13 +9,12 @@ Tests the apply_query_param_auth and sanitize_url_for_logging functions
 used for handling query parameter authentication with upstream MCP servers.
 """
 
-import pytest
-
+# First-Party
 from mcpgateway.utils.url_auth import (
-    STATIC_SENSITIVE_PARAMS,
     apply_query_param_auth,
     sanitize_exception_message,
     sanitize_url_for_logging,
+    STATIC_SENSITIVE_PARAMS,
 )
 
 
@@ -215,6 +214,46 @@ class TestSanitizeExceptionMessage:
         result = sanitize_exception_message(msg, {"tavilyApiKey": "mykey123"})  # pragma: allowlist secret
         assert "tavilyApiKey=REDACTED" in result
         assert "mykey123" not in result
+
+    def test_redacts_configured_secret_outside_urls_and_in_unknown_url_params(self):
+        """Configured values are redacted even outside URL query parameters."""
+        secret = "dummy-configured-key-12345"  # pragma: allowlist secret
+        msg = f"Request apiToken={secret} failed; " f"upstream URL https://api.example.com?routeKey={secret}&page=2"
+
+        result = sanitize_exception_message(msg, {"apiToken": secret})
+
+        assert "apiToken=REDACTED" in result
+        assert "routeKey=REDACTED" in result
+        assert "page=2" in result
+        assert secret not in result
+
+    def test_redacts_repeated_overlapping_configured_values(self):
+        """Longer overlapping values are replaced first and all occurrences are removed."""
+        longer = "dummy-secret-value-123"  # pragma: allowlist secret
+        shorter = "secret-value-123"  # pragma: allowlist secret
+        msg = f"first={longer}; second={shorter}; repeat={longer}"
+
+        result = sanitize_exception_message(msg, {"long": longer, "short": shorter})
+
+        assert result.count("REDACTED") == 3
+        assert longer not in result
+        assert shorter not in result
+
+    def test_skips_empty_and_short_configured_values(self):
+        """Empty and short values do not cause broad replacements in ordinary text."""
+        msg = "id appears in words like identity; empty stays empty"
+
+        result = sanitize_exception_message(msg, {"empty": "", "short": "id"})
+
+        assert result == msg
+
+    def test_message_without_configured_secret_remains_unchanged(self):
+        """Configured values absent from a message do not alter it."""
+        msg = "Connection failed while requesting page=2"
+
+        result = sanitize_exception_message(msg, {"apiToken": "dummy-configured-key-12345"})
+
+        assert result == msg
 
     def test_sanitizes_multiple_urls_in_message(self):
         """Sanitize multiple URLs in a single exception message."""
