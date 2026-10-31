@@ -10,9 +10,17 @@
 
 ### Breaking Changes
 
+- **REST tool URL template values are percent-encoded** - Values now fill `{param}` as one encoded path segment or one query value. Before, the gateway inserted the raw value into the URL.
+    - `/` reaches the backend as `%2F`. Tools that relied on a raw `/` in one parameter must use two parameters.
+    - In a query placeholder, `&` and `=` stay inside the value, and `+` arrives as a literal `+`, not a space.
+    - A space in a path placeholder used to fail URL validation and now goes out as `%20`.
+    - A value that already holds `%XX` (for example `42%2F43`) used to pass and now returns an error.
+    - A value with a `.` or `..` segment returns an error.
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
 
 ### Fixed
+
+- **REST URL template reuses a placeholder** - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
 
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
