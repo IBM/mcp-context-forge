@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **Anthropic requests omit the provider default temperature** ([#7385](https://github.com/IBM/mcp-context-forge/issues/7385)) - A chat completion to an Anthropic provider that does not set `temperature` no longer receives the provider-wide `default_temperature`; current Claude models (Opus 4.7+, Sonnet 5, Haiku 5.5) reject a non-default value with HTTP 400. An explicit client `temperature` is still forwarded.
+
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
 - **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
