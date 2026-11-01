@@ -196,6 +196,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/[^/]+/?$"), Permissions.A2A_UPDATE),
     ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    # Card fetch makes the gateway issue an outbound request to a caller-chosen URL,
+    # so it needs a2a.create rather than a2a.read.
+    ("POST", re.compile(r"^/a2a/fetch-card/?$"), Permissions.A2A_CREATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),

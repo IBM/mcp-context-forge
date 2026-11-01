@@ -5505,6 +5505,74 @@ class TopPerformer(BaseModelWithConfigDict):
 # --- A2A Agent Schemas ---
 
 
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+
+class A2AStoredCardRead(BaseModelWithConfigDict):
+    """The current stored Agent Card of a registered agent, as fetched."""
+
+    version: int = Field(..., description="Stored card version, starting at 1")
+    card: Dict[str, Any] = Field(..., description="Card document as fetched")
+    detected_version: str = Field(..., description="Card format version detected at fetch time: 1.0 or 0.3")
+    source_url: str = Field(..., description="URL the card was fetched from")
+    etag: Optional[str] = Field(None, description="ETag returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds returned with the card")
+    fetched_at: datetime = Field(..., description="When the card was fetched")
+
+
+class A2AFetchCardRequest(BaseModelWithConfigDict):
+    """Request to fetch an A2A Agent Card from an endpoint that is not yet registered."""
+
+    base_url: AnyHttpUrl = Field(..., description="Agent base endpoint, or a direct URL to the card document")
+    path: Optional[str] = Field(None, description="Card path appended to the base URL; defaults to the well-known locations")
+    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers, for example credentials for an authenticated card")
+
+    @field_validator("headers")
+    @classmethod
+    def validate_headers(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Reject malformed header names, header injection and ``Host`` overrides.
+
+        Args:
+            v: Optional header mapping.
+
+        Returns:
+            The validated mapping.
+
+        Raises:
+            ValueError: If a header name or value is unsafe.
+        """
+        for name, value in (v or {}).items():
+            if not _HEADER_NAME_RE.match(name) or name.lower() == "host":
+                raise ValueError("Invalid header name")
+            if any(char in value for char in ("\r", "\n", "\x00")):
+                raise ValueError("Invalid header value")
+        return v
+
+
+class A2AFetchCardResponse(BaseModelWithConfigDict):
+    """Result of fetching an Agent Card.
+
+    ``card`` is the card normalized to the A2A 1.0 shape, ``raw_card`` is the document as
+    fetched, and ``suggested_agent`` maps the card onto ``A2AAgentCreate`` fields without
+    credential values, team, visibility or tags.
+    """
+
+    found: bool = Field(..., description="Whether a valid A2A Agent Card was found")
+    outcome: Literal["found", "no_card", "auth_required", "unreachable"] = Field(
+        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, or host blocked or unreachable"
+    )
+    reason: Optional[str] = Field(None, description="Fixed explanation when no card was found")
+    auth_scheme: Optional[str] = Field(None, description="Scheme name from the WWW-Authenticate header when outcome is auth_required")
+    source_url: Optional[str] = Field(None, description="URL the card was fetched from")
+    detected_version: Optional[str] = Field(None, description="Card format version detected: 1.0 or 0.3")
+    card: Optional[Dict[str, Any]] = Field(None, description="Card normalized to the A2A 1.0 shape")
+    raw_card: Optional[Dict[str, Any]] = Field(None, description="Card as fetched")
+    suggested_agent: Optional[Dict[str, Any]] = Field(None, description="Suggested A2AAgentCreate fields derived from the card")
+    warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
+    etag: Optional[str] = Field(None, description="ETag the agent returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds the agent returned with the card")
+
+
 class A2AAgentCreate(BaseModel):
     """
     Schema for creating a new A2A (Agent-to-Agent) compatible agent.
@@ -5602,6 +5670,10 @@ class A2AAgentCreate(BaseModel):
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+    card_url: Optional[str] = Field(
+        None,
+        description="Agent Card endpoint or card URL. The gateway fetches the card itself and stores it as fetched; a card supplied by the client is never accepted. Registration fails when no card is found",
+    )
 
     @field_validator("passthrough_headers")
     @classmethod

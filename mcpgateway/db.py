@@ -5039,6 +5039,7 @@ class A2AAgent(Base):
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
     tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="agent", cascade="all, delete-orphan")
     auth_config: Mapped[Optional["A2AAgentAuth"]] = relationship("A2AAgentAuth", back_populates="agent", uselist=False, cascade="all, delete-orphan")
+    cards: Mapped[List["A2AAgentCard"]] = relationship("A2AAgentCard", back_populates="agent", cascade="all, delete-orphan", order_by="A2AAgentCard.version")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
@@ -5178,6 +5179,34 @@ class A2ATask(Base):
     def __repr__(self) -> str:
         """Return a string representation of the A2ATask instance."""
         return f"<A2ATask(id='{self.id}', task_id='{self.task_id}', state='{self.state}')>"
+
+
+class A2AAgentCard(Base):
+    """An Agent Card stored as fetched, one row per fetched version.
+
+    The card document stays separate from the deployment settings on ``A2AAgent``.
+    The highest ``version`` of an agent is its current card.
+    """
+
+    __tablename__ = "a2a_agent_cards"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    card: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    detected_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    etag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    max_age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("a2a_agent_id", "version", name="uq_a2a_agent_cards_agent_version"),)
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="cards")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2AAgentCard instance."""
+        return f"<A2AAgentCard(id='{self.id}', a2a_agent_id='{self.a2a_agent_id}', version={self.version})>"
 
 
 class ServerTaskMapping(Base):
