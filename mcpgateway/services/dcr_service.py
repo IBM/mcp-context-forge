@@ -262,7 +262,16 @@ class DcrService:
         except ValueError:
             return "web"
 
-    async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def register_client(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        issuer: str,
+        redirect_uri: str,
+        scopes: List[str],
+        db: Session,
+        registration_endpoint: Optional[str] = None,
+    ) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
 
         Args:
@@ -272,6 +281,7 @@ class DcrService:
             redirect_uri: OAuth redirect URI
             scopes: List of OAuth scopes
             db: Database session
+            registration_endpoint: Pre-recorded RFC 7591 endpoint from catalog metadata, when available.
 
         Returns:
             RegisteredOAuthClient record
@@ -288,8 +298,9 @@ class DcrService:
             if normalized_issuer not in normalized_allowlist:
                 raise DcrError(f"Issuer {issuer} is not in allowed issuers list")
 
-        # Discover AS metadata
-        metadata = await self.discover_as_metadata(normalized_issuer)
+        # Prefer a catalog-recorded endpoint. It still passes the same-origin and
+        # pinned-address checks below; discovery remains the fallback.
+        metadata = {"registration_endpoint": registration_endpoint} if registration_endpoint else await self.discover_as_metadata(normalized_issuer)
 
         registration_endpoint = metadata.get("registration_endpoint")
         if not registration_endpoint:
@@ -398,7 +409,16 @@ class DcrService:
 
         return registered_client
 
-    async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def get_or_register_client(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        issuer: str,
+        redirect_uri: str,
+        scopes: List[str],
+        db: Session,
+        registration_endpoint: Optional[str] = None,
+    ) -> RegisteredOAuthClient:
         """Get existing registered client or register new one.
 
         Args:
@@ -408,6 +428,7 @@ class DcrService:
             redirect_uri: OAuth redirect URI
             scopes: List of OAuth scopes
             db: Database session
+            registration_endpoint: Pre-recorded RFC 7591 endpoint from catalog metadata, when available.
 
         Returns:
             RegisteredOAuthClient record
@@ -439,7 +460,15 @@ class DcrService:
         logger.info(
             "No existing client found for gateway %s, registering new client with %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(normalized_issuer)
         )
-        return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
+        return await self.register_client(
+            gateway_id,
+            gateway_name,
+            normalized_issuer,
+            redirect_uri,
+            scopes,
+            db,
+            registration_endpoint=registration_endpoint,
+        )
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
         """Update existing client registration (RFC 7591 section 4.2).
