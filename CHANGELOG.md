@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **A2A invocation metrics count JSON-RPC errors as failures** ([#7348](https://github.com/IBM/mcp-context-forge/issues/7348)) - An A2A invocation that answers HTTP 200 but carries a JSON-RPC `error` member is now recorded with `success=False` and the error message, so `a2aAgents.successRate` from `GET /v1/metrics` no longer counts agent-reported failures as successes. The error envelope is still returned to the caller unchanged.
+
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
 - **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
