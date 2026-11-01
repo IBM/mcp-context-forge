@@ -374,10 +374,12 @@ class LLMProxyService:
         if system_message:
             body["system"] = system_message
 
+        # Anthropic rejects a non-default temperature for Opus 4.7+, Sonnet 5,
+        # Haiku 5.5 and other current models, so never inject the provider-wide
+        # default here: a request sent without a temperature must reach Claude
+        # without one (#7385). An explicit client temperature is still sent.
         if request.temperature is not None:
             body["temperature"] = request.temperature
-        elif provider.default_temperature:
-            body["temperature"] = provider.default_temperature
 
         if request.stream:
             body["stream"] = True

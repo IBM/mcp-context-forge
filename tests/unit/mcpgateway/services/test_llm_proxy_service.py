@@ -337,6 +337,9 @@ async def test_chat_completion_anthropic_success(service, monkeypatch):
 
     assert result.model == "claude"
     assert result.choices[0].message.content == "ok"
+    # A request sent without a temperature reaches Claude without one (#7385).
+    sent_body = service._client.post.call_args.kwargs["json"]
+    assert "temperature" not in sent_body
 
 
 @pytest.mark.asyncio
@@ -578,8 +581,14 @@ def test_build_azure_request_defaults(service):
     assert body["stream"] is True
 
 
-def test_build_anthropic_request_temperature_default(service):
-    """Anthropic request uses provider default temperature (lines 330-332)."""
+def test_build_anthropic_request_omits_provider_default_temperature(service):
+    """A request without temperature reaches Claude without one (#7385).
+
+    Anthropic rejects a non-default ``temperature`` for Opus 4.7+, Sonnet 5,
+    Haiku 5.5 and other current models, so the provider-wide
+    ``default_temperature`` must not be injected into an Anthropic request
+    the client sent without one.
+    """
     request = ChatCompletionRequest(
         model="claude",
         messages=[ChatMessage(role="user", content="hi")],
@@ -588,14 +597,35 @@ def test_build_anthropic_request_temperature_default(service):
         provider_type=LLMProviderType.ANTHROPIC,
         api_base="http://anthropic",
         config={},
-        default_temperature=0.4,
+        default_temperature=0.7,
         default_max_tokens=None,
     )
     model = _make_model(model_id="claude")
 
     url, headers, body = service._build_anthropic_request(request, provider, model)
 
-    assert body["temperature"] == 0.4
+    assert "temperature" not in body
+
+
+def test_build_anthropic_request_explicit_temperature_is_forwarded(service):
+    """An explicit client temperature is still forwarded to Anthropic."""
+    request = ChatCompletionRequest(
+        model="claude",
+        messages=[ChatMessage(role="user", content="hi")],
+        temperature=0.2,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.ANTHROPIC,
+        api_base="http://anthropic",
+        config={},
+        default_temperature=0.7,
+        default_max_tokens=None,
+    )
+    model = _make_model(model_id="claude")
+
+    url, headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert body["temperature"] == 0.2
 
 
 def test_build_ollama_request_native_default_temp(service):
