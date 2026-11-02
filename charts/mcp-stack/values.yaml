@@ -590,6 +590,8 @@ mcpContextForge:
 
     # ─ MCP subscriptions/listen ─
     MCP_LISTEN_MAX_LIFETIME_SECONDS: "3600" # max lifetime of a subscriptions/listen stream (60-86400)
+    MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL: "32" # max concurrent listen streams per principal per worker (1-1024)
+    MCP_LISTEN_MAX_ANONYMOUS_STREAMS: "256" # max concurrent listen streams shared by all anonymous callers per worker (0-1024; 0 refuses)
 
     # ─ MCP Session Pool (disabled) ─
     # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.
