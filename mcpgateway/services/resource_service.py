@@ -32,7 +32,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
@@ -108,8 +108,15 @@ except ImportError:
     PLUGINS_AVAILABLE = False
 
 
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+
+# Each honored URI holds one upstream stream; bound what one listen request can open.
+MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
 
 
 def _get_registry_cache():
@@ -3240,6 +3247,55 @@ class ResourceService(BaseService):
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
+
+    async def resolve_subscription_targets(
+        self,
+        db: Session,
+        uris: Sequence[str],
+        *,
+        server_id: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, List["UpstreamResourceTarget"]]:
+        """Resolve which requested resource URIs a ``subscriptions/listen`` caller may watch.
+
+        A URI is honored when an enabled resource with that URI passes the caller's visibility check.
+        On a server-scoped path the resource must belong to that virtual server.
+        The resource must come from an enabled upstream server that a standing stream can reach:
+        not SSE (legacy-only) and not OAuth (no per-user token on a standing stream).
+        Only the first ``MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN`` distinct requested URIs are considered.
+
+        Args:
+            db: Database session.
+            uris: Resource URIs from ``resourceSubscriptions``.
+            server_id: Virtual server ID for ``/servers/{id}/mcp``, or ``None``.
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
+
+        Returns:
+            Dict[str, List[UpstreamResourceTarget]]: Upstream targets per honored URI.
+        """
+        # First-Party
+        from mcpgateway.services.modern_listener_service import gateway_listen_headers  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+        wanted = list(dict.fromkeys(uris))[:MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN]
+        if not wanted:
+            return {}
+        query = select(DbResource).where(DbResource.uri.in_(wanted), DbResource.enabled.is_(True), DbResource.gateway_id.is_not(None))
+        if server_id:
+            query = query.join(server_resource_association, server_resource_association.c.resource_id == DbResource.id).where(server_resource_association.c.server_id == server_id)
+
+        targets: Dict[str, List[UpstreamResourceTarget]] = {}
+        for resource in db.execute(query).scalars().all():
+            gateway = resource.gateway
+            if gateway is None or not gateway.enabled or (gateway.transport or "").upper() == "SSE" or gateway.auth_type == "oauth":
+                continue
+            if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
+                continue
+            headers = tuple(gateway_listen_headers(gateway).items())
+            targets.setdefault(resource.uri, []).append(UpstreamResourceTarget(gateway_id=gateway.id, url=gateway.url, uri=resource.uri, headers=headers))
+        return {uri: targets[uri] for uri in wanted if uri in targets}
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """

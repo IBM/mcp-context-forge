@@ -80,6 +80,29 @@ class _GatewaySnapshot:
     headers: Dict[str, str] = field(default_factory=dict)
 
 
+def gateway_listen_headers(gw: DbGateway) -> Dict[str, str]:
+    """Return the stored auth headers a standing stream sends to a non-OAuth upstream server.
+
+    Args:
+        gw: Registered upstream server row.
+
+    Returns:
+        Dict[str, str]: Decoded auth headers; empty when none are stored.
+
+    Examples:
+        >>> gateway_listen_headers(DbGateway(auth_value={"X-Api-Key": "k"}))
+        {'X-Api-Key': 'k'}
+        >>> gateway_listen_headers(DbGateway(auth_value=None))
+        {}
+    """
+    auth_data = gw.auth_value or {}
+    if isinstance(auth_data, str):
+        return decode_auth(auth_data)
+    if isinstance(auth_data, dict):
+        return {str(k): str(v) for k, v in auth_data.items()}
+    return {}
+
+
 class ModernListenerService:
     """Maintain one ``subscriptions/listen`` stream per modern-era server.
 
@@ -195,14 +218,7 @@ class ModernListenerService:
                 if gw.auth_type == "oauth":
                     logger.debug("Skipping modern listener for OAuth server %s (token lifecycle not supported on standing streams)", gw.name)
                     continue
-                auth_data = gw.auth_value or {}
-                if isinstance(auth_data, str):
-                    headers = decode_auth(auth_data)
-                elif isinstance(auth_data, dict):
-                    headers = {str(k): str(v) for k, v in auth_data.items()}
-                else:
-                    headers = {}
-                snapshots.append(_GatewaySnapshot(id=gw.id, name=gw.name, url=gw.url, headers=headers))
+                snapshots.append(_GatewaySnapshot(id=gw.id, name=gw.name, url=gw.url, headers=gateway_listen_headers(gw)))
         return snapshots
 
     async def _listen_forever(self, gw: _GatewaySnapshot) -> None:
