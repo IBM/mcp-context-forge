@@ -38,6 +38,19 @@ DENIED = [
     "$__loc__",
     "debug",
     "stderr",
+    "halt",
+    "halt_error",
+    "halt_error(1)",
+    ".a | halt",
+    "builtins",
+    "builtins[]",
+    "while(true; .)",
+    "until(false; .)",
+    "recurse",
+    "recurse(.a)",
+    "recurse_down",
+    "foreach .[] as $x (0; .+1; .)",
+    "repeat(.)",
 ]
 
 ALLOWED = [
@@ -56,15 +69,34 @@ ALLOWED = [
     '{"input": .a}',
     "  .a  ",
     "",
-    "halt",
-    "halt_error",
+    ".halt",
+    ".halt_error",
+    ".builtins",
+    ".while",
+    ".until",
+    ".recurse",
+    ".recurse_down",
+    ".foreach",
+    ".repeat",
+    '{"halt": .a}',
+    '{"builtins": .a}',
+    '{"while": .a}',
+    '{"until": .a}',
+    '{"recurse": .a}',
+    '{"repeat": .a}',
 ]
 
 # Harmless constructs the guard rejects anyway. Object-construction keys are
 # scanned as code positions, so an unquoted key named after a restricted
 # built-in is refused. Quoting the key is the workaround, and the guard stays
 # simple rather than growing a context rule that would widen bypass surface.
-ACCEPTED_FALSE_POSITIVES = ["{env: .a}", "{env}", "{input: .a}"]
+ACCEPTED_FALSE_POSITIVES = [
+    "{env: .a}",
+    "{env}",
+    "{input: .a}",
+    "{halt: .a}",
+    "{builtins: .a}",
+]
 
 
 @pytest.mark.parametrize("jq_filter", DENIED)
