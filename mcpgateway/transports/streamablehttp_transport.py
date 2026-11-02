@@ -4116,13 +4116,13 @@ def _claim_listen_slot(principal: Optional[str]) -> None:
     The check and the increment run without an ``await``, so concurrent streams cannot exceed the cap.
 
     Args:
-        principal: Caller email, or ``None`` for an anonymous caller.
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
 
     Raises:
         MCPError: ``INTERNAL_ERROR`` "Subscription limit reached" when the cap is full.
     """
     global _anonymous_listen_streams  # pylint: disable=global-statement
-    if principal is None:
+    if not principal:
         if _anonymous_listen_streams >= settings.mcp_listen_max_anonymous_streams:
             raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
         _anonymous_listen_streams += 1
@@ -4136,10 +4136,10 @@ def _release_listen_slot(principal: Optional[str]) -> None:
     """Free the slot ``_claim_listen_slot`` took, removing a principal key at zero.
 
     Args:
-        principal: Caller email, or ``None`` for an anonymous caller.
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
     """
     global _anonymous_listen_streams  # pylint: disable=global-statement
-    if principal is None:
+    if not principal:
         _anonymous_listen_streams -= 1
     elif _listen_streams_by_principal[principal] <= 1:
         del _listen_streams_by_principal[principal]
