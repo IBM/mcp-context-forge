@@ -346,6 +346,8 @@ class TestRefreshExecution:
         gateway.tools = []
         gateway.resources = []
         gateway.prompts = []
+        for unset in ("transport", "auth_type", "auth_value", "oauth_config", "ca_certificate", "auth_query_params", "client_cert", "client_key"):
+            setattr(gateway, unset, None)
         session = MagicMock()
         session.dirty = set()
         session.execute.return_value.scalar_one_or_none.return_value = gateway
@@ -358,7 +360,7 @@ class TestRefreshExecution:
         cache.invalidate_prompts = AsyncMock()
 
         gateway_service = GatewayService()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="tool1")], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="tool1")], [], [], [], None))
         gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
         gateway_service._update_or_create_resources = MagicMock(return_value=[])
         gateway_service._update_or_create_prompts = MagicMock(return_value=[])
