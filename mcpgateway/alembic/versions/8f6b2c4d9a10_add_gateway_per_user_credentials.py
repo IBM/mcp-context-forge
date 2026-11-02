@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Add gateway per-user credential policy.
 
 Revision ID: 8f6b2c4d9a10
-Revises: c7e91a2b4d60
+Revises: d3f6a9b1c5e8
 """
 
 # Standard
@@ -17,7 +17,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "8f6b2c4d9a10"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "c7e91a2b4d60"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "d3f6a9b1c5e8"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
