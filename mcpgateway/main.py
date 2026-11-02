@@ -1508,6 +1508,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
+    reverse_proxy_reaper_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
 
@@ -1762,6 +1763,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
+        if _reverse_proxy_reaper_enabled():
+            reverse_proxy_reaper_task = asyncio.create_task(_run_reverse_proxy_reaper())
+
         # Start heartbeat, RPC listener, and notification service for
         # multi-worker session affinity. The upstream-session pool is
         # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
@@ -1964,6 +1968,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+
+        if reverse_proxy_reaper_task is not None:
+            reverse_proxy_reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reverse_proxy_reaper_task
 
         # Stop the plugin invalidation listener before the factory so in-flight
         # messages don't race with a half-torn-down cache.
