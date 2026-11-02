@@ -344,6 +344,38 @@ async def test_require_auth_header_overrides_manual_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_auth_accepts_access_token_cookie(monkeypatch):
+    """A request with only the access_token cookie authenticates, matching the other auth layers."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"access_token": _token({"a": 1})}
+
+    payload = await vc.require_auth(request=mock_request, credentials=None, jwt_token=None)
+    assert payload["a"] == 1
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_accepts_access_token_cookie(monkeypatch):
+    """require_auth_header_first resolves the access_token cookie when no header or jwt_token is present."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"access_token": _token({"a": 1})}
+
+    payload = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    assert payload["a"] == 1
+
+
+@pytest.mark.asyncio
 async def test_require_auth_manual_cookie_missing_falls_back_to_header(monkeypatch):
     """If cookies are present but don't include jwt_token, fall back to header token."""
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
