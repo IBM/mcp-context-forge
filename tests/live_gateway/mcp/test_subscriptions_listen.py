@@ -395,6 +395,17 @@ async def test_listen_on_mcp_gets_tools_list_changed_after_admin_create(gateway_
         await _next_event(frames, "notifications/tools/list_changed", time.monotonic() + 3)
 
 
+async def test_listen_teardown_sends_cancelled_then_result(gateway_listener: _Stack) -> None:
+    """At token exp the gateway sends notifications/cancelled naming the listen request, then the completion result."""
+    token = make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=gateway_listener.key, expires_in_minutes=8 / 60)
+    async with _listening(gateway_listener.base, "/mcp/", token) as (_, frames):
+        cancelled = await _next_event(frames, "notifications/cancelled", time.monotonic() + 20)
+        assert cancelled["params"]["requestId"] == 1, cancelled
+        result = await asyncio.wait_for(frames.get(), 5)
+    assert result.get("id") == 1 and "result" in result, result
+    assert result["result"]["_meta"][SUBSCRIPTION_ID] == 1, result
+
+
 async def test_listen_on_server_scoped_path_gets_event(gateway_listener: _Stack) -> None:
     """A stream on /servers/{id}/mcp receives catalog changes too."""
     async with _listening(gateway_listener.base, f"/servers/{gateway_listener.server_id}/mcp/", gateway_listener.token) as (_, frames):
