@@ -413,6 +413,28 @@ class TestResolveConfig:
     """Tests for _resolve_config() per-gateway overrides."""
 
     @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_identity_propagation_kwarg_overrides_global_and_gateway(self, mock_settings):
+        mock_settings.identity_propagation_enabled = True
+        mock_settings.identity_propagation_mode = "both"
+        mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
+        mock_settings.identity_sign_claims = False
+        mock_settings.identity_sensitive_attributes = []
+        gateway = MagicMock(identity_propagation={"enabled": True})
+        assert _resolve_config(gateway, {"enabled": False})["enabled"] is False
+        assert _resolve_config(None, None)["enabled"] is True
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_deny_path_disabled_gateway_dict_sends_no_identity(self, mock_settings):
+        mock_settings.identity_propagation_enabled = True
+        mock_settings.identity_propagation_mode = "both"
+        mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
+        mock_settings.identity_sign_claims = False
+        mock_settings.identity_sensitive_attributes = []
+        uc = UserContext(user_id="alice@co.com", email="alice@co.com")
+        assert build_identity_headers(uc, identity_propagation={"enabled": False}) == {}
+        assert build_identity_meta(uc, {"k": "v"}, identity_propagation={"enabled": False}) == {"k": "v"}
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
     def test_no_gateway_uses_global(self, mock_settings):
         mock_settings.identity_propagation_enabled = True
         mock_settings.identity_propagation_mode = "both"
@@ -1840,7 +1862,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             )
 
         assert result == "hello"
-        mock_build_headers.assert_called_once_with(user_context)
+        mock_build_headers.assert_called_once_with(user_context, gateway)
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_updates_headers_from_plugin_context(self):
@@ -2016,12 +2038,13 @@ class TestToolServiceIdentityPropagationCoverage:
                 plugin_global_context=plugin_global_context,
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=None)
         assert pinned_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
         pinned_client.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_mcp_updates_headers_and_meta_from_global_context(self):
+    @pytest.mark.parametrize("cached_setting", [{"enabled": True}, {"enabled": False}, None, "missing"])
+    async def test_invoke_tool_mcp_updates_headers_and_meta_from_global_context(self, cached_setting):
         # First-Party
         from mcpgateway.services.tool_service import ToolService
         from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
@@ -2057,6 +2080,7 @@ class TestToolServiceIdentityPropagationCoverage:
                     "ca_certificate": None,
                     "ca_certificate_sig": None,
                     "passthrough_headers": [],
+                    **({} if cached_setting == "missing" else {"identity_propagation": cached_setting}),
                 },
             }
         )
@@ -2097,8 +2121,9 @@ class TestToolServiceIdentityPropagationCoverage:
                 meta_data={"existing": True},
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
-        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True})
+        expected = None if cached_setting == "missing" else cached_setting
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=expected)
+        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, identity_propagation=expected)
 
 class TestStreamableHttpTransportIdentityPropagationCoverage:
     """Cover transport identity forwarding branches."""
