@@ -550,7 +550,6 @@ def progress_upstream() -> Generator[str, None, None]:
         listener.close()
 
 
-
 @pytest.fixture
 def prompt_error_upstream() -> Generator[str, None, None]:
     """Start an in-process upstream whose prompts answer JSON-RPC errors (issue #6618).
@@ -589,7 +588,6 @@ def prompt_error_upstream() -> Generator[str, None, None]:
         listener.close()
 
 
-
 @pytest.fixture
 def array_upstream() -> Generator[str, None, None]:
     """Serve a plain HTTP endpoint whose JSON body is an array, for a REST tool with an array outputSchema (issue #6575).
@@ -619,7 +617,6 @@ def array_upstream() -> Generator[str, None, None]:
         server.should_exit = True
         thread.join(timeout=10)
         listener.close()
-
 
 
 class TestConnectivity:
@@ -1029,7 +1026,6 @@ class TestToolErrorTranslation:
                     await http.delete(f"/gateways/{gateway_id}")
 
 
-
 @skip_no_modern_inbound
 class TestProgressRelay:
     """Upstream progress reaches modern clients on tools/call, prompts/get and resources/read, in order and before the result (issue #6647)."""
@@ -1374,7 +1370,6 @@ class TestStructuredContentShapes:
                     await http.delete(f"/servers/{server_id}")
                 if tool_id:
                     await http.delete(f"/tools/{tool_id}")
-
 
 
 # ---------------------------------------------------------------------------
