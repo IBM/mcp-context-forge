@@ -197,10 +197,25 @@ refetch its lists once.
 **Shutdown.** Listen streams close abruptly when a worker stops, as legacy GET
 streams do. The client treats the close as a signal to reconnect.
 
-**No `resources.subscribe` on the modern era.** The gateway emits no per-URI
-`notifications/resources/updated`. For `2026-07-28` callers, the capabilities
-(also in `server/discover`) omit `resources.subscribe`, and the ack never
-echoes `resourceSubscriptions`. Legacy capabilities are unchanged.
+**Per-resource subscriptions.** A modern client can name resource URIs in
+`resourceSubscriptions`. The URIs need `resources.read`. The ack lists only
+URIs the caller can see that come from an enabled upstream server reachable by
+a standing stream: not SSE and not OAuth. On `/servers/{id}/mcp` the resource
+must also belong to that virtual server. Unknown and hidden URIs drop from the
+ack without an error. One request considers at most 64 distinct URIs.
+
+While the stream is open, the worker that holds it keeps one upstream
+`subscriptions/listen` per `(server, URI)`, shared across streams. An upstream
+`notifications/resources/updated` reaches each subscribed stream as
+`notifications/resources/updated` with the URI, stamped with that stream's
+subscription ID. The relay needs no Redis, because the upstream stream lives on
+the same worker as the downstream stream. A pre-2026 upstream sends no updates.
+When an upstream stream drops, the relay reconnects with jittered backoff and
+sends one update, so clients read the resource again.
+
+For `2026-07-28` callers the capabilities (also in `server/discover`) advertise
+`resources.subscribe`. Legacy capabilities and `resources/subscribe` are
+unchanged.
 
 `tests/live_gateway/mcp/test_subscriptions_listen.py` proves these paths
 against running gateways.

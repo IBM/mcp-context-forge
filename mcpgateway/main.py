@@ -225,6 +225,7 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
@@ -2061,6 +2062,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             modern_listener_service = get_modern_listener_service()
             if modern_listener_service is not None:
                 services_to_shutdown.insert(0, modern_listener_service)
+
+        services_to_shutdown.insert(0, get_resource_subscription_relay())
 
         await shutdown_services(services_to_shutdown)
 
