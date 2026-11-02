@@ -4152,7 +4152,9 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
 
     Each requested list kind passes the same token-scope gate as its ``*/list`` call.
     ``resourceSubscriptions`` and unknown filter keys are always dropped.
-    The stream ends with a completion result at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
+    Every server teardown sends ``notifications/cancelled`` naming the listen request, then the completion result.
+    A client disconnect cancels the handler and sends nothing.
     Each principal may hold ``MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL`` streams; anonymous callers share ``MCP_LISTEN_MAX_ANONYMOUS_STREAMS``.
 
     Args:
@@ -4183,13 +4185,37 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
         user_email, _token_teams = get_scoped_visibility_from_user_context(user_context)
         _claim_listen_slot(user_email)
         try:
+            result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
             with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
-                return await get_listen_handler()(ctx, narrowed)
-            return types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+                result = await get_listen_handler()(ctx, narrowed)
+            await _send_listen_teardown(ctx)
+            return result
         finally:
             _release_listen_slot(user_email)
     finally:
         _v2_request_ctx.reset(token)
+
+
+LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _send_listen_teardown(ctx: Any) -> None:
+    """Send ``notifications/cancelled`` naming the listen request before the gateway closes the stream.
+
+    The 2026-07-28 cancellation spec requires this frame on every server teardown and forbids it for any other purpose.
+    A client that has stopped reading cannot hold the stream open: the send is bounded and its failure is only logged.
+
+    Args:
+        ctx: SDK request context of the listen request.
+    """
+    notification = types.CancelledNotification(
+        params=types.CancelledNotificationParams(request_id=ctx.request_id, reason="Subscription closed by server", _meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+    )
+    with anyio.move_on_after(LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS):
+        try:
+            await ctx.session.send_notification(notification, related_request_id=ctx.request_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("Listen teardown notification for %r not sent: %s", ctx.request_id, exc)
 
 
 # Register all handlers via the v2 add_request_handler API. set_logging_level
