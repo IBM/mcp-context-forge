@@ -208,13 +208,13 @@ class ModernListenerService:
     async def _listen_forever(self, gw: _GatewaySnapshot) -> None:
         """Hold a listen stream to one server, reconnecting with jittered backoff.
 
-        The spec defines no event replay, so each re-listen after a drop or a
-        graceful close triggers one refresh of every list kind. The backoff
+        The spec defines no event replay, so every acknowledged listen triggers
+        one refresh of every list kind. That covers a re-listen after a drop and
+        a listener that a newly elected primary starts after a handoff. The backoff
         resets only after a stream stayed up for ``BACKOFF_MAX_SECONDS``, so a
         server that acks and closes at once is re-listened ever less often.
         """
         backoff = BACKOFF_INITIAL_SECONDS
-        relisten = False
         while not self._shutdown_event.is_set():
             acked_at: Optional[float] = None
             dropped: Optional[Exception] = None
@@ -223,9 +223,8 @@ class ModernListenerService:
                     async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True) as subscription:
                         acked_at = time.monotonic()
                         logger.info("Listening for change events on modern server %s (%s)", gw.name, gw.url)
-                        if relisten:
-                            for kind in (NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED):
-                                await self._notification_service.notify_list_changed(gw.id, kind)
+                        for kind in (NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED):
+                            await self._notification_service.notify_list_changed(gw.id, kind)
                         async for event in subscription:
                             await self._dispatch(gw, event)
             except ListenNotSupportedError:
@@ -247,7 +246,6 @@ class ModernListenerService:
                 logger.info("Listen stream to server %s closed by the server; reconnecting in %.0fs", gw.name, delay)
             else:
                 logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(dropped).__name__, dropped, delay)
-            relisten = True
             try:
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
             except asyncio.TimeoutError:

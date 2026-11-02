@@ -276,7 +276,9 @@ class TestModernListenerReconnect:
 
         assert waits[0] == mls.BACKOFF_INITIAL_SECONDS
         assert connect_times[1] - connect_times[0] >= 0.04
-        notification_service.notify_list_changed.assert_not_awaited()  # the first connect never refreshes
+        # Every ack refreshes, the first too: a newly elected primary must catch up on changes made during the handoff.
+        refreshed = [c.args[1] for c in notification_service.notify_list_changed.await_args_list]
+        assert refreshed == [NotificationType.TOOLS_LIST_CHANGED, NotificationType.PROMPTS_LIST_CHANGED, NotificationType.RESOURCES_LIST_CHANGED]
 
     @staticmethod
     async def _record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop):
