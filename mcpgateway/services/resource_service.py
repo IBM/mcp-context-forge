@@ -119,6 +119,31 @@ _REGISTRY_CACHE = None
 MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
 
 
+def _standing_stream_can_reach(gateway: DbGateway) -> bool:
+    """Return whether a standing upstream stream reaches ``gateway`` with its stored headers alone.
+
+    SSE is legacy-only. OAuth needs a per-user token. Query-parameter auth, a private CA,
+    and mTLS need connection setup that the relay client does not perform.
+
+    Args:
+        gateway: Registered upstream server row.
+
+    Returns:
+        bool: True when the resource subscription relay can watch this upstream.
+
+    Examples:
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="bearer"))
+        True
+        >>> _standing_stream_can_reach(DbGateway(transport="SSE"))
+        False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", client_cert="pem"))
+        False
+    """
+    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param"):
+        return False
+    return not (gateway.ca_certificate or gateway.client_cert)
+
+
 def _get_registry_cache():
     """Get registry cache singleton lazily.
 
@@ -3261,8 +3286,7 @@ class ResourceService(BaseService):
 
         A URI is honored when an enabled resource with that URI passes the caller's visibility check.
         On a server-scoped path the resource must belong to that virtual server.
-        The resource must come from an enabled upstream server that a standing stream can reach:
-        not SSE (legacy-only) and not OAuth (no per-user token on a standing stream).
+        The resource must come from an enabled upstream server that a standing stream reaches with its stored headers alone.
         Only the first ``MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN`` distinct requested URIs are considered.
 
         Args:
@@ -3289,7 +3313,7 @@ class ResourceService(BaseService):
         targets: Dict[str, List[UpstreamResourceTarget]] = {}
         for resource in db.execute(query).scalars().all():
             gateway = resource.gateway
-            if gateway is None or not gateway.enabled or (gateway.transport or "").upper() == "SSE" or gateway.auth_type == "oauth":
+            if gateway is None or not gateway.enabled or not _standing_stream_can_reach(gateway):
                 continue
             if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
                 continue
