@@ -862,6 +862,12 @@
             "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
               "type": "string"
             },
+            "MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL": {
+              "type": "string"
+            },
+            "MCP_LISTEN_MAX_ANONYMOUS_STREAMS": {
+              "type": "string"
+            },
             "MCP_SESSION_POOL_ENABLED": {
               "type": "string"
             },

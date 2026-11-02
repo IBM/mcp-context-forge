@@ -22,6 +22,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import collections
 from contextlib import asynccontextmanager
 import json
 import time
@@ -21612,6 +21613,146 @@ async def test_listen_does_not_open_db_session(monkeypatch):
 
     assert state["delegating"] is True
     assert state["opened"] == 1  # the OAuth lookup ran and released its session
+
+
+@pytest.fixture
+def listen_counters(monkeypatch):
+    """Start each cap test with empty listen-stream counters."""
+    monkeypatch.setattr(tr, "_listen_streams_by_principal", collections.Counter())
+    monkeypatch.setattr(tr, "_anonymous_listen_streams", 0)
+
+
+def _listen_counters_empty():
+    """Return True when no listen stream holds a slot."""
+    return not tr._listen_streams_by_principal and tr._anonymous_listen_streams == 0
+
+
+def _context_for(email):
+    """Build an authenticated user context for ``email``."""
+    return {**_scoped_user_context([]), "email": email}
+
+
+def _blocking_delegate():
+    """Return a fake shared handler that parks until the returned event is set."""
+    release = anyio.Event()
+
+    async def park(_ctx, _params):
+        await release.wait()
+
+    delegate = AsyncMock(side_effect=park)
+    return delegate, release
+
+
+async def test_listen_per_principal_cap_refuses_extra_stream(monkeypatch, listen_requires_auth, listen_counters):
+    """The third concurrent stream of one principal is refused; the first two reach the shared handler."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 2)
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+    _patch_request_context(monkeypatch, _context_for("a@x.com"))
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(2):
+            tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        with pytest.raises(MCPError) as exc_info:
+            await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        release.set()
+
+    assert exc_info.value.error.code == types.INTERNAL_ERROR
+    assert exc_info.value.error.message == "Subscription limit reached"
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_per_principal_cap_is_per_principal(monkeypatch, listen_requires_auth, listen_counters):
+    """One principal at its cap does not block another principal."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 1)
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    async with anyio.create_task_group() as tg:
+        _patch_request_context(monkeypatch, _context_for("a@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 1:
+            await anyio.sleep(0)
+        _patch_request_context(monkeypatch, _context_for("b@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        release.set()
+
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_anonymous_cap_refuses_extra_stream(monkeypatch, listen_counters):
+    """Anonymous callers share one cap; an authenticated caller is unaffected."""
+    monkeypatch.setattr(tr.settings, "mcp_require_auth", False)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 1)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock())
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    async with anyio.create_task_group() as tg:
+        _patch_request_context(monkeypatch, {"is_authenticated": False})
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 1:
+            await anyio.sleep(0)
+        with pytest.raises(MCPError) as exc_info:
+            await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        _patch_request_context(monkeypatch, _context_for("a@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        release.set()
+
+    assert exc_info.value.error.message == "Subscription limit reached"
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_anonymous_cap_zero_refuses_anonymous(monkeypatch, listen_counters):
+    """An anonymous cap of 0 refuses every anonymous stream before the shared handler runs."""
+    monkeypatch.setattr(tr.settings, "mcp_require_auth", False)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 0)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock())
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+
+    with pytest.raises(MCPError) as exc_info:
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert exc_info.value.error.message == "Subscription limit reached"
+    delegate.assert_not_awaited()
+    assert _listen_counters_empty()
+
+
+async def test_listen_cap_slot_released_on_error(monkeypatch, listen_requires_auth, listen_counters):
+    """A failing stream releases its slot, so the next call reaches the shared handler."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 1)
+    delegate = _patch_listen_delegate(monkeypatch, AsyncMock(side_effect=[RuntimeError("boom"), types.SubscriptionsListenResult()]))
+    _patch_request_context(monkeypatch, _context_for("a@x.com"))
+
+    with pytest.raises(RuntimeError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    assert _listen_counters_empty()
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_cap_not_consumed_by_denied_request(monkeypatch, listen_requires_auth, listen_counters):
+    """A request denied by token scope never takes a slot."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {**_context_for("a@x.com"), "scoped_permissions": ["servers.use"]})
+
+    with pytest.raises(PermissionError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    delegate.assert_not_awaited()
+    assert _listen_counters_empty()
 
 
 def test_listen_handler_registered():

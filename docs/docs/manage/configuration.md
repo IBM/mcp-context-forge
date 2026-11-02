@@ -506,6 +506,8 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
 | `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `MCP_LISTEN_MAX_LIFETIME_SECONDS` | Maximum lifetime of a `subscriptions/listen` stream (2026-07-28 clients). A token expiry earlier than this ends the stream sooner | `3600` | int (60-86400) |
+| `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` | Maximum concurrent `subscriptions/listen` streams for one authenticated principal on one worker. The gateway refuses further streams with "Subscription limit reached" | `32` | int (1-1024) |
+| `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers (`MCP_REQUIRE_AUTH=false`). `0` refuses all anonymous streams | `256` | int (0-1024) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 

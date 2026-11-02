@@ -33,6 +33,7 @@ Examples:
 # Standard
 import asyncio
 import base64
+from collections import Counter
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
@@ -4104,12 +4105,55 @@ def _listen_lifetime_seconds(user_context: Any) -> float:
     return max(LISTEN_DEADLINE_FLOOR_SECONDS, lifetime)
 
 
+_listen_streams_by_principal: Counter[str] = Counter()
+_anonymous_listen_streams: int = 0  # pylint: disable=invalid-name
+
+
+def _claim_listen_slot(principal: Optional[str]) -> None:
+    """Count one open listen stream for ``principal``, or refuse it at the cap.
+
+    A caller with no email counts against the shared anonymous cap.
+    The check and the increment run without an ``await``, so concurrent streams cannot exceed the cap.
+
+    Args:
+        principal: Caller email, or ``None`` for an anonymous caller.
+
+    Raises:
+        MCPError: ``INTERNAL_ERROR`` "Subscription limit reached" when the cap is full.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if principal is None:
+        if _anonymous_listen_streams >= settings.mcp_listen_max_anonymous_streams:
+            raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+        _anonymous_listen_streams += 1
+        return
+    if _listen_streams_by_principal[principal] >= settings.mcp_listen_max_streams_per_principal:
+        raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+    _listen_streams_by_principal[principal] += 1
+
+
+def _release_listen_slot(principal: Optional[str]) -> None:
+    """Free the slot ``_claim_listen_slot`` took, removing a principal key at zero.
+
+    Args:
+        principal: Caller email, or ``None`` for an anonymous caller.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if principal is None:
+        _anonymous_listen_streams -= 1
+    elif _listen_streams_by_principal[principal] <= 1:
+        del _listen_streams_by_principal[principal]
+    else:
+        _listen_streams_by_principal[principal] -= 1
+
+
 async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListenRequestParams) -> types.SubscriptionsListenResult:
     """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
 
     Each requested list kind passes the same token-scope gate as its ``*/list`` call.
     ``resourceSubscriptions`` and unknown filter keys are always dropped.
     The stream ends with a completion result at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
+    Each principal may hold ``MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL`` streams; anonymous callers share ``MCP_LISTEN_MAX_ANONYMOUS_STREAMS``.
 
     Args:
         ctx: SDK request context.
@@ -4120,6 +4164,7 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
 
     Raises:
         MCPError: ``METHOD_NOT_FOUND`` for a handshake-era caller.
+            ``INTERNAL_ERROR`` "Subscription limit reached" when the caller is at its concurrent-stream cap.
         PermissionError: If list kinds were requested and the token scope denies every one, as ``tools/list`` would.
     """
     token = _v2_request_ctx.set(ctx)
@@ -4132,9 +4177,17 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
         if requested and not granted:
             raise PermissionError(_ACCESS_DENIED_MSG)
         narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted)})
-        with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
-            return await get_listen_handler()(ctx, narrowed)
-        return types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+        user_email, _token_teams = get_scoped_visibility_from_user_context(user_context)
+        _claim_listen_slot(user_email)
+        try:
+            with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
+                return await get_listen_handler()(ctx, narrowed)
+            return types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+        finally:
+            _release_listen_slot(user_email)
     finally:
         _v2_request_ctx.reset(token)
 

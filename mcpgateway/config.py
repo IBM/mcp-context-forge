@@ -598,6 +598,18 @@ class Settings(BaseSettings):
         le=86400,
         description="Maximum lifetime of a subscriptions/listen stream in seconds; a token expiry earlier than this ends the stream sooner",
     )
+    mcp_listen_max_streams_per_principal: int = Field(
+        default=32,
+        ge=1,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams per authenticated principal on one worker",
+    )
+    mcp_listen_max_anonymous_streams: int = Field(
+        default=256,
+        ge=0,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams shared by all anonymous callers on one worker; 0 refuses anonymous streams",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
