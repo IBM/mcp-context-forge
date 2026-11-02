@@ -11895,6 +11895,60 @@ class TestRemainingCoverageGaps:
         assert "version" not in info
         assert "admin_api_enabled" not in info
 
+    @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_baggage"])
+    def test_module_level_middleware_registration_branches(self, monkeypatch, variant):
+        """Exercise the middleware registration gates against a bare app.
+
+        Runs ``_register_middleware`` under three settings matrices. The matrix
+        covers both outcomes of each middleware gate without re-executing the
+        module.
+        """
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        import mcpgateway.main as main_module
+
+        overrides = {
+            "environment": "production",
+            "allowed_origins": [],
+            "compression_enabled": False,
+            "validation_middleware_enabled": False,
+            "token_usage_logging_enabled": False,
+            "email_auth_enabled": False,
+            "security_logging_enabled": True,
+            "observability_enabled": True,
+            "db_query_log_enabled": True,
+        }
+        if variant == "features_on":
+            overrides.update(
+                {
+                    "validation_middleware_enabled": True,
+                    "token_usage_logging_enabled": True,
+                    "otel_baggage_enabled": True,
+                }
+            )
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: True)
+        elif variant == "degraded_baggage":
+            overrides["otel_baggage_enabled"] = True
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: False)
+
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
+        monkeypatch.setattr("mcpgateway.middleware.db_query_logging.setup_query_logging", lambda *_a, **_k: None, raising=False)
+
+        bare_app = FastAPI()
+        main_module._register_middleware(bare_app)  # pylint: disable=protected-access
+
+        names = [mw.cls.__name__ for mw in bare_app.user_middleware]
+        if variant == "features_on":
+            assert "ValidationMiddleware" in names
+            assert "TokenUsageMiddleware" in names
+            assert "BaggageMiddleware" in names
+        else:
+            assert "ValidationMiddleware" not in names
+            assert "BaggageMiddleware" not in names
+
     def test_jsonpath_modifier_defaults_when_jsonpath_missing(self):
         # jsonpath_modifier(None/""/0) should fall back to default "$[*]".
         assert jsonpath_modifier([{"a": 1}], jsonpath="") == {"a": 1}

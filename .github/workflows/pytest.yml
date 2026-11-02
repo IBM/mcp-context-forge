@@ -118,7 +118,7 @@ jobs:
       # -----------------------------------------------------------
       - name: 🧪  Run rstest
         run: |
-          uv run --extra plugins rstest -n auto \
+          uv run --extra plugins --extra llmchat rstest -n auto \
             --durations=10 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
