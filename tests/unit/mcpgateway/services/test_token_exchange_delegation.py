@@ -18,7 +18,7 @@ from pydantic import ValidationError
 import pytest
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.config import get_settings, settings
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services import gateway_service_token_cache
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -31,6 +31,19 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 MALFORMED_KEY = "dummy-private-key-material"  # pragma: allowlist secret
 ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # nosec B105 - RFC 8693 URI
 JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
+
+
+@pytest.fixture(autouse=True)
+def _encryption_secret_matches_runtime(monkeypatch):
+    """Encrypt with the secret that the runtime decrypt path reads.
+
+    The production code reads ``get_settings().auth_encryption_secret``. An earlier test can
+    shadow that value on the ``settings`` wrapper, so pin the wrapper to the runtime value.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(settings, "auth_encryption_secret", get_settings().auth_encryption_secret)
 
 
 def _rsa_pem() -> str:
