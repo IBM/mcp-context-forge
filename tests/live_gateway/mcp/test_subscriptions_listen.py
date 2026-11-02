@@ -240,6 +240,14 @@ def gateway_noauth(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Stack]
         yield stack
 
 
+@pytest.fixture(scope="module")
+def gateway_capped(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Stack]:
+    """Gateway with small listen caps; no other test opens streams on it."""
+    overrides = {"MCP_REQUIRE_AUTH": "false", "MCP_LISTEN_MAX_ANONYMOUS_STREAMS": "2", "MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL": "1"}
+    with _start(tmp_path_factory.mktemp("capped"), overrides, upstream=False) as stack:
+        yield stack
+
+
 def _headers(token: str | None, method: str | None, protocol: str | None = MODERN) -> dict[str, str]:
     """Build Streamable HTTP request headers.
 
@@ -485,6 +493,32 @@ def test_listen_oauth_server_unauth_401_when_require_auth_false(gateway_noauth: 
     assert status == 200, ack
     status, payload = _listen_once(gateway_noauth, f"/servers/{oauth_id}/mcp/", None, {"toolsListChanged": True})
     assert status == 401, payload
+
+
+def _assert_limit_reached(payload: dict[str, Any] | None) -> None:
+    """Assert a listen reply is the stream-cap refusal."""
+    assert payload is not None and "error" in payload, payload
+    assert payload["error"]["code"] == -32603, payload
+    assert payload["error"]["message"] == "Subscription limit reached", payload
+
+
+async def test_listen_anonymous_streams_capped_without_blocking_authenticated(gateway_capped: _Stack) -> None:
+    """Anonymous callers share one cap; a full anonymous cap leaves authenticated callers unaffected."""
+    async with _listening(gateway_capped.base, "/mcp/", None), _listening(gateway_capped.base, "/mcp/", None):  # type: ignore[arg-type]
+        _, payload = await asyncio.to_thread(_listen_once, gateway_capped, "/mcp/", None, {"toolsListChanged": True})
+        _assert_limit_reached(payload)
+        status, ack = await asyncio.to_thread(_listen_once, gateway_capped, "/mcp/", _scoped_token(gateway_capped, ["tools.read", "servers.use"]), {"toolsListChanged": True})
+        assert status == 200 and ack["method"] == "notifications/subscriptions/acknowledged", ack
+
+
+async def test_listen_streams_capped_per_principal(gateway_capped: _Stack) -> None:
+    """One principal at its cap is refused; another principal still gets a stream."""
+    first, second = _scoped_token(gateway_capped, ["tools.read", "servers.use"]), _scoped_token(gateway_capped, ["tools.read", "servers.use"])
+    async with _listening(gateway_capped.base, "/mcp/", first):
+        _, payload = await asyncio.to_thread(_listen_once, gateway_capped, "/mcp/", first, {"toolsListChanged": True})
+        _assert_limit_reached(payload)
+        status, ack = await asyncio.to_thread(_listen_once, gateway_capped, "/mcp/", second, {"toolsListChanged": True})
+        assert status == 200 and ack["method"] == "notifications/subscriptions/acknowledged", ack
 
 
 def test_legacy_client_capabilities_and_listen_unchanged(gateway_listener: _Stack) -> None:
