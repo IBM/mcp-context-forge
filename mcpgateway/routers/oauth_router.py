@@ -849,9 +849,11 @@ async def initiate_oauth_flow(
     responses={
         400: {
             "description": (
-                "Safe OAuth failure HTML. Popup postMessage preserves type, status, error, and errorDescription, and adds "
-                "errorCode, failedStage, and reauthorizationRequired. Codes include redirect_uri_mismatch, insufficient_scope, "
-                "invalid_client, token_url_unreachable, token_exchange_failed, and oauth_error. Unknown provider failures remain generic."
+                "Safe OAuth failure HTML. Popup postMessage retains the type, status, error, and errorDescription fields, and adds "
+                "errorCode, failedStage, and reauthorizationRequired. Recognized provider codes are preserved; descriptions use fixed safe guidance. "
+                "Unknown provider codes become oauth_error. Codes include redirect_uri_mismatch, invalid_scope, insufficient_scope, "
+                "invalid_client, invalid_request, unauthorized_client, unsupported_response_type, server_error, temporarily_unavailable, "
+                "token_url_unreachable, and token_exchange_failed."
             )
         }
     },

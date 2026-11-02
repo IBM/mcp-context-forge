@@ -5192,7 +5192,6 @@ class TestPersistLearnedAudience:
 # ====================================================================
 
 
-
 class TestBuildUserContextSessionTokenPath:
     """Tests for _build_user_context session-token Vault path selection.
 
@@ -5333,7 +5332,6 @@ class TestBuildUserContextSessionTokenPath:
 # ====================================================================
 
 
-
 class TestOAuthCallbackScopeHandling:
     """Tests for scope_value list/str/other handling in OAuth callback (lines 922-928)."""
 
@@ -5436,7 +5434,6 @@ class TestOAuthCallbackScopeHandling:
 
 # Tests for oauth_router fetch-tools GatewayConnectionError (lines 1317-1318)
 # ====================================================================
-
 
 
 class TestFetchToolsGatewayConnectionError:
@@ -5789,7 +5786,20 @@ async def test_callback_passes_iss_to_the_completion_flow(mock_db, mock_request,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider,expected", [("redirect_uri_mismatch", "redirect_uri_mismatch"), ("insufficient_scope", "insufficient_scope"), ("ambiguous", "oauth_error")])
+@pytest.mark.parametrize(
+    "provider,expected",
+    [
+        ("redirect_uri_mismatch", "redirect_uri_mismatch"),
+        ("insufficient_scope", "insufficient_scope"),
+        ("invalid_scope", "invalid_scope"),
+        ("invalid_request", "invalid_request"),
+        ("unauthorized_client", "unauthorized_client"),
+        ("unsupported_response_type", "unsupported_response_type"),
+        ("server_error", "server_error"),
+        ("temporarily_unavailable", "temporarily_unavailable"),
+        ("ambiguous", "oauth_error"),
+    ],
+)
 async def test_callback_safe_structured_provider_errors(mock_db, mock_request_popup, provider, expected, caplog):
     """Callbacks preserve safe evidence and discard unsafe provider descriptions."""
     from mcpgateway.routers.oauth_router import oauth_callback
@@ -5800,6 +5810,7 @@ async def test_callback_safe_structured_provider_errors(mock_db, mock_request_po
     )
     body = result.body.decode()
     assert result.status_code == 400
+    assert f'"error": "{expected}"' in body
     assert f'"errorCode": "{expected}"' in body
     assert '"failedStage": "authorization"' in body
     assert '"errorDescription"' in body

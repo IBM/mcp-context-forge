@@ -635,3 +635,33 @@ def test_post_authorization_live_stored_token_validation(isolated_gateway: _Gate
             assert anonymous.status_code == 401
         finally:
             _delete_gateway(client, gateway_id)
+
+
+def test_live_oauth_callback_preserves_recognized_errors(isolated_gateway: _GatewayFixture):
+    """Callback messages retain recognized codes and exclude unsafe provider descriptions."""
+    client, _token, _base_url, _signing_key = isolated_gateway
+    cases = [
+        ("invalid_request", "invalid_request", "Check the OAuth configuration.", False),
+        ("unauthorized_client", "unauthorized_client", "Check the provider's client configuration.", False),
+        ("unsupported_response_type", "unsupported_response_type", "Check the OAuth configuration.", False),
+        ("server_error", "server_error", "Try again later.", False),
+        ("temporarily_unavailable", "temporarily_unavailable", "Try again later.", False),
+        ("invalid_scope", "invalid_scope", "Review the scopes and authorize again.", True),
+        ("insufficient_scope", "insufficient_scope", "Review the requested scopes and authorize again.", True),
+        ("unknown_provider_error", "oauth_error", "Check the configuration and try again.", False),
+    ]
+    for provider, expected, guidance, reauthorization_required in cases:
+        response = client.get("/oauth/callback", params={
+            "state": "popup.invalid-state", "error": provider, "error_description": "unsafe-provider-description",
+        })
+        assert response.status_code == 400, response.text
+        assert '"type": "oauth_callback"' in response.text
+        assert '"status": "error"' in response.text
+        assert f'"error": "{expected}"' in response.text
+        assert f'"errorCode": "{expected}"' in response.text
+        assert '"failedStage": "authorization"' in response.text
+        assert f'"reauthorizationRequired": {json.dumps(reauthorization_required)}' in response.text
+        assert guidance in response.text
+        assert "unsafe-provider-description" not in response.text
+        if expected == "oauth_error":
+            assert provider not in response.text

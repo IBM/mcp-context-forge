@@ -14,6 +14,26 @@ import pytest
 from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 
 
+@pytest.mark.parametrize(
+    "code,message,reauthorization_required",
+    [
+        ("invalid_request", "The provider rejects the authorization request. Check the OAuth configuration.", False),
+        ("unauthorized_client", "The client cannot use this authorization method. Check the provider's client configuration.", False),
+        ("unsupported_response_type", "The provider does not support the requested response type. Check the OAuth configuration.", False),
+        ("server_error", "The authorization server encountered an error. Try again later.", False),
+        ("temporarily_unavailable", "The authorization server is temporarily unavailable. Try again later.", False),
+        ("invalid_scope", "The provider rejects the requested scope. Review the scopes and authorize again.", True),
+        ("insufficient_scope", "The provider reports insufficient scope. Review the requested scopes and authorize again.", True),
+    ],
+)
+def test_recognized_failures_preserve_codes_with_safe_guidance(code, message, reauthorization_required):
+    """Recognized failures retain distinct codes and fixed corrective guidance."""
+    failure = oauth_failure(code)
+    assert failure.code == code
+    assert failure.message == message
+    assert failure.reauthorization_required is reauthorization_required
+
+
 @pytest.mark.parametrize("code", [None, {}, [], "unsafe-provider-text"])
 def test_unknown_failure_uses_fixed_guidance(code):
     """Unknown codes cannot expose provider text in guidance."""
@@ -28,7 +48,7 @@ def test_unknown_failure_uses_fixed_guidance(code):
     [
         ({"error": {"data": {"error": "insufficient_scope"}}}, "", "insufficient_scope"),
         ({"error": {"data": "unsafe-provider-text"}}, "", None),
-        ({"error": "invalid_scope"}, "", "insufficient_scope"),
+        ({"error": "invalid_scope"}, "", "invalid_scope"),
         ({"error": "unsafe-provider-text"}, "", None),
         ({}, 'Bearer error="invalid_token", error_description="unsafe-provider-text"', "invalid_token"),
         ({}, 'bEaReR error="INSUFFICIENT_SCOPE"', "insufficient_scope"),
