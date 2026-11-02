@@ -21439,24 +21439,114 @@ async def test_listen_empty_scope_keeps_all_kinds(monkeypatch, listen_requires_a
     assert _delegated_filter(delegate) == types.SubscriptionFilter(**_ALL_LIST_KINDS)
 
 
-async def test_listen_drops_resource_subscriptions(monkeypatch, listen_requires_auth):
-    """resourceSubscriptions is never honored; the permitted list kind is."""
+def _patch_resource_targets(monkeypatch, targets):
+    """Resolve requested URIs to ``targets`` and record relay watches; return (resolver, watched)."""
+    resolver = AsyncMock(return_value=targets)
+    monkeypatch.setattr(tr.resource_service, "resolve_subscription_targets", resolver)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    watched = {"active": [], "released": []}
+
+    class FakeRelay:
+        @asynccontextmanager
+        async def watch(self, watch_targets):
+            watched["active"] = list(watch_targets)
+            try:
+                yield
+            finally:
+                watched["released"] = list(watch_targets)
+
+    monkeypatch.setattr(tr, "get_resource_subscription_relay", FakeRelay)
+    return resolver, watched
+
+
+_UPSTREAM_TARGET = SimpleNamespace(gateway_id="gw-1", url="http://up/mcp", uri="file:///a")
+
+
+async def test_listen_acks_visible_resource_subscriptions(monkeypatch, listen_requires_auth):
+    """resourceSubscriptions the caller can see are honored, scoped to the request's server and identity."""
     delegate = _patch_listen_delegate(monkeypatch)
     _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    resolver, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
 
-    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resources_list_changed=True, resource_subscriptions=["file:///a"]))
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resources_list_changed=True, resource_subscriptions=["file:///a", "file:///hidden"]))
 
-    narrowed = _delegated_filter(delegate)
-    assert narrowed == types.SubscriptionFilter(resources_list_changed=True)
-    assert narrowed.resource_subscriptions is None
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(resources_list_changed=True, resource_subscriptions=["file:///a"])
+    assert resolver.await_args.args[1] == ["file:///a", "file:///hidden"]
+    assert resolver.await_args.kwargs == {"server_id": "server-1", "user_email": "dev@example.com", "token_teams": ["team-1"]}
+    assert watched["released"] == [_UPSTREAM_TARGET]
 
 
-async def test_listen_only_resource_subscriptions_gets_empty_filter(monkeypatch, listen_requires_auth):
-    """A request with only resourceSubscriptions is acked with an empty filter, not an error."""
-    delegate = _patch_listen_delegate(monkeypatch)
-    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+async def test_listen_relay_watch_held_while_streaming(monkeypatch, listen_requires_auth):
+    """The upstream watch is open while the shared handler serves the stream, and released after."""
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+    seen = {}
+
+    async def delegate(_ctx, _params):
+        seen["active"] = list(watched["active"])
+        seen["released"] = list(watched["released"])
+        return types.SubscriptionsListenResult()
+
+    _patch_listen_delegate(monkeypatch, delegate)
 
     await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    assert seen == {"active": [_UPSTREAM_TARGET], "released": []}
+    assert watched["released"] == [_UPSTREAM_TARGET]
+
+
+async def test_listen_releases_relay_watch_on_disconnect(monkeypatch, listen_requires_auth):
+    """A client disconnect releases the upstream watch."""
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    async def disconnected(_ctx, _params):
+        raise anyio.get_cancelled_exc_class()()
+
+    _patch_listen_delegate(monkeypatch, disconnected)
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    assert watched["released"] == [_UPSTREAM_TARGET]
+
+
+async def test_listen_resource_subscriptions_need_resources_read(monkeypatch, listen_requires_auth):
+    """Without resources.read the URIs are dropped and never resolved; a granted list kind still streams."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+    resolver, _ = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True, resource_subscriptions=["file:///a"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(tools_list_changed=True)
+    resolver.assert_not_awaited()
+
+
+async def test_listen_only_resource_subscriptions_denied_raises_like_resources_read(monkeypatch, listen_requires_auth):
+    """Only URIs requested and no resources.read: the same PermissionError resources/read raises, and no stream opens."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+    _patch_resource_targets(monkeypatch, {})
+
+    with pytest.raises(PermissionError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    delegate.assert_not_awaited()
+
+
+async def test_listen_only_invisible_resource_subscriptions_gets_empty_filter(monkeypatch, listen_requires_auth):
+    """Permitted but invisible or unknown URIs are acked with an empty filter, not an error, so existence never leaks."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {})
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///hidden"]))
 
     assert _delegated_filter(delegate) == types.SubscriptionFilter()
 
@@ -21847,15 +21937,15 @@ def test_listen_handler_registered():
     assert "subscriptions/listen" not in tr._MCP_KNOWN_REQUEST_METHODS
 
 
-def test_modern_capabilities_advertise_list_changed_without_subscribe():
-    """2026-07-28 advertises listChanged for all three kinds and omits resources.subscribe."""
+def test_modern_capabilities_advertise_list_changed_and_resource_subscribe():
+    """2026-07-28 advertises listChanged for all three kinds and resources.subscribe for resourceSubscriptions."""
     capabilities = tr.mcp_app.get_capabilities(protocol_version="2026-07-28")
 
     assert capabilities.tools.list_changed is True
     assert capabilities.prompts.list_changed is True
     assert capabilities.resources.list_changed is True
-    assert not capabilities.resources.subscribe
-    assert "subscribe" not in capabilities.model_dump(mode="json", by_alias=True, exclude_none=True)["resources"]
+    assert capabilities.resources.subscribe is True
+    assert capabilities.logging is None
 
 
 def test_legacy_capabilities_unchanged(monkeypatch):
@@ -21877,7 +21967,7 @@ def test_legacy_capabilities_unchanged(monkeypatch):
 
 
 async def test_listen_over_modern_wire_acks_narrowed_filter_and_delivers_permitted_kind(monkeypatch, listen_requires_auth):
-    """End to end on the 2026-07-28 wire: the ack carries only permitted kinds and no resourceSubscriptions."""
+    """End to end on the 2026-07-28 wire: the ack carries only permitted kinds; URIs need resources.read."""
     # Third-Party
     from mcp.shared.subscriptions import ToolsListChanged  # pylint: disable=import-outside-toplevel
 
@@ -21909,3 +21999,24 @@ async def test_listen_over_modern_wire_deadline_sends_cancelled_teardown(monkeyp
             # The SDK client settles a stream named by a server-sent cancel as lost, so the consumer re-listens.
             with pytest.raises(SubscriptionLost):
                 await asyncio.wait_for(anext(sub), timeout=5)
+
+
+async def test_listen_over_modern_wire_delivers_resource_updated_with_subscription_id(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: an honored URI is acked and its resources/updated reaches the stream, stamped with the subscription id."""
+    # Third-Party
+    from mcp.shared.subscriptions import ResourceUpdated  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(resource_subscriptions=["file:///a", "file:///hidden"]) as sub:
+            assert sub.honored.model_dump(by_alias=True, exclude_none=True) == {"resourceSubscriptions": ["file:///a"]}
+            await get_listen_bus().publish(ResourceUpdated(uri="file:///other"))
+            await get_listen_bus().publish(ResourceUpdated(uri="file:///a"))
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    # The SDK client routes a frame to ``sub`` only by its subscription id stamp, so receiving it proves the stamp.
+    assert event == ResourceUpdated(uri="file:///a")

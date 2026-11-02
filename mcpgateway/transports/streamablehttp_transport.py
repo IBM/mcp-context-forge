@@ -105,6 +105,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -477,16 +478,10 @@ class ContextForgeMCPServer(Server[Any]):
         Modern protocol versions omit the logging capability. MCP 2026-07-28
         deprecates it (SEP-2577), and ContextForge sends no request-scoped logs.
         The SDK derives it from the legacy ``logging/setLevel`` handler only.
-
-        Modern protocol versions also omit ``resources.subscribe``: the
-        ``subscriptions/listen`` adapter drops ``resourceSubscriptions``, so
-        per-resource update notifications are never delivered.
         """
         capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
         if protocol_version in MODERN_PROTOCOL_VERSIONS:
             capabilities.logging = None
-            if capabilities.resources is not None:
-                capabilities.resources.subscribe = None
         user_context = user_context_var.get()
         extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
         if extra_extensions:
@@ -4156,7 +4151,8 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
     """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
 
     Each requested list kind passes the same token-scope gate as its ``*/list`` call.
-    ``resourceSubscriptions`` and unknown filter keys are always dropped.
+    ``resourceSubscriptions`` needs ``resources.read``; the ack keeps only URIs the caller can see that come from a reachable upstream server.
+    The stream holds one relay watch per honored upstream resource. Unknown filter keys are dropped.
     The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
     Every server teardown sends ``notifications/cancelled`` naming the listen request, then the completion result.
     A client disconnect cancels the handler and sends nothing.
@@ -4172,29 +4168,36 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
     Raises:
         MCPError: ``METHOD_NOT_FOUND`` for a handshake-era caller.
             ``INTERNAL_ERROR`` "Subscription limit reached" when the caller is at its concurrent-stream cap.
-        PermissionError: If list kinds were requested and the token scope denies every one, as ``tools/list`` would.
+        PermissionError: If kinds or URIs were requested and the token scope denies every one, as ``tools/list`` or ``resources/read`` would.
     """
     token = _v2_request_ctx.set(ctx)
     try:
         if not _caller_is_modern():
             raise MCPError(code=types.METHOD_NOT_FOUND, message="Method not found", data="subscriptions/listen")
-        _, _, user_context = await _resolve_catalog_scope()
+        server_id, _, user_context = await _resolve_catalog_scope()
         requested = [flag for flag in _LISTEN_FLAG_PERMISSIONS if getattr(params.notifications, flag)]
         granted = {flag: True for flag in requested if _token_allows_catalog_read(user_context, _LISTEN_FLAG_PERMISSIONS[flag])}
-        if requested and not granted:
+        requested_uris = list(params.notifications.resource_subscriptions or ())
+        uris_permitted = bool(requested_uris) and _token_allows_catalog_read(user_context, LIST_PERMISSIONS["resources/list"])
+        if (requested or requested_uris) and not granted and not uris_permitted:
             raise PermissionError(_ACCESS_DENIED_MSG)
-        narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted)})
         # First-Party
         from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-        user_email, _token_teams = get_scoped_visibility_from_user_context(user_context)
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+        targets: dict[str, list[Any]] = {}
+        if uris_permitted:
+            async with get_db() as db:
+                targets = await resource_service.resolve_subscription_targets(db, requested_uris, server_id=server_id, user_email=user_email, token_teams=token_teams)
+        narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted, resource_subscriptions=list(targets) or None)})
         _claim_listen_slot(user_email)
         try:
-            result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
-            with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
-                result = await get_listen_handler()(ctx, narrowed)
-            await _send_listen_teardown(ctx)
-            return result
+            async with get_resource_subscription_relay().watch([target for uri_targets in targets.values() for target in uri_targets]):
+                result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+                with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
+                    result = await get_listen_handler()(ctx, narrowed)
+                await _send_listen_teardown(ctx)
+                return result
         finally:
             _release_listen_slot(user_email)
     finally:
