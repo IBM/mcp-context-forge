@@ -193,7 +193,7 @@ class _PolicyUpstream:
                 raise RuntimeError(f"upstream rejected {method}")
         tool = MagicMock()
         tool.name = "listed_tool"
-        return {"tools": {}}, [tool], [], [], []
+        return {"tools": {}}, [tool], [], [], [], None
 
 
 def _gateway_service(upstream):
@@ -224,7 +224,7 @@ async def test_discovery_registration_uses_service_token_for_list_methods():
     upstream = _PolicyUpstream()
     svc = _gateway_service(upstream)
 
-    _caps, tools, _r, _p, _e = await svc._initialize_gateway("https://upstream/mcp", None, "streamablehttp", "oauth", dict(_DISCOVERY_CFG))
+    _caps, tools, _r, _p, _e, _i = await svc._initialize_gateway("https://upstream/mcp", None, "streamablehttp", "oauth", dict(_DISCOVERY_CFG))
 
     assert [t.name for t in tools] == ["listed_tool"]
     assert upstream.calls == [(m, _SERVICE_TOKEN) for m in _PolicyUpstream.LIST_METHODS]
@@ -305,7 +305,7 @@ async def test_discovery_manual_refresh_uses_service_token_not_cookie_jwt():
     gateway.ca_certificate = gateway.client_cert = gateway.client_key = None
 
     async def _refresh(**kwargs):
-        _c, tools, _r, _p, _e = await svc._initialize_gateway("https://upstream/mcp", None, "streamablehttp", "oauth", gateway.oauth_config, pre_auth_headers=kwargs["pre_auth_headers"])
+        _c, tools, _r, _p, _e, _i = await svc._initialize_gateway("https://upstream/mcp", None, "streamablehttp", "oauth", gateway.oauth_config, pre_auth_headers=kwargs["pre_auth_headers"])
         return {"success": True, "tools_added": len(tools), "tools_updated": 0, "tools_removed": 0, "resources_added": 0, "resources_updated": 0, "resources_removed": 0, "prompts_added": 0, "prompts_updated": 0, "prompts_removed": 0}
 
     svc._refresh_gateway_tools_resources_prompts = _refresh

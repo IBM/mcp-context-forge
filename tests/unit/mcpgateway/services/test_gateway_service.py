@@ -2212,7 +2212,7 @@ class TestGatewayService:
     async def test_update_gateway_token_exchange_description_only_keeps_tools(self, gateway_service, mock_gateway, test_db):
         """A description-only update of a token-exchange gateway keeps every discovered tool."""
         self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "token-exchange", "target_audience": "mcp", "token_url": "https://as.example.com/token"})
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         mock_gateway_read = MagicMock()
@@ -2227,7 +2227,7 @@ class TestGatewayService:
     async def test_update_gateway_convert_to_token_exchange_keeps_tools(self, gateway_service, mock_gateway, test_db):
         """Converting a client_credentials gateway to token-exchange keeps its discovered tools."""
         self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"})
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
         gateway_service._enforce_token_exchange_admin_only = AsyncMock()
         gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
@@ -2268,7 +2268,7 @@ class TestGatewayService:
         listed[0].name, listed[1].name = "te-tool-0", "te-tool-1"
         gateway_service._service_token_cache = GatewayServiceTokenCache()
         gateway_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600}, side_effect=token_side_effect)
-        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, listed, [], [], []))
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, listed, [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
         gateway_service._enforce_token_exchange_admin_only = AsyncMock()
         gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
@@ -2319,7 +2319,7 @@ class TestGatewayService:
         cache.invalidate = AsyncMock(wraps=cache.invalidate)
         self._token_exchange_update_setup(mock_gateway, test_db, dict(self._TE_WITH_DISCOVERY))
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None), Mock(), Mock(), Mock()])
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
         gateway_service._enforce_token_exchange_admin_only = AsyncMock()
         gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
@@ -2341,7 +2341,7 @@ class TestGatewayService:
         """The token-exchange guard does not stop pruning for other grants."""
         self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"})
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None), Mock(), Mock(), Mock()])
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         mock_gateway_read = MagicMock()
@@ -3119,7 +3119,7 @@ class TestGatewayService:
         test_db.refresh = Mock()
 
         gateway_service._notify_gateway_activated = AsyncMock()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
 
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read

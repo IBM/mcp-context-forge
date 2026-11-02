@@ -347,7 +347,7 @@ class TestInitializeGatewayDiscovery:
 
         tool = MagicMock()
         tool.name = "listed_tool"
-        return ({"tools": {}}, [tool], [], [], [])
+        return ({"tools": {}}, [tool], [], [], [], None)
 
     async def test_registration_with_discovery_connects_with_discovery_token(self):
         # Standard
@@ -355,7 +355,7 @@ class TestInitializeGatewayDiscovery:
 
         service = _discovery_service()
         service.connect_to_streamablehttp_server = AsyncMock(return_value=self._connect_result())
-        _caps, tools, _r, _p, _e = await service._initialize_gateway("http://upstream.test/mcp", None, "streamablehttp", "oauth", dict(_WITH_DISCOVERY))
+        _caps, tools, _r, _p, _e, _i = await service._initialize_gateway("http://upstream.test/mcp", None, "streamablehttp", "oauth", dict(_WITH_DISCOVERY))
         assert [t.name for t in tools] == ["listed_tool"]
         assert service.connect_to_streamablehttp_server.call_args.args[1] == {"Authorization": "Bearer svc-tok"}
         service.oauth_manager.token_exchange.assert_not_awaited()
@@ -377,7 +377,7 @@ class TestInitializeGatewayDiscovery:
 
         service = _discovery_service()
         service.connect_to_streamablehttp_server = AsyncMock()
-        assert await service._initialize_gateway("http://upstream.test/mcp", None, "streamablehttp", "oauth", _te_config()) == ({}, [], [], [], [])
+        assert await service._initialize_gateway("http://upstream.test/mcp", None, "streamablehttp", "oauth", _te_config()) == ({}, [], [], [], [], None)
         service.connect_to_streamablehttp_server.assert_not_awaited()
         service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
 

@@ -8389,7 +8389,7 @@ class TestTokenExchangeAdminFormDenyPaths:
         db_gateway.prompts = []
         mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=db_gateway)))
         service = GatewayService()
-        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [])))
+        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [], None)))
         monkeypatch.setattr("mcpgateway.admin.gateway_service", service)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock(verify_team_for_user=AsyncMock(return_value="team-1")))
         with (
