@@ -1188,6 +1188,7 @@ async def test_require_admin_auth_header_overrides_cookie(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
     subjects = {"header-tok": "admin@example.com", "cookie-tok": "user@example.com"}
+    monkeypatch.setattr(vc, "_enforce_revocation_and_active_user", AsyncMock())
     monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=lambda token, *_a, **_k: {"sub": subjects[token]}))
 
     mock_request = Mock(spec=Request)
@@ -1222,6 +1223,7 @@ async def test_require_admin_auth_non_admin_header_with_admin_cookie_denied(monk
 
     monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
     subjects = {"header-tok": "user@example.com", "cookie-tok": "admin@example.com"}
+    monkeypatch.setattr(vc, "_enforce_revocation_and_active_user", AsyncMock())
     monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=lambda token, *_a, **_k: {"sub": subjects[token]}))
 
     mock_request = Mock(spec=Request)
