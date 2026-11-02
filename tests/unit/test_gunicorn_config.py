@@ -227,11 +227,11 @@ class TestOnStartingHook:
 
         mock_server = _make_fake_server()
         mock_cfg = MagicMock()
-        mock_cfg.ssl_version = "PROTOCOL_TLSv1_2"
+        mock_cfg.ssl_version = "PROTOCOL_TLS"
         mock_server.cfg = mock_cfg
 
         cfg_module.on_starting(mock_server)
-        mock_cfg.set.assert_called_once_with("ssl_version", ssl.PROTOCOL_TLSv1_2)
+        mock_cfg.set.assert_called_once_with("ssl_version", ssl.PROTOCOL_TLS)
 
     def test_on_starting_unrecognized_ssl_version_logs_warning_and_does_not_crash(self, monkeypatch):
         """Test that unrecognized string ssl_version logs a warning, does not set, and does not crash."""

@@ -119,10 +119,9 @@ def _force_minimal_main_app_features() -> None:
     # Defensive: if any import above already populated the settings cache,
     # clear it so subsequent reads reflect the values we just set.
     try:
-        # First-Party
-        from mcpgateway.config import get_settings  # noqa: E402  # local import - conftest bootstrap
-
-        get_settings.cache_clear()
+        config_module = sys.modules.get("mcpgateway.config")
+        if config_module is not None:
+            config_module.get_settings.cache_clear()
     except Exception:  # noqa: BLE001 - best-effort during bootstrap
         pass
 
@@ -134,14 +133,29 @@ def _force_minimal_main_app_features() -> None:
 
 _force_minimal_main_app_features()
 
-# First-Party
-import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
-from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
-
 # Local
 
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
+
+
+_INITIAL_STATE_FILES = (
+    "tests/unit/mcpgateway/transports/test_streamablehttp_transport.py",
+    "tests/unit/mcpgateway/utils/test_verify_credentials.py",
+    "tests/unit/mcpgateway/routers/test_oauth_router.py",
+    "tests/unit/mcpgateway/routers/test_search_router.py",
+)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Keep files ordered and run initial-state tests before other files on their worker."""
+    priority = {path: index for index, path in enumerate(_INITIAL_STATE_FILES)}
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        group = "initial-state" if path in priority else path
+        item.add_marker(pytest.mark.xdist_group(group))
+    items.sort(key=lambda item: (item.get_closest_marker("serial") is not None, priority.get(item.nodeid.split("::", 1)[0], len(priority))))
 
 
 def pytest_addoption(parser):
@@ -189,6 +203,9 @@ def test_db_url():
 @pytest.fixture(scope="session")
 def test_engine(test_db_url):
     """Create a SQLAlchemy engine for testing."""
+    # First-Party
+    import mcpgateway.db as db_mod
+
     if test_db_url.startswith("sqlite"):
         engine = create_engine(
             test_db_url,
@@ -222,6 +239,9 @@ def test_db(test_engine):
 @pytest.fixture
 def test_settings():
     """Create test settings with in-memory database."""
+    # First-Party
+    from mcpgateway.config import Settings
+
     return Settings(
         database_url="sqlite:///:memory:",
         basic_auth_user="testuser",
@@ -244,6 +264,7 @@ def app():
 
     # 2) patch settings
     # First-Party
+    import mcpgateway.db as db_mod
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
@@ -322,6 +343,7 @@ def app_with_temp_db():
 
     # 2) patch settings
     # First-Party
+    import mcpgateway.db as db_mod
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
@@ -496,7 +518,8 @@ def pytest_sessionfinish(session, exitstatus):
     # Dispose the module-level engine to close all SQLite connections
     # This prevents ResourceWarning about unclosed database connections
     try:
-        if hasattr(db_mod, "engine") and db_mod.engine is not None:
+        db_mod = sys.modules.get("mcpgateway.db")
+        if db_mod is not None and getattr(db_mod, "engine", None) is not None:
             db_mod.engine.dispose()
     except Exception:
         pass  # Ignore errors during cleanup
