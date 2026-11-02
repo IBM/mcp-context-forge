@@ -199,17 +199,23 @@ streams do. The client treats the close as a signal to reconnect.
 
 **Per-resource subscriptions.** A modern client can name resource URIs in
 `resourceSubscriptions`. The URIs need `resources.read`. The ack lists only
-URIs the caller can see that come from an enabled upstream server reachable by
-a standing stream: not SSE and not OAuth. On `/servers/{id}/mcp` the resource
-must also belong to that virtual server. Unknown and hidden URIs drop from the
-ack without an error. One request considers at most 64 distinct URIs.
+URIs the caller can see that come from an enabled upstream server that a
+standing stream reaches with its stored headers alone: not SSE, not OAuth, not
+query-parameter auth, and no private CA or mTLS client certificate. On
+`/servers/{id}/mcp` the resource must also belong to that virtual server.
+Unknown and hidden URIs drop from the ack without an error. One request
+considers at most 64 distinct URIs.
 
 While the stream is open, the worker that holds it keeps one upstream
 `subscriptions/listen` per `(server, URI)`, shared across streams. An upstream
 `notifications/resources/updated` reaches each subscribed stream as
 `notifications/resources/updated` with the URI, stamped with that stream's
-subscription ID. The relay needs no Redis, because the upstream stream lives on
-the same worker as the downstream stream. A pre-2026 upstream sends no updates.
+subscription ID. Two upstream servers can expose the same URI to different
+teams; a stream gets updates only from the upstream servers it was granted. The
+relay needs no Redis, because the upstream stream lives on the same worker as
+the downstream stream. Each worker holds at most 256 distinct upstream resource
+streams; a URI that would open one more drops from the ack. A pre-2026 upstream
+sends no updates, and its URIs drop from later acks for an hour.
 When an upstream stream drops, the relay reconnects with jittered backoff and
 sends one update, so clients read the resource again.
 

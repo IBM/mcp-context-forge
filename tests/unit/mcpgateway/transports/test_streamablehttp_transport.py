@@ -21376,6 +21376,7 @@ def _patch_listen_delegate(monkeypatch, delegate=None):
     """Replace the shared ListenHandler with a recording fake and return it."""
     delegate = delegate or AsyncMock(return_value=types.SubscriptionsListenResult())
     monkeypatch.setattr(tr, "get_listen_handler", lambda: delegate)
+    monkeypatch.setattr(tr, "_listen_handler_for", lambda _admitted: delegate)
     return delegate
 
 
@@ -21449,22 +21450,44 @@ def _patch_resource_targets(monkeypatch, targets):
         yield MagicMock()
 
     monkeypatch.setattr(tr, "get_db", fake_get_db)
-    watched = {"active": [], "released": []}
+    watched = {"active": [], "released": [], "admit": None}
 
     class FakeRelay:
         @asynccontextmanager
         async def watch(self, watch_targets):
-            watched["active"] = list(watch_targets)
+            admitted = [t for t in watch_targets if watched["admit"] is None or t in watched["admit"]]
+            watched["active"] = admitted
             try:
-                yield
+                yield admitted
             finally:
-                watched["released"] = list(watch_targets)
+                watched["released"] = admitted
 
     monkeypatch.setattr(tr, "get_resource_subscription_relay", FakeRelay)
     return resolver, watched
 
 
-_UPSTREAM_TARGET = SimpleNamespace(gateway_id="gw-1", url="http://up/mcp", uri="file:///a")
+def _upstream_target(gateway_id="gw-1", uri="file:///a"):
+    """Build an upstream target for listen tests."""
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+    return UpstreamResourceTarget(gateway_id=gateway_id, url=f"http://{gateway_id}/mcp", uri=uri)
+
+
+_UPSTREAM_TARGET = _upstream_target()
+
+
+async def test_listen_acks_only_uris_the_relay_admits(monkeypatch, listen_requires_auth):
+    """A URI whose upstream the relay does not admit (watch cap, legacy upstream) is dropped from the ack."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    other = _upstream_target(uri="file:///b")
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET], "file:///b": [other]})
+    watched["admit"] = [other]
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a", "file:///b"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(resource_subscriptions=["file:///b"])
 
 
 async def test_listen_acks_visible_resource_subscriptions(monkeypatch, listen_requires_auth):
@@ -22008,15 +22031,36 @@ async def test_listen_over_modern_wire_delivers_resource_updated_with_subscripti
 
     # First-Party
     from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceUpdated  # pylint: disable=import-outside-toplevel
 
     _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
     _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
     async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
         async with modern_client.listen(resource_subscriptions=["file:///a", "file:///hidden"]) as sub:
             assert sub.honored.model_dump(by_alias=True, exclude_none=True) == {"resourceSubscriptions": ["file:///a"]}
-            await get_listen_bus().publish(ResourceUpdated(uri="file:///other"))
-            await get_listen_bus().publish(ResourceUpdated(uri="file:///a"))
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///other", gateway_id="gw-1"))
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-1"))
             event = await asyncio.wait_for(anext(sub), timeout=5)
 
     # The SDK client routes a frame to ``sub`` only by its subscription id stamp, so receiving it proves the stamp.
     assert event == ResourceUpdated(uri="file:///a")
+
+
+async def test_listen_over_modern_wire_ignores_same_uri_from_another_gateway(monkeypatch, listen_requires_auth):
+    """Two upstreams can share a URI across teams: a stream gets updates only from the upstream it was granted."""
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceUpdated  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(resource_subscriptions=["file:///a"]) as sub:
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-other"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(anext(sub), timeout=0.3)
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-1"))
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    assert event.uri == "file:///a"

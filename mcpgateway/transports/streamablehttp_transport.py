@@ -54,6 +54,7 @@ import jwt
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.subscriptions import ListenHandler
 from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
 from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
@@ -105,7 +106,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
-from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay, scoped_listen_bus
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -4189,19 +4190,40 @@ async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListe
         if uris_permitted:
             async with get_db() as db:
                 targets = await resource_service.resolve_subscription_targets(db, requested_uris, server_id=server_id, user_email=user_email, token_teams=token_teams)
-        narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted, resource_subscriptions=list(targets) or None)})
         _claim_listen_slot(user_email)
         try:
-            async with get_resource_subscription_relay().watch([target for uri_targets in targets.values() for target in uri_targets]):
+            async with get_resource_subscription_relay().watch([target for uri_targets in targets.values() for target in uri_targets]) as admitted:
+                admitted_set = set(admitted)
+                honored_uris = [uri for uri, uri_targets in targets.items() if admitted_set.intersection(uri_targets)]
+                narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted, resource_subscriptions=honored_uris or None)})
+                handler = _listen_handler_for(admitted)
                 result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
                 with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
-                    result = await get_listen_handler()(ctx, narrowed)
+                    result = await handler(ctx, narrowed)
                 await _send_listen_teardown(ctx)
                 return result
         finally:
             _release_listen_slot(user_email)
     finally:
         _v2_request_ctx.reset(token)
+
+
+def _listen_handler_for(admitted: List[Any]) -> Any:
+    """Return the ``ListenHandler`` that serves one stream.
+
+    Two upstream servers can expose one URI to different teams. A stream that watches
+    upstream resources therefore gets its own handler over a bus scoped to its targets.
+    Other streams share the process-wide handler.
+
+    Args:
+        admitted: Upstream resource targets the stream watches.
+
+    Returns:
+        Any: A ``ListenHandler`` to delegate the stream to.
+    """
+    if admitted:
+        return ListenHandler(scoped_listen_bus(admitted), max_subscriptions=1)
+    return get_listen_handler()
 
 
 LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS: float = 5.0

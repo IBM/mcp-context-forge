@@ -110,11 +110,14 @@ async def test_uri_outside_virtual_server_is_dropped(db):
         ({"auth_type": "oauth"}, {}),
         ({"enabled": False}, {}),
         ({}, {"enabled": False}),
+        ({"auth_type": "query_param"}, {}),
+        ({"ca_certificate": "-----BEGIN CERTIFICATE-----"}, {}),
+        ({"client_cert": "-----BEGIN CERTIFICATE-----"}, {}),
     ],
-    ids=["sse-gateway", "oauth-gateway", "disabled-gateway", "disabled-resource"],
+    ids=["sse-gateway", "oauth-gateway", "disabled-gateway", "disabled-resource", "query-param-auth", "private-ca", "mtls"],
 )
 async def test_unwatchable_resources_are_dropped(db, gateway_overrides, resource_overrides):
-    """SSE and OAuth upstreams, disabled gateways, and disabled resources are not honored."""
+    """Upstreams a standing stream cannot reach with stored headers alone, disabled gateways, and disabled resources are not honored."""
     _resource(db, "test://skip", _gateway(db, **gateway_overrides), **resource_overrides)
 
     assert await _resolve(db, ["test://skip"]) == {}
