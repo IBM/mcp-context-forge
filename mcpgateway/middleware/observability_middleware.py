@@ -11,7 +11,7 @@ providing comprehensive visibility into all gateway operations.
 Session Management (Issue #3883):
     This middleware reuses one observability session, separate from request.state.db.
     Parent records commit before request processing so independent child writers can see them.
-    Completion updates share a final commit. Each commit releases its database connection.
+    Span and trace completion commit independently. Each commit releases its database connection.
 
     This separation ensures observability data persists even when main request transactions
     fail, providing visibility into partial failures. SQL query instrumentation is handled
@@ -30,6 +30,7 @@ from typing import Callable, Optional
 
 # Third-Party
 from cpex.framework.observability import current_trace_id as plugins_trace_id
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -43,6 +44,18 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.trace_redaction import sanitize_trace_text
 
 logger = logging.getLogger(__name__)
+
+
+def _rollback_observability_session(session: Session) -> None:
+    """Recover a shared session without interrupting the application request.
+
+    Args:
+        session: Observability session with a failed operation.
+    """
+    try:
+        session.rollback()
+    except Exception as error:
+        logger.warning("Failed to roll back observability session: %s", error)
 
 
 def sanitize_header_for_storage(value: Optional[str], max_length: int = 500) -> str:
@@ -90,7 +103,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     MCPGATEWAY_OBSERVABILITY_ENABLED environment variable.
     """
 
-    def __init__(self, app, enabled: bool = None, service: Optional[ObservabilityService] = None):
+    def __init__(self, app, enabled: Optional[bool] = None, service: Optional[ObservabilityService] = None):
         """Initialize the observability middleware.
 
         Args:
@@ -129,7 +142,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Extract request context
         http_method = request.method
-        http_url = sanitize_header_for_storage(str(request.url), max_length=2000)
+        http_url = sanitize_header_for_storage(sanitize_trace_text(str(request.url)), max_length=2000)
         user_email = None
         ip_address = request.client.host if request.client else None
         user_agent = sanitize_header_for_storage(request.headers.get("user-agent"), max_length=500)
@@ -230,8 +243,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if obs_db is not None:
                 try:
                     obs_db.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    logger.debug("Failed to close observability session: %s", close_error)
             return await call_next(request)
 
         # Process request (trace is set up at this point)
@@ -250,10 +263,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                                 "http.status_code": status_code,
                                 "http.response_size": response.headers.get("content-length"),
                             },
-                            commit=False,
+                            commit=True,
                             obs_db=obs_db,
                         )
                     except Exception as end_span_error:
+                        _rollback_observability_session(obs_db)
                         logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
                 # End trace (reuses the observability session)
@@ -286,7 +300,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                                 "exception.type": type(e).__name__,
                                 "exception.message": sanitized_error,
                             },
-                            commit=False,
+                            commit=True,
                             obs_db=obs_db,
                         )
 
@@ -298,10 +312,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             message=sanitized_error,
                             exception_type=type(e).__name__,
                             exception_message=sanitized_error,
-                            exception_stacktrace=traceback.format_exc(),
+                            exception_stacktrace=sanitize_trace_text(traceback.format_exc()),
                             obs_db=obs_db,
                         )
                     except Exception as log_error:
+                        _rollback_observability_session(obs_db)
                         logger.warning(f"Failed to log exception in span: {log_error}")
 
                 # End trace with error (reuses the observability session)

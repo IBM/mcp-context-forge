@@ -7,7 +7,7 @@ Unit tests for observability middleware.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -155,10 +155,6 @@ async def test_dispatch_exception_during_request(mock_request):
         mock_end_trace.assert_called()
 
 
-# Tests removed - obsolete after #3883
-# Middleware no longer creates or manages database sessions.
-
-
 @pytest.mark.asyncio
 async def test_dispatch_trace_setup_cleanup_close_failure_logs_debug(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
@@ -223,6 +219,7 @@ async def test_dispatch_end_trace_failure_logs_warning(mock_request, mock_call_n
     ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
+        mock_warning.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -250,9 +247,39 @@ async def test_dispatch_trace_setup_failure_with_session_close_failure(mock_requ
         # Verify warning was logged for trace setup failure
         mock_warning.assert_called_once()
         assert "Failed to setup observability trace" in str(mock_warning.call_args)
-        # Session close failure should be silently caught (lines 213-214)
+        # Session cleanup must preserve the application response.
         mock_session.close.assert_called_once()
         mock_warning.assert_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True], ids=["response", "exception"])
+async def test_dispatch_rollback_failure_preserves_application_result(mock_request: Request, fail: bool) -> None:
+    """Preserve application results when span recording and rollback both fail."""
+    service = MagicMock(spec=ObservabilityService)
+    service.start_trace.return_value = "trace123"
+    service.start_span.return_value = "span123"
+    service.end_span.side_effect = RuntimeError("span unavailable")
+    session = MagicMock()
+    session.rollback.side_effect = RuntimeError("rollback unavailable")
+    middleware = ObservabilityMiddleware(None, enabled=True, service=service)
+
+    async def handler(_request: Request) -> Response:
+        """Return the application result independently of observability."""
+        if fail:
+            raise ValueError("handler failure")
+        return Response("OK")
+
+    with patch("mcpgateway.db.SessionLocal", return_value=session), patch("mcpgateway.middleware.observability_middleware.logger.warning") as warning:
+        if fail:
+            with pytest.raises(ValueError, match="handler failure"):
+                await middleware.dispatch(mock_request, handler)
+        else:
+            assert (await middleware.dispatch(mock_request, handler)).status_code == 200
+    session.rollback.assert_called_once()
+    session.close.assert_called_once()
+    service.end_trace.assert_called_once()
+    assert any("Failed to roll back observability session" in str(call) for call in warning.call_args_list)
 
 
 @pytest.mark.asyncio

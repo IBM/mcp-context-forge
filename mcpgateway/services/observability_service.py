@@ -40,7 +40,7 @@ Transaction Semantics:
     - Context managers (trace_span, trace_tool_invocation, trace_a2a_request) create
       a single independent session for the entire span lifecycle
     - Middleware commits parent records before request processing for independent child writers.
-    - Middleware batches completion updates in the reused session.
+    - Middleware commits span and trace completion independently in the reused session.
 
 Examples:
     >>> from mcpgateway.services.observability_service import ObservabilityService  # doctest: +SKIP
@@ -314,7 +314,7 @@ class ObservabilityService:
             attributes: Additional trace attributes
             resource_attributes: Resource attributes (service name, version, etc.)
             commit: Whether to commit immediately (default True).
-                Set to False when called from middleware for session reuse.
+                Deferred inserts require a caller-owned session and an explicit commit.
             obs_db: Optional observability session for session reuse.
                 If not provided, creates a new independent session.
 
@@ -365,7 +365,7 @@ class ObservabilityService:
             obs_db.add(trace)
             if commit:
                 self._safe_commit(obs_db, "start_trace")
-            logger.debug(f"Started trace {trace_id}: {name}")
+            logger.debug("Started trace %s: %s", trace_id, name)
             return trace_id
         finally:
             if session_owned and obs_db is not None:
@@ -396,7 +396,7 @@ class ObservabilityService:
             http_status_code: HTTP response status code
             attributes: Additional attributes to merge
             commit: Whether to commit immediately (default True).
-                Set to False when called from middleware for session reuse.
+                Deferred updates require a caller-owned session and an explicit commit.
             obs_db: Optional observability session for session reuse.
                 If not provided, creates a new independent session.
 
@@ -437,7 +437,7 @@ class ObservabilityService:
 
             if commit:
                 self._safe_commit(obs_db, "end_trace")
-            logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
+            logger.debug("Ended trace %s: %s (%.2fms)", trace_id, status, duration_ms)
         finally:
             if session_owned and obs_db is not None:
                 try:

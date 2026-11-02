@@ -199,7 +199,9 @@ A session does not reserve a connection for its entire lifetime.
 
 The middleware commits the parent trace and HTTP span before calling the request handler.
 Independent child writers can then see both records.
-Completion updates share a final transaction. Exception events commit the span update before trace completion.
+Span completion, exception events, and trace completion commit independently.
+A trace completion failure does not discard a completed HTTP span.
+Caught span failures trigger rollback before trace completion.
 The observability session stays separate from the application's transaction.
 
 Run the real-database comparison with:
@@ -215,11 +217,14 @@ Measurements from this workload are:
 | Lifecycle | Sessions created | Connection checkouts | Peak connections in use |
 |-----------|-----------------:|---------------------:|------------------------:|
 | Independent sessions, success | 32 | 32 | 2 |
-| Reused session, success | 8 | 24 | 2 |
+| Reused session, success | 8 | 32 | 2 |
 | Independent sessions, exception | 40 | 48 | 2 |
-| Reused session, exception | 8 | 32 | 2 |
+| Reused session, exception | 8 | 40 | 2 |
 
 All requests complete without pool timeouts. All traces and spans persist with completed statuses.
+Session allocations fall by 75% for success and 80% for exceptions.
+Success checkouts stay unchanged; exception checkouts fall by approximately 17%.
+The pool caps peak connections at two in both cases.
 These counts measure lifecycle allocation and connection checkouts. They do not establish production throughput
 or a higher concurrent-request capacity. Size the pool from measured concurrent connection use in your deployment.
 

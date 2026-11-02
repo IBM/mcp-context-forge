@@ -245,7 +245,7 @@ def test_concurrent_request_traces_persist(isolated_observability_gateway: httpx
             "traceparent": f"00-{trace_id}-{uuid.uuid4().hex[:16]}-01",
         }
         path = "/mcp/" if index % 2 == 0 else f"/servers/{uuid.uuid4()}/mcp"
-        response = client.post(path, headers=headers, json=_build_initialize(index + 1))
+        response = client.post(path, headers=headers, params={"password": "trace-sensitive-value", "limit": "5"}, json=_build_initialize(index + 1))  # pragma: allowlist secret
         expected = 200 if index % 2 == 0 else 404
         assert response.status_code == expected, response.text
         return trace_id, expected
@@ -260,6 +260,8 @@ def test_concurrent_request_traces_persist(isolated_observability_gateway: httpx
         assert trace["status"] == expected_status
         assert trace["http_status_code"] == status_code
         assert trace["end_time"] is not None
+        assert "trace-sensitive-value" not in response.text
+        assert "limit=5" in trace["http_url"]
         http_span = next(span for span in trace["spans"] if span["name"] == "http.request")
         assert http_span["status"] == expected_status
         assert http_span["end_time"] is not None

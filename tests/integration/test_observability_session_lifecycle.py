@@ -201,7 +201,7 @@ def test_concurrent_lifecycle_pool_counts(database: Database, reuse: bool, fail:
         list(executor.map(run_request, range(8)))
     expected_sessions = 8 if reuse else 8 * (5 if fail else 4)
     assert counts["sessions"] == counts["closed"] == expected_sessions
-    expected_checkouts = 8 * ((4 if fail else 3) if reuse else (6 if fail else 4))
+    expected_checkouts = 8 * ((5 if fail else 4) if reuse else (6 if fail else 4))
     assert counts["checkouts"] == expected_checkouts
     assert counts["active"] == 0
     assert counts["peak"] <= 2
@@ -230,3 +230,107 @@ async def test_session_creation_failure_preserves_response(monkeypatch: pytest.M
         return Response("OK")
 
     assert (await middleware.dispatch(request, handler)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True], ids=["response", "exception"])
+@pytest.mark.parametrize("missing", [False, True], ids=["trace-error", "trace-missing"])
+async def test_span_completion_survives_trace_failure(database: Database, monkeypatch: pytest.MonkeyPatch, fail: bool, missing: bool) -> None:
+    """Keep completed spans when trace completion raises or finds no record."""
+    engine, _factory, counts = database
+    service = ObservabilityService()
+    end_trace = service.end_trace
+
+    def unavailable_trace(trace_id: str, **kwargs: Any) -> None:
+        """Simulate missing trace records or a trace persistence outage."""
+        if missing:
+            end_trace(f"missing-{trace_id}", **kwargs)
+        else:
+            raise RuntimeError("trace unavailable")
+
+    monkeypatch.setattr(service, "end_trace", unavailable_trace)
+    middleware = ObservabilityMiddleware(None, enabled=True, service=service)
+    request = Request({"type": "http", "method": "GET", "path": "/rpc", "headers": [], "query_string": b""})
+
+    async def handler(_request: Request) -> Response:
+        """Preserve the response or original handler exception."""
+        if fail:
+            raise ValueError("handler failure")
+        return Response("OK")
+
+    if fail:
+        with pytest.raises(ValueError, match="handler failure"):
+            await middleware.dispatch(request, handler)
+    else:
+        assert (await middleware.dispatch(request, handler)).status_code == 200
+    assert counts["active"] == 0
+    with Session(engine) as reader:
+        span = reader.get(db.ObservabilitySpan, request.state.span_id)
+        assert span is not None
+        assert span.end_time is not None
+        assert span.status == ("error" if fail else "ok")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True], ids=["response", "exception"])
+async def test_trace_completion_recovers_from_span_flush_failure(database: Database, monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
+    """Roll back failed span flushes before completing the trace."""
+    engine, _factory, counts = database
+    service = ObservabilityService()
+    end_span = service.end_span
+
+    def invalid_span(span_id: str, **kwargs: Any) -> None:
+        """Trigger a real constraint failure during the span flush."""
+        session = kwargs["obs_db"]
+        session.add(db.ObservabilitySpan(span_id="invalid-span", trace_id=request.state.trace_id, name=None))
+        end_span(span_id, **kwargs)
+
+    monkeypatch.setattr(service, "end_span", invalid_span)
+    middleware = ObservabilityMiddleware(None, enabled=True, service=service)
+    request = Request({"type": "http", "method": "GET", "path": "/rpc", "headers": [], "query_string": b""})
+
+    async def handler(_request: Request) -> Response:
+        """Return a response or raise the original application error."""
+        if fail:
+            raise ValueError("handler failure")
+        return Response("OK")
+
+    if fail:
+        with pytest.raises(ValueError, match="handler failure"):
+            await middleware.dispatch(request, handler)
+    else:
+        assert (await middleware.dispatch(request, handler)).status_code == 200
+    assert counts["active"] == 0
+    with Session(engine) as reader:
+        trace = reader.get(db.ObservabilityTrace, request.state.trace_id)
+        assert trace is not None
+        assert trace.end_time is not None
+        assert trace.status == ("error" if fail else "ok")
+        assert reader.get(db.ObservabilitySpan, "invalid-span") is None
+
+
+@pytest.mark.asyncio
+async def test_middleware_redacts_stored_credentials(database: Database) -> None:
+    """Exclude query and exception credentials from persisted HTTP telemetry."""
+    engine, _factory, _counts = database
+    middleware = ObservabilityMiddleware(None, enabled=True)
+    request = Request({"type": "http", "method": "GET", "path": "/rpc", "headers": [], "query_string": b"access_token=query-sensitive-value&limit=5"})
+
+    async def handler(_request: Request) -> Response:
+        """Raise an exception with a sensitive field value."""
+        raise ValueError("password=exception-sensitive-value")
+
+    with pytest.raises(ValueError, match="exception-sensitive-value"):
+        await middleware.dispatch(request, handler)
+    with Session(engine) as reader:
+        trace = reader.get(db.ObservabilityTrace, request.state.trace_id)
+        span = reader.get(db.ObservabilitySpan, request.state.span_id)
+        exception = reader.scalars(select(db.ObservabilityEvent).where(db.ObservabilityEvent.span_id == request.state.span_id)).one()
+        assert trace is not None
+        assert span is not None
+        for value in (trace.http_url, str(trace.attributes), str(span.attributes)):
+            assert "query-sensitive-value" not in value
+        assert "limit=5" in trace.http_url
+        for value in (trace.status_message, span.status_message, exception.message, exception.exception_message, exception.exception_stacktrace):
+            assert "exception-sensitive-value" not in value
+        assert "ValueError" in exception.exception_stacktrace
