@@ -33,6 +33,7 @@ from typing import Callable, Literal
 import httpx2
 from mcp import Client
 from mcp.client.sse import sse_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 # First-Party
 from mcpgateway.config import settings
@@ -87,12 +88,28 @@ async def mcp_proxy_client(
 
     if transport == "sse":
         # sse_client owns its httpx client lifecycle internally.
-        if httpx_client_factory is not None:
-            sse_acm = sse_client(url, headers=headers, timeout=timeout, httpx_client_factory=httpx_client_factory)
-        else:
-            sse_acm = sse_client(url, headers=headers, timeout=timeout)
-        async with Client(sse_acm, mode=resolved_mode) as client:
-            yield client
+        error_hook = ErrorResponseHook()
+
+        def _wrapped_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            if httpx_client_factory is not None:
+                client = httpx_client_factory(headers=headers, timeout=timeout, auth=auth)
+            else:
+                client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
+            return error_hook.install(client)
+
+        sse_acm = sse_client(url, headers=headers, timeout=timeout, httpx_client_factory=_wrapped_factory)
+        try:
+            async with Client(sse_acm, mode=resolved_mode) as client:
+                yield client
+        except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
+            transport_error = error_hook.to_transport_error(exc)
+            if transport_error is None:
+                raise
+            raise transport_error from exc
         return
 
     if httpx_client_factory is not None:

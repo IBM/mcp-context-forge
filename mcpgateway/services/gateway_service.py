@@ -245,6 +245,10 @@ def _safe_connection_error_text(exc: BaseException) -> str:
         'An unexpected error occurred'
         >>> _safe_connection_error_text(UnicodeEncodeError("ascii", "tok\u2060en", 3, 4, "ordinal not in range(128)"))
         'contains a character that is not valid ASCII (position 3)'
+        >>> _safe_connection_error_text(httpx.HTTPStatusError("Redirect", request=httpx.Request("GET", "http://example.com"), response=httpx.Response(307, headers={"Location": "http://example.com/mcp/"})))
+        'Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target.'
+        >>> _safe_connection_error_text(httpx.HTTPStatusError("Redirect", request=httpx.Request("GET", "http://example.com"), response=httpx.Response(307)))
+        'Upstream redirected with HTTP 307; update the gateway URL to the redirect target.'
     """
     if isinstance(exc, (UnicodeEncodeError, UnicodeDecodeError)):
         return f"contains a character that is not valid {exc.encoding.upper()} (position {exc.start})"
@@ -264,6 +268,12 @@ def _safe_connection_error_text(exc: BaseException) -> str:
     if isinstance(exc, TimeoutError):
         return "connection timed out"
     if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        if 300 <= exc.response.status_code < 400:
+            location = exc.response.headers.get("Location")
+            if location:
+                sanitized_loc = sanitize_url_for_logging(location)
+                return f"Upstream redirected to {sanitized_loc}; update the gateway URL to the redirect target."
+            return f"Upstream redirected with HTTP {exc.response.status_code}; update the gateway URL to the redirect target."
         return f"server responded with HTTP {exc.response.status_code}"
     return unexpected_error_detail(exc)
 
@@ -5508,6 +5518,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             timeout=timeout,
                             extensions=pinned_target.extensions,
                         ) as response:
+                            if 300 <= response.status_code < 400:
+                                location = response.headers.get("Location")
+                                sanitized_loc = sanitize_url_for_logging(location) if location else None
+                                loc_msg = f" to {sanitized_loc}" if sanitized_loc else f" with HTTP {response.status_code}"
+                                raise httpx.HTTPStatusError(
+                                    f"Upstream redirected{loc_msg}; update the gateway URL to the redirect target.",
+                                    request=response.request,
+                                    response=response,
+                                )
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
@@ -8520,8 +8539,15 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     Returns:
         Tuple of (failure_class, actionable error copy).
     """
-    if isinstance(root_cause, httpx.HTTPStatusError) and root_cause.response.status_code in (401, 403):
-        return "auth", _HANDSHAKE_AUTH_COPY
+    if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        if 300 <= root_cause.response.status_code < 400:
+            location = root_cause.response.headers.get("Location")
+            if location:
+                sanitized_loc = sanitize_url_for_logging(location)
+                return "transport", f"Upstream redirected to {sanitized_loc}; update the gateway URL to the redirect target."
+            return "transport", f"Upstream redirected with HTTP {root_cause.response.status_code}; update the gateway URL to the redirect target."
+        if root_cause.response.status_code in (401, 403):
+            return "auth", _HANDSHAKE_AUTH_COPY
     if isinstance(root_cause, (httpx.RequestError, OSError)):
         return "transport", _HANDSHAKE_TRANSPORT_COPY
     if isinstance(root_cause, MCPError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
@@ -8940,10 +8966,18 @@ async def test_gateway_connectivity(
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response: httpx.Response = await client.request(**request_kwargs)
         latency_ms = int((time.monotonic() - start_time) * 1000)
-        try:
-            response_body: Union[Dict[str, Any], str] = response.json()
-        except ValueError:
-            response_body = {"details": response.text}
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location")
+            if location:
+                sanitized_loc = sanitize_url_for_logging(location)
+                response_body = {"error": f"Upstream redirected to {sanitized_loc}; update the gateway URL to the redirect target."}
+            else:
+                response_body = {"error": f"Upstream redirected with HTTP {response.status_code}; update the gateway URL to the redirect target."}
+        else:
+            try:
+                response_body: Union[Dict[str, Any], str] = response.json()
+            except ValueError:
+                response_body = {"details": response.text}
 
         # Structured logging: Log successful gateway test
         structured_logger.log(
@@ -9213,6 +9247,13 @@ async def test_gateway_handshake(
                     except httpx.RequestError as e:
                         logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
                         return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
+
+                    if 300 <= response.status_code < 400:
+                        location = response.headers.get("Location")
+                        if location:
+                            sanitized_loc = sanitize_url_for_logging(location)
+                            return _failure("transport", f"Upstream redirected to {sanitized_loc}; update the gateway URL to the redirect target.")
+                        return _failure("transport", f"Upstream redirected with HTTP {response.status_code}; update the gateway URL to the redirect target.")
 
                     if response.status_code in (401, 403):
                         return _failure("auth", _HANDSHAKE_AUTH_COPY)
