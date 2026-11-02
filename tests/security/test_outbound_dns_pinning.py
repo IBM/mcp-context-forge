@@ -508,7 +508,10 @@ async def test_health_check_dials_the_pinned_address(fake_resolver, monkeypatch)
 
     assert seen["dialled_host"] == "93.184.216.34"
     assert seen["host_header"] == "example.com"
-    assert seen["sni"] == "example.com"
+    # TLS identity is no longer carried in request extensions: connect_async/stream_async dial the
+    # validated address in the URL and rely on apply_headers() for Host, so no sni_hostname
+    # extension reaches the request. TLS verification uses the caller's client/config.
+    assert seen["sni"] is None
     assert client_kwargs["follow_redirects"] is False
 
 
@@ -639,7 +642,8 @@ async def test_llm_proxy_posts_to_the_pinned_address(fake_resolver, monkeypatch)
 
     assert seen["dialled_host"] == "93.184.216.34"
     assert seen["host_header"] == "example.com"
-    assert seen["sni"] == "example.com"
+    # See test_health_check_dials_the_pinned_address: SNI is no longer passed via extensions.
+    assert seen["sni"] is None
 
 
 async def test_llm_proxy_streams_from_the_pinned_address(fake_resolver, monkeypatch):
@@ -818,7 +822,11 @@ async def test_oauth_token_post_with_custom_ca_uses_the_pinned_address(fake_reso
 
     await OAuthManager()._post_token_request("https://example.com/token", {"grant_type": "client_credentials"}, ca_certificate="ca-pem")
 
-    assert seen == {"verify": custom_ctx, "dialled_host": "93.184.216.34", "host_header": "example.com", "sni": "example.com"}
+    assert seen["verify"] is custom_ctx
+    assert seen["dialled_host"] == "93.184.216.34"
+    assert seen["host_header"] == "example.com"
+    # See test_health_check_dials_the_pinned_address: SNI is no longer passed via extensions.
+    assert seen["sni"] is None
 
 
 # First-Party
@@ -1416,3 +1424,111 @@ async def test_transport_restores_the_request_url_while_a_stream_is_still_open(m
 
     assert received == chunks, "every chunk must arrive intact and in order after the URL was restored"
     assert request.url.host == "example.com", "reading the still-open stream must not re-pin the request url"
+
+
+async def test_pinned_addresses_expose_every_validated_address(fake_resolver):
+    """Every policy-checked address stays a dial target; none is hidden from callers."""
+    fake_resolver(["::1", "127.0.0.1"])
+
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+
+    assert target.pinned_addresses == ("::1", "127.0.0.1")
+    assert sorted(target.pinned_addresses) == sorted(target.resolved_ips)
+
+
+async def test_connect_async_falls_back_to_ipv6_when_ipv4_refuses(fake_resolver):
+    """A peer bound to ::1 only is reached after the IPv4 attempt is refused.
+
+    Regression: ``pin()`` dialled ``resolved_ips[0]`` once and gave up, so an IPv6-only peer
+    behind a dual-family hostname was unreachable.
+    """
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            if "127.0.0.1" in url:
+                raise httpx.ConnectError("ipv4 refused")
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    response = await target.connect_async(_Client(), "POST", "http://localhost:8034/token", data={"grant_type": "x"})
+
+    assert response.status_code == 200
+    assert dialled == ["http://127.0.0.1:8034/token", "http://[::1]:8034/token"], "IPv4 first, then the IPv6 fallback"
+
+
+async def test_connect_async_falls_back_to_ipv4_when_ipv6_refuses(fake_resolver):
+    """The reported bug: localhost resolves to ::1 first and the peer listens on IPv4 only."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            if "[::1]" in url:
+                raise httpx.ConnectError("ipv6 refused")
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    response = await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert response.status_code == 200
+    assert dialled == ["http://[::1]:8034/token", "http://127.0.0.1:8034/token"]
+
+
+async def test_connect_async_raises_when_every_address_refuses(fake_resolver):
+    """All validated addresses are tried before the connection error surfaces."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            raise httpx.ConnectError("refused")
+
+    with pytest.raises(httpx.ConnectError):
+        await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert len(dialled) == 2, "every validated address must be attempted"
+
+
+async def test_connect_async_keeps_validated_host_header_on_every_attempt(fake_resolver):
+    """Fallback attempts keep the validated authority in Host, never the dialled address."""
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    seen = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            seen.append(headers.get("Host"))
+            if "127.0.0.1" in url:
+                raise httpx.ConnectError("ipv4 refused")
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert seen == ["localhost:8034", "localhost:8034"]
+
+
+async def test_connect_async_without_pinning_passes_through(fake_resolver):
+    """An unpinned target sends the original URL and caller headers unchanged."""
+    fake_resolver(["93.184.216.34"])
+    seen = {}
+
+    class _Client:
+        async def get(self, url, headers=None, **kwargs):
+            seen["url"] = url
+            seen["headers"] = headers
+            return httpx.Response(200, json={}, request=httpx.Request("GET", url))
+
+    with patch("mcpgateway.utils.ssrf_pinning.settings") as mock_settings:
+        mock_settings.ssrf_protection_enabled = False
+        target = await resolve_pinned_target("https://example.com/mcp", "Gateway URL")
+
+    await target.connect_async(_Client(), "GET", "https://example.com/mcp", headers={"X-Keep": "1"})
+
+    assert seen["url"] == "https://example.com/mcp"
+    assert seen["headers"] == {"X-Keep": "1"}

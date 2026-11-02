@@ -389,21 +389,19 @@ class OAuthManager:
         # explicitly, not assumed, so both branches below pass follow_redirects=False.
         try:
             pinned_target = await resolve_pinned_target(url, "OAuth token URL")
-            pinned_url = pinned_target.pin(url)
             pinned_headers = pinned_target.apply_headers(headers or {})
         except ValueError as exc:
             raise OAuthError(f"Token endpoint blocked by URL policy: {exc}") from exc
 
-        extensions = pinned_target.extensions
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+                return await pinned_target.connect_async(client, "POST", url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
         async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
+            return await pinned_target.connect_async(client, "POST", url, data=data, headers=pinned_headers, timeout=self.request_timeout)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "client_assertion"})

@@ -21,13 +21,15 @@ hostnames.
 """
 
 # Standard
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 import os
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 # Third-Party
+import httpx
 import httpx2
 
 # First-Party
@@ -154,8 +156,46 @@ class PinnedTarget:
         """
         return {"sni_hostname": self.hostname} if self.is_pinned else {}
 
+    @property
+    def pinned_addresses(self) -> Tuple[str, ...]:
+        """Return the validated addresses in the order they should be dialed.
+
+        Callers must try every address in turn: the outbound URL policy has already checked all
+        of them, and a peer that listens on only one address family refuses the others.
+
+        Returns:
+            Tuple[str, ...]: Validated addresses.
+        """
+        return self.resolved_ips
+
+    @staticmethod
+    def _dial(client: Any, method: str, url: str, **kwargs: Any) -> Any:
+        """Issue one request using the verb method for ``method``, as httpx callers already do.
+
+        Uses ``client.post`` / ``client.get`` so a caller's existing client stubs and
+        instrumentation keep working, and keeps ``client.request`` as the fallback for verbs
+        without a dedicated method.
+
+        Args:
+            client: httpx ``AsyncClient`` or a test double exposing the same verb methods.
+            method: HTTP method.
+            url: URL to dial.
+            **kwargs: Forwarded to the verb method.
+
+        Returns:
+            Awaitable response from the client.
+        """
+        verb = getattr(client, method.lower(), None) if method.lower() in {"get", "post", "put", "patch", "delete", "head"} else None
+        if verb is None:
+            return client.request(method, url, **kwargs)
+        return verb(url, **kwargs)
+
     def pin(self, url: str) -> str:
-        """Replace the network location of ``url`` with the first validated address.
+        """Replace the network location of ``url`` with a single validated address.
+
+        Deprecated: this dials only the first validated address, so a peer that listens on the
+        other address family is never reached. Use :meth:`connect_async` or :meth:`stream_async`
+        instead, which try every validated address.
 
         Args:
             url: URL addressed to the original hostname.
@@ -186,6 +226,103 @@ class PinnedTarget:
         pinned = {key: value for key, value in headers.items() if key.lower() != "host"}
         pinned["Host"] = self.original_authority
         return pinned
+
+    async def connect_async(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Send one request, trying every validated address until one answers.
+
+        The request keeps the validated hostname in its ``Host`` header, while each attempt dials
+        one validated address. An address that refuses the connection or times out is retried with
+        the next one, so a peer bound to only one address family is still reached.
+
+        Purpose-built clients stay with the caller: this uses the ``client`` it is given, so
+        custom SSL contexts and per-call timeouts keep working.
+
+        Args:
+            client: ``httpx.AsyncClient`` used for every attempt.
+            method: HTTP method.
+            url: URL addressed to the validated hostname, not to an address.
+            headers: Headers for the request. A ``Host`` entry is replaced with the validated
+                authority on pinned attempts.
+            **kwargs: Forwarded to the client verb method (json, data, timeout, follow_redirects...).
+
+        Returns:
+            httpx.Response: The first response received.
+
+        Raises:
+            httpx.ConnectError: If every validated address refuses the connection.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
+        if not self.is_pinned:
+            return await self._dial(client, method, url, headers=dict(headers or {}), **kwargs)
+
+        pinned_headers = self.apply_headers(headers or {})
+        last_error: Optional[Exception] = None
+        for address in self.pinned_addresses:
+            try:
+                return await self._dial(client, method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, **kwargs)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                logger.debug(
+                    "Pinned attempt failed for %s target; trying the next validated address (%s)",
+                    "an IPv6" if ":" in address else "an IPv4",
+                    type(exc).__name__,
+                )
+                last_error = exc
+        raise last_error if last_error else httpx.ConnectError(f"No validated address could be dialled: {method} {url}", request=None)
+
+    @asynccontextmanager
+    async def stream_async(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[httpx.Response]:
+        """Stream one request, trying every validated address until one answers.
+
+        Streaming counterpart of :meth:`connect_async`. Only the connection setup is retried: once
+        headers arrive the caller reads the body, so the context stays open for the whole response.
+
+        Args:
+            client: ``httpx.AsyncClient`` used for every attempt.
+            method: HTTP method.
+            url: URL addressed to the validated hostname, not to an address.
+            headers: Headers for the request. A ``Host`` entry is replaced with the validated
+                authority on pinned attempts.
+            **kwargs: Forwarded to ``client.stream``.
+
+        Yields:
+            httpx.Response: The first streaming response received.
+
+        Raises:
+            httpx.ConnectError: If every validated address refuses the connection.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
+        if not self.is_pinned:
+            async with client.stream(method, url, headers=dict(headers or {}), **kwargs) as response:
+                yield response
+            return
+
+        pinned_headers = self.apply_headers(headers or {})
+        last_error: Optional[Exception] = None
+        for address in self.pinned_addresses:
+            try:
+                async with client.stream(method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, **kwargs) as response:
+                    yield response
+                return
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                logger.debug("Pinned stream attempt failed; trying the next validated address (%s)", type(exc).__name__)
+                last_error = exc
+        raise last_error if last_error else httpx.ConnectError(f"No validated address could be dialled: {method} {url}", request=None)
 
     def client_kwargs(self, *, verify: Any, limits: Optional[httpx2.Limits] = None) -> Dict[str, Any]:
         """Return the ``httpx2.AsyncClient`` keyword arguments that apply this target's pinning.
