@@ -304,6 +304,7 @@ For user authentication and RBAC configuration, see [RBAC Configuration](../mana
 | `DATABASE_URL` | `sqlite:///./mcp.db` | Required when `CACHE_TYPE=database` |
 | `DCR_ENABLED` | `true` | Enable Dynamic Client Registration |
 | `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | `true` | Auto-register when issuer is set but client_id is missing |
+| `DCR_ALLOW_IMPLICIT_REGISTRATION_ON_AUTHORIZE` | `true` | Allow the authorize endpoint to trigger DCR; set `false` to require configured client credentials |
 | `DCR_DEFAULT_SCOPES` | `["mcp:read"]` | Default scopes for DCR |
 | `DCR_ALLOWED_ISSUERS` | `[]` | Allowlist of issuer URLs |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD` | `client_secret_basic` | Token endpoint auth method |

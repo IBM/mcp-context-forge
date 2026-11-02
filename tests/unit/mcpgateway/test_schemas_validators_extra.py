@@ -959,8 +959,11 @@ def test_password_team_token_and_grpc_validators(monkeypatch):
     assert TokenScopeRequest.validate_permissions([]) == []
     assert TokenScopeRequest.validate_permissions(["   ", "tools.read", "*"]) == ["tools.read", "*"]
     assert TokenScopeRequest.validate_permissions(["audit:read", "security:read"]) == ["audit:read", "security:read"]
+    assert TokenScopeRequest.validate_permissions(["admin.oauth_clients:create"]) == ["admin.oauth_clients:create"]
     with pytest.raises(ValueError, match="Invalid permission format"):
         TokenScopeRequest.validate_permissions(["audit:"])
+    with pytest.raises(ValueError, match="Invalid permission format"):
+        TokenScopeRequest.validate_permissions(["admin..oauth_clients:create"])
 
     with pytest.raises((ValidationError, ValueError)):
         GrpcServiceCreate(name="svc", target="localhost")

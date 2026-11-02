@@ -35,6 +35,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch as mock_patch
 
 # Third-Party
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
@@ -620,3 +621,81 @@ class TestWellKnownDisabledScenarios:
             assert response.json()["detail"] == "Not found"
         finally:
             settings.well_known_enabled = original_value
+
+
+class TestOAuthAuthorizeDcrAuthorization:
+    """Exercise implicit DCR authorization through the HTTP route."""
+
+    @pytest.mark.asyncio
+    async def test_read_only_session_cannot_trigger_dcr(self, client: AsyncClient, oauth_test_db, monkeypatch):
+        """A public gateway remains readable, but DCR is denied before provider registration."""
+        from mcpgateway.db import EmailUser, Gateway
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        gateway_id = "dcr-read-only-http"
+        original_oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        test_sessions = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=oauth_test_db)
+        with test_sessions() as db:
+            db.add(
+                EmailUser(
+                    email="read-only-dcr@example.com",
+                    password_hash="not-a-real-hash",
+                    full_name="Read Only User",
+                    is_admin=False,
+                    is_active=True,
+                )
+            )
+            db.add(
+                Gateway(
+                    id=gateway_id,
+                    name="DCR read-only test gateway",
+                    slug=gateway_id,
+                    url="https://mcp.example.com",
+                    capabilities={},
+                    oauth_config=original_oauth_config,
+                    auth_type=None,
+                    team_id=None,
+                    visibility="public",
+                )
+            )
+            db.commit()
+
+        async def read_only_user() -> dict[str, object]:
+            return {
+                "email": "read-only-dcr@example.com",
+                "is_admin": False,
+                "token_use": "session",
+                "token_teams": [],
+                "token_scopes": [],
+            }
+
+        previous_override = app.dependency_overrides.get(get_current_user_with_permissions)
+        app.dependency_overrides[get_current_user_with_permissions] = read_only_user
+        monkeypatch.setattr("mcpgateway.routers.oauth_router.settings.dcr_enabled", True)
+        monkeypatch.setattr("mcpgateway.routers.oauth_router.settings.dcr_auto_register_on_missing_credentials", True)
+        monkeypatch.setattr("mcpgateway.routers.oauth_router.settings.dcr_allow_implicit_registration_on_authorize", True)
+
+        try:
+            with (
+                mock_patch("mcpgateway.routers.oauth_router.DcrService") as dcr_service,
+                mock_patch("mcpgateway.routers.oauth_router._audit_oauth_dcr_outcome"),
+            ):
+                response = await client.get(f"/oauth/authorize/{gateway_id}")
+
+            assert response.status_code == 403
+            dcr_service.assert_not_called()
+        finally:
+            if previous_override is None:
+                app.dependency_overrides.pop(get_current_user_with_permissions, None)
+            else:
+                app.dependency_overrides[get_current_user_with_permissions] = previous_override
+
+        with test_sessions() as db:
+            persisted_gateway = db.get(Gateway, gateway_id)
+            assert persisted_gateway is not None
+            assert persisted_gateway.oauth_config == original_oauth_config
+            assert persisted_gateway.auth_type is None
