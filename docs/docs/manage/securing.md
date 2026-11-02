@@ -705,8 +705,10 @@ written and again when it is invoked, and — on Linux — they execute in a for
 worker whose environment has been cleared, under `JQ_FILTER_TIMEOUT_SECONDS`.
 
 Filters that reference `env`, `$ENV`, `input`, `inputs`, `input_filename`,
-`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`, or
-`modulemeta` are rejected. Field access such as `.env` is unaffected.
+`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`,
+`modulemeta`, `halt`, `halt_error`, `builtins`, `while`, `until`, `recurse`,
+`recurse_down`, `foreach`, or `repeat` are rejected. Field access such as `.env`
+is unaffected.
 
 Object-construction keys are read as code, so an unquoted key named after a
 restricted built-in is refused. Quote it instead — write `{"env": .region}`
@@ -745,8 +747,10 @@ response filtering for the lifetime of the gateway process.
 **If you ran a build released before this change**, treat the following as
 disclosed and rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the
 credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
-`BASIC_AUTH_PASSWORD`. Audit existing tools for hostile `jsonpath_filter` values
-before upgrading, since those tools will begin failing at invoke time.
+`BASIC_AUTH_PASSWORD`. Audit existing tools for `jsonpath_filter` values
+referencing restricted built-ins (including process control and unbounded iteration
+constructs such as `halt`, `recurse`, `while`, `until`, `foreach`, `repeat`, and `builtins`)
+before upgrading, since those tools will begin failing at write and invoke time.
 
 ### 14. JSON Schema Regex Sandbox
 

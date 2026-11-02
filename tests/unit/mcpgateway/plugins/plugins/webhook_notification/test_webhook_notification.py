@@ -6,7 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 Tests for WebhookNotificationPlugin.
 """
 
+import hashlib
+import hmac
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,10 +22,8 @@ from cpex.framework import (
     ToolHookType,
     PromptPrehookPayload,
     ToolPostInvokePayload,
-    ToolPreInvokePayload,
 )
 from plugins.webhook_notification.webhook_notification import (
-    AuthenticationType,
     EventType,
     WebhookNotificationPlugin,
 )
@@ -91,18 +92,146 @@ class TestWebhookNotificationPlugin:
         assert parsed["timestamp"] == "2025-01-15T10:30:45.123Z"
 
     @pytest.mark.asyncio
-    async def test_hmac_signature_creation(self):
-        """Test HMAC signature creation."""
+    async def test_hmac_signature_known_answer(self):
+        """Signatures match independently computed HMAC values for legacy, timestamp and delivery ID schemes."""
         plugin = _create_plugin()
-
         payload = '{"test": "data"}'
         secret = "test-secret"  # pragma: allowlist secret
-        algorithm = "sha256"
 
-        signature = plugin._create_hmac_signature(payload, secret, algorithm)
+        legacy = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        assert plugin._create_hmac_signature(payload, secret, "sha256") == f"sha256={legacy}"
 
-        assert signature.startswith("sha256=")
-        assert len(signature) > 10  # Basic length check
+        with_ts = hmac.new(secret.encode(), f"1700000000.{payload}".encode(), hashlib.sha256).hexdigest()
+        assert plugin._create_hmac_signature(payload, secret, "sha256", "1700000000") == f"sha256={with_ts}"
+
+        with_id = hmac.new(secret.encode(), f"1700000000.abc123.{payload}".encode(), hashlib.sha512).hexdigest()
+        assert plugin._create_hmac_signature(payload, secret, "sha512", "1700000000", "abc123") == f"sha512={with_id}"
+
+        assert plugin._create_hmac_signature(payload, secret, "sha256", "1700000001") != f"sha256={with_ts}"
+
+    @staticmethod
+    def _hmac_config(include_timestamp, retry_attempts=0):
+        return {
+            "webhooks": [
+                {
+                    "url": "https://hooks.example.com/webhook",
+                    "events": ["tool_success"],
+                    "authentication": {
+                        "type": "hmac",
+                        "hmac_secret": "test-secret",  # pragma: allowlist secret
+                        "hmac_include_timestamp": include_timestamp,
+                    },
+                    "retry_attempts": retry_attempts,
+                    "retry_delay": 100,
+                    "enabled": True,
+                }
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_webhook_hmac_default_is_legacy_scheme(self):
+        """Without the opt-in flag the signature covers the body only and no timestamp headers are sent."""
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200)
+        plugin = _create_plugin(self._hmac_config(False))
+        plugin._client = mock_client
+
+        await plugin._send_webhook(webhook=plugin._cfg.webhooks[0], event=EventType.TOOL_SUCCESS, context=_create_context())
+
+        kwargs = mock_client.post.call_args[1]
+        headers = kwargs["headers"]
+        expected = hmac.new(b"test-secret", kwargs["content"], hashlib.sha256).hexdigest()
+        assert headers["X-Signature"] == f"sha256={expected}"
+        assert "X-Timestamp" not in headers
+        assert "X-Delivery-Id" not in headers
+
+    @pytest.mark.asyncio
+    async def test_webhook_hmac_timestamp_scheme_headers_and_signature(self):
+        """With the opt-in flag the signature covers timestamp, delivery ID and body."""
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200)
+        plugin = _create_plugin(self._hmac_config(True))
+        plugin._client = mock_client
+
+        before = int(time.time())
+        await plugin._send_webhook(webhook=plugin._cfg.webhooks[0], event=EventType.TOOL_SUCCESS, context=_create_context())
+        after = int(time.time())
+
+        kwargs = mock_client.post.call_args[1]
+        headers = kwargs["headers"]
+        assert before <= int(headers["X-Timestamp"]) <= after
+        material = f"{headers['X-Timestamp']}.{headers['X-Delivery-Id']}.".encode() + kwargs["content"]
+        assert headers["X-Signature"] == "sha256=" + hmac.new(b"test-secret", material, hashlib.sha256).hexdigest()
+
+    @pytest.mark.asyncio
+    async def test_webhook_hmac_retries_resign_with_fresh_timestamp_and_stable_delivery_id(self):
+        """Each retry carries a fresh timestamp and a matching signature; the delivery ID stays the same."""
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=500)
+        plugin = _create_plugin(self._hmac_config(True, retry_attempts=2))
+        plugin._client = mock_client
+
+        with (
+            patch("plugins.webhook_notification.webhook_notification.time.time", side_effect=[1000, 1010, 1020]),
+            patch("plugins.webhook_notification.webhook_notification.asyncio.sleep", new=AsyncMock()),
+        ):
+            await plugin._send_webhook(webhook=plugin._cfg.webhooks[0], event=EventType.TOOL_SUCCESS, context=_create_context())
+
+        calls = mock_client.post.call_args_list
+        assert [c[1]["headers"]["X-Timestamp"] for c in calls] == ["1000", "1010", "1020"]
+        assert len({c[1]["headers"]["X-Delivery-Id"] for c in calls}) == 1
+        for call in calls:
+            headers = call[1]["headers"]
+            material = f"{headers['X-Timestamp']}.{headers['X-Delivery-Id']}.".encode() + call[1]["content"]
+            assert headers["X-Signature"] == "sha256=" + hmac.new(b"test-secret", material, hashlib.sha256).hexdigest()
+
+    @pytest.mark.parametrize(
+        "auth",
+        [
+            {"hmac_timestamp_header": ""},
+            {"hmac_timestamp_header": "x-signature"},
+            {"hmac_delivery_id_header": "X-Timestamp"},
+            {"hmac_delivery_id_header": " "},
+        ],
+    )
+    def test_hmac_header_validation_rejects_empty_or_colliding_names(self, auth):
+        """Empty or colliding HMAC header names are rejected at configuration time."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"].update(auth)
+        with pytest.raises(ValueError):
+            _create_plugin(config)
+
+    @pytest.mark.parametrize("algorithm", ["md5", "sha1", "sha224", "invalid", "ripemd160"])
+    def test_hmac_validation_rejects_invalid_algorithm(self, algorithm):
+        """Unsupported HMAC algorithms are rejected at configuration time."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_algorithm"] = algorithm
+        with pytest.raises(ValueError, match="hmac_algorithm must be one of"):
+            _create_plugin(config)
+
+    @pytest.mark.parametrize("secret", ["", "   ", None])
+    def test_hmac_validation_rejects_empty_secret(self, secret):
+        """HMAC authentication without a non-empty secret is rejected at configuration time."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_secret"] = secret
+        with pytest.raises(ValueError, match="hmac_secret must not be empty"):
+            _create_plugin(config)
+
+    @pytest.mark.parametrize("algorithm,stored", [("sha256", "sha256"), ("sha384", "sha384"), ("sha512", "sha512"), ("SHA256", "sha256"), ("SHA512", "sha512")])
+    def test_hmac_validation_accepts_valid_algorithms(self, algorithm, stored):
+        """Supported algorithms are accepted and stored lowercase."""
+        config = self._hmac_config(True)
+        config["webhooks"][0]["authentication"]["hmac_algorithm"] = algorithm
+        plugin = _create_plugin(config)
+        assert plugin._cfg.webhooks[0].authentication.hmac_algorithm == stored
+
+    def test_hmac_signature_sha512_known_answer(self):
+        """sha512 produces a 128-character hex digest, not a sha256 64-character one."""
+        plugin = _create_plugin(self._hmac_config(True))
+        sig = plugin._create_hmac_signature("body", "key", "sha512")
+        algo, digest = sig.split("=", 1)
+        assert algo == "sha512"
+        assert len(digest) == 128  # sha512 hex is 128 chars; sha256 would be 64
 
     @pytest.mark.asyncio
     @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
@@ -267,7 +396,7 @@ class TestWebhookNotificationPlugin:
 
         payload = ToolPostInvokePayload(name="test_tool", result={"success": True, "data": "test result"})
 
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Verify notification was triggered
         mock_notify.assert_called_once()
