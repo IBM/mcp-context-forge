@@ -77,7 +77,7 @@ def test_denied_filters_raise(jq_filter):
 @pytest.mark.parametrize("jq_filter", ALLOWED)
 def test_allowed_filters_pass(jq_filter):
     """Legitimate field access and string content are not rejected."""
-    assert_safe_jq_filter(jq_filter) is None
+    assert assert_safe_jq_filter(jq_filter) is None
 
 
 def test_string_literals_are_not_scanned_as_code():
