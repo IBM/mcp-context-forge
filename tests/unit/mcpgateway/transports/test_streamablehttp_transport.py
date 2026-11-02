@@ -21509,22 +21509,39 @@ async def _block_forever(_ctx, _params):
     await anyio.sleep_forever()
 
 
-def _assert_listen_completed(result):
-    """Assert the adapter returned a completion result tagged with the request id."""
+def _listen_ctx_with_session():
+    """Build a modern listen context whose session records sent notifications."""
+    return SimpleNamespace(protocol_version="2026-07-28", request_id=1, session=SimpleNamespace(send_notification=AsyncMock()))
+
+
+def _assert_listen_completed(result, ctx):
+    """Assert the adapter sent the teardown cancel and returned a completion result tagged with the request id."""
     assert isinstance(result, types.SubscriptionsListenResult)
-    assert result.meta[SUBSCRIPTION_ID_META_KEY] == _MODERN_LISTEN_CTX.request_id
+    assert result.meta[SUBSCRIPTION_ID_META_KEY] == ctx.request_id
+    _assert_teardown_cancel_sent(ctx)
+
+
+def _assert_teardown_cancel_sent(ctx):
+    """Assert exactly one notifications/cancelled naming the listen request went out on the stream."""
+    ctx.session.send_notification.assert_awaited_once()
+    notification = ctx.session.send_notification.await_args.args[0]
+    assert isinstance(notification, types.CancelledNotification)
+    assert notification.params.request_id == ctx.request_id
+    assert notification.params.meta[SUBSCRIPTION_ID_META_KEY] == ctx.request_id
+    assert ctx.session.send_notification.await_args.kwargs["related_request_id"] == ctx.request_id
 
 
 async def test_listen_ends_at_token_exp(monkeypatch, listen_requires_auth):
-    """A stream outliving the token exp ends with a completion result tagged with the subscription id."""
+    """A stream outliving the token exp sends notifications/cancelled, then a completion result tagged with the subscription id."""
     monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
     _patch_listen_delegate(monkeypatch, _block_forever)
     _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.25))
+    ctx = _listen_ctx_with_session()
 
     with anyio.fail_after(5):
-        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
 
-    _assert_listen_completed(result)
+    _assert_listen_completed(result, ctx)
 
 
 async def test_listen_without_exp_ends_at_max_lifetime(monkeypatch, listen_requires_auth):
@@ -21533,11 +21550,12 @@ async def test_listen_without_exp_ends_at_max_lifetime(monkeypatch, listen_requi
     monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
     _patch_listen_delegate(monkeypatch, _block_forever)
     _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
 
     with anyio.fail_after(5):
-        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
 
-    _assert_listen_completed(result)
+    _assert_listen_completed(result, ctx)
 
 
 async def test_listen_exp_none_treated_as_missing(monkeypatch, listen_requires_auth):
@@ -21546,11 +21564,64 @@ async def test_listen_exp_none_treated_as_missing(monkeypatch, listen_requires_a
     monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
     _patch_listen_delegate(monkeypatch, _block_forever)
     _patch_request_context(monkeypatch, _listen_context_with_exp(None))
+    ctx = _listen_ctx_with_session()
 
     with anyio.fail_after(5):
-        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
 
-    _assert_listen_completed(result)
+    _assert_listen_completed(result, ctx)
+
+
+async def test_listen_handler_end_sends_cancelled(monkeypatch, listen_requires_auth):
+    """The shared handler ending the stream itself (close or backlog cap) is a server teardown too."""
+    expected = types.SubscriptionsListenResult()
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=expected))
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+
+    assert await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True)) is expected
+    _assert_teardown_cancel_sent(ctx)
+
+
+async def test_listen_client_disconnect_sends_no_cancelled(monkeypatch, listen_requires_auth):
+    """A client disconnect cancels the handler; that is not a server teardown, so no cancel goes out."""
+
+    async def disconnected(_ctx, _params):
+        raise anyio.get_cancelled_exc_class()()
+
+    _patch_listen_delegate(monkeypatch, disconnected)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    ctx.session.send_notification.assert_not_awaited()
+
+
+async def test_listen_legacy_sends_no_cancelled(monkeypatch):
+    """A handshake-era caller gets -32601 and never sees notifications/cancelled."""
+    _patch_listen_delegate(monkeypatch)
+    ctx = _listen_ctx_with_session()
+    ctx.protocol_version = "2025-11-25"
+
+    with pytest.raises(MCPError):
+        await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    ctx.session.send_notification.assert_not_awaited()
+
+
+async def test_listen_teardown_send_failure_still_returns_result(monkeypatch, listen_requires_auth):
+    """A stream already gone when the cancel is sent still completes and releases its slot."""
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=types.SubscriptionsListenResult()))
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+    ctx.session.send_notification.side_effect = anyio.ClosedResourceError()
+
+    result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    assert isinstance(result, types.SubscriptionsListenResult)
+    assert tr._listen_streams_by_principal == {}
 
 
 async def test_listen_deadline_floor_ack_precedes_result(monkeypatch, listen_requires_auth):
@@ -21565,12 +21636,13 @@ async def test_listen_deadline_floor_ack_precedes_result(monkeypatch, listen_req
 
     _patch_listen_delegate(monkeypatch, recording_delegate)
     _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.01))
+    ctx = _listen_ctx_with_session()
 
     with anyio.fail_after(5):
-        result = await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
 
     assert time.monotonic() - started["at"] >= floor - 0.02
-    _assert_listen_completed(result)
+    _assert_listen_completed(result, ctx)
 
 
 async def test_listen_delegate_completing_early_returns_its_result(monkeypatch, listen_requires_auth):
@@ -21821,3 +21893,19 @@ async def test_listen_over_modern_wire_acks_narrowed_filter_and_delivers_permitt
             event = await asyncio.wait_for(anext(sub), timeout=5)
 
     assert isinstance(event, ToolsListChanged)
+
+
+async def test_listen_over_modern_wire_deadline_sends_cancelled_teardown(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: the gateway's deadline teardown reaches the client as notifications/cancelled."""
+    # Third-Party
+    from mcp.client.subscriptions import SubscriptionLost  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(tools_list_changed=True) as sub:
+            # The SDK client settles a stream named by a server-sent cancel as lost, so the consumer re-listens.
+            with pytest.raises(SubscriptionLost):
+                await asyncio.wait_for(anext(sub), timeout=5)

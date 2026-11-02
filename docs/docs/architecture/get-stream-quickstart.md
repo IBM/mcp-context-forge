@@ -176,9 +176,12 @@ SSE response is the stream:
 Listen events carry only the kind, never names, IDs, or row data. Each worker
 coalesces a burst of catalog changes into one event per kind (0.3 s window).
 Each requested kind passes the same token-scope check as its `*/list` call;
-the ack lists only the kinds that pass. A stream ends with a completion result
-at the token `exp` or `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default 3600),
-whichever comes first, and the client listens again.
+the ack lists only the kinds that pass. A stream ends at the token `exp` or
+`MCP_LISTEN_MAX_LIFETIME_SECONDS` (default 3600), whichever comes first, and the
+client listens again. When the gateway ends a stream, it sends
+`notifications/cancelled` naming the listen request ID, then the completion
+result. The gateway sends `notifications/cancelled` on the modern era for no
+other purpose. A client that closes the stream gets no cancel frame.
 
 **Cross-worker fan-out.** With `CACHE_TYPE=redis`, a change on any worker or
 replica reaches every listen stream through the `mcpgw:cache:invalidate`
