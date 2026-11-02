@@ -4562,6 +4562,8 @@ class TestReadResourceEndpointCoverage:
         result = await main_mod.read_resource("res-blob", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
 
         assert result == {
+            "type": "resource",
+            "id": "res-blob",
             "uri": "reference://static/blob",
             "mimeType": "application/x-t8-binary",
             "blob": "dDgtYmluYXJ5",
