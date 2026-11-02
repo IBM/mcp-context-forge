@@ -431,6 +431,15 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/oauth/status", "GET", [Permissions.TOOLS_READ]) is False
 
     @pytest.mark.asyncio
+    async def test_oauth_token_path_requires_gateways_read(self, middleware):
+        """GET /oauth/token/{gateway_id} is mapped to gateways.read so a scoped API token
+        holding that permission is not default-denied before reaching the handler."""
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "POST", [Permissions.GATEWAYS_READ]) is False
+
+    @pytest.mark.asyncio
     async def test_other_oauth_paths_still_default_deny(self, middleware):
         """Adding registered-client mappings must not open other /oauth routes to scoped tokens."""
         assert middleware._check_permission_restrictions("/oauth/authorize/gw1", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
