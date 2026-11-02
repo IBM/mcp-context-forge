@@ -21755,6 +21755,20 @@ async def test_listen_cap_not_consumed_by_denied_request(monkeypatch, listen_req
     assert _listen_counters_empty()
 
 
+def test_listen_slot_treats_empty_email_as_anonymous(monkeypatch, listen_counters):
+    """An empty-string principal counts against the anonymous cap, and release stays symmetric."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 1)
+
+    tr._claim_listen_slot("")
+    assert tr._anonymous_listen_streams == 1
+    assert not tr._listen_streams_by_principal
+    with pytest.raises(MCPError):
+        tr._claim_listen_slot(None)
+    tr._release_listen_slot("")
+
+    assert _listen_counters_empty()
+
+
 def test_listen_handler_registered():
     """subscriptions/listen is served by the ContextForge adapter, not added to the legacy known-method set."""
     assert "subscriptions/listen" in tr.mcp_app._request_handlers
