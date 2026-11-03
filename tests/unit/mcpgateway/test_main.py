@@ -4918,6 +4918,42 @@ class TestA2AAgentEndpoints:
         kwargs = mock_service.test_agent.call_args.kwargs
         assert kwargs["user_email"] == "u@x.com" and kwargs["token_teams"] == ["team-a"]
 
+    def test_test_a2a_agent_unauthenticated_returns_401(self, app_with_temp_db):
+        """POST /a2a/{agent_id}/test without credentials returns 401."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            response = TestClient(app_with_temp_db, raise_server_exceptions=False).post("/a2a/agent-1/test")
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+        assert response.status_code == 401
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test without a2a.invoke returns 403 and never reaches the service."""
+        mock_service.test_agent = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.test_agent.assert_not_called()
+
+    def test_test_a2a_agent_service_unavailable_returns_503(self, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test returns 503 when the A2A service is not loaded."""
+        with patch("mcpgateway.main.a2a_service", None):
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 503
+
+    def test_test_a2a_agent_rejects_unknown_body_fields(self, test_client, auth_headers):
+        """The request body forbids extra fields."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "hi", "extra": 1}, headers=auth_headers)
+        assert response.status_code == 422
+
     def test_test_a2a_agent_in_openapi(self, test_client):
         """The route is part of the OpenAPI schema."""
         paths = test_client.app.openapi()["paths"]

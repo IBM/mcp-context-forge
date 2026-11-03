@@ -83,6 +83,29 @@ curl -X POST "http://localhost:4444/a2a/hello_world_agent/invoke" \
   }'
 ```
 
+**Via the test endpoint:**
+
+`POST /v1/a2a/{agent_id}/test` sends a test message and needs no payload. It requires `a2a.invoke`. The optional body field `query` sets the message.
+
+```bash
+curl -X POST "http://localhost:4444/v1/a2a/$AGENT_ID/test" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "hello"}'
+```
+
+Success returns 200 with `success`, `result`, `agent_name`, and `test_timestamp`. Failure returns an error status with a `detail` object holding `success`, `error`, `error_type`, and `agent_id`.
+
+| Status | `error_type` | `error` | Cause |
+|--------|--------------|---------|-------|
+| 404 | `not_found` | `A2A agent not found` | Agent missing or not visible to the caller |
+| 502 | `agent_disabled` | `A2A agent is disabled` | Agent is disabled |
+| 502 | `agent_error` | `A2A agent invocation failed` | Agent unreachable or returned an error |
+| 422 | `validation_error` | Validation message | Invalid test parameters |
+| 500 | `internal_error` | Sanitized message | Unexpected error |
+
+The 404 response is identical for a missing agent and an agent the caller cannot see. The 502 response never carries upstream error text; the gateway logs it.
+
 ### 4. Create Virtual Server with A2A Agent
 
 ```bash

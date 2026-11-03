@@ -18,6 +18,8 @@ import pytest
 from mcpgateway.services.a2a_service import (
     A2A_TEST_AGENT_ERROR_MESSAGE,
     A2A_TEST_NOT_FOUND_MESSAGE,
+    A2A_TEST_AGENT_DISABLED_MESSAGE,
+    A2AAgentDisabledError,
     A2AAgentError,
     A2AAgentNotFoundError,
     A2AAgentService,
@@ -27,7 +29,7 @@ from mcpgateway.services.a2a_service import (
 
 def _service(agent_type="custom", endpoint="http://agent.example.com/api", invoke=None):
     service = A2AAgentService()
-    service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type=agent_type, endpoint_url=endpoint))
+    service.get_agent = AsyncMock(return_value=SimpleNamespace(id="a1", name="Agent", agent_type=agent_type, endpoint_url=endpoint))
     service.invoke_agent = invoke or AsyncMock(return_value={"ok": True})
     return service
 
@@ -45,6 +47,7 @@ async def test_success_uses_default_message_and_extended_params():
     assert params["test"] is True
     assert "admin" not in DEFAULT_A2A_TEST_MESSAGE.lower()
     assert service.invoke_agent.call_args.args[3] == "test"
+    assert service.invoke_agent.call_args.kwargs["agent_id"] == "a1"
 
 
 @pytest.mark.asyncio
@@ -74,6 +77,14 @@ async def test_not_found_classified_404():
 
 
 @pytest.mark.asyncio
+async def test_not_found_detail_returned_when_requested():
+    service = _service()
+    service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
+    outcome = await service.test_agent(MagicMock(), "a1", include_agent_error_detail=True)
+    assert (outcome.status_code, outcome.body["error"]) == (404, "A2A Agent not found with ID: a1")
+
+
+@pytest.mark.asyncio
 async def test_missing_and_inaccessible_agents_return_identical_404_body():
     missing = _service()
     missing.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
@@ -92,6 +103,20 @@ async def test_agent_error_classified_502_without_upstream_detail():
     assert (outcome.status_code, outcome.body["error_type"]) == (502, "agent_error")
     assert outcome.body["error"] == A2A_TEST_AGENT_ERROR_MESSAGE
     assert "internal-host" not in outcome.body["error"]
+
+
+@pytest.mark.asyncio
+async def test_disabled_agent_gets_distinct_502_code():
+    service = _service(invoke=AsyncMock(side_effect=A2AAgentDisabledError("A2A Agent 'Agent' is disabled")))
+    outcome = await service.test_agent(MagicMock(), "a1")
+    assert (outcome.status_code, outcome.body["error_type"], outcome.body["error"]) == (502, "agent_disabled", A2A_TEST_AGENT_DISABLED_MESSAGE)
+
+
+@pytest.mark.asyncio
+async def test_disabled_agent_keeps_admin_contract():
+    service = _service(invoke=AsyncMock(side_effect=A2AAgentDisabledError("A2A Agent 'Agent' is disabled")))
+    outcome = await service.test_agent(MagicMock(), "a1", include_agent_error_detail=True)
+    assert (outcome.body["error_type"], outcome.body["error"]) == ("agent_error", "A2A Agent 'Agent' is disabled")
 
 
 @pytest.mark.asyncio
@@ -122,3 +147,53 @@ async def test_unexpected_error_classified_500_and_sanitized():
     outcome = await service.test_agent(MagicMock(), "a1")
     assert (outcome.status_code, outcome.body["error_type"]) == (500, "internal_error")
     assert "secret-token-123" not in outcome.body["error"]
+
+
+@pytest.mark.asyncio
+async def test_agents_sharing_a_name_resolve_by_id():
+    """Two team agents with one name must not raise MultipleResultsFound."""
+    # Third-Party
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # First-Party
+    from mcpgateway.db import A2AAgent, Base
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    for agent_id, team in (("dup-a", "team-a"), ("dup-b", "team-b")):
+        db.add(A2AAgent(id=agent_id, name="shared-name", slug=f"shared-name-{team}", endpoint_url="https://example.com/a", visibility="team", team_id=team, enabled=False))
+    db.commit()
+
+    outcome = await A2AAgentService().test_agent(db, "dup-b", user_email="u@x.com", token_teams=["team-b"])
+
+    assert (outcome.status_code, outcome.body["error_type"]) == (502, "agent_disabled")
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_public_only_token_gets_404_for_private_agent():
+    """A public-only caller sees the same 404 for a private agent as for a missing one."""
+    # Third-Party
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # First-Party
+    from mcpgateway.db import A2AAgent, Base
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add(A2AAgent(id="priv", name="priv", slug="priv", endpoint_url="https://example.com/a", visibility="private", owner_email="owner@x.com", enabled=True))
+    db.commit()
+
+    service = A2AAgentService()
+    hidden = await service.test_agent(db, "priv", user_email="other@x.com", token_teams=[])
+    missing = await service.test_agent(db, "nope", user_email="other@x.com", token_teams=[])
+
+    assert hidden.status_code == 404
+    assert hidden.body["error"] == missing.body["error"] == A2A_TEST_NOT_FOUND_MESSAGE
+    db.close()
