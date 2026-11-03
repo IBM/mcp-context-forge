@@ -172,7 +172,7 @@ class TestWebhookNotificationPlugin:
         plugin._client = mock_client
 
         with (
-            patch("plugins.webhook_notification.webhook_notification.time.time", side_effect=[1000, 1010, 1020]),
+            patch("plugins.webhook_notification.webhook_notification.time", side_effect=[1000, 1010, 1020]),
             patch("plugins.webhook_notification.webhook_notification.asyncio.sleep", new=AsyncMock()),
         ):
             await plugin._send_webhook(webhook=plugin._cfg.webhooks[0], event=EventType.TOOL_SUCCESS, context=_create_context())
