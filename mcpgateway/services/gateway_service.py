@@ -55,7 +55,7 @@ import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Literal, Optional, Set, TYPE_CHECKING, Union
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 import uuid
 
 # Third-Party
@@ -102,7 +102,6 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.schemas import (
     GATEWAY_SUPPORTED_TRANSPORTS,
     GatewayCreate,
@@ -129,6 +128,7 @@ from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
+from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.services.server_service import server_service
@@ -139,6 +139,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.pagination import unified_paginate
@@ -151,13 +152,13 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.ssrf_pinning import SniPinningTransport as _SniPinningTransport
+from mcpgateway.utils.streamable_http_compat import REDIRECT_STATUS_CODES as _REDIRECT_STATUS_CODES
 from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 
 class MCPListMethod(Enum):
@@ -222,8 +223,10 @@ _REDIRECT_LOCATION_MAX_CHARS = 200
 def _redirect_error_text(status_code: int, location: Optional[str]) -> str:
     """Build the operator-facing message for an upstream 3xx response that was not followed.
 
-    The ``Location`` header is upstream-controlled. It is sanitized, stripped of
-    non-printable characters, and truncated. An unparsable value falls back to the status code.
+    The ``Location`` header is upstream-controlled and can echo the credential the
+    gateway appended to the probed URL. The message keeps only scheme, host, and path.
+    Userinfo, query, and fragment are dropped. Non-printable characters are removed
+    and the result is truncated. An unparsable value falls back to the status code.
 
     Args:
         status_code: The 3xx status code of the upstream response.
@@ -231,11 +234,20 @@ def _redirect_error_text(status_code: int, location: Optional[str]) -> str:
 
     Returns:
         The message that tells the operator to register the redirect target directly.
+
+    Examples:
+        >>> _redirect_error_text(307, "http://u:p@h.example/mcp/?api=SECRET#frag")
+        'Upstream redirected to http://h.example/mcp/; update the gateway URL to the redirect target.'
+        >>> _redirect_error_text(301, "http://[bad")
+        'Upstream redirected with HTTP 301; update the gateway URL to the redirect target.'
     """
     target = None
     if location:
         try:
-            target = "".join(ch for ch in sanitize_url_for_logging(location) if ch.isprintable())[:_REDIRECT_LOCATION_MAX_CHARS]
+            parts = urlsplit(location.strip())
+            host = parts.netloc.rpartition("@")[2]
+            target = urlunsplit((parts.scheme, host, parts.path, "", ""))
+            target = "".join(ch for ch in target if ch.isprintable())[:_REDIRECT_LOCATION_MAX_CHARS]
         except ValueError:
             target = None
     destination = f"to {target}" if target else f"with HTTP {status_code}"
@@ -294,7 +306,7 @@ def _safe_connection_error_text(exc: BaseException) -> str:
     if isinstance(exc, TimeoutError):
         return "connection timed out"
     if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
-        if 300 <= exc.response.status_code < 400:
+        if exc.response.status_code in _REDIRECT_STATUS_CODES:
             return _redirect_error_text(exc.response.status_code, exc.response.headers.get("Location"))
         return f"server responded with HTTP {exc.response.status_code}"
     return unexpected_error_detail(exc)
@@ -5540,9 +5552,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             timeout=timeout,
                             extensions=pinned_target.extensions,
                         ) as response:
-                            if 300 <= response.status_code < 400:
-                                raise httpx.HTTPStatusError(f"Upstream answered HTTP {response.status_code} redirect", request=response.request, response=response)
-                            # This will raise immediately if status is 4xx/5xx
+                            # This will raise immediately if status is 3xx/4xx/5xx
                             response.raise_for_status()
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
@@ -6392,7 +6402,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active.is_(True))).scalar_one_or_none()
         if not target_user:
             raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
@@ -8555,7 +8565,7 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
         Tuple of (failure_class, actionable error copy).
     """
     if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
-        if 300 <= root_cause.response.status_code < 400:
+        if root_cause.response.status_code in _REDIRECT_STATUS_CODES:
             return "transport", _HANDSHAKE_TRANSPORT_COPY
         if root_cause.response.status_code in (401, 403):
             return "auth", _HANDSHAKE_AUTH_COPY
@@ -8981,8 +8991,9 @@ async def test_gateway_connectivity(
             response_body: Union[Dict[str, Any], str] = response.json()
         except ValueError:
             response_body = {"details": response.text}
-        if 300 <= response.status_code < 400:
-            response_body = {"error": _redirect_error_text(response.status_code, response.headers.get("Location")), "details": response.text}
+        if response.status_code in _REDIRECT_STATUS_CODES:
+            upstream_body = response_body if isinstance(response_body, dict) else {"details": response_body}
+            response_body = {**upstream_body, "error": _redirect_error_text(response.status_code, response.headers.get("Location"))}
 
         # Structured logging: Log successful gateway test
         structured_logger.log(
@@ -9253,7 +9264,7 @@ async def test_gateway_handshake(
                         logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
                         return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
 
-                    if 300 <= response.status_code < 400:
+                    if response.status_code in _REDIRECT_STATUS_CODES:
                         return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_redirect_error_text(response.status_code, response.headers.get('Location'))}")
 
                     if response.status_code in (401, 403):

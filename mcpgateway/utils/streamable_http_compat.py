@@ -35,8 +35,10 @@ from typing import Any, AsyncIterator, Callable, Optional
 import httpx2
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp_types import JSONRPCError, jsonrpc_message_adapter
+from mcp_types import jsonrpc_message_adapter, JSONRPCError
 from pydantic import ValidationError
+
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 
 class ErrorResponseHook:
@@ -72,7 +74,7 @@ class ErrorResponseHook:
         if response.request.method != "POST":
             return
         if response.status_code in (202, 204):
-            if self.response is not None and 300 <= self.response.status_code < 400:
+            if self.response is not None and self.response.status_code in REDIRECT_STATUS_CODES:
                 self.response = None
             return
         self.response = response

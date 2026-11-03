@@ -10,28 +10,27 @@ directing the operator to register the redirected target URL, while ensuring red
 are not followed automatically to preserve SSRF and credential protection.
 """
 
+# Standard
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
 import httpx
 import httpx2
 import pytest
 
+# First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.schemas import GatewayHandshakeRequest, GatewayTestRequest
 from mcpgateway.services.gateway_service import (
-    GatewayConnectionError,
-    GatewayService,
-    _HANDSHAKE_TRANSPORT_COPY,
     _classify_handshake_error,
+    _HANDSHAKE_TRANSPORT_COPY,
     _redirect_error_text,
     _safe_connection_error_text,
+    GatewayConnectionError,
+    GatewayService,
 )
-from mcpgateway.services.gateway_service import (
-    test_gateway_connectivity as run_test_gateway_connectivity,
-)
-from mcpgateway.services.gateway_service import (
-    test_gateway_handshake as run_test_gateway_handshake,
-)
+from mcpgateway.services.gateway_service import test_gateway_connectivity as run_test_gateway_connectivity
+from mcpgateway.services.gateway_service import test_gateway_handshake as run_test_gateway_handshake
 
 
 def _make_mock_gateway(url: str = "http://example.com/mcp", transport: str = "sse") -> DbGateway:
@@ -321,16 +320,19 @@ async def test_test_gateway_handshake_307_redirect_actionable_error():
     [
         ("http://example.com/mcp/", "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."),
         ("/mcp/", "Upstream redirected to /mcp/; update the gateway URL to the redirect target."),
-        ("http://a.example/b?token=secret&x=1", "Upstream redirected to http://a.example/b?token=REDACTED&x=1; update the gateway URL to the redirect target."),
-        ("http://user:pw@a.example/b", "Upstream redirected to http://REDACTED:REDACTED@a.example/b; update the gateway URL to the redirect target."),
+        ("http://a.example/b?token=secret&x=1", "Upstream redirected to http://a.example/b; update the gateway URL to the redirect target."),
+        ("http://a.example/mcp/?X-Custom-Key=SECRET123#frag", "Upstream redirected to http://a.example/mcp/; update the gateway URL to the redirect target."),
+        ("http://user:pw@a.example/b", "Upstream redirected to http://a.example/b; update the gateway URL to the redirect target."),
         ("http://[invalid", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
         ("", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
         (None, "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
     ],
 )
 def test_redirect_error_text_sanitizes_and_survives_hostile_location(location, expected):
-    """The shared helper redacts secrets and falls back to the status code when Location cannot be parsed."""
-    assert _redirect_error_text(307, location) == expected
+    """The shared helper drops userinfo, query, and fragment, and falls back to the status code when Location cannot be parsed."""
+    text = _redirect_error_text(307, location)
+    assert text == expected
+    assert "@" not in text and "?" not in text and "#" not in text
 
 
 def test_redirect_error_text_truncates_and_strips_control_characters():
@@ -382,3 +384,81 @@ async def test_test_gateway_connectivity_redirect_keeps_upstream_body_text():
     assert response.status_code == 301
     assert response.body["details"] == "Moved"
     assert response.body["error"].startswith("Upstream redirected to http://example.com/mcp/")
+
+
+async def _run_connectivity(status_code: int, headers: dict, content: bytes = b""):
+    """Run Test Connection against an upstream that answers with ``status_code``."""
+    request = GatewayTestRequest(base_url="http://example.com/mcp", method="GET", path="")
+    target = {
+        "validated_base_url": "http://example.com/mcp",
+        "validated_hostname": "example.com",
+        "pinned_base_url": "http://127.0.0.1/mcp",
+        "resolved_ip": "127.0.0.1",
+        "original_authority": "example.com",
+    }
+    resp = httpx.Response(status_code, headers=headers, content=content, request=httpx.Request("GET", "http://example.com/mcp"))
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def request(self, **kwargs):
+            return resp
+
+    with (
+        patch("mcpgateway.services.gateway_service._validate_gateway_test_target", return_value=target),
+        patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=_Client()),
+        patch("mcpgateway.services.gateway_service.structured_logger"),
+    ):
+        return await run_test_gateway_connectivity(request, team_id=None, user={"email": "t@example.com"}, db=MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_test_gateway_connectivity_redirect_keeps_parsed_json_body():
+    """A JSON body on a redirect stays in the response next to the actionable error."""
+    response = await _run_connectivity(307, {"Location": "http://example.com/mcp/", "content-type": "application/json"}, b'{"moved": true}')
+    assert response.body["moved"] is True
+    assert response.body["error"].startswith("Upstream redirected to http://example.com/mcp/")
+
+
+@pytest.mark.asyncio
+async def test_test_gateway_connectivity_200_with_location_is_not_a_redirect():
+    """A 200 answer that carries a Location header takes the normal success path."""
+    response = await _run_connectivity(200, {"Location": "http://example.com/other", "content-type": "application/json"}, b'{"ok": true}')
+    assert response.status_code == 200
+    assert response.body == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_test_gateway_connectivity_304_is_not_a_redirect():
+    """A 304 answer to a conditional request is not reported as a gateway URL change."""
+    response = await _run_connectivity(304, {})
+    assert response.status_code == 304
+    assert "Upstream redirected" not in str(response.body)
+
+
+def test_safe_connection_error_text_304_is_not_a_redirect():
+    """A 304 status error keeps the generic status text."""
+    req = httpx.Request("GET", "http://example.com/mcp")
+    err = httpx.HTTPStatusError("304", request=req, response=httpx.Response(304, request=req))
+    assert _safe_connection_error_text(err) == "server responded with HTTP 304"
+
+
+def test_classify_handshake_error_304_is_not_a_redirect():
+    """A 304 handshake failure is not classed as a redirect-driven transport failure."""
+    req = httpx.Request("POST", "http://example.com/mcp")
+    err = httpx.HTTPStatusError("304", request=req, response=httpx.Response(304, request=req))
+    assert _classify_handshake_error(err)[0] == "invalid_response"
+
+
+def test_safe_connection_error_text_never_echoes_custom_named_query_credential():
+    """A Location that echoes a custom-named auth query param cannot reach last_error."""
+    req = httpx.Request("GET", "http://example.com/mcp?X-Custom-Key=SECRET123")
+    resp = httpx.Response(307, headers={"Location": "http://example.com/mcp/?X-Custom-Key=SECRET123"}, request=req)
+    err = httpx.HTTPStatusError("307", request=req, response=resp)
+    text = _safe_connection_error_text(err)
+    assert "SECRET123" not in text
+    assert text == "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."
