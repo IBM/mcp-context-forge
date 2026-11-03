@@ -179,7 +179,6 @@ dev = [
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
-    "pytype>=2024.10.11",
     "pyupgrade>=3.21.2",
     "radon>=6.0.1",
     "redis>=8.0.1",
@@ -375,11 +374,6 @@ mcpgateway = [
 # --------------------------------------------------------------------
 #  🛠  Tool configurations (black, mypy, etc.)
 # --------------------------------------------------------------------
-[tool.pytype]
-# Directory-specific options:
-inputs = ["mcpgateway"]
-python_version = "3.12"          # match default runtime
-
 [tool.pyright]
 typeCheckingMode = "standard"
 reportUnusedCoroutine = "error"
@@ -801,7 +795,6 @@ ignore_unused = [
   "pytest-rerunfailures",
   "pytest-xdist",
   "rstest",
-  "pytype",
   "settings-doc",
   "snakeviz",
   "types-tabulate",

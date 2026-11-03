@@ -3346,7 +3346,6 @@ images:
 # help: spellcheck-sort      - Sort local spellcheck dictionary
 # help: tox                  - Run tox across multi-Python versions
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
-# help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
@@ -3384,7 +3383,7 @@ endif
 # List of individual lint targets
 LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck \
-		pytype check-manifest markdownlint vulture
+		check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
@@ -4101,10 +4100,6 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "📄  Files generated:"
 	@echo "    - $(PROJECT_NAME).sbom.xml (CycloneDX XML format)"
 	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
-
-pytype:								## 🧠  Pytype static type analysis
-	@echo "🧠  Pytype analysis..."
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto $(TARGET)
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
