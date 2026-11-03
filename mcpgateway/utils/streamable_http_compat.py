@@ -59,22 +59,21 @@ class ErrorResponseHook:
         return self
 
     async def _get_error(self, response: httpx2.Response) -> None:
-        """Keep ``response`` if it answers a POST or redirects, and note what the SDK will make of its body.
+        """Keep ``response`` if it answers a POST, and note what the SDK will make of its body.
 
         The SDK reads a JSON body as the message it carries. It makes up a JSON-RPC error
         of its own when the body does not parse, when the content type is neither JSON nor
         SSE, or when an error status comes without a JSON-RPC error body. Those made-up
         errors are the ones translated later; a real JSON-RPC error the upstream sent is
         left untouched. An SSE body cannot be inspected here, so nothing is noted for it.
+        The hook runs before the SDK decides whether to follow a redirect. A kept 3xx is
+        therefore dropped when the next answer is 202 or 204, which shows the SDK followed it.
         """
-        if response.status_code in (202, 204):
-            return
-        if 300 <= response.status_code < 400:
-            self.response = response
-            self.response_carried_jsonrpc_error = False
-            self.response_body_unreadable = True
-            return
         if response.request.method != "POST":
+            return
+        if response.status_code in (202, 204):
+            if self.response is not None and 300 <= self.response.status_code < 400:
+                self.response = None
             return
         self.response = response
         self.response_carried_jsonrpc_error = False
@@ -93,9 +92,9 @@ class ErrorResponseHook:
     def to_transport_error(self, exc: BaseException) -> Optional[httpx2.HTTPError]:
         """Translate an error the SDK made up into the transport failure it stands for.
 
-        Returns ``httpx2.HTTPStatusError`` when the last request was redirected (3xx)
-        or refused with an error status (4xx/5xx) and no JSON-RPC error body,
-        ``httpx2.DecodingError`` when it answered 2xx with a body the SDK could not
+        Returns ``httpx2.HTTPStatusError`` when the last POST was redirected without being
+        followed (3xx) or refused with an error status (4xx/5xx) and no JSON-RPC error
+        body, ``httpx2.DecodingError`` when it answered 2xx with a body the SDK could not
         read as JSON-RPC, and None otherwise, including for a real JSON-RPC error the
         upstream sent (even at a 4xx status).
         """
@@ -105,7 +104,7 @@ class ErrorResponseHook:
         root: BaseException = exc
         while isinstance(root, BaseExceptionGroup) and root.exceptions:  # pylint: disable=no-member
             root = root.exceptions[0]  # pylint: disable=no-member
-        if self.response_carried_jsonrpc_error:
+        if not isinstance(root, MCPError) or self.response_carried_jsonrpc_error:
             return None
         if response.status_code >= 300:
             return httpx2.HTTPStatusError(
@@ -113,8 +112,6 @@ class ErrorResponseHook:
                 request=response.request,
                 response=response,
             )
-        if not isinstance(root, MCPError):
-            return None
         if self.response_body_unreadable:
             content_type = response.headers.get("content-type") or "none"
             return httpx2.DecodingError(

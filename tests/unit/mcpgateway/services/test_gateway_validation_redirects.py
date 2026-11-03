@@ -21,7 +21,9 @@ from mcpgateway.schemas import GatewayHandshakeRequest, GatewayTestRequest
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayService,
+    _HANDSHAKE_TRANSPORT_COPY,
     _classify_handshake_error,
+    _redirect_error_text,
     _safe_connection_error_text,
 )
 from mcpgateway.services.gateway_service import (
@@ -86,14 +88,14 @@ def test_safe_connection_error_text_3xx_without_location():
 
 
 def test_classify_handshake_error_3xx():
-    """_classify_handshake_error classifies 3xx redirects with actionable copy."""
+    """_classify_handshake_error classes a 3xx as a transport failure; the caller adds the redirect detail."""
     req = httpx.Request("POST", "http://example.com/mcp")
     resp = httpx.Response(307, headers={"Location": "http://example.com/mcp/"}, request=req)
     err = httpx.HTTPStatusError("307", request=req, response=resp)
 
     failure_class, copy = _classify_handshake_error(err)
     assert failure_class == "transport"
-    assert copy == "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."
+    assert copy == _HANDSHAKE_TRANSPORT_COPY
 
 
 @pytest.mark.asyncio
@@ -110,33 +112,17 @@ async def test_sse_health_check_handles_307_redirect_actionable_error():
     gateway = _make_mock_gateway(url="http://sse.example.com/mcp", transport="sse")
     requested_urls: list[str] = []
 
-    class _MockResponse:
-        status_code = 307
-        headers = {"Location": "http://sse.example.com/mcp/"}
-        request = httpx.Request("GET", "http://sse.example.com/mcp")
-
-        def raise_for_status(self):
-            pass
+    def _upstream(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(307, headers={"Location": "http://sse.example.com/mcp/"})
 
     class _IsoClientCM:
         async def __aenter__(self_inner):
-            client = MagicMock()
-            stream_cm = MagicMock()
-
-            async def _stream_enter():
-                return _MockResponse()
-
-            stream_cm.__aenter__ = AsyncMock(side_effect=_stream_enter)
-            stream_cm.__aexit__ = AsyncMock(return_value=False)
-
-            def _stream(method, url, **kwargs):
-                requested_urls.append(str(url))
-                return stream_cm
-
-            client.stream = MagicMock(side_effect=_stream)
-            return client
+            self_inner.client = httpx.AsyncClient(transport=httpx.MockTransport(_upstream), follow_redirects=False)
+            return self_inner.client
 
         async def __aexit__(self_inner, *exc):
+            await self_inner.client.aclose()
             return False
 
     with (
@@ -165,8 +151,8 @@ async def test_sse_health_check_handles_307_redirect_actionable_error():
     called_error = service._handle_gateway_failure.call_args[1]["error"]
     assert isinstance(called_error, httpx.HTTPStatusError)
     assert _safe_connection_error_text(called_error) == "Upstream redirected to http://sse.example.com/mcp/; update the gateway URL to the redirect target."
-    # Ensure no request was sent to the redirect location
-    assert "http://sse.example.com/mcp/" not in requested_urls
+    assert len(requested_urls) == 1
+    assert requested_urls[0].endswith("/mcp")
 
 
 @pytest.mark.asyncio
@@ -285,7 +271,7 @@ async def test_test_gateway_connectivity_307_redirect_actionable_error():
         response = await run_test_gateway_connectivity(request, team_id=None, user=user, db=mock_db)
 
     assert response.status_code == 307
-    assert response.body == {"error": "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."}
+    assert response.body == {"error": "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target.", "details": ""}
 
 
 @pytest.mark.asyncio
@@ -325,4 +311,74 @@ async def test_test_gateway_handshake_307_redirect_actionable_error():
 
     assert response.success is False
     assert response.failure_class == "transport"
-    assert "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target." in response.error
+    redirect_text = "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."
+    assert response.error == f"{_HANDSHAKE_TRANSPORT_COPY}: {redirect_text}"
+    assert response.error.count("Upstream redirected") == 1
+
+
+@pytest.mark.parametrize(
+    "location, expected",
+    [
+        ("http://example.com/mcp/", "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."),
+        ("/mcp/", "Upstream redirected to /mcp/; update the gateway URL to the redirect target."),
+        ("http://a.example/b?token=secret&x=1", "Upstream redirected to http://a.example/b?token=REDACTED&x=1; update the gateway URL to the redirect target."),
+        ("http://user:pw@a.example/b", "Upstream redirected to http://REDACTED:REDACTED@a.example/b; update the gateway URL to the redirect target."),
+        ("http://[invalid", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
+        ("", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
+        (None, "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
+    ],
+)
+def test_redirect_error_text_sanitizes_and_survives_hostile_location(location, expected):
+    """The shared helper redacts secrets and falls back to the status code when Location cannot be parsed."""
+    assert _redirect_error_text(307, location) == expected
+
+
+def test_redirect_error_text_truncates_and_strips_control_characters():
+    """An oversized or control-character Location cannot flood last_error or inject log lines."""
+    text = _redirect_error_text(302, "http://a.example/" + "x" * 5000 + "\r\nINJECTED")
+    assert len(text) < 400
+    assert "\r" not in text and "\n" not in text
+
+
+def test_safe_connection_error_text_does_not_raise_on_malformed_location():
+    """A malformed upstream Location must not break health-check bookkeeping."""
+    req = httpx.Request("GET", "http://example.com/mcp")
+    resp = httpx.Response(307, headers={"Location": "http://[invalid"}, request=req)
+    err = httpx.HTTPStatusError("307", request=req, response=resp)
+    assert _safe_connection_error_text(err) == "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."
+
+
+@pytest.mark.asyncio
+async def test_test_gateway_connectivity_redirect_keeps_upstream_body_text():
+    """Test Connection reports the redirect and keeps what the upstream sent."""
+    request = GatewayTestRequest(base_url="http://example.com/mcp", method="GET", path="")
+    target = {
+        "validated_base_url": "http://example.com/mcp",
+        "validated_hostname": "example.com",
+        "pinned_base_url": "http://127.0.0.1/mcp",
+        "resolved_ip": "127.0.0.1",
+        "original_authority": "example.com",
+    }
+    req = httpx.Request("GET", "http://example.com/mcp")
+    resp = httpx.Response(301, headers={"Location": "http://example.com/mcp/"}, content=b"Moved", request=req)
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def request(self, **kwargs):
+            return resp
+
+    with (
+        patch("mcpgateway.services.gateway_service._validate_gateway_test_target", return_value=target),
+        patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=_Client()),
+        patch("mcpgateway.services.gateway_service.structured_logger"),
+    ):
+        response = await run_test_gateway_connectivity(request, team_id=None, user={"email": "t@example.com"}, db=MagicMock())
+
+    assert response.status_code == 301
+    assert response.body["details"] == "Moved"
+    assert response.body["error"].startswith("Upstream redirected to http://example.com/mcp/")
