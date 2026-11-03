@@ -2223,6 +2223,86 @@ class TestGatewayService:
         assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
         test_db.commit.assert_called_once()
 
+    _TE_STORED = {"grant_type": "token-exchange", "client_id": "cid", "token_url": "https://as.example.com/token", "target_audience": "mcp"}
+
+    async def _update_as(self, gateway_service, mock_gateway, test_db, monkeypatch, oauth_config, gateway_update, *, is_admin):
+        """Run ``update_gateway`` as an owner whose platform-admin check returns ``is_admin``.
+
+        Args:
+            gateway_service: Service under test.
+            mock_gateway: Gateway mock.
+            test_db: Session mock.
+            monkeypatch: Pytest monkeypatch fixture.
+            oauth_config: Stored oauth_config of the gateway.
+            gateway_update: Update to apply.
+            is_admin: Result of the platform-admin permission check.
+
+        Returns:
+            The patched ``check_permission`` mock.
+        """
+        self._token_exchange_update_setup(mock_gateway, test_db, dict(oauth_config))
+        test_db.rollback = Mock()
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        mock_perm = MagicMock()
+        mock_perm.return_value.check_resource_ownership = AsyncMock(return_value=True)
+        mock_perm.return_value.check_permission = AsyncMock(return_value=is_admin)
+        monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", mock_perm)
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update, user_email="owner@example.com")
+        return mock_perm.return_value.check_permission
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_token_exchange_url_change_denied_for_non_admin(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """A non-admin owner cannot redirect a token-exchange gateway; the discovery token never leaves."""
+        original_url = mock_gateway.url
+        with pytest.raises(PermissionError, match="platform administrator"):
+            await self._update_as(gateway_service, mock_gateway, test_db, monkeypatch, self._TE_STORED, GatewayUpdate(url="https://attacker.example.com/mcp"), is_admin=False)
+
+        gateway_service._initialize_gateway.assert_not_awaited()
+        assert mock_gateway.url == original_url
+        test_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_token_exchange_ca_certificate_change_denied_for_non_admin(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """A non-admin owner cannot replace the TLS trust anchor of a token-exchange gateway."""
+        with pytest.raises(PermissionError, match="platform administrator"):
+            await self._update_as(gateway_service, mock_gateway, test_db, monkeypatch, self._TE_STORED, GatewayUpdate(ca_certificate="-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----"), is_admin=False)
+
+        gateway_service._initialize_gateway.assert_not_awaited()
+        assert mock_gateway.ca_certificate is None
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_token_exchange_url_change_allowed_for_admin(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """A platform admin may change the URL of a token-exchange gateway."""
+        check_permission = await self._update_as(gateway_service, mock_gateway, test_db, monkeypatch, self._TE_STORED, GatewayUpdate(url="https://new.example.com/mcp"), is_admin=True)
+
+        check_permission.assert_awaited_once_with("owner@example.com", "*", allow_admin_bypass=True)
+        assert mock_gateway.url == "https://new.example.com/mcp"
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_client_credentials_url_change_skips_gate(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """A URL change on a non-token-exchange gateway never runs the platform-admin check."""
+        stored = {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"}
+        check_permission = await self._update_as(gateway_service, mock_gateway, test_db, monkeypatch, stored, GatewayUpdate(url="https://new.example.com/mcp"), is_admin=False)
+
+        check_permission.assert_not_awaited()
+        assert mock_gateway.url == "https://new.example.com/mcp"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_token_exchange_description_only_skips_gate(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """A description-only update of a token-exchange gateway never runs the platform-admin check."""
+        check_permission = await self._update_as(gateway_service, mock_gateway, test_db, monkeypatch, self._TE_STORED, GatewayUpdate(description="new description"), is_admin=False)
+
+        check_permission.assert_not_awaited()
+        test_db.commit.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_update_gateway_convert_to_token_exchange_keeps_tools(self, gateway_service, mock_gateway, test_db):
         """Converting a client_credentials gateway to token-exchange keeps its discovered tools."""

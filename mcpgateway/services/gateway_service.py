@@ -1403,9 +1403,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         a non-admin who can set ``token_url`` could harvest other users' JWTs by pointing
         it at attacker-controlled infrastructure. No-op for any other grant type.
 
+        ``update_gateway`` also calls this gate with the *stored* oauth_config when the
+        update changes the connection destination or TLS material (``url``, ``transport``,
+        ``ca_certificate``, ``client_cert``, ``client_key``). Reinitialization sends the
+        stored discovery token to that destination, so redirecting an existing
+        token-exchange gateway is as privileged as configuring one.
+
         Args:
             db: Database session.
-            oauth_config: Raw gateway oauth_config dict being applied (create or update).
+            oauth_config: Gateway oauth_config dict being applied (create or update), or the
+                stored config when an update changes the connection destination. Only
+                ``grant_type`` is read, so an encrypted stored config is safe to pass.
             requester_email: Email of the user performing the create/update. ``None``/empty
                 means the call originates from a trusted internal flow (config import, which
                 is already gated behind the platform-admin-only ``admin.import`` permission)
@@ -1429,6 +1437,52 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
         if not is_platform_admin:
             raise PermissionError("Configuring a token-exchange gateway requires platform administrator privileges.")
+
+    @staticmethod
+    def _is_destination_changing(
+        gateway_update: GatewayUpdate,
+        is_url_changing: bool,
+        original_transport: Optional[str],
+        original_ca_certificate: Optional[str],
+        original_client_cert: Optional[str],
+    ) -> bool:
+        """Report whether an update changes where or how the gateway connects upstream.
+
+        Args:
+            gateway_update: The submitted gateway update.
+            is_url_changing: Whether the normalized submitted URL differs from the stored URL.
+            original_transport: The stored transport.
+            original_ca_certificate: The stored CA certificate.
+            original_client_cert: The stored mTLS client certificate.
+
+        Returns:
+            ``True`` if the URL, transport, CA certificate, client certificate, or client key changes.
+            The stored ``client_key`` is encrypted, so any submitted unmasked key counts as a change.
+            A masked ``client_key`` counts as unchanged.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> update = SimpleNamespace(transport="SSE", ca_certificate=None, client_cert=None, client_key=None)
+            >>> GatewayService._is_destination_changing(update, False, "SSE", None, None)
+            False
+            >>> GatewayService._is_destination_changing(update, True, "SSE", None, None)
+            True
+            >>> GatewayService._is_destination_changing(SimpleNamespace(transport="STREAMABLEHTTP", ca_certificate=None, client_cert=None, client_key=None), False, "SSE", None, None)
+            True
+        """
+        if is_url_changing:
+            return True
+        transport = getattr(gateway_update, "transport", None)
+        if transport is not None and transport != original_transport:
+            return True
+        ca_certificate = getattr(gateway_update, "ca_certificate", None)
+        if ca_certificate is not None and ca_certificate != original_ca_certificate:
+            return True
+        client_cert = getattr(gateway_update, "client_cert", None)
+        if client_cert is not None and client_cert != original_client_cert:
+            return True
+        client_key = getattr(gateway_update, "client_key", None)
+        return client_key is not None and client_key != settings.masked_auth_value
 
     async def prepare_oauth_config_for_storage(self, db: Session, raw_oauth_config: Optional[dict], requester_email: Optional[str]) -> Optional[dict]:
         """Run the shared enforce/discover/validate/encrypt pipeline for a gateway's oauth_config.
@@ -3684,6 +3738,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         )
                     return pairs
 
+                is_url_changing = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != original_url
+                # Security: reinitialization sends the stored discovery token to the
+                # (possibly new) destination, so a token-exchange gateway's destination
+                # and TLS envelope are as privileged as its token_url.
+                if self._is_destination_changing(gateway_update, is_url_changing, original_transport, original_ca_certificate, original_client_cert):
+                    await self._enforce_token_exchange_admin_only(db, original_oauth_config, user_email)
+
                 # Update fields if provided
                 if gateway_update.name is not None:
                     gateway.name = gateway_update.name
@@ -3852,7 +3913,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Use original_auth_type since gateway.auth_type may have been updated already
                 is_switching_to_queryparam = gateway_update.auth_type == "query_param" and original_auth_type != "query_param"
                 is_updating_queryparam_creds = original_auth_type == "query_param" and (gateway_update.auth_query_param_key is not None or gateway_update.auth_query_param_value is not None)
-                is_url_changing = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != original_url
 
                 if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
                     # Service-layer enforcement: Check feature flag
