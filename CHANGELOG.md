@@ -49,6 +49,8 @@
 
 ### Added
 
+- **A2A agent test endpoint** ([#6696](https://github.com/IBM/mcp-context-forge/issues/6696)) - `POST /v1/a2a/{agent_id}/test` sends a test message to an agent and returns `result`, `agent_name`, and `test_timestamp`. It requires `a2a.invoke`. The optional body field `query` sets the message. Failures return 404, 502, 422, or 500 with a `detail` object holding `success`, `error`, `error_type` (`not_found`, `agent_error`, `agent_disabled`, `validation_error`, or `internal_error`), and `agent_id`. The Admin UI test route calls the same `A2AAgentService.test_agent()` method.
+
 - **Webhook HMAC replay protection** (internal issue 1149, PSIRT ADV0369535) - The `webhook_notification` plugin accepts `hmac_include_timestamp: true`. The signature then covers `{timestamp}.{delivery_id}.{body}`, and the plugin sends `X-Timestamp` and `X-Delivery-Id` headers. Each retry is signed again with a fresh timestamp. The default stays `false`, so existing receivers keep verifying `HMAC(body)`. The default flips to `true` in a later minor release.
 
 #### **API & Platform**

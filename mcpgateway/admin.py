@@ -16961,74 +16961,35 @@ async def admin_test_a2a_agent(
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
+    user_email = get_user_email(user)
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    token_teams = user.get("token_teams") if isinstance(user, dict) else None
+    # Missing token_teams key for non-admin = public-only (per normalize_token_teams rules).
+    # Only admin users retain None (admin bypass); all others default to [].
+    if not is_admin and token_teams is None:
+        token_teams = []
+    # Admin users with unrestricted tokens get full bypass (both None);
+    # non-admin users pass their actual email and team scoping.
+    invoke_user_email = None if (is_admin and token_teams is None) else user_email
+
+    default_message = "Hello from ContextForge Admin UI test!"
     try:
-        user_email = get_user_email(user)
-        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
-        token_teams = user.get("token_teams") if isinstance(user, dict) else None
-        # Missing token_teams key for non-admin = public-only (per normalize_token_teams rules).
-        # Only admin users retain None (admin bypass); all others default to [].
-        if not is_admin and token_teams is None:
-            token_teams = []
-        # Admin users with unrestricted tokens get full bypass (both None);
-        # non-admin users pass their actual email and team scoping.
-        invoke_user_email = None if (is_admin and token_teams is None) else user_email
-        # Get the agent by ID
-        agent = await a2a_service.get_agent(db, agent_id, user_email=invoke_user_email, token_teams=token_teams)
+        body = await _read_request_json(request)
+        user_query = (body.get("query") if body else None) or default_message
+    except Exception:
+        user_query = default_message
 
-        # Parse request body to get user-provided query
-        default_message = "Hello from ContextForge Admin UI test!"
-        try:
-            body = await _read_request_json(request)
-            # Use 'or' to also handle empty string queries
-            user_query = (body.get("query") if body else None) or default_message
-        except Exception:
-            user_query = default_message
-
-        # Prepare test parameters based on agent type and endpoint
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # Let the A2A protocol helper choose v1 or legacy wire format from the agent record.
-            test_params = {"query": user_query}
-        else:
-            # Generic test format
-            test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
-
-        # Invoke the agent
-        result = await a2a_service.invoke_agent(
-            db,
-            agent.name,
-            test_params,
-            "admin_test",
-            user_email=invoke_user_email,
-            user_id=user_email,
-            token_teams=token_teams,
-        )
-
-        return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
-
-    except A2AAgentNotFoundError as e:
-        LOGGER.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id},
-            status_code=404,
-        )
-    except A2AAgentError as e:
-        LOGGER.error(f"A2A agent error for {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id},
-            status_code=502,
-        )
-    except ValidationError as e:
-        LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id},
-            status_code=422,
-        )
-    except Exception as e:
-        LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id},
-            status_code=500,
-        )
+    outcome = await a2a_service.test_agent(
+        db,
+        agent_id,
+        query=user_query,
+        interaction_type="admin_test",
+        user_email=invoke_user_email,
+        user_id=user_email,
+        token_teams=token_teams,
+        include_agent_error_detail=True,
+    )
+    return ORJSONResponse(content=outcome.body, status_code=outcome.status_code)
 
 
 # gRPC Service Management Endpoints
