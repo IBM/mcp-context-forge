@@ -569,3 +569,32 @@ def prepare_a2a_invocation(
         configured_headers=configured_headers,
         correlation_id=correlation_id,
     )
+
+
+def get_agent_skills(agent: Any) -> list[Any]:
+    """Return the skills an agent publishes.
+
+    Reads the ``skills`` column first. Agents created before the column existed
+    keep their skills in ``capabilities["skills"]``, which serves as the fallback.
+
+    Args:
+        agent: Agent row with ``skills`` and ``capabilities`` attributes.
+
+    Returns:
+        list[Any]: Skill entries, or an empty list when none are declared.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_agent_skills(SimpleNamespace(skills=[{"id": "a"}], capabilities={"skills": [{"id": "b"}]}))
+        [{'id': 'a'}]
+        >>> get_agent_skills(SimpleNamespace(skills=None, capabilities={"skills": [{"id": "b"}]}))
+        [{'id': 'b'}]
+        >>> get_agent_skills(SimpleNamespace(skills=None, capabilities=None))
+        []
+    """
+    skills = getattr(agent, "skills", None)
+    if isinstance(skills, list):
+        return skills
+    capabilities = getattr(agent, "capabilities", None)
+    legacy = capabilities.get("skills") if isinstance(capabilities, dict) else None
+    return legacy if isinstance(legacy, list) else []

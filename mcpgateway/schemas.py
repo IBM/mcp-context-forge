@@ -5815,6 +5815,24 @@ class TopPerformer(BaseModelWithConfigDict):
 # --- A2A Agent Schemas ---
 
 
+class A2AAgentSkill(BaseModel):
+    """A skill an A2A agent advertises on its Agent Card.
+
+    Attributes:
+        id (str): Unique skill identifier.
+        name (str): Human-readable skill name.
+        description (str): What the skill does.
+        tags (List[str]): Keywords describing the skill.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(..., min_length=1, description="Unique skill identifier")
+    name: str = Field(..., min_length=1, description="Human-readable skill name")
+    description: str = Field(..., description="What the skill does")
+    tags: List[str] = Field(..., description="Keywords describing the skill")
+
+
 class A2AAgentCreate(BaseModel):
     """
     Schema for creating a new A2A (Agent-to-Agent) compatible agent.
@@ -5850,6 +5868,7 @@ class A2AAgentCreate(BaseModel):
     agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
+    skills: Optional[List[A2AAgentSkill]] = Field(default=None, description="Skills the agent advertises on its Agent Card")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
@@ -6192,6 +6211,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     agent_type: Optional[str] = Field(None, description="Type of agent")
     protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
+    skills: Optional[List[A2AAgentSkill]] = Field(None, description="Skills the agent advertises on its Agent Card")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
@@ -6565,6 +6585,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     agent_type: str
     protocol_version: str
     capabilities: Dict[str, Any]
+    skills: Optional[List[Dict[str, Any]]] = Field(default=None, description="Skills the agent advertises; falls back to capabilities.skills for older agents")
     config: Dict[str, Any]
     enabled: bool
     reachable: bool
