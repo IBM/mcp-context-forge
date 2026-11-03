@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- **`X-Upstream-Authorization` no longer overrides gateway-managed credentials** - The header is dropped, with a warning, for gateways with `auth_type` `oauth`, `bearer`, `basic`, or `authheaders`, and for REST tools and A2A agents with the same auth types. Previously any authenticated caller could replace the stored per-user upstream credential.
+
 ### Breaking Changes
 
 - **REST tool URL template values are percent-encoded** - Values now fill `{param}` as one encoded path segment or one query value. Before, the gateway inserted the raw value into the URL.
@@ -17,6 +21,10 @@
     - A value that already holds `%XX` (for example `42%2F43`) used to pass and now returns an error.
     - A value with a `.` or `..` segment returns an error.
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+
+### Security
+
+- **Per-gateway identity propagation on tool and resource calls** (internal issue 1149, PSIRT ADV0369535, CWE-200) - MCP and REST tool calls and resource reads ignored the gateway `identity_propagation` override and sent user identity headers when the global setting was on. A gateway set to `enabled: false` now receives no identity headers or `_meta`. Deployments with global propagation on and a gateway override of off no longer disclose user identity to that gateway.
 
 ### Fixed
 
@@ -33,12 +41,15 @@
 - **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
 - **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
+- **LLM Chat loads MCP tools with the MCP SDK client** ([#7090](https://github.com/IBM/mcp-context-forge/issues/7090), [#7332](https://github.com/IBM/mcp-context-forge/pull/7332)) - `langchain-mcp-adapters` has no release compatible with MCP SDK 2.x and is removed from the `llmchat` extra; LLM Chat lists and calls tools through `mcp.client.Client`.
 
 ### Changed
 
 - **A2A agent cards follow the 1.0 schema (breaking for card consumers)** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Cards for agents with a stored protocol version of 1.x now use the A2A 1.0 `AgentCard` shape, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. `protocol_version` defaults to `"1.0"`, so most existing agents change shape. These fields leave 1.x cards: `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `capabilities.stateTransitionHistory`. A caller that sends `A2A-Version: 0.3` to the sidecar keeps the legacy shape for a 1.x agent. A caller that sends no version follows the stored version. Agents with a stored version of 0.x keep the legacy shape. Server cards now aggregate `streaming`, `pushNotifications`, and the default input and output modes from enabled associated agents instead of hardcoded values. Server cards skip malformed capability entries. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. Scheme names are `basicAuth`, `bearerAuth`, `apiKeyAuth`, and `oauth2Auth`. OAuth schemes read the stored `scopes` list and always emit the scope map.
 
 ### Added
+
+- **Webhook HMAC replay protection** (internal issue 1149, PSIRT ADV0369535) - The `webhook_notification` plugin accepts `hmac_include_timestamp: true`. The signature then covers `{timestamp}.{delivery_id}.{body}`, and the plugin sends `X-Timestamp` and `X-Delivery-Id` headers. Each retry is signed again with a fresh timestamp. The default stays `false`, so existing receivers keep verifying `HMAC(body)`. The default flips to `true` in a later minor release.
 
 #### **API & Platform**
 

@@ -1464,6 +1464,7 @@ class ToolService(BaseService):
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
                 "auth_value": getattr(gateway, "auth_value", None),
+                "identity_propagation": getattr(gateway, "identity_propagation", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -5121,6 +5122,7 @@ class ToolService(BaseService):
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
                     "gateway_mode": gateway.gateway_mode,
+                    "identity_propagation": getattr(gateway, "identity_propagation", None),
                 }
                 # Create minimal tool payload for direct proxy (no DB tool needed)
                 tool_payload = {
@@ -5461,6 +5463,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_identity_propagation = gateway_payload.get("identity_propagation") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -5725,11 +5728,13 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
+                        # Pass tool_auth_type so X-Upstream-Authorization cannot override
+                        # a credential already set in headers for managed auth types.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -5747,7 +5752,7 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -6215,8 +6220,8 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data)
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -6912,11 +6917,13 @@ class ToolService(BaseService):
                     a2a_allowlist = a2a_agent_passthrough_headers or []
                     headers = {"Content-Type": "application/json"}
                     if request_headers:
+                        # Pass a2a_agent_auth_type so X-Upstream-Authorization cannot inject
+                        # an Authorization header into A2A calls with agent-managed credentials.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=a2a_agent_auth_type,
                             gateway_passthrough_headers=a2a_allowlist,
                         )
                         if not settings.enable_sensitive_header_passthrough:
