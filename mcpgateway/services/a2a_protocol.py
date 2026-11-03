@@ -249,8 +249,21 @@ def normalize_a2a_version_header(protocol_version: Optional[str]) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str]) -> bool:
-    """Return whether the registered agent should be invoked as JSON-RPC A2A."""
+def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str], protocol_binding: Optional[str] = None) -> bool:
+    """Return whether the registered agent should be invoked as JSON-RPC A2A.
+
+    A stored ``protocol_binding`` decides. Agents without one fall back to the ``agent_type`` and trailing slash heuristic.
+
+    Args:
+        agent_type: Registered agent type.
+        endpoint_url: Registered endpoint URL.
+        protocol_binding: Stored binding, ``jsonrpc`` or ``http_json``, or ``None`` when not set.
+
+    Returns:
+        bool: True when the agent is invoked with a JSON-RPC body.
+    """
+    if protocol_binding in {"jsonrpc", "http_json"}:
+        return protocol_binding == "jsonrpc"
     return str(agent_type or "").lower() in {"generic", "jsonrpc"} or str(endpoint_url or "").endswith("/")
 
 
@@ -478,6 +491,7 @@ def prepare_a2a_invocation(
     plugin_input_headers: Optional[Mapping[str, str]] = None,
     plugin_output_headers: Optional[Mapping[str, str]] = None,
     correlation_id: Optional[str] = None,
+    protocol_binding: Optional[str] = None,
 ) -> PreparedA2AInvocation:
     """Prepare endpoint, headers, and request body for an outbound A2A invocation."""
     caller_headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
@@ -533,7 +547,7 @@ def prepare_a2a_invocation(
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)
 
-    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url)
+    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url, protocol_binding)
     protocol_version_header = normalize_a2a_version_header(protocol_version)
     headers = resolve_a2a_headers(
         caller_headers=caller_headers,

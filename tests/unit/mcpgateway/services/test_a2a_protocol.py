@@ -139,6 +139,33 @@ class TestIsJsonrpcA2AAgent:
     def test_none_values(self):
         assert is_jsonrpc_a2a_agent(None, None) is False
 
+    def test_http_json_binding_ignores_trailing_slash(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com/", "http_json") is False
+
+    def test_http_json_binding_overrides_generic_type(self):
+        assert is_jsonrpc_a2a_agent("generic", "https://x.com", "http_json") is False
+
+    def test_jsonrpc_binding_without_trailing_slash(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com", "jsonrpc") is True
+
+    def test_missing_binding_keeps_url_fallback(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com/", None) is True
+
+
+def test_prepare_invocation_http_json_agent_with_trailing_slash_sends_plain_body():
+    prepared = prepare_a2a_invocation(
+        agent_type="custom",
+        endpoint_url="https://agent.example/a2a/",
+        protocol_version="1.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        protocol_binding="http_json",
+    )
+
+    assert "jsonrpc" not in prepared.request_data
+    assert prepared.request_data["interaction_type"] == "query"
+    assert prepared.request_data["parameters"] == {"query": "hi"}
+
 
 # ── normalize_a2a_method ─────────────────────────────────────────────────────
 

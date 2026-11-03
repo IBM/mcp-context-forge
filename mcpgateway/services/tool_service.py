@@ -5652,6 +5652,7 @@ class ToolService(BaseService):
         a2a_agent_name: Optional[str] = None
         a2a_agent_endpoint_url: Optional[str] = None
         a2a_agent_type: Optional[str] = None
+        a2a_agent_protocol_binding: Optional[str] = None
         a2a_agent_protocol_version: Optional[str] = None
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
@@ -5677,6 +5678,7 @@ class ToolService(BaseService):
             a2a_agent_name = a2a_agent.name
             a2a_agent_endpoint_url = a2a_agent.endpoint_url
             a2a_agent_type = a2a_agent.agent_type
+            a2a_agent_protocol_binding = getattr(a2a_agent, "protocol_binding", None)
             a2a_agent_protocol_version = a2a_agent.protocol_version
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
@@ -7094,6 +7096,7 @@ class ToolService(BaseService):
                         plugin_input_headers=plugin_headers,
                         plugin_output_headers=plugin_returned_headers,
                         correlation_id=get_correlation_id(),
+                        protocol_binding=a2a_agent_protocol_binding,
                     )
                     for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
                         del prepared.headers[existing_key]
@@ -8713,6 +8716,7 @@ class ToolService(BaseService):
             auth_value=agent.auth_value,
             auth_query_params=agent.auth_query_params,
             correlation_id=get_correlation_id(),
+            protocol_binding=getattr(agent, "protocol_binding", None),
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 
