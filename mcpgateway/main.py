@@ -140,7 +140,7 @@ from mcpgateway.schemas import (
     A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
     A2ATaskState,
-    A2ATestError,
+    A2ATestErrorResponse,
     A2ATestRequest,
     A2ATestResponse,
     AgentCard,
@@ -5810,10 +5810,10 @@ async def invoke_a2a_agent(
     "/{agent_id}/test",
     response_model=A2ATestResponse,
     responses={
-        404: {"model": A2ATestError, "description": "Agent not found or not accessible (detail is an A2ATestError)"},
-        422: {"model": A2ATestError, "description": "Invalid test parameters (detail is an A2ATestError)"},
-        500: {"model": A2ATestError, "description": "Unexpected error (detail is an A2ATestError)"},
-        502: {"model": A2ATestError, "description": "Agent disabled, unreachable or returned an error (detail is an A2ATestError)"},
+        404: {"model": A2ATestErrorResponse, "description": "Agent not found or not accessible"},
+        422: {"model": A2ATestErrorResponse, "description": "Invalid test parameters. Request body validation failures return the default FastAPI 422 with a list in detail"},
+        500: {"model": A2ATestErrorResponse, "description": "Unexpected error"},
+        502: {"model": A2ATestErrorResponse, "description": "Agent disabled, unreachable or returned an error"},
     },
 )
 @require_permission("a2a.invoke")
@@ -5824,7 +5824,9 @@ async def test_a2a_agent(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
-    """Invoke an A2A agent with a test message and return a sanitized result.
+    """Invoke an A2A agent with a test message.
+
+    Error text is fixed and sanitized. ``result`` relays the upstream agent response unchanged. A test call counts in the agent metrics.
 
     Args:
         agent_id: Agent ID.
@@ -5843,15 +5845,7 @@ async def test_a2a_agent(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
-    outcome = await a2a_service.test_agent(
-        db,
-        agent_id,
-        query=payload.query if payload else None,
-        user_email=user_email,
-        user_id=user_email,
-        token_teams=token_teams,
-    )
+    outcome = await a2a_service.test_agent(db, agent_id, query=payload.query if payload else None, **_extract_a2a_request_context(request, user))
     if outcome.status_code != 200:
         raise HTTPException(status_code=outcome.status_code, detail=outcome.body)
     return outcome.body

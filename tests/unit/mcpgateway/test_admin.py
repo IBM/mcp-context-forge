@@ -6699,7 +6699,7 @@ class TestA2AAgentManagement:
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#a2a-agents"
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_success(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Test testing A2A agent."""
@@ -6722,14 +6722,14 @@ class TestA2AAgentManagement:
         assert body["success"] is True
         assert "result" in body
         # Non-admin user without token_teams key → normalized to [] (public-only)
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=[])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "test-user", [])
         mock_invoke_agent.assert_called_once()
         # Verify invoke_agent receives correct user context
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "test-user"
         assert invoke_kwargs["token_teams"] == []
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_admin_bypass(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Admin user with token_teams=None gets full bypass (user_email=None)."""
@@ -6751,14 +6751,14 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         # Admin bypass: get_agent called with user_email=None, token_teams=None
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email=None, token_teams=None)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", None, None)
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] is None
         assert invoke_kwargs["token_teams"] is None
         # user_id still carries the real email for audit logging
         assert invoke_kwargs["user_id"] == "admin@example.com"
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_team_scoped(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Team-scoped user passes actual email and team list."""
@@ -6779,12 +6779,12 @@ class TestA2AAgentManagement:
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
         assert body["success"] is True
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="dev@example.com", token_teams=["team-1"])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "dev@example.com", ["team-1"])
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "dev@example.com"
         assert invoke_kwargs["token_teams"] == ["team-1"]
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_proxy_auth_no_token_teams_key(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Proxy-auth user without token_teams key gets public-only scope, not admin bypass."""
@@ -6805,7 +6805,7 @@ class TestA2AAgentManagement:
 
         assert isinstance(result, JSONResponse)
         # Missing token_teams key normalizes to [] (public-only), not None (admin bypass)
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="proxy@example.com", token_teams=[])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "proxy@example.com", [])
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["token_teams"] == []
 
@@ -6822,7 +6822,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6836,7 +6836,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6852,7 +6852,7 @@ class TestA2AAgentManagement:
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test generic exception returns 500 with error_type field."""
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6873,7 +6873,7 @@ class TestA2AAgentManagement:
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
         service = A2AAgentService()
-        service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
+        service._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
@@ -6892,7 +6892,7 @@ class TestA2AAgentManagement:
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with name: private-agent"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6911,7 +6911,7 @@ class TestA2AAgentManagement:
         from mcpgateway.services.a2a_service import A2AAgentError
 
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("A2A Agent 'test-agent' is disabled"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6932,7 +6932,7 @@ class TestA2AAgentManagement:
         from mcpgateway.services.a2a_service import A2AAgentError
 
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("HTTP 503: Service Unavailable"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6949,7 +6949,7 @@ class TestA2AAgentManagement:
     async def test_admin_test_a2a_agent_validation_error(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test ValidationError returns 422 with validation_error type."""
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         # Simulate validation error during parameter processing
         service.invoke_agent = AsyncMock(side_effect=ValidationError.from_exception_data("test", []))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6970,7 +6970,7 @@ class TestA2AAgentManagement:
         from mcpgateway.services.a2a_service import A2AAgentError
 
         service = A2AAgentService()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Failed to invoke A2A agent: Connection refused"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)

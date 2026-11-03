@@ -6653,6 +6653,12 @@ class A2ATestError(BaseModel):
     agent_id: str = Field(..., description="ID of the agent that was tested")
 
 
+class A2ATestErrorResponse(BaseModel):
+    """Schema for the wire body of a failed ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    detail: A2ATestError = Field(..., description="Failure envelope")
+
+
 class A2AInvokeResponse(A2AInvocationResponse):
     """Schema for ``POST /v1/a2a/{agent_name}/invoke`` and ``POST /v1/a2a/invoke``.
 
