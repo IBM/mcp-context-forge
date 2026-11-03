@@ -1230,6 +1230,8 @@ def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], exi
     checkbox removes it. Keys the form does not render (for example
     ``token_endpoint_auth_method``) keep their stored value, and a blank secret
     keeps the stored secret. A rendered override submitted blank clears its key.
+    A stored secret is removed when the discovery identity changes without a new
+    secret (see ``_drop_stale_discovery_secret``).
 
     Args:
         merged: oauth_config being built from the stored and submitted configs.
@@ -1237,12 +1239,15 @@ def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], exi
         existing: Stored oauth_config of the gateway.
         form: Submitted form.
 
+    Raises:
+        PublicValidationError: If a discovery ``client_id`` override changes and no new secret is submitted.
+
     Examples:
         >>> stored = {"discovery": {"grant_type": "client_credentials", "client_secret": "enc", "client_id": "svc", "token_endpoint_auth_method": "client_secret_post"}}  # pragma: allowlist secret
         >>> merged = {"discovery": {"grant_type": "client_credentials"}}
         >>> _merge_discovery_edit(merged, dict(merged), stored, {"oauth_discovery_present": "1", "oauth_discovery_enabled": "on", "oauth_discovery_client_id": ""})
         >>> sorted(merged["discovery"].items())
-        [('client_secret', 'enc'), ('grant_type', 'client_credentials'), ('token_endpoint_auth_method', 'client_secret_post')]
+        [('grant_type', 'client_credentials'), ('token_endpoint_auth_method', 'client_secret_post')]
         >>> merged = dict(stored)
         >>> _merge_discovery_edit(merged, {}, stored, {"oauth_discovery_present": "1"})
         >>> "discovery" in merged
@@ -1263,7 +1268,53 @@ def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], exi
             discovery.pop(config_key, None)
     if "scopes" not in submitted_discovery:
         discovery.pop("scopes", None)
+    _drop_stale_discovery_secret(discovery, stored_discovery, submitted_discovery, merged)
     merged["discovery"] = discovery
+
+
+def _drop_stale_discovery_secret(discovery: Dict[str, Any], stored_discovery: Dict[str, Any], submitted_discovery: Dict[str, Any], merged: Dict[str, Any]) -> None:
+    """Remove a stored discovery secret that no longer matches the discovery identity, in place.
+
+    The stored secret belongs to the stored ``client_id`` and ``token_url``. When either
+    override changes without a new secret, the stored secret is removed so discovery
+    inherits the parent secret together with the parent client ID. A remaining
+    ``client_id`` override then needs its own secret, unless the effective
+    ``token_endpoint_auth_method`` is ``private_key_jwt`` or ``none``.
+
+    Args:
+        discovery: Merged discovery object being built.
+        stored_discovery: Stored discovery object, or an empty dict.
+        submitted_discovery: Discovery object assembled from the edit form.
+        merged: Merged parent oauth_config, used for the inherited auth method.
+
+    Raises:
+        PublicValidationError: If a ``client_id`` override changes and no new secret is submitted.
+
+    Examples:
+        >>> stored = {"client_id": "svc", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> discovery = {"grant_type": "client_credentials", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"grant_type": "client_credentials"}, {})
+        >>> discovery
+        {'grant_type': 'client_credentials'}
+        >>> discovery = {"grant_type": "client_credentials", "client_id": "other", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"client_id": "other"}, {})
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: A discovery client_secret is required when the discovery client_id or token_url changes
+        >>> discovery = {"client_id": "svc", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"client_id": "svc"}, {})
+        >>> discovery["client_secret"]
+        'enc'
+    """
+    identity_changed = any(discovery.get(key) != stored_discovery.get(key) for key in ("client_id", "token_url"))
+    submitted_secret = submitted_discovery.get("client_secret")
+    has_new_secret = bool(submitted_secret) and submitted_secret != settings.masked_auth_value
+    if not identity_changed or has_new_secret:
+        return
+    discovery.pop("client_secret", None)
+    auth_method = discovery.get("token_endpoint_auth_method") or merged.get("token_endpoint_auth_method")
+    if discovery.get("client_id") and auth_method not in ("private_key_jwt", "none"):
+        raise PublicValidationError("A discovery client_secret is required when the discovery client_id or token_url changes")
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:

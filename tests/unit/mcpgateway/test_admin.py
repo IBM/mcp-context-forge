@@ -8326,6 +8326,53 @@ class TestTokenExchangeAdminForms:
         assert "client_id" not in mock_update_gateway.call_args.args[2].oauth_config["discovery"]
 
     @patch.object(GatewayService, "update_gateway")
+    async def test_edit_clearing_discovery_overrides_drops_stored_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing both identity overrides with a blank secret drops the stored discovery secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY, token_url="https://discovery.example.com/token"))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="", oauth_discovery_token_url="", oauth_discovery_client_secret="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert "client_id" not in discovery
+        assert "token_url" not in discovery
+        assert "client_secret" not in discovery
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_changed_discovery_client_id_without_secret_rejected(self, mock_update_gateway, mock_request, mock_db):
+        """A new discovery client_id without a new secret returns 400 and saves nothing."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="svc-other")
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 400
+        assert "discovery client_secret is required" in result.body.decode()
+        mock_update_gateway.assert_not_called()
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_changed_discovery_client_id_with_new_secret_kept(self, mock_update_gateway, mock_request, mock_db):
+        """A new discovery client_id with a new secret keeps the submitted secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="svc-other", oauth_discovery_client_secret="new-discovery-secret")  # pragma: allowlist secret
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert discovery["client_id"] == "svc-other"
+        assert discovery["client_secret"] == "new-ciphertext"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("secret_field", ["", "masked"])
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_unchanged_discovery_identity_keeps_stored_secret(self, mock_update_gateway, mock_request, mock_db, secret_field):
+        """An unchanged discovery identity with a blank or masked secret keeps the stored secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        secret = settings.masked_auth_value if secret_field == "masked" else ""
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_secret=secret)
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert discovery["client_id"] == "svc-discovery"
+        assert discovery["client_secret"] in ("stored-discovery-ciphertext", settings.masked_auth_value)
+
+    @patch.object(GatewayService, "update_gateway")
     async def test_edit_token_exchange_without_any_secret_rejected(self, mock_update_gateway, mock_request, mock_db):
         """Converting to token-exchange with no secret anywhere is rejected."""
         form = {k: v for k, v in _TE_FORM_FIELDS.items() if k != "oauth_client_secret"}
