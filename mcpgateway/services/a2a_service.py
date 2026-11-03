@@ -332,10 +332,15 @@ class A2AAgentNotFoundError(A2AAgentError):
     """
 
 
+class A2AAgentDisabledError(A2AAgentError):
+    """Raised when an invoked A2A agent is disabled."""
+
+
 DEFAULT_A2A_TEST_MESSAGE = "ContextForge A2A agent connectivity test"
 DEFAULT_A2A_TEST_INTERACTION_TYPE = "test"
 A2A_TEST_NOT_FOUND_MESSAGE = "A2A agent not found"
 A2A_TEST_AGENT_ERROR_MESSAGE = "A2A agent invocation failed"
+A2A_TEST_AGENT_DISABLED_MESSAGE = "A2A agent is disabled"
 
 
 @dataclass(frozen=True)
@@ -2232,9 +2237,8 @@ class A2AAgentService(BaseService):
     ) -> A2ATestOutcome:
         """Invoke an A2A agent with a test message and classify the outcome.
 
-        The 404 response carries a fixed message. Missing and inaccessible agents both classify
-        as ``not_found`` so agent existence does not leak. The 502 response carries a fixed message
-        unless ``include_agent_error_detail`` is true. The service always logs the exception detail.
+        Missing and inaccessible agents both classify as ``not_found`` so agent existence does not leak.
+        The 404 and 502 responses carry fixed messages unless ``include_agent_error_detail`` is true. The service always logs the exception detail.
 
         Args:
             db: Database session.
@@ -2244,7 +2248,7 @@ class A2AAgentService(BaseService):
             user_email: Email used for visibility checks. None with ``token_teams`` None means admin bypass.
             user_id: Identity recorded for the invocation.
             token_teams: Teams from the token. None means admin bypass, [] means public-only.
-            include_agent_error_detail: Return the agent error text in the 502 response. The Admin UI sets this so operators see the cause.
+            include_agent_error_detail: Return the exception text in the 404 and 502 responses. The Admin UI sets this so operators see the cause.
 
         Returns:
             A2ATestOutcome: HTTP status and response envelope.
@@ -2257,20 +2261,26 @@ class A2AAgentService(BaseService):
             else:
                 test_params = {"query": message, "message": message, "test": True, "timestamp": int(time.time())}
 
-            result = await self.invoke_agent(db, agent.name, test_params, interaction_type, user_email=user_email, user_id=user_id, token_teams=token_teams)
+            result = await self.invoke_agent(db, agent.name, test_params, interaction_type, agent_id=agent.id, user_email=user_email, user_id=user_id, token_teams=token_teams)
             return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
         except A2AAgentNotFoundError as e:
-            logger.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
-            return A2ATestOutcome(404, {"success": False, "error": A2A_TEST_NOT_FOUND_MESSAGE, "error_type": "not_found", "agent_id": agent_id})
+            logger.warning("A2A agent not found or access denied for %s: %s", agent_id, e)
+            error = str(e) if include_agent_error_detail else A2A_TEST_NOT_FOUND_MESSAGE
+            return A2ATestOutcome(404, {"success": False, "error": error, "error_type": "not_found", "agent_id": agent_id})
+        except A2AAgentDisabledError as e:
+            logger.warning("A2A agent %s is disabled: %s", agent_id, e)
+            if include_agent_error_detail:
+                return A2ATestOutcome(502, {"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id})
+            return A2ATestOutcome(502, {"success": False, "error": A2A_TEST_AGENT_DISABLED_MESSAGE, "error_type": "agent_disabled", "agent_id": agent_id})
         except A2AAgentError as e:
-            logger.error(f"A2A agent error for {agent_id}: {e}")
+            logger.error("A2A agent error for %s: %s", agent_id, e)
             error = str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE
             return A2ATestOutcome(502, {"success": False, "error": error, "error_type": "agent_error", "agent_id": agent_id})
         except ValidationError as e:
-            logger.warning(f"Validation error testing A2A agent {agent_id}: {e}")
+            logger.warning("Validation error testing A2A agent %s: %s", agent_id, e)
             return A2ATestOutcome(422, {"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id})
         except Exception as e:
-            logger.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
+            logger.error("Unexpected error testing A2A agent %s: %s", agent_id, e)
             return A2ATestOutcome(500, {"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id})
 
     async def invoke_agent(
@@ -2414,7 +2424,7 @@ class A2AAgentService(BaseService):
             raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
-            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+            raise A2AAgentDisabledError(f"A2A Agent '{agent_name}' is disabled")
 
         # Extract all needed data to local variables before releasing DB connection
         agent_id = agent.id

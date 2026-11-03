@@ -6630,7 +6630,9 @@ class A2AInvocationResponse(BaseModel):
 class A2ATestRequest(BaseModel):
     """Schema for the optional body of ``POST /v1/a2a/{agent_id}/test``."""
 
-    query: Optional[str] = Field(None, description="Test message. A neutral default is used when omitted or empty.")
+    model_config = ConfigDict(extra="forbid")
+
+    query: Optional[str] = Field(None, max_length=4096, description="Test message. A neutral default is used when omitted or empty.")
 
 
 class A2ATestResponse(BaseModel):
@@ -6647,7 +6649,7 @@ class A2ATestError(BaseModel):
 
     success: bool = Field(False, description="Always false on failure")
     error: str = Field(..., description="Sanitized error message")
-    error_type: Literal["not_found", "agent_error", "validation_error", "internal_error"] = Field(..., description="Error classification")
+    error_type: Literal["not_found", "agent_error", "agent_disabled", "validation_error", "internal_error"] = Field(..., description="Error classification")
     agent_id: str = Field(..., description="ID of the agent that was tested")
 
 
