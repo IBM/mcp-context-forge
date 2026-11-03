@@ -214,3 +214,57 @@ def test_unreachable_agent_is_502_without_upstream_text(test_gateway):
     detail = response.json()["detail"]
     assert detail["error_type"] == "agent_error" and detail["error"] == "A2A agent invocation failed"
     assert "127.0.0.1" not in response.text and ":9" not in detail["error"]
+
+
+def _register(admin, name, endpoint, agent_type="generic"):
+    """Register a public agent and return its ID."""
+    agent = {"name": name, "endpoint_url": endpoint, "agent_type": agent_type, "protocol_version": "1.0"}
+    created = admin.post("/a2a", json={"agent": agent, "visibility": "public"})
+    assert created.status_code in (200, 201), created.text
+    return created.json()["id"]
+
+
+def test_extra_body_field_is_422(test_gateway):
+    """An unknown body field fails request validation."""
+    admin, _other, _reader, reachable, _unreachable, _private = test_gateway
+    response = admin.post(f"/v1/a2a/{reachable}/test", json={"query": "hi", "extra": 1})
+    assert response.status_code == 422
+
+
+def test_oversized_query_is_422(test_gateway):
+    """A query over 4096 characters fails request validation."""
+    admin, _other, _reader, reachable, _unreachable, _private = test_gateway
+    response = admin.post(f"/v1/a2a/{reachable}/test", json={"query": "x" * 4097})
+    assert response.status_code == 422
+
+
+def test_disabled_agent_is_502_agent_disabled(test_gateway, echo_agent):
+    """A disabled agent returns the fixed agent_disabled envelope."""
+    admin = test_gateway[0]
+    agent_id = _register(admin, "test-e2e-disabled", echo_agent)
+    state = admin.post(f"/v1/a2a/{agent_id}/state", params={"activate": "false"})
+    assert state.status_code == 200, state.text
+    response = admin.post(f"/v1/a2a/{agent_id}/test")
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"success": False, "error": "A2A agent is disabled", "error_type": "agent_disabled", "agent_id": agent_id}
+
+
+def test_non_generic_agent_receives_extended_payload(test_gateway, echo_agent):
+    """A non-generic agent receives message, test, and timestamp alongside query."""
+    admin = test_gateway[0]
+    agent_id = _register(admin, "test-e2e-custom", echo_agent, agent_type="custom")
+    response = admin.post(f"/v1/a2a/{agent_id}/test", json={"query": "payload-check"})
+    assert response.status_code == 200, response.text
+    received = [item for item in _EchoAgent.received if "payload-check" in json.dumps(item)]
+    assert received, _EchoAgent.received
+    assert "message" in json.dumps(received[-1]) and "timestamp" in json.dumps(received[-1])
+
+
+def test_admin_route_keeps_its_contract(test_gateway):
+    """The admin route reports failure in the body and keeps the detailed 404 text."""
+    admin = test_gateway[0]
+    response = admin.post("/admin/a2a/does-not-exist/test", data={"test_message": "hi"})
+    assert response.status_code == 404
+    body = response.json()
+    assert body["success"] is False and body["error_type"] == "not_found"
+    assert "does-not-exist" in body["error"]

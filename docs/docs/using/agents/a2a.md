@@ -94,7 +94,7 @@ curl -X POST "http://localhost:4444/v1/a2a/$AGENT_ID/test" \
   -d '{"query": "hello"}'
 ```
 
-Success returns 200 with `success`, `result`, `agent_name`, and `test_timestamp`. Failure returns an error status with a `detail` object holding `success`, `error`, `error_type`, and `agent_id`.
+Success returns 200 with `success`, `result`, `agent_name`, and `test_timestamp`. Failure returns an error status with a `detail` object holding `success`, `error`, `error_type`, and `agent_id`. Request body validation failures (an extra field, a `query` over 4096 characters, a non-JSON body) return the default FastAPI 422, where `detail` is a list of validation errors.
 
 | Status | `error_type` | `error` | Cause |
 |--------|--------------|---------|-------|
@@ -104,7 +104,7 @@ Success returns 200 with `success`, `result`, `agent_name`, and `test_timestamp`
 | 422 | `validation_error` | Validation message | Invalid test parameters |
 | 500 | `internal_error` | Sanitized message | Unexpected error |
 
-The 404 response is identical for a missing agent and an agent the caller cannot see. The 502 response never carries upstream error text; the gateway logs it.
+The 404 response is identical for a missing agent and an agent the caller cannot see. The 502 response never carries upstream error text; the gateway logs it. The `result` field relays the agent response unchanged. The gateway forwards the same passthrough headers as a normal invocation, and a test call counts in the agent metrics.
 
 ### 4. Create Virtual Server with A2A Agent
 

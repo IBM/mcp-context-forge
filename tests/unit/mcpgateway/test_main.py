@@ -4954,6 +4954,40 @@ class TestA2AAgentEndpoints:
         response = test_client.post("/a2a/agent-1/test", json={"query": "hi", "extra": 1}, headers=auth_headers)
         assert response.status_code == 422
 
+    def test_test_a2a_agent_rejects_oversized_query(self, test_client, auth_headers):
+        """A query over 4096 characters fails body validation."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "x" * 4097}, headers=auth_headers)
+        assert response.status_code == 422
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_forwards_request_context(self, mock_service, test_client, auth_headers):
+        """The route forwards the shared invoke context, including passthrough headers and content type."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {}, "agent_name": "a", "test_timestamp": 1.0}))
+        context = {
+            "user_id": "uid",
+            "user_email": "u@x.com",
+            "token_teams": ["team-a"],
+            "hop_count": 2,
+            "bearer_token": None,
+            "content_type": "application/json",
+            "request_headers": {"x-trace": "abc"},
+        }
+        with patch("mcpgateway.main._extract_a2a_request_context", return_value=context) as extract:
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 200
+        extract.assert_called_once()
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert {key: kwargs[key] for key in context} == context
+
+    def test_test_a2a_agent_openapi_documents_wrapped_error_body(self, test_client):
+        """OpenAPI documents the wire shape: an object holding the envelope under detail."""
+        spec = test_client.app.openapi()
+        operation = spec["paths"]["/v1/a2a/{agent_id}/test"]["post"]
+        for status in ("404", "422", "500", "502"):
+            assert operation["responses"][status]["content"]["application/json"]["schema"]["$ref"].endswith("/A2ATestErrorResponse")
+        wrapper = spec["components"]["schemas"]["A2ATestErrorResponse"]
+        assert wrapper["properties"]["detail"]["$ref"].endswith("/A2ATestError")
+
     def test_test_a2a_agent_in_openapi(self, test_client):
         """The route is part of the OpenAPI schema."""
         paths = test_client.app.openapi()["paths"]
@@ -6694,7 +6728,6 @@ def test_startup_no_warning_when_a2a_disabled():
 def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
     """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
@@ -6713,7 +6746,6 @@ def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
 def test_startup_succeeds_with_uaid_require_allowlist_false():
     """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False

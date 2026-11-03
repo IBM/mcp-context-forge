@@ -39,7 +39,7 @@ from mcpgateway.db import fresh_db_session, get_for_update, server_tool_associat
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
 from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -2229,6 +2229,42 @@ class A2AAgentService(BaseService):
 
         return plugin_headers, downstream_headers
 
+    async def _load_accessible_agent(self, db: Session, agent_id: str, user_email: Optional[str], token_teams: Optional[List[str]]) -> DbA2AAgent:
+        """Load an agent row once and enforce visibility.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Email used for visibility checks.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+
+        Returns:
+            DbA2AAgent: The agent row.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent is missing or the caller cannot see it.
+        """
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+        return agent
+
+    @staticmethod
+    def _test_failure(status_code: int, error: str, error_type: str, agent_id: str) -> A2ATestOutcome:
+        """Build a failure outcome whose envelope is validated through ``A2ATestError``.
+
+        Args:
+            status_code: HTTP status of the outcome.
+            error: Message returned to the caller.
+            error_type: One of the ``A2ATestError.error_type`` values.
+            agent_id: ID of the tested agent.
+
+        Returns:
+            A2ATestOutcome: Outcome carrying the validated failure envelope.
+        """
+        envelope = A2ATestError(error=error, error_type=error_type, agent_id=agent_id)  # type: ignore[arg-type]
+        return A2ATestOutcome(status_code, envelope.model_dump())
+
     async def test_agent(
         self,
         db: Session,
@@ -2240,6 +2276,10 @@ class A2AAgentService(BaseService):
         user_id: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         include_agent_error_detail: bool = False,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> A2ATestOutcome:
         """Invoke an A2A agent with a test message and classify the outcome.
 
@@ -2255,39 +2295,55 @@ class A2AAgentService(BaseService):
             user_id: Identity recorded for the invocation.
             token_teams: Teams from the token. None means admin bypass, [] means public-only.
             include_agent_error_detail: Return the exception text in the 404 and 502 responses. The Admin UI sets this so operators see the cause.
+            hop_count: Federation hop counter from the inbound request.
+            bearer_token: Bearer token to forward for cross-gateway calls.
+            content_type: Content-Type of the inbound request.
+            request_headers: Inbound request headers for passthrough and plugin context.
 
         Returns:
             A2ATestOutcome: HTTP status and response envelope.
         """
+        log_agent_id = SecurityValidator.sanitize_log_message(agent_id)
         try:
-            agent = await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+            agent = await self._load_accessible_agent(db, agent_id, user_email, token_teams)
             message = query or DEFAULT_A2A_TEST_MESSAGE
             if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
                 test_params: Dict[str, Any] = {"query": message}
             else:
                 test_params = {"query": message, "message": message, "test": True, "timestamp": int(time.time())}
 
-            result = await self.invoke_agent(db, agent.name, test_params, interaction_type, agent_id=agent.id, user_email=user_email, user_id=user_id, token_teams=token_teams)
+            result = await self.invoke_agent(
+                db,
+                agent.name,
+                test_params,
+                interaction_type,
+                agent_id=agent.id,
+                user_email=user_email,
+                user_id=user_id,
+                token_teams=token_teams,
+                hop_count=hop_count,
+                bearer_token=bearer_token,
+                content_type=content_type,
+                request_headers=request_headers,
+            )
             return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
         except A2AAgentNotFoundError as e:
-            logger.warning("A2A agent not found or access denied for %s: %s", agent_id, e)
-            error = str(e) if include_agent_error_detail else A2A_TEST_NOT_FOUND_MESSAGE
-            return A2ATestOutcome(404, {"success": False, "error": error, "error_type": "not_found", "agent_id": agent_id})
+            logger.warning("A2A agent not found or access denied for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(404, str(e) if include_agent_error_detail else A2A_TEST_NOT_FOUND_MESSAGE, "not_found", agent_id)
         except A2AAgentDisabledError as e:
-            logger.warning("A2A agent %s is disabled: %s", agent_id, e)
+            logger.warning("A2A agent %s is disabled: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
             if include_agent_error_detail:
-                return A2ATestOutcome(502, {"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id})
-            return A2ATestOutcome(502, {"success": False, "error": A2A_TEST_AGENT_DISABLED_MESSAGE, "error_type": "agent_disabled", "agent_id": agent_id})
+                return self._test_failure(502, str(e), "agent_error", agent_id)
+            return self._test_failure(502, A2A_TEST_AGENT_DISABLED_MESSAGE, "agent_disabled", agent_id)
         except A2AAgentError as e:
-            logger.error("A2A agent error for %s: %s", agent_id, e)
-            error = str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE
-            return A2ATestOutcome(502, {"success": False, "error": error, "error_type": "agent_error", "agent_id": agent_id})
+            logger.error("A2A agent error for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(502, str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE, "agent_error", agent_id)
         except ValidationError as e:
-            logger.warning("Validation error testing A2A agent %s: %s", agent_id, e)
-            return A2ATestOutcome(422, {"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id})
+            logger.warning("Validation error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(422, ErrorFormatter.format_validation_error(e)["message"], "validation_error", agent_id)
         except Exception as e:
-            logger.error("Unexpected error testing A2A agent %s: %s", agent_id, e)
-            return A2ATestOutcome(500, {"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id})
+            logger.error("Unexpected error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(500, unexpected_error_detail(e), "internal_error", agent_id)
 
     async def invoke_agent(
         self,

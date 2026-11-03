@@ -29,7 +29,7 @@ from mcpgateway.services.a2a_service import (
 
 def _service(agent_type="custom", endpoint="http://agent.example.com/api", invoke=None):
     service = A2AAgentService()
-    service.get_agent = AsyncMock(return_value=SimpleNamespace(id="a1", name="Agent", agent_type=agent_type, endpoint_url=endpoint))
+    service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="a1", name="Agent", agent_type=agent_type, endpoint_url=endpoint))
     service.invoke_agent = invoke or AsyncMock(return_value={"ok": True})
     return service
 
@@ -68,9 +68,39 @@ async def test_custom_interaction_type_and_scope_forwarded():
 
 
 @pytest.mark.asyncio
+async def test_request_context_forwarded_to_invoke():
+    service = _service()
+    headers = {"x-trace": "abc"}
+    await service.test_agent(MagicMock(), "a1", hop_count=2, bearer_token="tok", content_type="application/json", request_headers=headers)
+    kwargs = service.invoke_agent.call_args.kwargs
+    assert (kwargs["hop_count"], kwargs["bearer_token"], kwargs["content_type"], kwargs["request_headers"]) == (2, "tok", "application/json", headers)
+
+
+@pytest.mark.asyncio
+async def test_empty_query_falls_back_to_default_message():
+    service = _service()
+    await service.test_agent(MagicMock(), "a1", query="")
+    assert service.invoke_agent.call_args.args[2]["query"] == DEFAULT_A2A_TEST_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_agent_id_is_sanitized_in_logs(caplog):
+    service = _service()
+    service._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
+    with caplog.at_level("WARNING"):
+        await service.test_agent(MagicMock(), "a1\nforged log line")
+    assert "\n" not in "".join(record.getMessage() for record in caplog.records)
+
+
+def test_failure_envelope_rejects_unknown_error_type():
+    with pytest.raises(ValidationError):
+        A2AAgentService._test_failure(500, "boom", "not_a_type", "a1")
+
+
+@pytest.mark.asyncio
 async def test_not_found_classified_404():
     service = _service()
-    service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
+    service._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
     outcome = await service.test_agent(MagicMock(), "a1")
     assert outcome.status_code == 404
     assert outcome.body == {"success": False, "error": A2A_TEST_NOT_FOUND_MESSAGE, "error_type": "not_found", "agent_id": "a1"}
@@ -79,7 +109,7 @@ async def test_not_found_classified_404():
 @pytest.mark.asyncio
 async def test_not_found_detail_returned_when_requested():
     service = _service()
-    service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
+    service._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
     outcome = await service.test_agent(MagicMock(), "a1", include_agent_error_detail=True)
     assert (outcome.status_code, outcome.body["error"]) == (404, "A2A Agent not found with ID: a1")
 
@@ -87,9 +117,9 @@ async def test_not_found_detail_returned_when_requested():
 @pytest.mark.asyncio
 async def test_missing_and_inaccessible_agents_return_identical_404_body():
     missing = _service()
-    missing.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
+    missing._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with ID: a1"))
     inaccessible = _service()
-    inaccessible.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+    inaccessible._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
     missing_outcome = await missing.test_agent(MagicMock(), "a1")
     inaccessible_outcome = await inaccessible.test_agent(MagicMock(), "a1")
     assert missing_outcome == inaccessible_outcome
