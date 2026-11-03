@@ -23,6 +23,20 @@ permissions:
   contents: read
 
 jobs:
+  pre-commit-gate:
+    name: Pre-commit gate
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/wait-pre-commit
+
   ci-decision:
     name: Full CI decision
     runs-on: ubuntu-latest
@@ -49,8 +63,8 @@ jobs:
         run: python3 .github/scripts/secret_baseline_ci_decision.py
 
   build-package:
-    needs: ci-decision
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    needs: [ci-decision, pre-commit-gate]
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false') && needs.pre-commit-gate.result == 'success'
     runs-on: ubuntu-slim
     timeout-minutes: 20
 

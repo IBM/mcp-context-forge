@@ -1,0 +1,29 @@
+name: Wait for pre-commit
+description: Block until the "Run pre-commit hooks" job (pre-commit.yml) succeeds on the PR head SHA; fail if it does not.
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for pre-commit
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Must match the job name in .github/workflows/pre-commit.yml.
+        CHECK_NAME: Run pre-commit hooks
+      run: |
+        set -euo pipefail
+        # shortcut: flat 20s poll, 25 min cap (pre-commit job timeout is 20); add backoff only if API rate limits bite.
+        for _ in $(seq 75); do
+          conclusion=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?filter=latest&per_page=100" \
+            --jq "[.check_runs[] | select(.name == \"${CHECK_NAME}\")][0] | .conclusion // \"pending\"")
+          case "${conclusion}" in
+            success) echo "pre-commit passed."; exit 0 ;;
+            pending|null|"") sleep 20 ;;
+            *) echo "::error::pre-commit finished with '${conclusion}'; halting CI."; exit 1 ;;
+          esac
+        done
+        echo "::error::Timed out waiting for pre-commit."
+        exit 1
