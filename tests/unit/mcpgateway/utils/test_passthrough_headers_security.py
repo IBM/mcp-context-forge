@@ -905,3 +905,336 @@ class TestInboundPassthroughDenylist:
         hop_by_hop_headers = ["Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer", "Upgrade"]
         for header in hop_by_hop_headers:
             assert any(f"Refusing inbound passthrough of protocol-level header '{header}'" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# X-Upstream-Authorization must not override credentials on managed gateways.
+# ---------------------------------------------------------------------------
+class TestUpstreamAuthHeaderDenyForManagedGateways:
+    """Deny-path tests for X-Upstream-Authorization on credential-managing gateways.
+
+    When a gateway manages its own upstream credential (auth_type in
+    oauth/bearer/basic/authheaders) the rename to Authorization must be
+    blocked.  Only auth_type "none" or no gateway allows the rename.
+    """
+
+    def setup_method(self):
+        """Clear the global config cache before each test."""
+        global_config_cache.invalidate()
+
+    # ------------------------------------------------------------------
+    # get_passthrough_headers — non-cached path
+    # ------------------------------------------------------------------
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_oauth_gateway_blocks_upstream_auth_rename(self, mock_settings, caplog):
+        """Deny-path: oauth gateway must not let caller replace gateway token."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+        mock_db = Mock()
+        mock_gateway = Mock()
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.name = "oauth-gw"
+
+        request_headers = {"x-upstream-authorization": "Bearer attacker-token"}
+        base_headers = {"Authorization": "Bearer gateway-token"}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # Gateway-managed Authorization must NOT be replaced.
+        assert result.get("Authorization") == "Bearer gateway-token"
+        assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_bearer_gateway_blocks_upstream_auth_rename(self, mock_settings, caplog):
+        """Deny-path: bearer gateway must not let caller replace bearer token."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+        mock_db = Mock()
+        mock_gateway = Mock()
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.name = "bearer-gw"
+
+        request_headers = {"x-upstream-authorization": "Bearer evil"}
+        base_headers = {"Authorization": "Bearer legitimate"}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        assert result.get("Authorization") == "Bearer legitimate"
+        assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_basic_gateway_blocks_upstream_auth_rename(self, mock_settings, caplog):
+        """Deny-path: basic auth gateway must not let caller replace Basic creds."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+        mock_db = Mock()
+        mock_gateway = Mock()
+        mock_gateway.auth_type = "basic"
+        mock_gateway.name = "basic-gw"
+
+        request_headers = {"x-upstream-authorization": "Basic evilcreds"}
+        base_headers = {"Authorization": "Basic dXNlcjpwYXNz"}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        assert result.get("Authorization") == "Basic dXNlcjpwYXNz"
+        assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_authheaders_gateway_blocks_upstream_auth_rename(self, mock_settings, caplog):
+        """Deny-path: authheaders gateway must not let caller override its headers."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+        mock_db = Mock()
+        mock_gateway = Mock()
+        mock_gateway.auth_type = "authheaders"
+        mock_gateway.name = "authheaders-gw"
+
+        request_headers = {"x-upstream-authorization": "Bearer spoofed"}
+        base_headers = {"Authorization": "Bearer gateway-injected"}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        assert result.get("Authorization") == "Bearer gateway-injected"
+        assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_none_gateway_allows_upstream_auth_rename(self, mock_settings):
+        """Allow-path: auth_type=none gateway may have X-Upstream-Authorization renamed."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+
+        mock_db = Mock()
+        mock_gateway = Mock()
+        mock_gateway.auth_type = "none"
+        mock_gateway.name = "no-auth-gw"
+
+        request_headers = {"x-upstream-authorization": "Bearer user-token"}
+        base_headers = {}
+
+        result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        assert result.get("Authorization") == "Bearer user-token"
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_no_gateway_allows_upstream_auth_rename(self, mock_settings):
+        """Allow-path: no gateway object allows X-Upstream-Authorization rename."""
+        mock_settings.max_header_value_length = 4096
+        mock_settings.enable_header_passthrough = False
+
+        mock_db = Mock()
+
+        request_headers = {"x-upstream-authorization": "Bearer user-token"}
+        base_headers = {}
+
+        result = get_passthrough_headers(request_headers, base_headers, mock_db, gateway=None)
+
+        assert result.get("Authorization") == "Bearer user-token"
+
+    # ------------------------------------------------------------------
+    # compute_passthrough_headers_cached — cached path
+    # ------------------------------------------------------------------
+
+    def test_cached_oauth_gateway_blocks_upstream_auth_rename(self, caplog):
+        """Deny-path (cached): oauth gateway auth_type must block X-Upstream-Authorization."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer attacker"}
+            base_headers = {"Authorization": "Bearer gateway-oauth-token"}
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers,
+                    base_headers,
+                    allowed_headers=[],
+                    gateway_auth_type="oauth",
+                    is_token_exchange=False,
+                )
+
+            assert result.get("Authorization") == "Bearer gateway-oauth-token"
+            assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_bearer_gateway_blocks_upstream_auth_rename(self, caplog):
+        """Deny-path (cached): bearer auth_type must block X-Upstream-Authorization."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer spoofed"}
+            base_headers = {"Authorization": "Bearer real"}
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers,
+                    base_headers,
+                    allowed_headers=[],
+                    gateway_auth_type="bearer",
+                    is_token_exchange=False,
+                )
+
+            assert result.get("Authorization") == "Bearer real"
+            assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_basic_gateway_blocks_upstream_auth_rename(self, caplog):
+        """Deny-path (cached): basic auth_type must block X-Upstream-Authorization."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Basic evilcreds"}
+            base_headers = {"Authorization": "Basic legitimatecreds"}
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers,
+                    base_headers,
+                    allowed_headers=[],
+                    gateway_auth_type="basic",
+                    is_token_exchange=False,
+                )
+
+            assert result.get("Authorization") == "Basic legitimatecreds"
+            assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_authheaders_gateway_blocks_upstream_auth_rename(self, caplog):
+        """Deny-path (cached): authheaders auth_type must block X-Upstream-Authorization."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer spoofed"}
+            base_headers = {"Authorization": "Bearer injected-by-gateway"}
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers,
+                    base_headers,
+                    allowed_headers=[],
+                    gateway_auth_type="authheaders",
+                    is_token_exchange=False,
+                )
+
+            assert result.get("Authorization") == "Bearer injected-by-gateway"
+            assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_token_exchange_still_blocked(self, caplog):
+        """Deny-path (cached): is_token_exchange=True must also block the rename."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer attacker"}
+            base_headers = {"Authorization": "Bearer exchanged-token"}
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers,
+                    base_headers,
+                    allowed_headers=[],
+                    gateway_auth_type="oauth",
+                    is_token_exchange=True,
+                )
+
+            assert result.get("Authorization") == "Bearer exchanged-token"
+            assert any("Blocked X-Upstream-Authorization" in r.message for r in caplog.records)
+
+    def test_cached_none_gateway_allows_upstream_auth_rename(self):
+        """Allow-path (cached): auth_type=none allows X-Upstream-Authorization rename."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer user-token"}
+            base_headers = {}
+
+            result = compute_passthrough_headers_cached(
+                request_headers,
+                base_headers,
+                allowed_headers=[],
+                gateway_auth_type="none",
+                is_token_exchange=False,
+            )
+
+        # auth_type=none: rename is allowed (no gateway-managed credential)
+        assert result.get("Authorization") == "Bearer user-token"
+
+    def test_cached_no_gateway_auth_type_allows_upstream_auth_rename(self):
+        """Allow-path (cached): None auth_type allows X-Upstream-Authorization rename."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
+            mock_settings.enable_header_passthrough = False
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {"x-upstream-authorization": "Bearer user-token"}
+            base_headers = {}
+
+            result = compute_passthrough_headers_cached(
+                request_headers,
+                base_headers,
+                allowed_headers=[],
+                gateway_auth_type=None,
+                is_token_exchange=False,
+            )
+
+        assert result.get("Authorization") == "Bearer user-token"
