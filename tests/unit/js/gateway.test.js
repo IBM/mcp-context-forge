@@ -2223,6 +2223,7 @@ describe("editGateway - token-exchange", () => {
         <select id="oauth-token-endpoint-auth-method-gw-edit">
           <option value="client_secret_post">client_secret_post</option>
           <option value="private_key_jwt" hidden disabled>private_key_jwt</option>
+          <option value="none" hidden disabled>none</option>
         </select>
         <input id="oauth-subject-token-type-gw-edit" />
         <input id="oauth-requested-token-type-gw-edit" />
@@ -2277,6 +2278,20 @@ describe("editGateway - token-exchange", () => {
     expect(value("oauth-subject-token-source-gw-edit")).toBe("inbound_user_jwt");
     expect(toggleTokenExchangeFields).toHaveBeenLastCalledWith("gw-edit", "token-exchange");
     expect(document.getElementById("oauth-client-id-gw-edit").disabled).toBe(false);
+  });
+
+  test("keeps a stored none token endpoint auth method selectable", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({ ...TE_CONFIG, token_endpoint_auth_method: "none" });
+
+    await editGateway("gw-te");
+
+    const select = document.getElementById("oauth-token-endpoint-auth-method-gw-edit");
+    const noneOption = Array.from(select.options).find((o) => o.value === "none");
+    expect(select.value).toBe("none");
+    expect(noneOption.disabled).toBe(false);
+    expect(noneOption.hidden).toBe(false);
   });
 
   test("populates the stored discovery credential with the masked secret", async () => {
