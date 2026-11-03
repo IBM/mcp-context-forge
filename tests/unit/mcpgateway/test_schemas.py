@@ -2391,3 +2391,45 @@ class TestToolOutputSchemaShapes:
     def test_tool_result_carries_any_json_value(self, value):
         result = ToolResult(content=[], structured_content=value)
         assert result.structured_content == value
+
+
+class TestA2AAgentSkills:
+    """Skills are a typed top-level field on A2A agent create and update schemas."""
+
+    VALID_SKILL = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+    def test_create_accepts_valid_skill_and_keeps_capabilities_untouched(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", capabilities={"streaming": True}, skills=[self.VALID_SKILL])
+
+        assert agent.skills[0].tags == ["text"]
+        assert agent.capabilities == {"streaming": True}
+
+    @pytest.mark.parametrize("missing", ["id", "name", "description", "tags"])
+    def test_create_rejects_skill_missing_required_key(self, missing):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        skill = {k: v for k, v in self.VALID_SKILL.items() if k != missing}
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[skill])
+
+    def test_update_with_only_skills_leaves_capabilities_unset(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        update = A2AAgentUpdate(skills=[self.VALID_SKILL])
+
+        assert update.model_fields_set == {"skills"}
+
+    def test_update_rejects_skill_without_tags(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=[{"id": "s", "name": "n", "description": "d"}])
+
+    def test_skill_keeps_extra_agent_card_fields(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[{**self.VALID_SKILL, "examples": ["x"]}])
+
+        assert agent.skills[0].model_dump()["examples"] == ["x"]
