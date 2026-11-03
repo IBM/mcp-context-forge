@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 import os
+import ssl
 from typing import Any, AsyncIterator, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
@@ -264,11 +265,37 @@ class PinnedTarget:
             return await self._dial(client, method, url, headers=dict(headers or {}), **kwargs)
 
         pinned_headers = self.apply_headers(headers or {})
+        return await self._dial_pinned(client, method, url, pinned_headers, **kwargs)
+
+    async def _dial_pinned(self, client: Any, method: str, url: str, headers: Dict[str, str], **kwargs: Any) -> httpx.Response:
+        """Dial each validated address until one answers, keeping TLS pinned to the hostname.
+
+        ``sni_hostname`` is passed on every attempt so httpcore verifies the certificate against
+        the validated hostname rather than the IP literal in the dialled URL. A TLS failure is
+        raised immediately instead of being retried on the next address: retrying would mask a
+        certificate problem as an unreachable peer.
+
+        Args:
+            client: ``httpx.AsyncClient`` or a test double exposing the same verb methods.
+            method: HTTP method.
+            url: URL addressed to the validated hostname.
+            headers: Headers with ``Host`` already forced to the validated authority.
+            **kwargs: Forwarded to the client verb method.
+
+        Returns:
+            httpx.Response: The first response received.
+
+        Raises:
+            httpx.ConnectError: If every validated address refuses the connection, or TLS verification fails.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
         last_error: Optional[Exception] = None
         for address in self.pinned_addresses:
             try:
-                return await self._dial(client, method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, **kwargs)
+                return await self._dial(client, method, pin_url_to_resolved_ip(url, address), headers=headers, extensions=self.extensions, **kwargs)
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if _is_tls_failure(exc):
+                    raise
                 logger.debug(
                     "Pinned attempt failed for %s target; trying the next validated address (%s)",
                     "an IPv6" if ":" in address else "an IPv4",
@@ -316,10 +343,12 @@ class PinnedTarget:
         last_error: Optional[Exception] = None
         for address in self.pinned_addresses:
             try:
-                async with client.stream(method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, **kwargs) as response:
+                async with client.stream(method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, extensions=self.extensions, **kwargs) as response:
                     yield response
                 return
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if _is_tls_failure(exc):
+                    raise
                 logger.debug("Pinned stream attempt failed; trying the next validated address (%s)", type(exc).__name__)
                 last_error = exc
         raise last_error if last_error else httpx.ConnectError(f"No validated address could be dialled: {method} {url}", request=None)
@@ -342,6 +371,30 @@ class PinnedTarget:
             # target must configure the client directly and leave the transport unset.
             return transport_kwargs
         return {"transport": SniPinningTransport(sni_hostname=self.hostname, pinned_hosts=self.resolved_ips, **transport_kwargs)}
+
+
+def _is_tls_failure(exc: BaseException) -> bool:
+    """Report whether a connection error is a TLS verification failure.
+
+    A pinned attempt dials an IP literal while ``sni_hostname`` carries the validated hostname.
+    When verification fails against that hostname, retrying another address cannot help: the
+    certificate is wrong for every one of them. Treating it as a transport failure would both
+    hide a security-relevant error and invite a pointless retry per address.
+
+    Args:
+        exc: Exception raised by the pinned attempt.
+
+    Returns:
+        bool: True when the cause chain contains a certificate verification failure.
+    """
+    seen = 0
+    current: Optional[BaseException] = exc
+    while current is not None and seen < 10:
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        current = current.__cause__ or current.__context__
+        seen += 1
+    return False
 
 
 async def resolve_pinned_target(url: str, field_name: str = "URL") -> PinnedTarget:
