@@ -19,6 +19,7 @@ import {
   handleOAuthGrantTypeChange,
   handleEditOAuthGrantTypeChange,
   toggleTokenExchangeFields,
+  refreshTokenExchangeFields,
   toggleDiscoveryFields,
   bindDiscoveryToggle,
 } from "../../../mcpgateway/admin_ui/auth.js";
@@ -1301,6 +1302,86 @@ describe("token-exchange grant fields", () => {
     handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-a2a", value: "token-exchange" });
 
     expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("none");
+  });
+});
+
+describe("token-exchange required flags follow the auth type", () => {
+  function render(prefix) {
+    document.body.innerHTML = `
+      <form>
+        <select id="auth-type-${prefix}">
+          <option value="">None</option>
+          <option value="basic">Basic</option>
+          <option value="oauth">OAuth</option>
+        </select>
+        <div id="auth-oauth-fields-${prefix}" style="display:none">
+          <select id="oauth-grant-type-${prefix}">
+            <option value="client_credentials">CC</option>
+            <option value="token-exchange">TE</option>
+          </select>
+          <input name="oauth_token_url" />
+          <div id="oauth-token-exchange-fields-${prefix}" style="display:none">
+            <input id="oauth-target-audience-${prefix}" />
+          </div>
+        </div>
+      </form>
+    `;
+  }
+
+  const audience = (prefix) => document.getElementById(`oauth-target-audience-${prefix}`);
+  const tokenUrl = () => document.querySelector('input[name="oauth_token_url"]');
+  const group = (prefix) => document.getElementById(`oauth-token-exchange-fields-${prefix}`);
+
+  test("add form drops the flags when OAuth is deselected and restores them", () => {
+    render("gw");
+    const authType = document.getElementById("auth-type-gw");
+    authType.value = "oauth";
+    handleAuthTypeChange.call(authType);
+    const grantType = document.getElementById("oauth-grant-type-gw");
+    grantType.value = "token-exchange";
+    handleOAuthGrantTypeChange.call(grantType);
+    expect(audience("gw").required).toBe(true);
+    expect(tokenUrl().required).toBe(true);
+
+    for (const value of ["", "basic"]) {
+      authType.value = value;
+      handleAuthTypeChange.call(authType);
+      expect(audience("gw").required).toBe(false);
+      expect(tokenUrl().required).toBe(false);
+      expect(group("gw").style.display).toBe("none");
+    }
+
+    authType.value = "oauth";
+    handleAuthTypeChange.call(authType);
+    expect(audience("gw").required).toBe(true);
+    expect(tokenUrl().required).toBe(true);
+    expect(group("gw").style.display).toBe("block");
+  });
+
+  test("edit form drops the flags when OAuth is deselected", () => {
+    render("gw-edit");
+    const authType = document.getElementById("auth-type-gw-edit");
+    authType.value = "oauth";
+    document.getElementById("oauth-grant-type-gw-edit").value = "token-exchange";
+    refreshTokenExchangeFields("gw-edit");
+    expect(audience("gw-edit").required).toBe(true);
+    expect(tokenUrl().required).toBe(true);
+
+    authType.value = "";
+    refreshTokenExchangeFields("gw-edit");
+    expect(audience("gw-edit").required).toBe(false);
+    expect(tokenUrl().required).toBe(false);
+    expect(group("gw-edit").style.display).toBe("none");
+  });
+
+  test("toggleTokenExchangeFields stays inactive while the auth type is not OAuth", () => {
+    render("gw");
+    document.getElementById("auth-type-gw").value = "basic";
+
+    toggleTokenExchangeFields("gw", "token-exchange");
+
+    expect(audience("gw").required).toBe(false);
+    expect(group("gw").style.display).toBe("none");
   });
 });
 

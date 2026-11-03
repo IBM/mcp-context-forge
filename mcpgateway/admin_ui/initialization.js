@@ -4,6 +4,7 @@ import {
   handleAuthTypeSelection,
   handleEditOAuthGrantTypeChange,
   handleOAuthGrantTypeChange,
+  refreshTokenExchangeFields,
 } from "./auth.js";
 import {
   handleDragLeave,
@@ -316,6 +317,7 @@ const setupAuthenticationToggles = function () {
       headersId: "auth-headers-fields-gw-edit",
       oauthId: "auth-oauth-fields-gw-edit",
       queryParamId: "auth-query_param-fields-gw-edit",
+      tokenExchangePrefix: "gw-edit",
     },
 
     // A2A Edit Form auth fields
@@ -358,6 +360,9 @@ const setupAuthenticationToggles = function () {
           oauthFields,
           queryParamFields
         );
+        if (handler.tokenExchangePrefix) {
+          refreshTokenExchangeFields(handler.tokenExchangePrefix);
+        }
       });
     }
   });

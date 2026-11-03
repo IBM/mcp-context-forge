@@ -590,6 +590,21 @@ export function handleAuthTypeChange() {
       // "none" or unknown type — keep everything hidden
       break;
   }
+
+  if (!isA2A) {
+    refreshTokenExchangeFields(prefix);
+  }
+}
+
+/**
+ * Recompute the token-exchange field group of a gateway form from its current
+ * auth type and grant type selections.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ */
+export function refreshTokenExchangeFields(prefix) {
+  const grantType =
+    safeGetElement(`oauth-grant-type-${prefix}`, true)?.value || "";
+  toggleTokenExchangeFields(prefix, grantType);
 }
 
 const TOKEN_EXCHANGE_DEFAULTS = {
@@ -601,7 +616,9 @@ const TOKEN_EXCHANGE_DEFAULTS = {
 
 /**
  * Show or hide the token-exchange field group for a gateway form and toggle
- * its required inputs. Blank inputs receive the RFC 8693 defaults.
+ * its required inputs. The group is active only while the auth type is OAuth
+ * and the grant type is token-exchange, so hidden inputs never block submit.
+ * Blank inputs receive the RFC 8693 defaults.
  * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
  * @param {string} grantType - Selected OAuth grant type
  */
@@ -610,20 +627,22 @@ export function toggleTokenExchangeFields(prefix, grantType) {
   if (!group) {
     return;
   }
-  const isTokenExchange = grantType === "token-exchange";
-  group.style.display = isTokenExchange ? "block" : "none";
+  const authTypeSelect = safeGetElement(`auth-type-${prefix}`, true);
+  const isOAuth = !authTypeSelect || authTypeSelect.value === "oauth";
+  const active = isOAuth && grantType === "token-exchange";
+  group.style.display = active ? "block" : "none";
 
   const audience = safeGetElement(`oauth-target-audience-${prefix}`, true);
   if (audience) {
-    audience.required = isTokenExchange;
+    audience.required = active;
   }
   const form = group.closest("form");
   const tokenUrl = form?.querySelector('input[name="oauth_token_url"]');
   if (tokenUrl) {
-    tokenUrl.required = isTokenExchange;
+    tokenUrl.required = active;
   }
 
-  if (isTokenExchange) {
+  if (active) {
     Object.entries(TOKEN_EXCHANGE_DEFAULTS).forEach(([idBase, value]) => {
       const field = safeGetElement(`${idBase}-${prefix}`, true);
       if (field && !field.value) {
