@@ -212,7 +212,7 @@ Without a discovery credential, registration, health checks, and scheduled auto-
 - `discovery.token_url` passes the same SSRF validation as `token_url`. `discovery.client_secret` is stored encrypted and masked on read.
 - Only a platform admin can add, change, or remove `discovery`.
 
-The discovery token is used only for `initialize`, `tools/list`, `resources/list`, `prompts/list`, and health probes. Tool calls, resource reads, and prompt gets always use the per-user exchange, and fail without a usable user JWT. See [Tool discovery for token-exchange gateways](../architecture/oauth-design.md#tool-discovery-for-token-exchange-gateways) for caching and audit details.
+The discovery token is used only for `initialize`, `tools/list`, `resources/list`, `prompts/list`, and health probes. Tool calls and resource reads always use the per-user exchange, and fail without a usable user JWT. `prompts/get` does not perform the per-user exchange yet: the request reaches the upstream with neither an exchanged user token nor the discovery token. See [Tool discovery for token-exchange gateways](../architecture/oauth-design.md#tool-discovery-for-token-exchange-gateways) for caching and audit details.
 
 !!! warning "Upstream policy requirement"
     Configure the upstream MCP server to accept the discovery service token for `initialize` and the list methods only. It must reject that token for `tools/call`, `resources/read`, and `prompts/get`, and require a token exchanged for the calling user. ContextForge never sends the service token on an invocation, but the upstream policy is the second layer of that boundary.

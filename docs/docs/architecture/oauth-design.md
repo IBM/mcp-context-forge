@@ -298,11 +298,19 @@ consent flow exists, and the Admin UI hides that action for them.
 #### Invocation isolation
 
 The discovery token authorizes only `initialize`, the list methods, and health
-probes. Tool calls, resource reads, and prompt gets always use a token
-exchanged from the calling user's subject token. A request without a usable
-user JWT is rejected, and ContextForge never falls back to the discovery
-token. The invocation services (`ToolService`, `ResourceService`,
-`PromptService`) have no reference to the discovery credential.
+probes. Tool calls and resource reads always use a token exchanged from the
+calling user's subject token. A request without a usable user JWT is rejected,
+and ContextForge never falls back to the discovery token. The invocation
+services (`ToolService`, `ResourceService`, `PromptService`) have no reference
+to the discovery credential.
+
+!!! note "Limitation: prompt gets"
+    `prompts/get` for a gateway-backed prompt does not perform the per-user
+    exchange. `PromptService._fetch_gateway_prompt_result()` builds its headers
+    with `build_gateway_auth_headers()`, which handles only the gateway's static
+    `bearer` and `basic` credentials. For a token-exchange gateway, the request
+    reaches the upstream without an exchanged user token and without the
+    discovery token.
 
 The catalog lists every tool the discovery identity can see, which can include
 tools that a given user cannot call. Visibility in ContextForge stays governed
