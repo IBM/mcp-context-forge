@@ -6815,6 +6815,33 @@ class A2APushNotificationConfigRequest(BaseModel):
         return validate_core_url(v, "Webhook URL")
 
 
+class A2ATaskMessageRequest(BaseModel):
+    """Schema for a follow-up message sent to an existing A2A task.
+
+    Send either ``message`` (an A2A message object, in the 0.3 or 1.0 shape) or
+    ``text`` (shorthand for a single text part). The gateway binds the message to the
+    task from the URL path and converts it to the agent's protocol version.
+    """
+
+    message: Optional[Dict[str, Any]] = None
+    text: Optional[str] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_exactly_one_payload(self) -> "A2ATaskMessageRequest":
+        """Require exactly one of ``message`` and ``text``, and non-empty ``parts``."""
+        if (self.message is None) == (self.text is None):
+            raise ValueError("Provide exactly one of 'message' or 'text'")
+        if self.message is not None and not (isinstance(self.message.get("parts"), list) and self.message["parts"]):
+            raise ValueError("message.parts must be a non-empty list")
+        return self
+
+    def to_message(self) -> Dict[str, Any]:
+        """Return the A2A message object, expanding ``text`` into a single text part."""
+        if self.message is not None:
+            return dict(self.message)
+        return {"parts": [{"text": self.text}]}
+
+
 class A2APushNotificationConfigRead(BaseModel):
     """Schema for reading a push notification webhook configuration."""
 
