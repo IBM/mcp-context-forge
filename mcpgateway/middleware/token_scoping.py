@@ -832,6 +832,11 @@ class TokenScopingMiddleware:
         if request_path == "/search" or request_path.startswith("/search/"):
             return True
 
+        # The caller's own profile and deployment feature flags need no scoped permission;
+        # any authenticated token may read them.
+        if request_method == "GET" and request_path in ("/auth/email/me", "/auth/email/me/"):
+            return True
+
         # Handle admin routes with granular route-group mapping.
         # Unmapped /admin/* paths are denied by default (fail-secure).
         if request_path.startswith("/admin"):

@@ -21,6 +21,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from fastapi import HTTPException
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
@@ -295,6 +296,42 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
         await redis.publish("mcpgw:a2a:invalidate", payload)
     except Exception as e:
         logger.warning("Failed to publish A2A cache invalidation: %s", e)
+
+
+A2A_DISABLED_DETAIL = {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}
+
+
+def a2a_enabled() -> bool:
+    """Return whether A2A is enabled on this gateway.
+
+    Returns:
+        bool: ``True`` when ``MCPGATEWAY_A2A_ENABLED`` is set.
+
+    Examples:
+        >>> isinstance(a2a_enabled(), bool)
+        True
+    """
+    return settings.mcpgateway_a2a_enabled
+
+
+def raise_if_a2a_disabled() -> None:
+    """Raise the typed 404 when A2A is disabled.
+
+    Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` when A2A is disabled.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_enabled", False):
+        ...     try:
+        ...         raise_if_a2a_disabled()
+        ...     except HTTPException as exc:
+        ...         exc.status_code, exc.detail["error"]
+        (404, 'a2a_disabled')
+    """
+    if not a2a_enabled():
+        logger.warning("A2A request rejected because A2A is disabled")
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
 
 
 class A2AAgentError(Exception):

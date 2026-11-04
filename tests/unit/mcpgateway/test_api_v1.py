@@ -20,7 +20,8 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
+import pytest
 
 # First-Party
 from tests.helpers.router_helpers import collect_routes
@@ -217,10 +218,19 @@ class TestBuildV1RouterGroupC:
         v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-a2a" in _route_paths(v1)
 
-    def test_a2a_router_excluded_when_disabled(self):
+    def test_a2a_router_still_mounted_when_disabled(self):
+        """The router stays mounted so its dependency can answer with the typed a2a_disabled 404."""
         settings = _settings(mcpgateway_a2a_enabled=False)
         v1 = build_v1_router(settings, **_required_kwargs())
-        assert "/v1/sentinel-a2a" not in _route_paths(v1)
+        assert "/v1/sentinel-a2a" in _route_paths(v1)
+
+    @pytest.mark.parametrize("a2a_enabled", [True, False])
+    def test_a2a_routes_listed_in_openapi_only_when_enabled(self, a2a_enabled):
+        """A disabled deployment hides A2A operations from the OpenAPI schema."""
+        v1 = build_v1_router(_settings(mcpgateway_a2a_enabled=a2a_enabled), **_required_kwargs())
+        app = FastAPI()
+        app.include_router(v1)
+        assert ("/v1/sentinel-a2a" in app.openapi()["paths"]) is a2a_enabled
 
     # Observability --------------------------------------------------------------
 
