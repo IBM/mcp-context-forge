@@ -4466,6 +4466,8 @@ class Server(Base):
     prompts: Mapped[List["Prompt"]] = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
     a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", secondary=server_a2a_association, back_populates="servers")
 
+    interfaces: Mapped[List["ServerInterface"]] = relationship("ServerInterface", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin", order_by="ServerInterface.created_at")
+
     # API token relationships
     scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
 

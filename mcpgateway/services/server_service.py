@@ -38,10 +38,11 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import server_a2a_association, server_prompt_association, server_resource_association, server_tool_association
+from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.schemas import ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -272,6 +273,34 @@ def _associate_server_entities(db: Session, db_server: DbServer, server_in: Serv
                 logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
 
 
+def _apply_server_interfaces(server: DbServer, interfaces: Optional[List[ServerInterfaceInput]]) -> None:
+    """Replace the interfaces published by a server.
+
+    A ``None`` value leaves the stored interfaces untouched. Entries that match an
+    existing protocol and binding pair update that row in place so its ``id`` and
+    ``config`` survive. Existing rows missing from the input are deleted.
+
+    Args:
+        server: Server ORM instance to modify.
+        interfaces: Interfaces declared by the caller, or None to keep the current ones.
+    """
+    if interfaces is None:
+        return
+    existing = {(i.protocol.lower(), i.binding.lower()): i for i in server.interfaces}
+    kept: List[DbServerInterface] = []
+    for item in interfaces:
+        row = existing.get((item.protocol.lower(), item.binding.lower()))
+        if row is None:
+            row = DbServerInterface(protocol=item.protocol, binding=item.binding)
+        row.protocol = item.protocol
+        row.binding = item.binding
+        row.version = item.version
+        row.tenant = item.tenant
+        row.enabled = item.enabled
+        kept.append(row)
+    server.interfaces = kept
+
+
 def _update_server_associations(db: Session, server: DbServer, server_update: ServerUpdate) -> None:
     """Replace tool/resource/prompt/a2a_agent associations during server update.
 
@@ -495,6 +524,7 @@ class ServerService(BaseService):
         server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        server_dict["interfaces"] = list(server.interfaces) if getattr(server, "interfaces", None) else []
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -669,6 +699,7 @@ class ServerService(BaseService):
             db.add(db_server)
 
             _associate_server_entities(db, db_server, server_in)
+            _apply_server_interfaces(db_server, getattr(server_in, "interfaces", None))
 
             # Commit the new record and refresh.
             db.commit()
@@ -1412,6 +1443,7 @@ class ServerService(BaseService):
                 server.team_id = server_update.team_id
 
             _update_server_associations(db, server, server_update)
+            _apply_server_interfaces(server, getattr(server_update, "interfaces", None))
 
             # Update tags if provided
             if server_update.tags is not None:
