@@ -29,7 +29,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import server_a2a_association
 from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerTaskMapping as DbServerTaskMapping
-from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol
+from mcpgateway.services.a2a_protocol import get_agent_skills, is_v1_a2a_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -208,8 +208,7 @@ class A2AServerService:
             caps = agent.capabilities if isinstance(agent.capabilities, dict) else {}
             streaming = streaming or bool(caps.get("streaming", False))
             push_notifications = push_notifications or bool(caps.get("pushNotifications", False))
-            raw_skills = caps.get("skills")
-            for skill in raw_skills if isinstance(raw_skills, list) else []:
+            for skill in get_agent_skills(agent):
                 skill_id = skill.get("id") if isinstance(skill, dict) else None
                 if skill_id is not None:
                     if not isinstance(skill_id, str):
