@@ -718,6 +718,9 @@ mcpContextForge:
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
+    CEL_EXECUTION: "subprocess" # where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess
+    CEL_TIMEOUT_SECONDS: "1.0" # wall-clock limit for one policy evaluation
+    CEL_WORKERS: "2" # policy sandbox worker processes per gateway process
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
     ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
 

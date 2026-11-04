@@ -293,6 +293,10 @@ export const editGateway = async function (gatewayId) {
     if (descField) {
       descField.value = decodeHtml(gateway.description || "");
     }
+    const policyField = safeGetElement("edit-gateway-validation-policy");
+    if (policyField) {
+      policyField.value = gateway.toolValidationPolicy || "";
+    }
 
     // Set tags field
     const tagsField = safeGetElement("edit-gateway-tags");

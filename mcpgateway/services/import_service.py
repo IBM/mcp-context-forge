@@ -1229,6 +1229,7 @@ class ImportService:
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
+            tool_validation_policy=tool_data.get("tool_validation_policy"),
             auth=auth_info,
             tags=tool_data.get("tags", []),
         )
@@ -1258,6 +1259,7 @@ class ImportService:
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
+            tool_validation_policy=tool_data.get("tool_validation_policy"),
             auth=auth_info,
             tags=tool_data.get("tags"),
         )
@@ -1327,6 +1329,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tool_validation_policy=gateway_data.get("tool_validation_policy"),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1391,6 +1394,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tool_validation_policy=gateway_data.get("tool_validation_policy"),
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )
