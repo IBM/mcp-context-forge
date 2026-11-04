@@ -1396,6 +1396,7 @@ class Settings(BaseSettings):
             "Requires a server restart to take effect."
         ),
     )
+
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
     WEAK_VALUES: ClassVar[list[str]] = list(_CANONICAL_WEAK_VALUES)

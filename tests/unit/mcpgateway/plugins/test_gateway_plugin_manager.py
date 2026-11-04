@@ -633,6 +633,16 @@ class TestGetManager:
 
         assert result is cached_manager
 
+    @pytest.mark.asyncio
+    async def test_get_manager_never_expires_over_time(self, factory):
+        """Ensure cached manager persists indefinitely across time advances."""
+        mock_manager = AsyncMock()
+        factory._managers["ctx"] = mock_manager
+
+        with patch("time.monotonic", return_value=time.monotonic() + 1_000_000.0):
+            result = await factory.get_manager("ctx")
+            assert result is mock_manager
+
 
 # ---------------------------------------------------------------------------
 # reload_tenant
