@@ -571,7 +571,7 @@ def prepare_a2a_invocation(
     )
 
 
-def get_agent_skills(agent: Any) -> list[Any]:
+def get_agent_skills(agent: Any) -> list[Dict[str, Any]]:
     """Return the skills an agent publishes.
 
     Reads the ``skills`` column first. Agents created before the column existed
@@ -581,7 +581,7 @@ def get_agent_skills(agent: Any) -> list[Any]:
         agent: Agent row with ``skills`` and ``capabilities`` attributes.
 
     Returns:
-        list[Any]: Skill entries, or an empty list when none are declared.
+        list[Dict[str, Any]]: Skill entries in ``A2AAgentSkill`` shape, or an empty list when none are declared.
 
     Examples:
         >>> from types import SimpleNamespace
