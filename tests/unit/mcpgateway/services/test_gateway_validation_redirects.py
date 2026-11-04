@@ -24,6 +24,7 @@ from mcpgateway.schemas import GatewayHandshakeRequest, GatewayTestRequest
 from mcpgateway.services.gateway_service import (
     _classify_handshake_error,
     _HANDSHAKE_TRANSPORT_COPY,
+    _is_redirect_error,
     _redirect_error_text,
     _safe_connection_error_text,
     _safe_log_exception_text,
@@ -537,3 +538,68 @@ async def test_health_check_and_failure_logs_hold_no_query_string_on_redirect(ca
     assert "unknown_secret_param" not in log_output
     assert "Redirect location:" not in log_output
     assert "Upstream redirected to http://sse.example.com/mcp/; update the gateway URL to the redirect target." in log_output
+
+
+def test_is_redirect_error_identifies_redirect_and_unwraps_exception_groups():
+    """_is_redirect_error returns True for redirect HTTPStatusError even within BaseExceptionGroup."""
+    req = httpx.Request("GET", "http://example.com/mcp")
+    resp = httpx.Response(307, request=req)
+    err = httpx.HTTPStatusError("307", request=req, response=resp)
+
+    assert _is_redirect_error(err) is True
+    assert _is_redirect_error(BaseExceptionGroup("group", [err])) is True
+    assert _is_redirect_error(RuntimeError("failed")) is False
+    assert _is_redirect_error(BaseExceptionGroup("group", [RuntimeError("failed")])) is False
+
+
+@pytest.mark.asyncio
+async def test_initialize_gateway_logs_hold_no_query_string_or_traceback_on_redirect(caplog):
+    """_initialize_gateway error log omits traceback and does not leak unredacted query string on redirect."""
+    service = GatewayService()
+
+    req = httpx2.Request("GET", "http://example.com/mcp")
+    resp = httpx2.Response(307, headers={"Location": "http://example.com/mcp/?custom_leak=SECRET_VALUE#frag"}, request=req)
+    redirect_status_error = httpx2.HTTPStatusError("307 Temporary Redirect", request=req, response=resp)
+
+    with (
+        caplog.at_level("ERROR"),
+        patch("mcpgateway.services.gateway_service.resolve_pinned_target"),
+        patch.object(service, "connect_to_sse_server", side_effect=redirect_status_error),
+    ):
+        with pytest.raises(GatewayConnectionError):
+            await service._initialize_gateway("http://example.com/mcp", transport="SSE")
+
+    log_output = caplog.text
+    assert "SECRET_VALUE" not in log_output
+    assert "custom_leak" not in log_output
+    assert "Redirect location:" not in log_output
+    assert "Traceback (most recent call last)" not in log_output
+    assert "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target." in log_output
+
+
+@pytest.mark.asyncio
+async def test_oauth_sse_connection_logs_hold_no_query_string_or_traceback_on_redirect(caplog):
+    """_connect_to_sse_server_without_validation error log omits traceback and does not leak query string on redirect."""
+    service = GatewayService()
+
+    req = httpx2.Request("GET", "http://oauth.example.com/mcp")
+    resp = httpx2.Response(307, headers={"Location": "http://oauth.example.com/mcp/?custom_oauth_leak=TOKEN123#frag"}, request=req)
+    redirect_status_error = httpx2.HTTPStatusError("307 Temporary Redirect", request=req, response=resp)
+
+    with (
+        caplog.at_level("ERROR"),
+        patch("mcpgateway.services.gateway_service.resolve_pinned_target"),
+        patch("mcpgateway.services.gateway_service.mcp_proxy_client", side_effect=redirect_status_error),
+    ):
+        with pytest.raises(GatewayConnectionError):
+            await service._connect_to_sse_server_without_validation(
+                server_url="http://oauth.example.com/mcp",
+                authentication={"Authorization": "Bearer test-token"},
+            )
+
+    log_output = caplog.text
+    assert "TOKEN123" not in log_output
+    assert "custom_oauth_leak" not in log_output
+    assert "Redirect location:" not in log_output
+    assert "Traceback (most recent call last)" not in log_output
+    assert "Upstream redirected to http://oauth.example.com/mcp/; update the gateway URL to the redirect target." in log_output

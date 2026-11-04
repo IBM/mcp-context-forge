@@ -121,8 +121,8 @@ from mcpgateway.schemas import (
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
@@ -306,6 +306,30 @@ def _safe_connection_error_text(exc: BaseException) -> str:
     return unexpected_error_detail(exc)
 
 
+def _is_redirect_error(exc: BaseException) -> bool:
+    """Check whether an exception or exception group root cause represents a 3xx redirect status.
+
+    Args:
+        exc: The exception to inspect.
+
+    Returns:
+        True if the exception or unwrapped root cause is an HTTP 3xx redirect status error.
+
+    Examples:
+        >>> import httpx
+        >>> req = httpx.Request("GET", "http://example.com/mcp")
+        >>> resp = httpx.Response(307, request=req)
+        >>> _is_redirect_error(httpx.HTTPStatusError("307", request=req, response=resp))
+        True
+        >>> _is_redirect_error(RuntimeError("failed"))
+        False
+    """
+    root = exc
+    while isinstance(root, BaseExceptionGroup) and root.exceptions:
+        root = root.exceptions[0]
+    return isinstance(root, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root.response.status_code in _REDIRECT_STATUS_CODES
+
+
 def _safe_log_exception_text(exc: BaseException, auth_query_params: Optional[Dict[str, str]] = None) -> str:
     """Format an exception for logging without leaking redirect query params or credentials.
 
@@ -331,8 +355,11 @@ def _safe_log_exception_text(exc: BaseException, auth_query_params: Optional[Dic
         >>> _safe_log_exception_text(RuntimeError("Connection failed"))
         'Connection failed'
     """
-    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and exc.response.status_code in _REDIRECT_STATUS_CODES:
-        return _safe_connection_error_text(exc)
+    root = exc
+    while isinstance(root, BaseExceptionGroup) and root.exceptions:
+        root = root.exceptions[0]
+    if isinstance(root, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root.response.status_code in _REDIRECT_STATUS_CODES:
+        return _safe_connection_error_text(root)
     return sanitize_exception_message(str(exc) or type(exc).__name__, auth_query_params)
 
 
@@ -6002,7 +6029,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise root_cause
 
             sanitized_error = _safe_connection_error_text(root_cause)
-            logger.error("Gateway initialization failed for %s: %s", sanitized_url, _safe_log_exception_text(root_cause, auth_query_params), exc_info=True)
+            logger.error(
+                "Gateway initialization failed for %s: %s",
+                sanitized_url,
+                _safe_log_exception_text(root_cause, auth_query_params),
+                exc_info=not _is_redirect_error(root_cause),
+            )
 
             # A header value that reaches the HTTP client encoding step is either an
             # OAuth-derived value or something else this method didn't sanitize up front.
@@ -8033,7 +8065,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
             sanitized_error = _safe_connection_error_text(e)
-            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitize_exception_message(str(e)), exc_info=True)
+            logger.error(
+                "SSE connection error details: %s: %s",
+                type(e).__name__,
+                _safe_log_exception_text(e),
+                exc_info=not _is_redirect_error(e),
+            )
 
             # Surface diagnostic context for likely auth rejections (401/403)
             error_str = str(e).lower()
