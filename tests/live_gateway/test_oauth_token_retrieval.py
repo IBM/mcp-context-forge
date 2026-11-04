@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Black-box OAuth token retrieval checks against isolated gateway processes.
-
+"""Location: ./tests/live_gateway/test_oauth_token_retrieval.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+
+Black-box OAuth token retrieval checks against isolated gateway processes.
 """
 
 # Standard

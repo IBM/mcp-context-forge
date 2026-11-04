@@ -151,9 +151,7 @@ class AbstractTokenBackend(ABC):
             TokenRecord with plain-text tokens for immediate use
         """
 
-    async def get_user_token_details(
-        self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300
-    ) -> AccessTokenDetails | None:
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
         """Return token metadata together, preserving retrieval failure reasons.
 
         Args:

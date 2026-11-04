@@ -193,9 +193,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             )
             raise OAuthError("Token storage failed")
 
-    async def get_user_token_details(
-        self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300
-    ) -> AccessTokenDetails | None:
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
         """Return the caller's token and metadata, preserving failure reasons.
 
         Args:

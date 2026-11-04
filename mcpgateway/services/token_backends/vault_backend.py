@@ -422,9 +422,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             learned_iss=learned_iss,
         )
 
-    async def get_user_token_details(
-        self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300
-    ) -> AccessTokenDetails | None:
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
         """Read token metadata together, bypassing the token-only cache.
 
         Args:
@@ -1269,4 +1267,3 @@ class VaultTokenBackend(AbstractTokenBackend):
         )
 
         return AccessTokenDetails(access_token=stored.access_token, expires_at=stored.expires_at, scopes=stored.scopes)
-
