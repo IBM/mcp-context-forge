@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/tools/builder/build_hooks.py
+"""Location: ./mcpgateway/build_hooks.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class BuildPyWithUI(build_py):
     """Custom build_py that generates UI assets before building the package."""
 
-    def run(self):
+    def run(self) -> None:
         """Run UI build before standard build_py."""
         # Standard
         import os
@@ -45,7 +45,7 @@ class BuildPyWithUI(build_py):
         _path = Path(__file__).resolve().parent
         project_root = _path
         _max_depth = 10
-        for depth in range(_max_depth):
+        for _ in range(_max_depth):
             if (project_root / "pyproject.toml").exists():
                 break
             if project_root.parent == project_root:
@@ -104,9 +104,9 @@ class BuildPyWithUI(build_py):
             logger.info(f"ERROR: Tailwind CSS build failed: {e}")
             sys.exit(1)
 
-        logger.info("\n" + "=" * 70)
+        logger.info("\n%s", "=" * 70)
         logger.info("UI assets built successfully!")
-        logger.info("=" * 70 + "\n")
+        logger.info("%s\n", "=" * 70)
 
         # Continue with standard build_py
         super().run()

@@ -23,7 +23,6 @@ branch = true
 concurrency = thread, multiprocessing
 omit =
     mcpgateway/alembic/*
-    mcpgateway/tools/builder/*
     */tests/*
     */test_*.py
 
