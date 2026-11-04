@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 # Custom build hook to generate UI assets before packaging
 [tool.setuptools.cmdclass]
-build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
+build_py = "mcpgateway.build_hooks.BuildPyWithUI"
 
 [tool.uv]
 # 0.6.9 is the minimum version that understands relative exclude-newer durations ("10 days").
@@ -333,7 +333,6 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "cpex.tools.cli:main"
-cforge = "mcpgateway.tools.cli:main"
 init-secrets = "mcpgateway.scripts.init_secrets:main"
 mcpgateway-server = "mcpgateway.__main__:main"
 
@@ -354,9 +353,6 @@ exclude = ["tests*"]
 #  - templates -> Jinja2 templates shipped at runtime
 [tool.setuptools.package-data]
 mcpgateway = [
-  "tools/builder/templates/*.yaml.j2",
-  "tools/builder/templates/compose/*.yaml.j2",
-  "tools/builder/templates/kubernetes/*.yaml.j2",
   "py.typed",
   "static/*.css",
   "static/css/*.css",
@@ -511,7 +507,6 @@ preview = true
 "mcpgateway/routers/**/*.py" = ["G004"]
 "mcpgateway/scripts/**/*.py" = ["G004"]
 "mcpgateway/toolops/**/*.py" = ["G004"]
-"mcpgateway/tools/**/*.py" = ["G004"]
 "mcpgateway/transports/**/*.py" = ["G004"]
 "mcpgateway/utils/**/*.py" = ["G004"]
 "mcpgateway/validation/**/*.py" = ["G004"]
@@ -831,7 +826,6 @@ parallel = true
 concurrency = ["thread", "multiprocessing"]
 omit = [
     "mcpgateway/alembic/*",
-    "mcpgateway/tools/builder/*",
     "*/tests/*",
     "*/test_*.py",
 ]
