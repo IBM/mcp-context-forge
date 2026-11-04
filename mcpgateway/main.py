@@ -5056,6 +5056,7 @@ async def get_a2a_agent_metrics(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
     if not settings.mcpgateway_a2a_metrics_enabled:
+        logger.debug(f"User {safe_log_user(user)} requested A2A metrics while MCPGATEWAY_A2A_METRICS_ENABLED is false")
         raise HTTPException(status_code=404, detail="A2A metrics are disabled")
 
     user_email, token_teams = get_scoped_resource_access_context(request, user)

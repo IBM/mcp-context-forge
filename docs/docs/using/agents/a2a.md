@@ -450,6 +450,25 @@ A2A agents provide comprehensive metrics:
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
 
+### Aggregate Metrics Endpoint
+
+`GET /v1/a2a/metrics` returns aggregate metrics for the agents the caller can see. The route requires `a2a.read`, not `admin.metrics`.
+
+| Caller | Agents counted |
+|--------|----------------|
+| Token with `teams: []` | Public |
+| Token with `teams: ["t1"]` | Public, team `t1`, own private |
+| Admin token with `teams: null` | Public, all team, own private |
+
+The count includes disabled agents. `activeAgents` counts the enabled ones. An admin never counts the private agents of other users, so the result can be lower than `a2aAgents` on `GET /v1/metrics`, which aggregates every agent.
+
+| Status | Cause |
+|--------|-------|
+| 200 | `A2AAgentAggregateMetrics` body |
+| 401/403 | Missing authentication or missing `a2a.read` |
+| 404 | `MCPGATEWAY_A2A_METRICS_ENABLED` is `false` |
+| 503 | A2A service unavailable |
+
 ## Task and Push Notification Routes
 
 ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks`.

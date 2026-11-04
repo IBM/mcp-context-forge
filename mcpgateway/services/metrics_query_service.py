@@ -12,10 +12,11 @@ with historical hourly rollups for complete historical coverage.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Type
+from typing import Any, Dict, List, Optional, Sequence, Type, Union
 
 # Third-Party
 from sqlalchemy import and_, case, func, literal, select, union_all
+from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -273,7 +274,7 @@ def aggregate_metrics_combined(
     db: Session,
     metric_type: str,
     entity_id: Optional[str] = None,
-    entity_ids: Optional[Sequence[str]] = None,
+    entity_ids: Optional[Union[Sequence[str], Select]] = None,
 ) -> AggregatedMetrics:
     """Aggregate metrics combining three data sources for complete coverage.
 
@@ -289,7 +290,7 @@ def aggregate_metrics_combined(
         db: Database session
         metric_type: Type of metric ('tool', 'resource', 'prompt', 'server', 'a2a_agent')
         entity_id: Optional entity ID to filter by (e.g., specific tool_id)
-        entity_ids: Optional entity IDs to filter by. An empty sequence matches no entity.
+        entity_ids: Optional entity IDs, or a single-column select of IDs, to filter by. An empty sequence matches no entity.
 
     Returns:
         AggregatedMetrics: Combined metrics from all three sources

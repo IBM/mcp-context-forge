@@ -7,7 +7,7 @@ Visibility scoping of A2AAgentService.aggregate_metrics against a real database.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Third-Party
 import pytest
@@ -16,7 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import A2AAgent, A2AAgentMetric, Base
+from mcpgateway.db import A2AAgent, A2AAgentMetric, A2AAgentMetricsHourly, Base
+from mcpgateway.services.metrics_query_service import aggregate_metrics_combined, get_retention_cutoff
 from mcpgateway.services.a2a_service import A2AAgentService
 
 
@@ -89,3 +90,36 @@ async def test_admin_context_sees_all_team_agents_but_not_others_private(seeded,
     result = await A2AAgentService().aggregate_metrics(seeded, user_email="me@x.com", token_teams=None)
     assert result.total_agents == 5  # everything except "theirs"
     assert result.total_interactions == 2 + 2 + 10 + 1 + 3
+
+
+@pytest.mark.asyncio
+async def test_scoped_rollup_counts_only_visible_agents(seeded):
+    old = get_retention_cutoff() - timedelta(hours=5)
+    seeded.add(
+        A2AAgentMetricsHourly(
+            a2a_agent_id="pub", agent_name="pub", hour_start=old, total_count=7, success_count=6, failure_count=1, min_response_time=1.0, max_response_time=2.0, avg_response_time=1.5
+        )
+    )
+    seeded.add(A2AAgentMetricsHourly(a2a_agent_id="theirs", agent_name="theirs", hour_start=old, total_count=100, success_count=100, failure_count=0))
+    seeded.commit()
+    result = await A2AAgentService().aggregate_metrics(seeded, user_email="me@x.com", token_teams=[])
+    assert result.total_interactions == 5 + 7
+    assert result.failed_interactions == 1
+
+
+def test_entity_ids_empty_sequence_matches_nothing(seeded):
+    assert aggregate_metrics_combined(seeded, "a2a_agent", entity_ids=[]).total_executions == 0
+
+
+def test_entity_id_and_entity_ids_intersect(seeded):
+    assert aggregate_metrics_combined(seeded, "a2a_agent", entity_id="pub", entity_ids=["pub", "mine"]).total_executions == 2
+    assert aggregate_metrics_combined(seeded, "a2a_agent", entity_id="pub", entity_ids=["mine"]).total_executions == 0
+
+
+@pytest.mark.asyncio
+async def test_scoped_query_does_not_bind_one_parameter_per_agent(db):
+    for index in range(1000):
+        db.add(A2AAgent(id=f"a{index}", name=f"a{index}", slug=f"a{index}", endpoint_url=f"http://a{index}.example.com", visibility="public", owner_email="o@x.com"))
+    db.commit()
+    result = await A2AAgentService().aggregate_metrics(db, user_email="me@x.com", token_teams=[])
+    assert result.total_agents == 1000

@@ -5030,6 +5030,31 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 404
         mock_service.aggregate_metrics.assert_not_called()
 
+    def test_get_a2a_agent_metrics_unauthenticated_returns_401(self, app_with_temp_db):
+        """GET /a2a/metrics without credentials must return 401."""
+        from fastapi import HTTPException, status as http_status
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            assert client.get("/a2a/metrics").status_code == 401
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics without a2a.read must return 403 and not reach the service."""
+        mock_service.aggregate_metrics = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.aggregate_metrics.assert_not_called()
+
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
         """Test invoking A2A agent."""
