@@ -214,7 +214,7 @@ mcpContextForge:
     # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
     # Example:
     #   kubectl create secret generic my-gateway-tls-pass \
-    #     --from-literal=keyFilePassword=my-passphrase
+    #     --from-literal=keyFilePassword=my-passphrase # pragma: allowlist secret
     keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
 
   ####################################################################
@@ -718,6 +718,9 @@ mcpContextForge:
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
+    CEL_EXECUTION: "subprocess" # where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess
+    CEL_TIMEOUT_SECONDS: "1.0" # wall-clock limit for one policy evaluation (seconds, at most 1.0)
+    CEL_WORKERS: "2" # policy sandbox worker processes per gateway process
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
     ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
 
@@ -1111,10 +1114,10 @@ postgres:
   # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
   existingSecret: ""
 
-  credentials:                  # used only when existingSecret is blank
+  credentials:                  # used only when existingSecret is blank # pragma: allowlist secret
     database: postgresdb
     user: admin
-    password: test123           # CHANGE ME in production!
+    password: test123           # CHANGE ME in production! # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1281,7 +1284,7 @@ redis:
     existingSecret: ""
     passwordKey: "REDIS_PASSWORD"
     #checkov:skip=CKV_SECRET_6:Redis example pass
-    password: "change-me-redis"      # CHANGE ME in production!
+    password: "change-me-redis"      # CHANGE ME in production! # pragma: allowlist secret
   # Transport recommendation:
   # For production, prefer TLS (for example rediss:// via redis.external.url
   # or a managed Redis endpoint with TLS enabled).
@@ -1303,7 +1306,7 @@ redis:
         - sh
         - -c
         - |
-          if [ -n "${REDIS_PASSWORD:-}" ]; then
+          if [ -n "${REDIS_PASSWORD:-}" ]; then # pragma: allowlist secret
             redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
           else
             redis-cli PING
@@ -1320,7 +1323,7 @@ redis:
         - sh
         - -c
         - |
-          if [ -n "${REDIS_PASSWORD:-}" ]; then
+          if [ -n "${REDIS_PASSWORD:-}" ]; then # pragma: allowlist secret
             redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
           else
             redis-cli PING
@@ -1374,7 +1377,7 @@ pgadmin:
 
   env:
     email: admin@example.com
-    password: admin123           # CHANGE ME in production!
+    password: admin123           # CHANGE ME in production! # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1470,7 +1473,7 @@ minio:
   credentials:
     rootUser: minioadmin
     #checkov:skip=CKV_SECRET_6:Example password
-    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION! # pragma: allowlist secret
 
   service:
     type: ClusterIP
@@ -1841,7 +1844,7 @@ monitoring:
     service:
       type: ClusterIP
       port: 3000
-    adminPassword: changeme
+    adminPassword: changeme # pragma: allowlist secret
     allowSignUp: false
     persistence:
       enabled: true

@@ -9221,6 +9221,8 @@ class TestToolServiceHelpers:
             input_schema=None,
             output_schema={"type": "object"},
             annotations=None,
+            tool_validation_policy=None,
+            validation_refusal=None,
             auth_type="bearer",
             auth_value="secret",
             oauth_config=None,

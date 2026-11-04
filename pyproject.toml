@@ -85,6 +85,7 @@ dependencies = [
     "brotli>=1.2.1",
     "certifi>=2026.10.19", # Transitive pin (httpx, requests); GHSA-6q48-6c7w-9gw2 fixed in 2026.10.19
     "click>=8.4.2", # Transitive pin
+    "common-expression-language>=0.10.0", # CEL evaluator for user-supplied policy expressions (#7010, #5046)
     "cpex>=0.1.4", # first PyPI release built for mcp 2.x
     "certifi>=2026.10.19", # Transitive pin; drops eMudhra/emSign roots removed by Mozilla 2026-10-18
     "cryptography>=50.0.0",
