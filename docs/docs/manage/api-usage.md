@@ -1780,6 +1780,28 @@ A2A (Agent-to-Agent) enables integration with external AI agents.
 !!! note "A2A Feature Flag"
     A2A features must be enabled via `MCPGATEWAY_A2A_ENABLED=true` in your `.env` file.
 
+### Detect Whether A2A Is Enabled
+
+`GET /auth/email/me` returns a `features` object that any authenticated user can read:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/email/me | jq '.features'
+# { "a2a": false }
+```
+
+When A2A is disabled, every A2A route returns 404 with `{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}`. Unauthenticated callers receive 401.
+
+Status changes from earlier releases:
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/a2a/*`, `/v1/a2a/*` | 404, generic body | 404, typed body |
+| `GET /admin/a2a` | 200, empty page | 404, typed body |
+| `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial` | 500 or 200 | 404, typed body |
+| `POST /admin/a2a` | 403, `success: false` | 404, typed body |
+| `POST /admin/a2a/{agent_id}/test` | 403, `success: false` | 404, typed body |
+| `POST /metrics/reset`, entity `a2a` | 400, "A2A features are disabled" | 404, typed body |
+
 ### List All A2A Agents
 
 ```bash

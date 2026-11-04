@@ -464,7 +464,7 @@ class TestJSONRPCPassthroughErrorHandling:
 
     def test_service_unavailable_returns_typed_404(self, mock_auth, auth_headers):
         """Test that an unavailable service returns the typed a2a_disabled 404."""
-        with patch("mcpgateway.main.a2a_service", None):
+        with patch("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_enabled", False):
             client = TestClient(app)
             response = client.post(
                 "/a2a/test-agent/jsonrpc",
@@ -1198,29 +1198,19 @@ class TestJSONRPCPassthroughFeatureFlags:
 
         payload = {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1}
 
-        # Temporarily disable A2A feature flag and reload app
-        with patch.object(settings, "mcpgateway_a2a_enabled", False):
-            import importlib
-            import mcpgateway.main
-            importlib.reload(mcpgateway.main)
-            from mcpgateway.main import app as reloaded_app, get_current_user_with_permissions as reloaded_user_dep
+        from mcpgateway.main import get_current_user_with_permissions
 
-            client = TestClient(reloaded_app)
+        client = TestClient(app)
+        override = app.dependency_overrides.pop(get_current_user_with_permissions)
+        with patch.object(settings, "mcpgateway_a2a_enabled", False):
             unauthenticated = client.post("/a2a/test-agent/jsonrpc", json=payload)
             assert unauthenticated.status_code == status.HTTP_401_UNAUTHORIZED
 
-            # Reload creates a new dependency function, so override it on the reloaded app.
-            reloaded_app.dependency_overrides[reloaded_user_dep] = lambda: {"sub": "test-user@example.com", "email": "test-user@example.com", "is_admin": True, "teams": None}
-            try:
-                response = client.post("/a2a/test-agent/jsonrpc", json=payload, headers={"Authorization": "Bearer test-token"})
-            finally:
-                reloaded_app.dependency_overrides.clear()
+            app.dependency_overrides[get_current_user_with_permissions] = override
+            response = client.post("/a2a/test-agent/jsonrpc", json=payload, headers={"Authorization": "Bearer test-token"})
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
             assert response.json()["detail"]["error"] == "a2a_disabled"
-
-        # Reload app again to restore A2A-enabled state for other tests
-        importlib.reload(mcpgateway.main)
 
 
 class TestJSONRPCPassthroughEdgeCases:

@@ -41,6 +41,7 @@ from mcpgateway.schemas import (
     AuthEventResponse,
     ChangePasswordRequest,
     CurrentUserResponse,
+    FeatureFlags,
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
     EmailUserResponse,
@@ -50,6 +51,7 @@ from mcpgateway.schemas import (
     ResetPasswordRequest,
     SuccessResponse,
 )
+from mcpgateway.services.a2a_service import a2a_enabled
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -569,7 +571,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         >>> # Headers: Authorization: Bearer <token>
     """
     profile = EmailUserResponse.from_email_user(current_user)
-    return CurrentUserResponse(**profile.model_dump(), features={"a2a": settings.mcpgateway_a2a_enabled})
+    return CurrentUserResponse(**profile.model_dump(), features=FeatureFlags(a2a=a2a_enabled()))
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])

@@ -1633,7 +1633,7 @@ async def test_get_current_user_profile_reports_a2a_feature_flag(monkeypatch, a2
     user.is_email_verified = MagicMock(return_value=True)
 
     result = await get_current_user_profile(current_user=user)
-    assert result.features == {"a2a": a2a_enabled}
+    assert result.features.model_dump() == {"a2a": a2a_enabled}
 
 
 class TestGetAuthEvents:

@@ -148,7 +148,7 @@ class TestTasks:
 
     def test_service_disabled_404(self, client):
         """A disabled A2A service returns the typed a2a_disabled 404."""
-        with patch("mcpgateway.main.a2a_service", None):
+        with patch("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_enabled", False):
             response = client.get(BASE, headers=HEADERS)
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "a2a_disabled"

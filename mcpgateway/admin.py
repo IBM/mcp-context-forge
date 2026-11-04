@@ -161,7 +161,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import A2A_DISABLED_DETAIL, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, a2a_enabled, raise_if_a2a_disabled
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -879,8 +879,8 @@ resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
 export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
-# Initialize A2A service only if A2A features are enabled
-a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+# Created only when A2A is enabled. A2A admin handlers call raise_if_a2a_disabled() first, so they treat it as present.
+a2a_service: A2AAgentService = typing_cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 # Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
 grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE and GrpcService is not None) else None
 
@@ -11279,6 +11279,7 @@ async def admin_a2a_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded a2a agent data when templates expect it.
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(
         f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
     )
@@ -11474,6 +11475,7 @@ async def admin_get_all_agent_ids(
             - "agent_ids": List[str] of accessible agent IDs.
             - "count": int number of IDs returned.
     """
+    raise_if_a2a_disabled()
     user_email = get_user_email(user)
     team_ids = await _get_user_team_ids(user, db)
 
@@ -11541,6 +11543,7 @@ async def admin_search_a2a_agents(
             - "agents": List[dict] where each dict has keys "id", "name", "description".
             - "count": int number of matched a2a agents returned.
     """
+    raise_if_a2a_disabled()
     user_email = get_user_email(user)
     search_query = _normalize_search_query(q)
     normalized_tags = _normalize_tags_query(tags)
@@ -16316,6 +16319,7 @@ async def admin_get_agent(
         >>> admin_get_agent.__name__
         'admin_get_agent'
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
     user_email = get_user_email(user)
     token_teams = get_token_teams_from_request(request)
@@ -16371,8 +16375,7 @@ async def admin_list_a2a_agents(
         >>> admin_list_a2a_agents.__name__
         'admin_list_a2a_agents'
     """
-    if a2a_service is None:
-        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+    raise_if_a2a_disabled()
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
@@ -16418,9 +16421,7 @@ async def admin_add_a2a_agent(
     """
     LOGGER.info(f"A2A agent creation request from user {user}")
 
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+    raise_if_a2a_disabled()
 
     form = await request.form()
     team_id = _form_team_id(form)
@@ -16823,7 +16824,7 @@ async def admin_set_a2a_agent_state(
     Raises:
         HTTPException: If A2A features are disabled
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+    if not a2a_enabled():
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -16877,7 +16878,7 @@ async def admin_delete_a2a_agent(
     Raises:
         HTTPException: If A2A features are disabled
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+    if not a2a_enabled():
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -16949,8 +16950,7 @@ async def admin_test_a2a_agent(
         Error messages are sanitized by a2a_service to prevent credential leakage.
         Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+    raise_if_a2a_disabled()
 
     try:
         user_email = get_user_email(user)
