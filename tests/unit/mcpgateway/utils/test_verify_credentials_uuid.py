@@ -1013,17 +1013,25 @@ async def test_verify_oauth_access_token_jwks_uri_origin_mismatch(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("allow_localhost", [False, True])
-async def test_verify_oauth_access_token_discovered_local_http_jwks_policy(monkeypatch, allow_localhost):
+@pytest.mark.parametrize(
+    ("issuer", "jwks_uri", "allow_localhost", "accepted"),
+    [
+        ("http://localhost:8080", "http://localhost:8080/jwks", False, False),
+        ("http://localhost:8080", "http://localhost:8080/jwks", True, True),
+        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/jwks", True, True),
+        ("http://idp.internal:8080", "http://idp.internal:8080/jwks", True, False),
+        ("http://localhost:8080", "http://localhost:abc/jwks", True, False),
+    ],
+)
+async def test_verify_oauth_access_token_discovered_local_http_jwks_policy(monkeypatch, issuer, jwks_uri, allow_localhost, accepted):
     """Discovered HTTP JWKS is allowed only for matching loopback issuer origins."""
     from unittest.mock import AsyncMock
     import jwt
 
-    issuer = "http://localhost:8080"
     token_payload = {"sub": "user@example.com", "iss": issuer, "aud": "my-api", "exp": 9999999999}
     token = jwt.encode(token_payload, _TEST_SIGNING_KEY, algorithm="HS256")
     monkeypatch.setattr(vc.settings, "ssrf_allow_localhost", allow_localhost)
-    monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value={"jwks_uri": f"{issuer}/jwks"}))
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value={"jwks_uri": jwks_uri}))
 
     mock_signing_key = MagicMock(key="secret")
     mock_jwks_client = MagicMock()
@@ -1035,7 +1043,7 @@ async def test_verify_oauth_access_token_discovered_local_http_jwks_policy(monke
     )
 
     result = await vc.verify_oauth_access_token(token, [issuer], expected_audience="my-api")
-    assert (result is not None) is allow_localhost
+    assert (result is not None) is accepted
 
 
 @pytest.mark.asyncio

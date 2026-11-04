@@ -551,13 +551,14 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
     Returns:
         A list of allowed issuer URLs, with surrounding whitespace stripped.
     """
+
     def _is_allowed_url(value: str) -> bool:
         """Return whether an issuer URL uses an allowed scheme and host."""
         try:
             parts = urlsplit(value)
             hostname = parts.hostname
             # Accessing port validates malformed port values.
-            parts.port
+            _ = parts.port
         except ValueError:
             return False
         if not parts.netloc or not hostname:

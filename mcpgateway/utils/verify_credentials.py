@@ -2075,28 +2075,18 @@ async def verify_oauth_access_token(
             jwks_parts = urlsplit(jwks_uri)
             issuer_parts = urlsplit(normalized_issuer)
             # Accessing ports validates malformed port values.
-            jwks_parts.port
-            issuer_parts.port
+            _ = jwks_parts.port
+            _ = issuer_parts.port
             jwks_hostname = jwks_parts.hostname
             issuer_hostname = issuer_parts.hostname
         except ValueError:
             jwks_hostname = issuer_hostname = None
 
-        same_origin = (
-            jwks_parts.netloc == issuer_parts.netloc
-            and bool(jwks_parts.netloc)
-            and bool(issuer_parts.netloc)
-        )
+        same_origin = jwks_parts.netloc == issuer_parts.netloc and bool(jwks_parts.netloc) and bool(issuer_parts.netloc)
         local_http = False
         if jwks_parts.scheme.lower() == issuer_parts.scheme.lower() == "http" and settings.ssrf_allow_localhost:
             local_hosts = {jwks_hostname, issuer_hostname}
-            local_http = all(
-                host and (
-                    host.rstrip(".").lower() in {"localhost", "localhost.localdomain"}
-                    or _is_loopback_host(host)
-                )
-                for host in local_hosts
-            )
+            local_http = all(host and (host.rstrip(".").lower() in {"localhost", "localhost.localdomain"} or _is_loopback_host(host)) for host in local_hosts)
         if not (same_origin and (jwks_parts.scheme.lower() == "https" or local_http)):
             logger.warning(
                 "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
