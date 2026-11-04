@@ -1729,7 +1729,7 @@ async def get_oauth_status_batch(
 
 
 @oauth_router.get("/token/{gateway_id}")
-@require_permission(Permissions.GATEWAYS_READ)
+@require_permission(Permissions.GATEWAYS_UPDATE)
 async def get_gateway_oauth_token(
     gateway_id: str,
     request: Request,

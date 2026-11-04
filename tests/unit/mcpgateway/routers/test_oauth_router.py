@@ -5911,8 +5911,8 @@ class TestGetGatewayOauthToken:
         return Response()
 
     @pytest.mark.asyncio
-    async def test_denied_without_gateways_read_permission(self, mock_db, mock_request, mock_response):
-        """A caller without gateways.read is rejected by @require_permission before any gateway lookup."""
+    async def test_denied_without_gateways_update_permission(self, mock_db, mock_request, mock_response):
+        """A caller without gateways.update is rejected by @require_permission before any gateway lookup."""
         from mcpgateway.routers.oauth_router import get_gateway_oauth_token
 
         with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
