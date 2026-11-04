@@ -134,9 +134,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         ip_address = request.client.host if request.client else None
         user_agent = sanitize_header_for_storage(request.headers.get("user-agent"), max_length=500)
 
-        # Try to extract user from request state (set by auth middleware)
+        # Identity set by auth middleware. Prefer the full user object; the
+        # JWT and API-token paths only leave `request.state.user_email` behind.
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
             user_email = request.state.user.email
+        elif hasattr(request.state, "user_email"):
+            user_email = request.state.user_email
 
         # Extract W3C Trace Context from headers (for distributed tracing)
         external_trace_id = None
