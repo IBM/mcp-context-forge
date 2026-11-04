@@ -479,6 +479,7 @@ class ExportService:
                 "output_schema": tool.output_schema,
                 "annotations": tool.annotations or {},
                 "jsonpath_filter": tool.jsonpath_filter,
+                "tool_validation_policy": tool.tool_validation_policy,
                 "tags": tool.tags or [],
                 "rate_limit": getattr(tool, "rate_limit", None),
                 "timeout": getattr(tool, "timeout", None),
@@ -545,6 +546,7 @@ class ExportService:
                 "is_active": gateway.enabled,
                 "tags": gateway.tags or [],
                 "passthrough_headers": gateway.passthrough_headers or [],
+                "tool_validation_policy": gateway.tool_validation_policy,
             }
 
             # Handle authentication data securely - use batch-fetched values
@@ -915,6 +917,7 @@ class ExportService:
                 "output_schema": db_tool.output_schema,
                 "annotations": db_tool.annotations or {},
                 "jsonpath_filter": db_tool.jsonpath_filter,
+                "tool_validation_policy": db_tool.tool_validation_policy,
                 "tags": db_tool.tags or [],
                 "rate_limit": getattr(db_tool, "rate_limit", None),
                 "timeout": getattr(db_tool, "timeout", None),
@@ -974,6 +977,7 @@ class ExportService:
                 "is_active": db_gateway.enabled,
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
+                "tool_validation_policy": db_gateway.tool_validation_policy,
             }
 
             # Include auth data directly from DB (already have raw values)

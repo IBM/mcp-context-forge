@@ -3718,6 +3718,18 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tool Validation Policy</label
+                >
+                <textarea
+                  name="tool_validation_policy"
+                  rows="2"
+                  placeholder="CEL expression over description and tool_name, for example !description.contains(&quot;&amp;&amp;&quot;). Leave empty to inherit."
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Integration Type</label
                 >
                 <select
@@ -5313,6 +5325,18 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 >
                 <textarea
                   name="description"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tool Validation Policy</label
+                >
+                <textarea
+                  name="tool_validation_policy"
+                  rows="2"
+                  placeholder="CEL expression over description and tool_name, for example !description.contains(&quot;&amp;&amp;&quot;). Leave empty to inherit."
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -8714,6 +8738,19 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Tool Validation Policy</label
+                      >
+                      <textarea
+                        name="tool_validation_policy"
+                        id="edit-tool-validation-policy"
+                        rows="2"
+                        placeholder="CEL expression over description and tool_name, for example !description.contains(&quot;&amp;&amp;&quot;). Leave empty to inherit."
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      ></textarea>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                         >Integration Type</label
                       >
                       <select
@@ -9892,6 +9929,19 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <textarea
                         name="description"
                         id="edit-gateway-description"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      ></textarea>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700"
+                        >Tool Validation Policy</label
+                      >
+                      <textarea
+                        name="tool_validation_policy"
+                        id="edit-gateway-validation-policy"
+                        rows="2"
+                        placeholder="CEL expression over description and tool_name, for example !description.contains(&quot;&amp;&amp;&quot;). Leave empty to inherit."
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       ></textarea>
                     </div>

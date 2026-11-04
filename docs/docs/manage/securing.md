@@ -752,7 +752,28 @@ referencing restricted built-ins (including process control and unbounded iterat
 constructs such as `halt`, `recurse`, `while`, `until`, `foreach`, `repeat`, and `builtins`)
 before upgrading, since those tools will begin failing at write and invoke time.
 
-### 14. JSON Schema Regex Sandbox
+### 14. Tool Validation Policy Sandbox
+
+Gateway and tool `tool_validation_policy` values are CEL expressions written by
+operators. They are evaluated when the policy is saved and whenever a tool is
+registered, refreshed, or edited, and — on Linux — they execute in the same kind of
+forked, environment-scrubbed worker as jq filters, under `CEL_TIMEOUT_SECONDS`.
+An expression sees only `description` and `tool_name`; any other name, any
+function the CEL runtime does not provide, and any non-boolean result is
+rejected when the policy is saved.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `CEL_EXECUTION` | `subprocess` | `subprocess` evaluates policies in the sandbox; `inprocess` disables it. |
+| `CEL_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for a single evaluation. |
+| `CEL_WORKERS` | `2` | Worker processes per gateway process. |
+
+The platform caveat, the meaning of `inprocess`, and the pool-wide kill on timeout
+are the same as for the jq sandbox above. A policy that times out or cannot be
+evaluated counts as a refusal, so a sandbox failure disables the affected tools
+rather than admitting them unchecked.
+
+### 15. JSON Schema Regex Sandbox
 
 A JSON Schema `pattern` or `patternProperties` keyword is a regular expression,
 and tool, prompt, and output schemas are attacker-influenced. A schema that
@@ -790,7 +811,7 @@ the gateway's own sandboxed check runs. A hostile federated MCP server
 controls both the schema and the instance on this path, and it is not yet
 bounded by this sandbox; tracked as a follow-up.
 
-### 15. Database Security
+### 16. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -798,7 +819,7 @@ bounded by this sandbox; tracked as a follow-up.
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 16. Monitoring & Logging
+### 17. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -806,7 +827,7 @@ bounded by this sandbox; tracked as a follow-up.
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 17. Integration Security
+### 18. Integration Security
 
 ContextForge should be integrated with:
 
@@ -816,7 +837,7 @@ ContextForge should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 18. Well-Known URI Security
+### 19. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -840,7 +861,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 19. Downstream Application Security
+### 20. Downstream Application Security
 
 Applications consuming ContextForge data must:
 

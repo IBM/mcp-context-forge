@@ -968,6 +968,30 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+def _tool_validation_policy_from_form(form: Any) -> Dict[str, Any]:
+    """Return the policy field only when the form submitted it.
+
+    A form that omits the field leaves the stored policy unchanged, because passing
+    None explicitly would land in ``model_fields_set`` and clear it. An empty
+    submitted field clears the policy, which the schema normalises to None.
+
+    Args:
+        form: The submitted form data.
+
+    Returns:
+        A kwargs dict with ``tool_validation_policy`` when present, else empty.
+
+    Examples:
+        >>> _tool_validation_policy_from_form({"name": "x"})
+        {}
+        >>> _tool_validation_policy_from_form({"tool_validation_policy": "true"})
+        {'tool_validation_policy': 'true'}
+    """
+    if "tool_validation_policy" not in form:
+        return {}
+    return {"tool_validation_policy": form.get("tool_validation_policy")}
+
+
 def _form_instructions(form: Any) -> Optional[str]:
     """Extract the server ``instructions`` text from form data.
 
@@ -12234,6 +12258,7 @@ async def admin_add_tool(
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
+        tool_data.update(_tool_validation_policy_from_form(form))
         tool = ToolCreate(**tool_data)
         LOGGER.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
 
@@ -12388,6 +12413,7 @@ async def admin_edit_tool(
         tool_data["request_type"] = form.get("requestType")
     LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
+        tool_data.update(_tool_validation_policy_from_form(form))
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
 
         # Get current tool to extract current version
@@ -13370,6 +13396,7 @@ async def admin_edit_gateway(
             visibility=visibility,
             owner_email=user_email,
             team_id=team_id,
+            **_tool_validation_policy_from_form(form),
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
