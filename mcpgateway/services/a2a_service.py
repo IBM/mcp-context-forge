@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 # Third-Party
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -635,17 +635,15 @@ class A2AAgentService(BaseService):
 
         return False
 
-    def _visible_agent_ids(
+    def _visible_agent_filters(
         self,
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
         include_inactive: bool = False,
-    ) -> List[str]:
-        """Return IDs of agents visible to the caller.
+    ) -> List[Any]:
+        """Return the SQL predicates that select agents visible to the caller.
 
-        Used by list_tasks, list_push_configs_for_dispatch and scoped aggregate_metrics.
-        Pushes visibility filtering into SQL to avoid loading all agents.
         Disabled agents are excluded unless ``include_inactive`` is true.
 
         Note: admin bypass here requires BOTH token_teams=None AND
@@ -655,21 +653,27 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
 
-        PR #4341: Admin bypass (user_email=None AND token_teams=None) returns
-        agent IDs for public + team visibility only, explicitly excluding
-        private agents. This aligns with the post-#4341 invariant: admin bypass
-        must not grant visibility to another user's private resources.
-        """
-        # Admin bypass: return public + team agents only (exclude private)
-        if user_email is None and token_teams is None:
-            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.visibility.in_(["public", "team"]))
-            if not include_inactive:
-                query = query.filter(DbA2AAgent.enabled.is_(True))
-            return [row[0] for row in query.all()]
+        PR #4341: Admin bypass (user_email=None AND token_teams=None) selects
+        public + team visibility only, explicitly excluding private agents.
+        This aligns with the post-#4341 invariant: admin bypass must not grant
+        visibility to another user's private resources.
 
-        query = db.query(DbA2AAgent.id)
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[Any]: Predicates to combine with AND.
+        """
+        filters: List[Any] = []
         if not include_inactive:
-            query = query.filter(DbA2AAgent.enabled.is_(True))
+            filters.append(DbA2AAgent.enabled.is_(True))
+
+        if user_email is None and token_teams is None:
+            filters.append(DbA2AAgent.visibility.in_(["public", "team"]))
+            return filters
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
@@ -682,14 +686,39 @@ class A2AAgentService(BaseService):
             elif token_teams is None and caller_is_admin:
                 # token_teams is None with user_email set → admin with email context
                 visibility_filters.append(DbA2AAgent.visibility == "team")
-            elif token_teams is None:
-                # Non-admin with token_teams=None should not see all team agents.
-                # The user_email check below still grants own-private access.
-                pass
+            # Non-admin with token_teams=None must not see all team agents;
+            # the own-private clause below still applies.
             if user_email:
                 visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
 
-        query = query.filter(or_(*visibility_filters))
+        filters.append(or_(*visibility_filters))
+        return filters
+
+    def _visible_agent_ids(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        include_inactive: bool = False,
+    ) -> List[str]:
+        """Return IDs of agents visible to the caller.
+
+        Used by list_tasks and list_push_configs_for_dispatch.
+        Pushes visibility filtering into SQL to avoid loading all agents.
+        See ``_visible_agent_filters`` for the visibility rules.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[str]: Visible agent IDs.
+        """
+        query = db.query(DbA2AAgent.id)
+        for predicate in self._visible_agent_filters(db, user_email, token_teams, include_inactive):
+            query = query.filter(predicate)
         return [row[0] for row in query.all()]
 
     async def _check_agent_access_by_id(
@@ -3320,21 +3349,7 @@ class A2AAgentService(BaseService):
 
         result = aggregate_metrics_combined(db, "a2a_agent")
 
-        total_interactions = result.total_executions
-        successful_interactions = result.successful_executions
-        failed_interactions = result.failed_executions
-
-        metrics = A2AAgentAggregateMetrics(
-            total_agents=total_agents,
-            active_agents=active_agents,
-            total_interactions=total_interactions,
-            successful_interactions=successful_interactions,
-            failed_interactions=failed_interactions,
-            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            avg_response_time=float(result.avg_response_time or 0.0),
-            min_response_time=float(result.min_response_time or 0.0),
-            max_response_time=float(result.max_response_time or 0.0),
-        )
+        metrics = self._build_aggregate_metrics(result, total_agents, active_agents)
 
         # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
@@ -3344,6 +3359,9 @@ class A2AAgentService(BaseService):
 
     def _aggregate_scoped_metrics(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> A2AAgentAggregateMetrics:
         """Aggregate metrics over the agents visible to the caller.
+
+        Visibility stays in SQL as a subquery, so the statement size does not
+        grow with the number of visible agents.
 
         Args:
             db: Database session.
@@ -3356,14 +3374,29 @@ class A2AAgentService(BaseService):
         # First-Party
         from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        visible_ids = self._visible_agent_ids(db, user_email, token_teams, include_inactive=True)
-        active_agents = db.query(DbA2AAgent.id).filter(DbA2AAgent.id.in_(visible_ids), DbA2AAgent.enabled.is_(True)).count() if visible_ids else 0
-        result = aggregate_metrics_combined(db, "a2a_agent", entity_ids=visible_ids)
+        filters = self._visible_agent_filters(db, user_email, token_teams, include_inactive=True)
+        total_agents, active_agents = db.execute(
+            select(func.count(DbA2AAgent.id), func.coalesce(func.sum(case((DbA2AAgent.enabled.is_(True), 1), else_=0)), 0)).where(*filters)  # pylint: disable=not-callable
+        ).one()
+        result = aggregate_metrics_combined(db, "a2a_agent", entity_ids=select(DbA2AAgent.id).where(*filters))
+        return self._build_aggregate_metrics(result, total_agents, int(active_agents))
 
+    @staticmethod
+    def _build_aggregate_metrics(result: Any, total_agents: int, active_agents: int) -> A2AAgentAggregateMetrics:
+        """Build the aggregate metrics model from a combined metrics result.
+
+        Args:
+            result: Combined raw and rollup metrics.
+            total_agents: Number of agents counted.
+            active_agents: Number of enabled agents counted.
+
+        Returns:
+            A2AAgentAggregateMetrics: The aggregate model.
+        """
         total_interactions = result.total_executions
         successful_interactions = result.successful_executions
         return A2AAgentAggregateMetrics(
-            total_agents=len(visible_ids),
+            total_agents=total_agents,
             active_agents=active_agents,
             total_interactions=total_interactions,
             successful_interactions=successful_interactions,
