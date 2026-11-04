@@ -733,7 +733,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 | Setting                   | Description                    | Default                                        | Options    |
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
-| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification, including SSO/OIDC and JWKS key fetches | `false`                                        | bool       |
 | `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
 | `APP_DOMAIN`              | Domain for production CORS origins | `http://localhost:4444`                     | string     |
 | `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |

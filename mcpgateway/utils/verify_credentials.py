@@ -67,7 +67,6 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
-import httpx
 import jwt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -75,9 +74,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import SSOProvider
-from mcpgateway.services.http_client_service import get_default_verify
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
+from mcpgateway.services.sso_service import _NoRedirectPyJWKClient, resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -1780,30 +1778,6 @@ _oauth_oidc_metadata_cache: dict[str, tuple[float, Optional[dict[str, Any]], flo
 _OAUTH_OIDC_METADATA_TTL = 300  # seconds — successful discovery
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT = 30  # seconds — 404/malformed
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT = 5  # seconds — timeouts / 5xx / network
-
-
-class _NoRedirectPyJWKClient(jwt.PyJWKClient):
-    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
-
-    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
-    redirects transparently, bypassing the same-origin check enforced on the
-    jwks_uri before this client is constructed.  Overriding with httpx
-    (follow_redirects=False) closes the SSRF redirect bypass across the full
-    fetch chain. TLS verification follows get_default_verify(), so
-    SKIP_SSL_VERIFY applies.
-    """
-
-    def fetch_data(self) -> Any:
-        """Fetch JWKS data without following redirects."""
-        try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout, verify=get_default_verify()) as _client:
-                resp = _client.get(self.uri, headers=self.headers)
-                if resp.is_redirect:
-                    raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "redirect status {resp.status_code}"')
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPError as exc:
-            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
 
 
 _oauth_jwks_client_cache: dict[str, _NoRedirectPyJWKClient] = {}

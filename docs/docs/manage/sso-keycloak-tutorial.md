@@ -1047,6 +1047,11 @@ SKIP_SSL_VERIFY=true
 # Or configure custom CA bundle
 ```
 
+!!! warning "JWKS follows `SKIP_SSL_VERIFY`"
+    `SKIP_SSL_VERIFY=true` also disables TLS verification when ContextForge fetches the JWKS
+    signing keys. An attacker on the network path can then serve their own keys and forge tokens.
+    Use it in development only. The gateway logs a warning on each JWKS fetch while it is set.
+
 ### Groups Not Appearing in JWT
 
 **Problem**: User groups not included in JWT token
