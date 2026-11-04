@@ -163,6 +163,60 @@ def get_auth_bearer_token_from_request(request: Any) -> Optional[str]:
     return token or None
 
 
+def get_request_cookie_token(request: Any) -> Optional[str]:
+    """Resolve the JWT from the auth cookies of a request.
+
+    Order: ``jwt_token`` cookie, then ``access_token`` cookie. Empty or
+    whitespace-only values count as absent.
+
+    Args:
+        request: FastAPI/Starlette ``Request``-like object exposing ``.cookies``.
+
+    Returns:
+        The token string when present, otherwise ``None``.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_request_cookie_token(SimpleNamespace(cookies={"access_token": "a"}))
+        'a'
+        >>> get_request_cookie_token(SimpleNamespace(cookies={"jwt_token": " "})) is None
+        True
+    """
+    cookies = getattr(request, "cookies", None)
+    if not cookies:
+        return None
+    for name in ("jwt_token", "access_token"):
+        value = cookies.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def get_request_auth_token(request: Any) -> Optional[str]:
+    """Resolve the JWT for a request using one fixed precedence.
+
+    Order: Bearer token in the configured auth header, then the ``jwt_token``
+    cookie, then the ``access_token`` cookie. Empty or whitespace-only values
+    count as absent.
+
+    Args:
+        request: FastAPI/Starlette ``Request``-like object exposing ``.headers`` and ``.cookies``.
+
+    Returns:
+        The token string when present, otherwise ``None``.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_request_auth_token(SimpleNamespace(headers={"authorization": "Bearer abc"}, cookies={"jwt_token": "xyz"}))
+        'abc'
+        >>> get_request_auth_token(SimpleNamespace(headers={}, cookies={"jwt_token": "xyz"}))
+        'xyz'
+        >>> get_request_auth_token(None) is None
+        True
+    """
+    return get_auth_bearer_token_from_request(request) or get_request_cookie_token(request)
+
+
 class ConfigurableHTTPBearer(HTTPBearer):
     """HTTPBearer with a configurable header name.
 
@@ -1024,20 +1078,16 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
                 )
             return "anonymous"
 
-    # Standard JWT authentication flow - prioritize manual cookie reading
+    # Standard JWT authentication flow - the configured auth header takes precedence over cookies
     token = None
 
-    # 1. First try manual cookie reading (most reliable)
-    if hasattr(request, "cookies") and request.cookies:
-        manual_token = request.cookies.get("jwt_token")
-        if manual_token:
-            token = manual_token
+    header_token = getattr(credentials, "credentials", None)
+    if header_token:
+        token = header_token
 
-    # 2. Then try Authorization header
-    if not token and credentials and credentials.credentials:
-        token = credentials.credentials
+    if not token:
+        token = get_request_cookie_token(request)
 
-    # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
 
@@ -1490,11 +1540,11 @@ async def require_auth_header_first(
     jwt_token: str | None = None,
     request: Request | None = None,
 ) -> str | dict:
-    """Like require_auth_override but Authorization header takes precedence over cookies.
+    """Authenticate with the configured auth header first, then the cookie, then ``jwt_token``.
 
     Token resolution order (matches streamable_http_auth middleware):
-    1. Authorization Bearer header (highest priority)
-    2. Cookie ``jwt_token`` from ``request.cookies``
+    1. Bearer token from the configured auth header (highest priority)
+    2. Cookie ``jwt_token``, then ``access_token``, from ``request.cookies``
     3. ``jwt_token`` keyword argument
 
     Use this in the stateful-session fallback (``_get_request_context_or_default``)
@@ -1603,9 +1653,9 @@ async def require_auth_header_first(
     if scheme.lower() == "bearer" and param:
         token = param
 
-    # 2. Cookie from request.cookies
-    if not token and hasattr(request, "cookies") and request.cookies:
-        token = request.cookies.get("jwt_token") or None
+    # 2. Auth cookies from request.cookies (jwt_token, then access_token)
+    if not token:
+        token = get_request_cookie_token(request)
 
     # 3. jwt_token keyword argument
     if not token and jwt_token:
@@ -1664,9 +1714,7 @@ async def require_admin_auth(
             from mcpgateway.db import get_db
             from mcpgateway.services.email_auth_service import EmailAuthService
 
-            token = jwt_token
-            if not token and credentials:
-                token = credentials.credentials
+            token = getattr(credentials, "credentials", None) or jwt_token
 
             if token:
                 db_session = next(get_db())
