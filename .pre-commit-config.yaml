@@ -26,6 +26,20 @@ default_language_version:
 
 repos:
   # -----------------------------------------------------------------------------
+  #  🔐 Security - Detect Secrets (runs first; fail_fast stops all other hooks on failure)
+  # -----------------------------------------------------------------------------
+  #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
+  # -----------------------------------------------------------------------------
+  - repo: https://github.com/ibm/detect-secrets
+    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
+    hooks:
+      - id: detect-secrets
+        name: 🔐 IBM Detect Secrets
+        description: Detects secrets within a repository using IBM's detect-secrets.
+        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
+        types: [text]
+
+  # -----------------------------------------------------------------------------
   # 🔐 Security - Detect Private Keys
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -397,18 +411,3 @@ repos:
       - id: interrogate
         files: ^(mcpgateway|plugins)/
         exclude: _pb2(_grpc)?\.py$
-
-  # -----------------------------------------------------------------------------
-  #  🔐 Security - Detect Secrets
-  # -----------------------------------------------------------------------------
-  #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
-  #  This tool must be run after all other tools have completed.
-  # -----------------------------------------------------------------------------
-  - repo: https://github.com/ibm/detect-secrets
-    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
-    hooks:
-      - id: detect-secrets
-        name: 🔐 IBM Detect Secrets
-        description: Detects secrets within a repository using IBM's detect-secrets.
-        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
-        types: [text]
