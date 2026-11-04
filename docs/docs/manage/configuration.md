@@ -277,7 +277,7 @@ The banner remains informational after the notice date. It does not disable the 
 **Configuration Effects:**
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
-- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality. `GET /v1/a2a/metrics` returns 404 with `A2A metrics are disabled`, and `GET /v1/metrics` omits the A2A key
 
 ### Experimental Dataplane Publisher
 
