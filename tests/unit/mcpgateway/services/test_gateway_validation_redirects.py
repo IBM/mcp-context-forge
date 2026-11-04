@@ -26,6 +26,7 @@ from mcpgateway.services.gateway_service import (
     _HANDSHAKE_TRANSPORT_COPY,
     _redirect_error_text,
     _safe_connection_error_text,
+    _safe_log_exception_text,
     GatewayConnectionError,
     GatewayService,
 )
@@ -322,7 +323,7 @@ async def test_test_gateway_handshake_307_redirect_actionable_error():
         ("/mcp/", "Upstream redirected to /mcp/; update the gateway URL to the redirect target."),
         ("http://a.example/b?token=secret&x=1", "Upstream redirected to http://a.example/b; update the gateway URL to the redirect target."),
         ("http://a.example/mcp/?X-Custom-Key=SECRET123#frag", "Upstream redirected to http://a.example/mcp/; update the gateway URL to the redirect target."),
-        ("http://user:pw@a.example/b", "Upstream redirected to http://a.example/b; update the gateway URL to the redirect target."),
+        ("http://user:pw@a.example/b", "Upstream redirected to http://a.example/b; update the gateway URL to the redirect target."),  # pragma: allowlist secret
         ("http://[invalid", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
         ("", "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
         (None, "Upstream redirected with HTTP 307; update the gateway URL to the redirect target."),
@@ -462,3 +463,77 @@ def test_safe_connection_error_text_never_echoes_custom_named_query_credential()
     text = _safe_connection_error_text(err)
     assert "SECRET123" not in text
     assert text == "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."
+
+
+def test_safe_log_exception_text_sanitizes_redirect_and_drops_query_params():
+    """_safe_log_exception_text formats redirect errors without query strings or secrets."""
+    req = httpx.Request("GET", "http://example.com/mcp")
+    resp = httpx.Response(307, headers={"Location": "http://example.com/mcp/?custom_secret_key=LEAK123#frag"}, request=req)
+    err = httpx.HTTPStatusError("307 Temporary Redirect", request=req, response=resp)
+
+    log_text = _safe_log_exception_text(err)
+    assert "LEAK123" not in log_text
+    assert "?" not in log_text
+    assert "#" not in log_text
+    assert log_text == "Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target."
+
+    # Non-redirect errors use sanitize_exception_message
+    other_err = RuntimeError("Connection failed to http://example.com/mcp")
+    assert _safe_log_exception_text(other_err) == "Connection failed to http://example.com/mcp"
+
+
+@pytest.mark.asyncio
+async def test_health_check_and_failure_logs_hold_no_query_string_on_redirect(caplog):
+    """Health check debug and error logs do not echo query strings or unredacted secrets on 3xx redirect."""
+    service = GatewayService()
+    service._instance_id = "test-instance"
+    service._gateway_failure_counts = {}
+    service._active_gateways = set()
+    service._mark_gateway_reachable = AsyncMock()
+    service.set_gateway_state = AsyncMock()
+    service._classification_service = None
+
+    gateway = _make_mock_gateway(url="http://sse.example.com/mcp", transport="sse")
+
+    def _upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(307, headers={"Location": "http://sse.example.com/mcp/?unknown_secret_param=LEAKED123#frag"})
+
+    class _IsoClientCM:
+        async def __aenter__(self_inner):
+            self_inner.client = httpx.AsyncClient(transport=httpx.MockTransport(_upstream), follow_redirects=False)
+            return self_inner.client
+
+        async def __aexit__(self_inner, *exc):
+            await self_inner.client.aclose()
+            return False
+
+    with (
+        caplog.at_level("DEBUG"),
+        patch(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                httpx_admin_read_timeout=5,
+                health_check_timeout=5,
+                httpx_max_connections=10,
+                httpx_max_keepalive_connections=5,
+                httpx_keepalive_expiry=30,
+                auto_refresh_servers=False,
+                max_consecutive_health_failures=1,
+            ),
+        ),
+        patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+        patch("mcpgateway.services.gateway_service.create_span", return_value=MagicMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=False))),
+        patch("mcpgateway.services.gateway_service.sanitize_url_for_logging", side_effect=lambda u, *_a, **_k: u),
+        patch("mcpgateway.services.gateway_service.SecurityValidator") as mock_sv,
+        patch("mcpgateway.services.gateway_service.SessionLocal"),
+    ):
+        mock_sv.sanitize_log_message.side_effect = lambda x: x
+        mock_sv.sanitize_credential_value.side_effect = lambda x: x
+        await service._check_single_gateway_health(gateway)
+
+    log_output = caplog.text
+    assert "LEAKED123" not in log_output
+    assert "unknown_secret_param" not in log_output
+    assert "Redirect location:" not in log_output
+    assert "Upstream redirected to http://sse.example.com/mcp/; update the gateway URL to the redirect target." in log_output
