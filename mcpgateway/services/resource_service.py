@@ -77,7 +77,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.services.token_exchange_actor import resolve_actor_token
+from mcpgateway.services.token_exchange_actor import invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -2142,6 +2142,7 @@ class ResourceService(BaseService):
                                     )
                                 except Exception as e:
                                     logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
+                                    await invalidate_actor_token(gateway_id, gateway_oauth_config, e)
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Token exchange failed")

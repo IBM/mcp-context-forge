@@ -387,10 +387,10 @@ rejected on any grant other than `token-exchange`.
 #### Sequence
 
 1. A user calls a tool, reads a resource, or runs a manual refresh with their JWT.
-2. ContextForge looks up the per-user exchanged-token cache. A hit skips the remaining steps.
+2. On a tool call or manual refresh, ContextForge looks up the per-user exchanged-token cache. A hit skips the remaining steps. Resource reads have no exchanged-token cache and always continue to step 3.
 3. ContextForge gets the actor token: from the service-token cache or a new `client_credentials` request, or by signing a new assertion.
 4. ContextForge sends one exchange request with `subject_token` (the user's JWT), `actor_token`, and `actor_token_type`.
-5. The AS returns a token with an `act` claim. ContextForge caches it per user and forwards only that token upstream.
+5. The AS returns a token with an `act` claim. On a tool call or manual refresh, ContextForge caches it per user. ContextForge forwards only that token upstream.
 
 The tool-call, resource-read, and manual-refresh paths all resolve the actor
 token through `resolve_actor_token()` in
@@ -401,9 +401,11 @@ validate the returned `act` claim.
 
 Delegation never falls back to impersonation:
 
-- If the actor token request or signing fails, ContextForge sends no exchange request. The tool call or resource read fails, and the per-user negative cache records the failure, so a retry inside the cooldown sends no request to the AS.
+- If the actor token request or signing fails, ContextForge sends no exchange request, and the tool call, resource read, or manual refresh fails.
+- On tool calls and manual refresh, the per-user negative cache records the failure, so a retry inside the cooldown sends no request to the AS.
+- Resource reads have no negative cache. Each read resolves the actor token and attempts the exchange again.
 - `OAuthManager.token_exchange()` refuses a delegation config that arrives without an actor token. A new call site that forgets the actor token therefore fails instead of impersonating.
-- If the AS rejects an exchange that carried a cached `client_credentials` actor token, ContextForge discards the cached actor token. The next exchange after the cooldown requests a new one.
+- If the AS rejects an exchange that carried a cached `client_credentials` actor token, ContextForge discards the cached actor token on every path, including resource reads. The next exchange requests a new one; on tool calls and manual refresh, it waits until the cooldown ends.
 
 #### Cache behavior on a mode change
 
@@ -516,9 +518,6 @@ Also configure these ISV settings:
 - Keep the **Audiences** list empty on every MCP and API client. ISV adds each entry to every token the client issues, so an entry can make a hop 1 token valid at the API.
 - Turn on **Require actor token** on each mcpN and apiN client.
 - Let each mcpN client accept subject tokens issued by the user's client.
-
-`infra/token-exchange-demo-isv-delegation` runs this setup end to end.
-`./demo.sh check-isv` runs both hops and the deny paths without the gateway.
 
 ### `subject_token_type`
 

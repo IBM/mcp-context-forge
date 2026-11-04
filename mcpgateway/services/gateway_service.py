@@ -149,7 +149,7 @@ from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
+from mcpgateway.services.token_exchange_actor import build_actor_oauth_config, exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -1414,6 +1414,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         uses_private_key_jwt = normalize_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method")) == "private_key_jwt"
         if oauth_config.get("actor_token_source") == ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION and not uses_private_key_jwt:
             GatewayService._validate_signing_key(oauth_config, existing_oauth_config, "actor_token_source is client_assertion")
+        if oauth_config.get("actor_token_source") == ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS and isinstance(oauth_config.get("actor"), dict):
+            actor_config = build_actor_oauth_config(oauth_config)
+            if normalize_token_endpoint_auth_method(actor_config.get("token_endpoint_auth_method")) == "private_key_jwt":
+                existing_actor_config = build_actor_oauth_config(existing_oauth_config) if isinstance(existing_oauth_config, dict) else None
+                GatewayService._validate_signing_key(actor_config, existing_actor_config, "actor.token_endpoint_auth_method is private_key_jwt")
         discovery_config = build_discovery_oauth_config(oauth_config)
         if discovery_config is not None:
             GatewayService._validate_private_key_jwt_material(discovery_config, build_discovery_oauth_config(existing_oauth_config) or existing_oauth_config)

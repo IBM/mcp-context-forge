@@ -4942,6 +4942,51 @@ class TestInvokeResourceCoverage:
         mock_sse.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_token_exchange_actor_rejection_evicts_cached_actor_token(self, resource_service, monkeypatch):
+        """A rejected exchange evicts the cached actor token, so the next read acquires a replacement."""
+        # First-Party
+        from mcpgateway.services import gateway_service_token_cache
+        from mcpgateway.services.oauth_manager import OAuthTokenExchangeError
+
+        monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache())
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as.example.com/token", "client_id": "cf", "actor_token_source": "client_credentials"}
+        resource_service.oauth_manager.get_client_credentials_token_response = AsyncMock(
+            side_effect=[{"access_token": "actor-tok-1", "expires_in": 3600}, {"access_token": "actor-tok-2", "expires_in": 3600}]
+        )
+        resource_service.oauth_manager.get_access_token = AsyncMock(side_effect=[OAuthTokenExchangeError("rejected", status_code=400, error_code="invalid_client"), "exchanged-tok"])
+
+        first, _, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+        second, captured_headers, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+
+        assert isinstance(first, ResourceError)
+        assert second == "ok"
+        assert resource_service.oauth_manager.get_client_credentials_token_response.await_count == 2
+        sent_actor_tokens = [call.kwargs["actor_token"] for call in resource_service.oauth_manager.get_access_token.call_args_list]
+        assert sent_actor_tokens == ["actor-tok-1", "actor-tok-2"]
+        assert captured_headers.get("Authorization") == "Bearer exchanged-tok"
+
+    @pytest.mark.asyncio
+    async def test_token_exchange_non_actor_failure_keeps_cached_actor_token(self, resource_service, monkeypatch):
+        """An exchange failure that does not blame the actor keeps the cached actor token."""
+        # First-Party
+        from mcpgateway.services import gateway_service_token_cache
+        from mcpgateway.services.oauth_manager import OAuthTokenExchangeError
+
+        monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache())
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as.example.com/token", "client_id": "cf", "actor_token_source": "client_credentials"}
+        resource_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "actor-tok-1", "expires_in": 3600})
+        resource_service.oauth_manager.get_access_token = AsyncMock(side_effect=[OAuthTokenExchangeError("denied", status_code=400, error_code="invalid_grant"), "exchanged-tok"])
+
+        first, _, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+        second, _, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+
+        assert isinstance(first, ResourceError)
+        assert second == "ok"
+        assert resource_service.oauth_manager.get_client_credentials_token_response.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_sse_auth_value_string_decode_returns_none_defaults_authentication_to_empty_dict(self, resource_service):
         """Cover non-OAuth auth decode returning None which triggers authentication defaulting in connect_to_sse_session()."""
         resource = self._make_resource()

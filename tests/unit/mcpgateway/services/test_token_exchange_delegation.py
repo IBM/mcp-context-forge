@@ -641,6 +641,37 @@ class TestBuildActorOAuthConfig:
         assert parent == snapshot
 
 
+class TestActorSigningKeyValidation:
+    def test_secret_parent_with_private_key_jwt_actor_without_key_rejected(self):
+        cfg = _actor_config(actor={**_ACTOR, "token_endpoint_auth_method": "private_key_jwt"})
+        with pytest.raises(ValueError, match="private_key is required when actor.token_endpoint_auth_method is private_key_jwt"):
+            GatewayService._validate_private_key_jwt_config(cfg)
+
+    def test_private_key_jwt_actor_with_malformed_parent_key_rejected(self):
+        cfg = _actor_config(private_key=MALFORMED_KEY, actor={**_ACTOR, "token_endpoint_auth_method": "private_key_jwt"})
+        with pytest.raises(ValueError, match="not a valid PEM-encoded private key"):
+            GatewayService._validate_private_key_jwt_config(cfg)
+
+    def test_private_key_jwt_actor_with_valid_parent_key_accepted(self):
+        cfg = _actor_config(private_key=_rsa_pem(), actor={**_ACTOR, "token_endpoint_auth_method": "private_key_jwt"})
+        GatewayService._validate_private_key_jwt_config(cfg)
+
+    def test_private_key_jwt_actor_masked_key_resolves_stored_key(self):
+        stored = get_encryption_service(settings.auth_encryption_secret).encrypt_secret(_rsa_pem())
+        actor = {**_ACTOR, "token_endpoint_auth_method": "private_key_jwt"}
+        cfg = _actor_config(private_key=settings.masked_auth_value, actor=actor)
+        GatewayService._validate_private_key_jwt_config(cfg, existing_oauth_config=_actor_config(private_key=stored, actor=actor))
+
+    def test_private_key_jwt_actor_masked_key_without_stored_key_rejected(self):
+        actor = {**_ACTOR, "token_endpoint_auth_method": "private_key_jwt"}
+        cfg = _actor_config(private_key=settings.masked_auth_value, actor=actor)
+        with pytest.raises(ValueError, match="no stored key exists"):
+            GatewayService._validate_private_key_jwt_config(cfg, existing_oauth_config=_actor_config(actor=actor))
+
+    def test_secret_actor_needs_no_signing_key(self):
+        GatewayService._validate_private_key_jwt_config(_actor_config())
+
+
 @pytest.mark.asyncio
 class TestActorOverrideResolver:
     async def test_actor_request_as_actor_client_and_exchange_as_parent(self, service_cache):
