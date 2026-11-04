@@ -42,6 +42,7 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
@@ -1767,8 +1768,10 @@ async def get_gateway_oauth_token(
     Raises:
         HTTPException: 503 if the feature flag is disabled; 404 if the gateway is not
             found or no OAuth token is stored for the caller; 400 if the gateway has no
-            OAuth configuration; 401 if the caller's identity cannot be resolved; 403 if
-            the caller lacks access to this gateway.
+            OAuth configuration or its grant type is not ``authorization_code``; 401 if
+            the caller's identity cannot be resolved; 403 if the caller lacks access to
+            this gateway; 409 if OAuth reauthorization is required; 502 if the provider
+            fails; 503 if token storage fails.
     """
     if not settings.oauth_token_retrieval_enabled:
         raise HTTPException(
@@ -1785,31 +1788,39 @@ async def get_gateway_oauth_token(
     if not gateway.oauth_config:
         raise HTTPException(status_code=400, detail="Gateway is not configured for OAuth")
 
+    if gateway.oauth_config.get("grant_type") != "authorization_code":
+        raise HTTPException(status_code=400, detail="Gateway is not configured for Authorization Code flow")
+
     app_user_email = get_user_email(current_user)
     if not app_user_email or app_user_email == "unknown":
         raise HTTPException(status_code=401, detail="User authentication required")
 
     user_context = _build_user_context(current_user, db=db)
-    token_storage = TokenStorageService(db, user_context)
-
-    access_token = await token_storage.get_user_token(gateway_id, app_user_email, threshold_seconds=OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS)
-    if not access_token:
+    try:
+        token_storage = TokenStorageService(db, user_context)
+        token_details = await token_storage.get_user_token_details(gateway_id, app_user_email, threshold_seconds=OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS)
+    except TokenReauthorizationRequired as exc:
+        raise HTTPException(status_code=409, detail="OAuth reauthorization required for this gateway and user") from exc
+    except OAuthError as exc:
+        raise HTTPException(status_code=502, detail="OAuth provider could not refresh the access token") from exc
+    except Exception as exc:
+        logger.error("OAuth token storage retrieval failed")
+        raise HTTPException(status_code=503, detail="OAuth token storage unavailable") from exc
+    if token_details is None:
         raise HTTPException(
             status_code=404,
             detail="No OAuth token found for this gateway and user. Complete the OAuth flow at /oauth/authorize/{gateway_id} first.",
         )
-
-    token_info = await token_storage.get_token_info(gateway_id, app_user_email) or {}
 
     response.headers["Cache-Control"] = "no-store"
     logger.info(f"OAuth access token issued for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
 
     return {
         "gateway_id": gateway_id,
-        "access_token": access_token,
+        "access_token": token_details.access_token,
         "token_type": "Bearer",  # nosec B105 - OAuth token_type constant, not a credential
-        "expires_at": token_info.get("expires_at"),
-        "scopes": token_info.get("scopes"),
+        "expires_at": token_details.expires_at.isoformat() if token_details.expires_at else None,
+        "scopes": token_details.scopes,
     }
 
 

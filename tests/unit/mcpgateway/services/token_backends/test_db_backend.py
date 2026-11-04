@@ -397,6 +397,57 @@ async def test_store_tokens_no_expires_in_persists_null(backend_with_encryption,
 
 
 @pytest.mark.asyncio
+async def test_token_details_return_token_and_metadata(backend_no_encryption, mock_db):
+    """Return metadata from the same stored record as the access token."""
+    record = _make_token_record(access_token="caller-access")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+
+    result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "caller-access"
+    assert result.expires_at == record.expires_at
+    assert result.scopes == record.scopes
+    assert not hasattr(result, "refresh_token")
+    assert mock_db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_token_details_keep_valid_token_when_refresh_fails(backend_no_encryption, mock_db):
+    """A transient refresh failure preserves the current usable access token."""
+    from mcpgateway.services.oauth_manager import OAuthError
+
+    record = _make_token_record(access_token="still-valid", expires_at=datetime.now(timezone.utc) + timedelta(seconds=60))
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=OAuthError("Provider unavailable"))):
+        result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "still-valid"
+
+
+@pytest.mark.asyncio
+async def test_token_details_distinguish_missing_and_expired(backend_no_encryption, mock_db):
+    """An expired stored token requires authorization; a missing row returns None."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    assert await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com") is None
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(refresh_token=None, expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
+
+    with pytest.raises(TokenReauthorizationRequired):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_token_details_propagate_database_failure(backend_no_encryption, mock_db):
+    """Database failures remain distinct from an absent token."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    mock_db.execute.side_effect = SQLAlchemyError("Database unavailable")
+    with pytest.raises(SQLAlchemyError):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
 async def test_get_user_token_not_found(backend_with_encryption, mock_db):
     """Test that None is returned when no token exists."""
     mock_db.execute.return_value.scalar_one_or_none.return_value = None

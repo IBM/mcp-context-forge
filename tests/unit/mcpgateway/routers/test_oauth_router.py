@@ -28,6 +28,7 @@ from mcpgateway.routers.oauth_router import (
     _require_admin_user,
     delete_registered_client,
     enforce_fetch_tools_csrf,
+    get_gateway_oauth_token,
     get_registered_client_for_gateway,
     list_registered_oauth_clients,
 )
@@ -5986,6 +5987,25 @@ class TestGetGatewayOauthToken:
 
         assert exc.value.status_code == 400
         assert "not configured for OAuth" in exc.value.detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "password", "token-exchange", None])
+    async def test_non_authorization_code_grant_returns_400(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, grant_type):
+        """Grant types without a per-user token row are rejected before any token lookup."""
+
+        mock_gateway.oauth_config = {**mock_gateway.oauth_config, "grant_type": grant_type}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_storage = AsyncMock()
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.oauth_token_retrieval_enabled = True
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+                with pytest.raises(HTTPException) as exc:
+                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+
+        assert exc.value.status_code == 400
+        assert "Authorization Code flow" in exc.value.detail
+        mock_storage.get_user_token.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_stored_token_returns_404(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):
