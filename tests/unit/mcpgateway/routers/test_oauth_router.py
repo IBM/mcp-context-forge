@@ -34,6 +34,7 @@ from mcpgateway.routers.oauth_router import (
 )
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
+from mcpgateway.services.token_backends.base import AccessTokenDetails
 from mcpgateway.utils.oauth_resource import derive_resource_origin
 
 
@@ -6014,7 +6015,7 @@ class TestGetGatewayOauthToken:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
-        mock_storage.get_user_token = AsyncMock(return_value=None)
+        mock_storage.get_user_token_details = AsyncMock(return_value=None)
 
         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.oauth_token_retrieval_enabled = True
@@ -6033,14 +6034,8 @@ class TestGetGatewayOauthToken:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
-        mock_storage.get_user_token = AsyncMock(return_value="live-access-tok")
-        mock_storage.get_token_info = AsyncMock(
-            return_value={
-                "scopes": ["read", "write"],
-                "expires_at": "2026-01-01T00:00:00+00:00",
-                "status": "valid",
-                "updated_at": "2025-12-31T23:00:00+00:00",
-            }
+        mock_storage.get_user_token_details = AsyncMock(
+            return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc), scopes=["read", "write"])
         )
 
         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
@@ -6056,7 +6051,7 @@ class TestGetGatewayOauthToken:
         assert "refresh_token" not in result
 
         # Refreshes proactively if the token is within 10 minutes of expiring.
-        mock_storage.get_user_token.assert_awaited_once_with("gateway123", "test@example.com", threshold_seconds=600)
+        mock_storage.get_user_token_details.assert_awaited_once_with("gateway123", "test@example.com", threshold_seconds=600)
 
         # The credential-bearing response must not be cached by an intermediary.
         assert mock_response.headers["Cache-Control"] == "no-store"
@@ -6077,8 +6072,7 @@ class TestGetGatewayOauthToken:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
-        mock_storage.get_user_token = AsyncMock(return_value="live-access-tok")
-        mock_storage.get_token_info = AsyncMock(return_value=None)
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=None, scopes=None))
 
         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.oauth_token_retrieval_enabled = True
@@ -6100,8 +6094,7 @@ class TestGetGatewayOauthToken:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
-        mock_storage.get_user_token = AsyncMock(return_value="super-secret-live-token")
-        mock_storage.get_token_info = AsyncMock(return_value={"scopes": ["read"], "expires_at": None})
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="super-secret-live-token", expires_at=None, scopes=["read"]))
 
         with caplog.at_level(logging.INFO, logger="mcpgateway.routers.oauth_router"):
             with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
