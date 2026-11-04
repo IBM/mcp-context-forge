@@ -590,10 +590,21 @@ class OAuthManager:
             raise OAuthError("OAuth configuration missing token_url required as the aud claim of the client assertion")
 
         private_key = runtime_credentials.get("private_key")
-        if not isinstance(private_key, str) or not private_key.strip():
-            raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
+        is_cimd = runtime_credentials.get("registration_method") == "cimd"
 
-        alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
+        if not isinstance(private_key, str) or not private_key.strip():
+            if is_cimd:
+                try:
+                    from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret
+
+                    private_key = get_jwt_private_key_or_secret()
+                except Exception as exc:
+                    raise OAuthError(f"Failed to load gateway private key for CIMD client assertion: {exc}")
+            if not isinstance(private_key, str) or not private_key.strip():
+                raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
+
+        default_alg = get_settings().jwt_algorithm.upper() if is_cimd else DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
+        alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or default_alg
         if not isinstance(alg, str):
             raise OAuthError("Unsupported token_endpoint_auth_signing_alg - must be a string")
         if alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
@@ -613,6 +624,8 @@ class OAuthManager:
         # against the client's public JWKS by key ID; the kid is optional.
         headers: Dict[str, str] = {}
         raw_kid = runtime_credentials.get("private_key_jwt_kid")
+        if is_cimd and (not raw_kid or not raw_kid.strip()):
+            raw_kid = "current"
         if isinstance(raw_kid, str) and raw_kid.strip():
             headers["kid"] = raw_kid.strip()
 

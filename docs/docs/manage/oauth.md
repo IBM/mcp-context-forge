@@ -116,6 +116,42 @@ Example OAuth-enabled gateway record:
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
 
+---
+
+## Client Registration Methods
+
+When connecting to upstream authorization servers where you have not pre-registered a static Client ID and Client Secret, ContextForge supports zero-touch client registration. The registration strategy is set per gateway via `oauth_config.registration_method` (defaults to `auto`).
+
+### Supported Registration Methods
+
+1. **Client ID Metadata Documents (CIMD) (`cimd`)**:
+   - Instead of exchanging credentials statically, the gateway acts as a public client identified by the URL of a metadata document it publishes.
+   - When the authorization server metadata advertises `client_id_metadata_document_supported: true` (or when `registration_method` is explicitly set to `"cimd"`), the gateway uses its published document URL (`/oauth/client-metadata.json`) as the `client_id` directly, completely avoiding any registration API calls.
+   - **Important**: The published document URL **must be reachable** from the authorization server, as the server will fetch this URL dynamically to validate the gateway's client identity.
+
+2. **Dynamic Client Registration (DCR) (`dcr`)**:
+   - Deprecated path. Registers the gateway dynamically via the RFC 7591 `/register` API of the authorization server, yielding a generated `client_id` and `client_secret` saved in the database.
+   - Triggers a deprecation warning indicating that the upstream server does not support CIMD.
+
+3. **Automatic Selection (`auto`)**:
+   - The default mode. ContextForge queries the authorization server's `.well-known` configuration. If CIMD is supported, it uses CIMD. Otherwise, it falls back to Dynamic Client Registration (DCR).
+
+### CIMD Behind Reverse Proxies
+
+By default, ContextForge derives the metadata document URL dynamically. If your gateway runs behind a reverse proxy, load balancer, or Kubernetes ingress, the auto-derived URL might reflect internal hostnames.
+
+Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the document is served (e.g., `https://my-gateway.example.com/oauth/client-metadata.json`) to guarantee the authorization server can reach and validate the gateway.
+
+### CIMD with Private-Key JWT (Confidential Client)
+
+To run as a confidential client using CIMD without any shared secrets:
+- Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
+- The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
+- The gateway serves its public signing key (and any configured previous public key for smooth key rotation) at `/oauth/client-metadata/jwks.json` with stable `kid` values (`current` and `previous`).
+- All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
+
+---
+
 ### Token Endpoint Authentication
 
 `token_endpoint_auth_method` selects how the gateway authenticates to the token endpoint:

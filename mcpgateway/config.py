@@ -303,6 +303,7 @@ class Settings(BaseSettings):
     )
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
+    jwt_previous_public_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
     jwt_issuer: str = "mcpgateway"
     jwt_audience_verification: bool = True
@@ -1030,6 +1031,32 @@ class Settings(BaseSettings):
     dcr_request_refresh_token_when_unsupported: bool = Field(
         default=False,
         description="Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+    )
+
+    # ===================================
+    # Client ID Metadata Documents (CIMD) - Client Mode
+    # ===================================
+
+    cimd_enabled: bool = Field(
+        default=True,
+        description="Prefer Client ID Metadata Documents over Dynamic Client Registration when the authorization server advertises client_id_metadata_document_supported",
+    )
+
+    cimd_client_name: str = Field(default="ContextForge", description="client_name published in the gateway's Client ID Metadata Document")
+
+    cimd_client_metadata_url: Optional[str] = Field(
+        default=None,
+        description="Optional explicit URL of the gateway's Client ID Metadata Document, overriding the auto-derived URL when served behind a reverse proxy",
+    )
+
+    cimd_token_endpoint_auth_method: str = Field(
+        default="none",
+        description="Preferred token endpoint authentication method for CIMD clients (none or private_key_jwt)",
+    )
+
+    cimd_document_cache_seconds: int = Field(
+        default=3600,
+        description="Cache-Control max-age in seconds for the Client ID Metadata Document public endpoint",
     )
 
     # ===================================
