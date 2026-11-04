@@ -27,6 +27,35 @@ MCPGATEWAY_A2A_ENABLED=true
 MCPGATEWAY_A2A_METRICS_ENABLED=true
 ```
 
+### When A2A Is Disabled
+
+With `MCPGATEWAY_A2A_ENABLED=false`, every A2A route returns 404 with one typed body:
+
+```json
+{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}
+```
+
+Clients branch on `detail.error`. The check runs after authentication, so unauthenticated callers still receive 401. The OpenAPI schema omits the A2A operations.
+
+Any authenticated user can discover the flag with `GET /auth/email/me`, which returns `features`:
+
+```json
+{"email": "user@example.com", "features": {"a2a": false}}
+```
+
+The admin state, edit, and delete form routes still redirect to the A2A tab, which is hidden when A2A is off.
+
+Status changes from earlier releases:
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/a2a/*`, `/v1/a2a/*` | 404, generic body | 404, typed body |
+| `GET /admin/a2a` | 200, empty page | 404, typed body |
+| `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial` | 500 or 200 | 404, typed body |
+| `POST /admin/a2a` | 403, `success: false` | 404, typed body |
+| `POST /admin/a2a/{agent_id}/test` | 403, `success: false` | 404, typed body |
+| `POST /metrics/reset`, entity `a2a` | 400, "A2A features are disabled" | 404, typed body |
+
 ### 2. Register an A2A Agent
 
 **Via Admin UI:**

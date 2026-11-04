@@ -861,6 +861,20 @@ class TestTokenScopingMiddleware:
             assert "Hourly request limit exceeded" in content.get("detail")
             call_next.assert_not_called()
 
+    @pytest.mark.parametrize("permissions", [["tools.read"], ["resources.*"]])
+    @pytest.mark.parametrize("path", ["/auth/email/me", "/v1/auth/email/me"])
+    def test_me_is_readable_with_any_scoped_permissions(self, middleware, path, permissions):
+        """A token scoped to unrelated permissions can still read its own profile and feature flags."""
+        assert middleware._check_permission_restrictions(path, "GET", permissions) is True
+
+    @pytest.mark.parametrize(
+        "method,path",
+        [("POST", "/auth/email/me"), ("PUT", "/auth/email/me"), ("DELETE", "/auth/email/me"), ("GET", "/auth/email/events"), ("GET", "/auth/email/me/extra")],
+    )
+    def test_me_exemption_does_not_widen_other_auth_paths(self, middleware, method, path):
+        """The /me exemption is GET-only and does not cover sibling auth paths."""
+        assert middleware._check_permission_restrictions(path, method, ["tools.read"]) is False
+
     @pytest.mark.asyncio
     async def test_whitelisted_paths_bypass_middleware(self, middleware):
         """Test that whitelisted paths bypass all scoping checks."""
