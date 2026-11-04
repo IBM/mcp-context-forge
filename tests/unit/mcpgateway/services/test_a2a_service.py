@@ -381,6 +381,32 @@ class TestA2AAgentService:
         assert sample_db_agent.skills == [skill]
         assert sample_db_agent.capabilities == {"streaming": True, "pushNotifications": True}
 
+    async def test_update_agent_empty_skills_blocks_capabilities_fallback(self, service, mock_db, sample_db_agent):
+        """An explicit empty skills list is stored and wins over legacy capabilities skills."""
+        from mcpgateway.services.a2a_protocol import get_agent_skills
+
+        sample_db_agent.version = 1
+        sample_db_agent.capabilities = {"skills": [{"id": "legacy"}]}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(skills=[]))
+
+        assert sample_db_agent.skills == []
+        assert get_agent_skills(sample_db_agent) == []
+
+    def test_get_agent_skills_logs_malformed_value(self, caplog):
+        """A non-list skills value yields an empty list and a warning naming the agent."""
+        from types import SimpleNamespace
+
+        from mcpgateway.services.a2a_protocol import get_agent_skills
+
+        with caplog.at_level("WARNING"):
+            assert get_agent_skills(SimpleNamespace(id="agent-1", skills=None, capabilities={"skills": "oops"})) == []
+        assert "agent-1" in caplog.text
+
     async def test_update_agent_team_id_rejects_nonexistent_team(self, service, mock_db, sample_db_agent):
         """Reassigning an agent to a non-existent team must raise A2AAgentError."""
         sample_db_agent.version = 1

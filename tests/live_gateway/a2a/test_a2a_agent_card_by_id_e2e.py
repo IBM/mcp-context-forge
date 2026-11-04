@@ -213,3 +213,72 @@ def test_token_without_a2a_read_returns_403(card_gateway):
     """A token whose scope omits a2a.read is rejected even for an admin identity."""
     headers = _bearer(ADMIN_EMAIL, card_gateway["key"], is_admin=True, teams=None, scopes={"permissions": ["tools.read"]})
     assert _get(card_gateway, f"/v1/a2a/{card_gateway['agents']['public']}/card", headers).status_code == 403
+
+
+SKILL = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+
+def _admin_client(gateway):
+    """Return an admin HTTP client for the gateway."""
+    headers = _bearer(ADMIN_EMAIL, gateway["key"], is_admin=True, teams=None)
+    return httpx.Client(base_url=gateway["base_url"], headers=headers, timeout=15, trust_env=False)
+
+
+def _create_agent(client, name, **fields):
+    """Create a public agent and return its read payload."""
+    body = {"name": name, "endpoint_url": "http://127.0.0.1:9/invoke", "agent_type": "generic", **fields}
+    response = client.post("/v1/a2a", json={"agent": body, "visibility": "public"})
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+def test_create_with_skills_publishes_them_on_card(card_gateway):
+    """Skills sent at creation are stored on the agent and published on its card."""
+    with _admin_client(card_gateway) as client:
+        agent = _create_agent(client, f"skills-create-{uuid.uuid4().hex[:8]}", skills=[SKILL])
+        assert agent["skills"] == [SKILL]
+        card = client.get(f"/v1/a2a/{agent['id']}/card")
+    assert card.status_code == 200, card.text
+    assert card.json()["skills"] == [SKILL]
+
+
+def test_update_with_only_skills_keeps_capabilities(card_gateway):
+    """An update that sends only skills changes the card skills and leaves capabilities unchanged."""
+    capabilities = {"streaming": True, "pushNotifications": True}
+    with _admin_client(card_gateway) as client:
+        agent = _create_agent(client, f"skills-update-{uuid.uuid4().hex[:8]}", capabilities=capabilities)
+        response = client.put(f"/a2a/{agent['id']}", json={"skills": [SKILL]})
+        assert response.status_code == 200, response.text
+        assert response.json()["capabilities"] == capabilities
+        card = client.get(f"/v1/a2a/{agent['id']}/card")
+    assert card.json()["skills"] == [SKILL]
+    assert card.json()["capabilities"]["streaming"] is True
+
+
+def test_legacy_capabilities_skills_fallback_and_empty_override(card_gateway):
+    """An agent without the skills field publishes capabilities skills. An explicit empty list overrides them."""
+    legacy = {"id": "legacy", "name": "Legacy", "description": "Old", "tags": []}
+    with _admin_client(card_gateway) as client:
+        agent = _create_agent(client, f"skills-legacy-{uuid.uuid4().hex[:8]}", capabilities={"skills": [legacy]})
+        assert client.get(f"/v1/a2a/{agent['id']}/card").json()["skills"] == [legacy]
+        assert client.put(f"/a2a/{agent['id']}", json={"skills": []}).status_code == 200
+        assert client.get(f"/v1/a2a/{agent['id']}/card").json()["skills"] == []
+
+
+@pytest.mark.parametrize(
+    "skills",
+    [
+        [{**SKILL, "name": "<script>alert(1)</script>"}],
+        [{**SKILL, "description": "<img src=x onerror=alert(1)>"}],
+        [SKILL, SKILL],
+        [{**SKILL, "tags": ["x" * 100000]}],
+    ],
+)
+def test_invalid_skills_are_rejected(card_gateway, skills):
+    """Markup, duplicate ids, and oversized values return 422."""
+    with _admin_client(card_gateway) as client:
+        response = client.post(
+            "/v1/a2a",
+            json={"agent": {"name": f"skills-bad-{uuid.uuid4().hex[:8]}", "endpoint_url": "http://127.0.0.1:9/invoke", "skills": skills}, "visibility": "public"},
+        )
+    assert response.status_code == 422, response.text
