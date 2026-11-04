@@ -571,11 +571,31 @@ def prepare_a2a_invocation(
     )
 
 
+def dump_agent_skills(skills: Any) -> list[Dict[str, Any]]:
+    """Serialize validated skill models into the dicts stored on the agent row.
+
+    Args:
+        skills: Iterable of ``A2AAgentSkill`` models.
+
+    Returns:
+        list[Dict[str, Any]]: One dict per skill, including extra fields.
+
+    Examples:
+        >>> from mcpgateway.schemas import A2AAgentSkill
+        >>> dump_agent_skills([A2AAgentSkill(id="a", name="n", description="d", tags=[])])
+        [{'id': 'a', 'name': 'n', 'description': 'd', 'tags': []}]
+    """
+    return [skill.model_dump() for skill in skills]
+
+
 def get_agent_skills(agent: Any) -> list[Dict[str, Any]]:
     """Return the skills an agent publishes.
 
     Reads the ``skills`` column first. Agents created before the column existed
     keep their skills in ``capabilities["skills"]``, which serves as the fallback.
+    An explicit empty ``skills`` list is authoritative: the agent publishes no
+    skills and the fallback does not apply. A non-list value logs a warning and
+    yields an empty list.
 
     Args:
         agent: Agent row with ``skills`` and ``capabilities`` attributes.
@@ -597,4 +617,8 @@ def get_agent_skills(agent: Any) -> list[Dict[str, Any]]:
         return skills
     capabilities = getattr(agent, "capabilities", None)
     legacy = capabilities.get("skills") if isinstance(capabilities, dict) else None
-    return legacy if isinstance(legacy, list) else []
+    if isinstance(legacy, list):
+        return legacy
+    if skills is not None or legacy is not None:
+        logger.warning("Ignoring malformed skills value for A2A agent %s", getattr(agent, "id", None))
+    return []

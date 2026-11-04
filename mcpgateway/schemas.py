@@ -5505,6 +5505,10 @@ class TopPerformer(BaseModelWithConfigDict):
 # --- A2A Agent Schemas ---
 
 
+MAX_A2A_AGENT_SKILLS = 100
+MAX_A2A_SKILL_TAGS = 50
+
+
 class A2AAgentSkill(BaseModel):
     """A skill an A2A agent advertises on its Agent Card.
 
@@ -5517,10 +5521,108 @@ class A2AAgentSkill(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    id: str = Field(..., min_length=1, description="Unique skill identifier")
-    name: str = Field(..., min_length=1, description="Human-readable skill name")
-    description: str = Field(..., description="What the skill does")
-    tags: List[str] = Field(..., description="Keywords describing the skill")
+    id: str = Field(..., min_length=1, max_length=SecurityValidator.MAX_NAME_LENGTH, description="Unique skill identifier")
+    name: str = Field(..., min_length=1, max_length=SecurityValidator.MAX_NAME_LENGTH, description="Human-readable skill name")
+    description: str = Field(..., max_length=SecurityValidator.MAX_DESCRIPTION_LENGTH, description="What the skill does")
+    tags: List[str] = Field(..., max_length=MAX_A2A_SKILL_TAGS, description="Keywords describing the skill")
+
+    @field_validator("id", "name")
+    @classmethod
+    def validate_display_text(cls, v: str, info: ValidationInfo) -> str:
+        """Reject markup in skill identifiers and names.
+
+        Args:
+            v (str): Value to validate.
+            info (ValidationInfo): Field context.
+
+        Returns:
+            str: Sanitized value.
+
+        Examples:
+            >>> A2AAgentSkill(id="a", name="Summarize", description="d", tags=[]).name
+            'Summarize'
+            >>> try:
+            ...     A2AAgentSkill(id="a", name="<script>alert(1)</script>", description="d", tags=[])
+            ... except ValueError as e:
+            ...     "HTML tags" in str(e)
+            True
+        """
+        return SecurityValidator.sanitize_display_text(v, f"Skill {info.field_name}")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: str) -> str:
+        """Reject markup in the skill description.
+
+        Args:
+            v (str): Value to validate.
+
+        Returns:
+            str: Sanitized value.
+        """
+        return SecurityValidator.sanitize_display_text(v, "Skill description")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: List[str]) -> List[str]:
+        """Reject markup and oversized entries in skill tags.
+
+        Args:
+            v (List[str]): Value to validate.
+
+        Returns:
+            List[str]: Sanitized tags.
+
+        Raises:
+            ValueError: When a tag exceeds the name length limit.
+        """
+        for tag in v:
+            if len(tag) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Skill tag exceeds {SecurityValidator.MAX_NAME_LENGTH} characters")
+        return [SecurityValidator.sanitize_display_text(tag, "Skill tag") for tag in v]
+
+    @model_validator(mode="after")
+    def validate_extra_depth(self) -> "A2AAgentSkill":
+        """Limit the nesting depth of extra skill fields.
+
+        Returns:
+            A2AAgentSkill: The validated skill.
+        """
+        SecurityValidator.validate_json_depth(self.model_extra or {})
+        return self
+
+
+def validate_a2a_skills(skills: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+    """Validate the size and uniqueness of an agent skill list.
+
+    Args:
+        skills: Skills submitted with an agent create or update request.
+
+    Returns:
+        The skills unchanged.
+
+    Raises:
+        ValueError: When the list is too long or repeats a skill ``id``.
+
+    Examples:
+        >>> validate_a2a_skills(None) is None
+        True
+        >>> dup = [A2AAgentSkill(id="a", name="n", description="d", tags=[])] * 2
+        >>> validate_a2a_skills(dup)
+        Traceback (most recent call last):
+            ...
+        ValueError: Duplicate skill id: a
+    """
+    if skills is None:
+        return None
+    if len(skills) > MAX_A2A_AGENT_SKILLS:
+        raise ValueError(f"An agent can advertise at most {MAX_A2A_AGENT_SKILLS} skills")
+    seen: set[str] = set()
+    for skill in skills:
+        if skill.id in seen:
+            raise ValueError(f"Duplicate skill id: {skill.id}")
+        seen.add(skill.id)
+    return skills
 
 
 class A2AAgentCreate(BaseModel):
@@ -5719,6 +5821,19 @@ class A2AAgentCreate(BaseModel):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("skills")
+    @classmethod
+    def validate_skills(cls, v: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+        """Validate skill list size and id uniqueness.
+
+        Args:
+            v (Optional[List[A2AAgentSkill]]): Value to validate
+
+        Returns:
+            Optional[List[A2AAgentSkill]]: Value if validated as safe
+        """
+        return validate_a2a_skills(v)
 
     @field_validator("capabilities", "config")
     @classmethod
@@ -6061,6 +6176,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("skills")
+    @classmethod
+    def validate_skills(cls, v: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+        """Validate skill list size and id uniqueness.
+
+        Args:
+            v (Optional[List[A2AAgentSkill]]): Value to validate
+
+        Returns:
+            Optional[List[A2AAgentSkill]]: Value if validated as safe
+        """
+        return validate_a2a_skills(v)
 
     @field_validator("capabilities", "config")
     @classmethod

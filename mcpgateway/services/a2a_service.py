@@ -39,7 +39,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import get_agent_skills, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -875,7 +875,7 @@ class A2AAgentService(BaseService):
                     agent_type=agent_data.agent_type,
                     protocol_version=agent_data.protocol_version,
                     capabilities=agent_data.capabilities,
-                    skills=[skill.model_dump() for skill in agent_data.skills] if agent_data.skills is not None else None,
+                    skills=dump_agent_skills(agent_data.skills) if agent_data.skills is not None else None,
                     config=agent_data.config,
                     auth_type=auth_type,
                     auth_value=auth_value,  # This should be encrypted in practice
@@ -1737,7 +1737,7 @@ class A2AAgentService(BaseService):
                     continue
 
                 if field == "skills" and value is not None:
-                    value = [skill.model_dump() if hasattr(skill, "model_dump") else skill for skill in value]
+                    value = dump_agent_skills(value)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)

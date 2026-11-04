@@ -47,7 +47,7 @@
 
 ### Added
 
-- **A2A agent `skills` field** ([#7349](https://github.com/IBM/mcp-context-forge/issues/7349)) - `A2AAgentCreate`, `A2AAgentUpdate`, and `A2AAgentRead` accept a typed top-level `skills` list. Each skill needs `id`, `name`, `description`, and `tags`; the API rejects a skill without them. An update that sends only `skills` no longer touches `capabilities`. Agent cards and server cards read `skills` first and fall back to `capabilities["skills"]` for existing agents. Migration `e5a1c7b9d3f2` adds the `a2a_agents.skills` column.
+- **A2A agent `skills` field** ([#7349](https://github.com/IBM/mcp-context-forge/issues/7349)) - `A2AAgentCreate`, `A2AAgentUpdate`, and `A2AAgentRead` accept a typed top-level `skills` list. Each skill needs `id`, `name`, `description`, and `tags`; the API rejects a skill without them, markup in `id`, `name`, `description`, and `tags`, duplicate `id` values, more than 100 skills, and deeply nested extra fields. An update that sends only `skills` no longer touches `capabilities`. Agent cards and server cards read `skills` first and fall back to `capabilities["skills"]` for existing agents. Migration `e5a1c7b9d3f2` adds the `a2a_agents.skills` column.
 
 ### Changed
 
