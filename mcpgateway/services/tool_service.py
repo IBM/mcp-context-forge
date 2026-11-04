@@ -30,7 +30,7 @@ import ssl
 import time
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
 # Third-Party
@@ -82,6 +82,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
@@ -935,6 +936,41 @@ def _validate_mapping_contents(mapping: dict, label: str, tool_name: str) -> dic
     return mapping
 
 
+def _substitute_url_template(tool_url: str, payload: dict[str, Any]) -> str:
+    """Fill ``{param}`` placeholders in a REST tool URL with percent-encoded argument values.
+
+    Each value becomes one path segment or one query value. The helper removes every
+    substituted key from ``payload``.
+
+    Args:
+        tool_url: URL template that can hold ``{param}`` placeholders.
+        payload: Tool arguments. The helper pops each substituted key.
+
+    Returns:
+        The URL with every placeholder replaced.
+
+    Raises:
+        ToolInvocationError: If an argument is missing, holds a dot segment, or already holds a percent-encoded sequence.
+
+    Examples:
+        >>> _substitute_url_template("https://h/v1/users/{id}/public", {"id": "42#"})
+        'https://h/v1/users/42%23/public'
+    """
+    if "{" not in tool_url or "}" not in tool_url:
+        return tool_url
+    final_url = tool_url
+    for param in dict.fromkeys(re.findall(r"\{(\w+)\}", tool_url)):
+        if param not in payload:
+            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+        text = str(payload.pop(param))
+        if any(part in (".", "..") for part in re.split(r"[/\\]", text)):
+            raise ToolInvocationError(f"URL parameter '{param}' must not contain dot segments")
+        if unquote(text) != text:
+            raise ToolInvocationError(f"URL parameter '{param}' must not contain percent-encoded sequences")
+        final_url = final_url.replace(f"{{{param}}}", quote(text, safe=""))
+    return final_url
+
+
 def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) -> None:
     """Validate that header mapping target names are safe and well-formed.
 
@@ -1429,6 +1465,7 @@ class ToolService(BaseService):
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
                 "auth_value": getattr(gateway, "auth_value", None),
+                "identity_propagation": getattr(gateway, "identity_propagation", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -2446,6 +2483,7 @@ class ToolService(BaseService):
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
+            notify_dataplane()
             await self._notify_tool_added(db_tool)
 
             # Structured logging: Audit trail for tool creation
@@ -2844,6 +2882,7 @@ class ToolService(BaseService):
 
             # Commit the chunk
             db.commit()
+            notify_dataplane()
 
             # Refresh tools for notifications and audit trail
             for db_tool in tools_to_add:
@@ -3850,6 +3889,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
             db.commit()
+            notify_dataplane()
             await self._notify_tool_deleted(tool_info)
             logger.info("Permanently deleted tool: %s", tool_info["name"])
 
@@ -4003,6 +4043,7 @@ class ToolService(BaseService):
 
                 db.commit()
                 db.refresh(tool)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -5086,6 +5127,7 @@ class ToolService(BaseService):
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
                     "gateway_mode": gateway.gateway_mode,
+                    "identity_propagation": getattr(gateway, "identity_propagation", None),
                 }
                 # Create minimal tool payload for direct proxy (no DB tool needed)
                 tool_payload = {
@@ -5426,6 +5468,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_identity_propagation = gateway_payload.get("identity_propagation") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -5690,11 +5733,13 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
+                        # Pass tool_auth_type so X-Upstream-Authorization cannot override
+                        # a credential already set in headers for managed auth types.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -5712,7 +5757,7 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -5748,19 +5793,7 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path and query parameter substitution (using local variable)
-                    final_url = tool_url
-                    if "{" in tool_url and "}" in tool_url:
-                        # Extract ALL parameters (path and query) from URL template
-                        url_params = re.findall(r"\{(\w+)\}", tool_url)
-                        url_substitutions = {}
-
-                        for param in url_params:
-                            if param in payload:
-                                url_substitutions[param] = payload.pop(param)  # Remove from payload
-                                final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
-                            else:
-                                raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+                    final_url = _substitute_url_template(tool_url, payload)
 
                     # --- Extract query params from URL if query_mapping or header_mapping is used ---
                     # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
@@ -6192,8 +6225,8 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data)
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -6889,11 +6922,13 @@ class ToolService(BaseService):
                     a2a_allowlist = a2a_agent_passthrough_headers or []
                     headers = {"Content-Type": "application/json"}
                     if request_headers:
+                        # Pass a2a_agent_auth_type so X-Upstream-Authorization cannot inject
+                        # an Authorization header into A2A calls with agent-managed credentials.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=a2a_agent_auth_type,
                             gateway_passthrough_headers=a2a_allowlist,
                         )
                         if not settings.enable_sensitive_header_passthrough:
@@ -7866,6 +7901,7 @@ class ToolService(BaseService):
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(tool)
+            notify_dataplane()
             await self._notify_tool_updated(tool)
             logger.info("Updated tool: %s", tool.name)
 

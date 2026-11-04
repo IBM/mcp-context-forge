@@ -30,7 +30,7 @@ ContextForge is built with:
 Development tools:
 
 * Linters: `ruff`, `mypy`
-* Testing: `pytest`, `httpx`
+* Testing: `rstest` with pytest fixtures, `httpx`
 * Serving: `uvicorn`, `gunicorn`
 
 Frontend tools (Admin UI):
@@ -66,10 +66,10 @@ Use:
 
 ```bash
 make test                        # run full suite (in-process; no live services required)
-pytest tests/unit/               # run only unit tests
-pytest tests/e2e/                # run in-process end-to-end scenarios
+rstest tests/unit/               # run only unit tests
+rstest tests/e2e/                # run in-process end-to-end scenarios
 make test-live-gateway           # run live-gateway tests (mcp + sso + rust + compliance)
-pytest tests/playwright/         # run UI automation tests
+rstest tests/playwright/         # run UI automation tests
 locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```
 

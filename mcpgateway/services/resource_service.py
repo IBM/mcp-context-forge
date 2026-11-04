@@ -65,6 +65,7 @@ from mcpgateway.observability import create_span, set_span_attribute, set_span_e
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
@@ -713,6 +714,7 @@ class ResourceService(BaseService):
             db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
+            notify_dataplane()
 
             # Notify subscribers
             await self._notify_resource_added(db_resource)
@@ -1139,6 +1141,7 @@ class ResourceService(BaseService):
 
                 # Commit the chunk
                 db.commit()
+                notify_dataplane()
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
@@ -2158,7 +2161,7 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity))
+                                headers.update(build_identity_headers(user_identity, gateway))
 
                         async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
@@ -3043,6 +3046,7 @@ class ResourceService(BaseService):
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -3466,6 +3470,7 @@ class ResourceService(BaseService):
                 resource.version = 1
             db.commit()
             db.refresh(resource)
+            notify_dataplane()
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -3731,6 +3736,7 @@ class ResourceService(BaseService):
 
             db.delete(resource)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
