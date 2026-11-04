@@ -10,8 +10,8 @@
 - Interface: "Rust MCP and A2A runtime sidecars"
   Removed: "2026-10-29 (EPIC #5817)"
   Notes: >-
-    Deprecated on 2026-06-11. The runtime integration, configuration flags,
-    container and CI wiring, MCP crate, and Cargo workspace are removed.
+    Deprecated on 2026-06-11. The runtime proxies, mode-selection settings,
+    Rust build jobs, MCP crate, and Cargo workspace are removed.
     Use the Python MCP transport and Python A2A invocation path. Remove old
     Rust runtime settings and sidecars from deployments. See
     [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md).

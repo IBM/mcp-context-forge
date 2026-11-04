@@ -193,8 +193,8 @@ paths. See [Multi-Worker Session Affinity](adr/038-multi-worker-session-affinity
 | Python auth/control path | 5-15ms | Auth DB/cache queries | `AUTH_CACHE_*`, `AUTH_CACHE_BATCH_QUERIES` |
 | Python MCP session manager | 2-5ms | JSON-RPC parsing, context vars | `JSON_RESPONSE_ENABLED` |
 | RBAC check | 1-5ms | Permission DB queries | Role cache TTL (5 min internal) |
-| tools/list / resources / prompts | 5-10ms | DB and compatibility paths | cache TTLs, catalog pagination |
-| tools/call (upstream) | 10-200ms | Upstream server + network | upstream session reuse, connection pooling |
+| tools/list / resources / prompts | 5-10ms | DB and compatibility paths | [`MCP_LIST_PAGE_SIZE`](../manage/configuration.md#mcp-catalog-pagination) |
+| tools/call (upstream) | 10-200ms | Upstream server + network | [`MCP_SESSION_POOL_ENABLED`, `MCP_SESSION_POOL_MAX_PER_KEY`](../manage/configuration.md#mcp-session-pool) |
 
 ### Feature Flags and Middleware Overhead
 

@@ -2,12 +2,14 @@
 
 The Rust MCP runtime sidecar is removed under
 [EPIC #5817](https://github.com/IBM/mcp-context-forge/issues/5817).
-ContextForge serves MCP requests through the Python transport.
+The gateway in this repository serves MCP requests through the Python transport.
+The separate external Rust dataplane is outside this removal.
 
 ## Removed Runtime Interfaces
 
 Remove the old sidecar and Rust runtime configuration from deployments.
-The runtime status fields and Rust-specific response headers are also removed.
+The runtime mode override APIs and their health status fields are removed.
+The Python transport retains the `x-contextforge-mcp-runtime: python` response header.
 Use the standard Python gateway image and
 [deployment configuration](../deployment/index.md).
 
@@ -15,6 +17,12 @@ Use the standard Python gateway image and
 
 The MCP and A2A runtime mode override APIs are removed. The gateway no longer
 selects between Python and Rust runtimes.
+
+The `/_internal/mcp/*` endpoints remain for Python session affinity. Internal
+dispatch retains its shared-secret HMAC, trusted runtime marker, forwarded auth
+context, and loopback checks. Keep network controls around these endpoints.
+Rust marker branches and deployment remnants remain tracked in
+[#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
 
 [ADR-043](adr/043-rust-mcp-runtime-sidecar-mode-model.md) preserves the historical
 design. [ADR-058](adr/058-remove-rust-runtime-and-workspace.md) records its removal.

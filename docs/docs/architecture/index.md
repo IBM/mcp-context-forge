@@ -8,6 +8,7 @@ ContextForge runs its MCP and A2A request paths in Python. The Rust runtime
 sidecars and repository-owned Rust workspace are removed under
 [EPIC #5817](https://github.com/IBM/mcp-context-forge/issues/5817).
 [ADR-058](adr/058-remove-rust-runtime-and-workspace.md) records the decision.
+The separate external Rust dataplane is outside this removal.
 See the [Performance Architecture Diagram](performance-architecture.md) for the
 current request path and native library dependencies.
 
@@ -143,7 +144,7 @@ ContextForge leverages cutting-edge Rust-powered components for maximum throughp
 
 - **orjson (Rust-Powered JSON Serialization)**: High-performance JSON parsing and serialization using Rust internals, delivering 5-6x faster serialization and 1.5-2x faster deserialization compared to Python's standard library, with 7% smaller output size. Enables sub-millisecond JSON-RPC responses even for large payloads.
 - **Pydantic V2 (Rust-Core Validation)**: Runtime validation and data serialization powered by Pydantic 2.11+ with its Rust-based pydantic-core engine, providing 5-50x performance improvements over Pydantic V1 for schema validation, type coercion, and model serialization.
-- **PyO3 Rust Plugins**: Extensible plugin framework supporting Rust modules via PyO3, enabling native-speed Python extensions for performance-critical operations. Rust plugins provide near-native performance for compute-intensive tasks while integrating seamlessly with the Python ecosystem.
+- **External Rust-backed plugin packages**: Managed `cpex-*` wheels from `IBM/cpex-plugins` provide native extensions through Python interfaces. Their source and build toolchains live outside this repository. See [ADR-048](adr/048-extract-rust-backed-plugins-first-and-preserve-python-examples.md).
 
 This performance-first architecture enables ContextForge to handle high-throughput workloads while maintaining low latency for tool invocations, resource access, and federation operations.
 
@@ -220,7 +221,7 @@ ContextForge ecosystem consists of **independently deployable modules** that can
 **Plugin Ecosystem:**
 
 - `mcp-contextforge-plugins-python` - 40+ Python plugins
-- `mcp-contextforge-plugins-rust` - High-performance PyO3 plugins
+- `IBM/cpex-plugins` - External Rust-backed plugin packages published as `cpex-*` wheels
 
 **Agent Runtimes:**
 

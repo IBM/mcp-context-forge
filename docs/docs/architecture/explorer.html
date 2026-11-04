@@ -4988,7 +4988,7 @@ renderConfig();
         svg.appendChild(svgText(450,240,'ContextForge',{size:'16',weight:'800',fill:C.blue}));
         svg.appendChild(svgText(450,260,'MCP Gateway & Registry',{size:'11',fill:C.muted}));
         svg.appendChild(svgText(450,278,'FastAPI + SQLAlchemy + Redis',{size:'9',fill:C.muted}));
-        svg.appendChild(svgText(450,294,'Python 3.11+ / Optional Rust Sidecar',{size:'9',fill:C.muted}));
+        svg.appendChild(svgText(450,294,'Python Gateway',{size:'9',fill:C.muted}));
         // Clients (top)
         var clients = [
           {x:60,label:'MCP Clients',sub:'Claude, VS Code, CLI',color:C.cyan},
@@ -5024,7 +5024,7 @@ renderConfig();
         svg.setAttribute('viewBox','0 0 860 500');
         svg.appendChild(svgArrowDef());
         var layers = [
-          {y:10,h:55,label:'Transport Layer',color:C.cyan,items:['Streamable HTTP','SSE','WebSocket','STDIO','gRPC','Rust Sidecar']},
+          {y:10,h:55,label:'Transport Layer',color:C.cyan,items:['Streamable HTTP','SSE','WebSocket','STDIO','gRPC']},
           {y:80,h:55,label:'Middleware Pipeline',color:C.purple,items:['Auth','Token Scoping','RBAC','Logging','Observability','Security Headers','Compression']},
           {y:150,h:55,label:'Router Layer (19 routers)',color:C.green,items:['Auth','Teams','OAuth','LLM','Observability','Tools','Federation','Well-Known']},
           {y:220,h:80,label:'Service Layer (56 services)',color:C.orange,items:['Tool Svc','Resource Svc','Prompt Svc','Server Svc','Gateway Svc','Session Pool','A2A Svc','...']},
@@ -5060,7 +5060,7 @@ renderConfig();
         svg.appendChild(svgLine(690,420,750,455,{stroke:C.red+'66',dash:'4'}));
       }
     },
-    { id:'deployment', title:'Deployment Architecture', desc:'Production Kubernetes deployment topology with nginx reverse proxy, PostgreSQL, Redis, and optional Rust sidecar.',
+    { id:'deployment', title:'Deployment Architecture', desc:'Production Kubernetes deployment topology with nginx reverse proxy, Python gateway, PostgreSQL, and Redis.',
       render: function(svg) {
         svg.setAttribute('viewBox','0 0 860 440');
         svg.appendChild(svgArrowDef());

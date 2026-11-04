@@ -11,22 +11,36 @@ EPIC #5817 removes the Rust runtime sidecars and repository-owned Rust workspace
 Maintaining parallel Python and Rust runtime paths adds build, testing, deployment,
 and security maintenance costs. Python remains the gateway runtime.
 
-The implementation removes the Python runtime proxies, settings, deployment
-wiring, build infrastructure, and `crates/mcp_runtime`. This record completes the
-historical documentation required by [#5823](https://github.com/IBM/mcp-context-forge/issues/5823).
+The merged changes remove the runtime proxies, mode-selection settings, Rust
+build infrastructure, and `crates/mcp_runtime`. Some internal Python handlers
+and deployment remnants remain. This record documents the verified removals
+for [#5823](https://github.com/IBM/mcp-context-forge/issues/5823).
 
 ## Decision
 
-Use the Python MCP transport and Python A2A invocation path.
+Use the Python MCP transport and Python A2A invocation path in this repository.
 Remove the Rust runtime sidecars and the root Cargo workspace.
 
-The removal includes:
+The external Rust dataplane is outside this decision. Its configuration publisher
+(`DATAPLANE_PUBLISHER`) and `/contextforge-rs` ingress remain separate from the
+removed repository-owned sidecars. See [Configuration](../../manage/configuration.md).
 
-- The Rust MCP and A2A integration paths and runtime selection settings.
-- The runtime mode override APIs and Rust-specific health and response metadata.
-- The Rust session-validation bypass and session-auth-reuse path.
+The verified removals include:
+
+- The Rust MCP and A2A runtime proxies and runtime selection settings.
+- The runtime mode override APIs and their health status fields.
 - Rust build targets, container stages, CI jobs, and workspace tooling.
 - `crates/mcp_runtime`, the root Cargo manifests, toolchain configuration, and supply-chain files.
+
+The `/_internal/mcp/*` dispatch endpoints remain for Python session affinity.
+Internal MCP and A2A requests require a trusted runtime marker, a shared-secret
+HMAC, and a loopback client address. Forwarded dispatch also requires an auth
+context. Keep these trust checks and network controls in place.
+
+Rust marker branches, internal handlers, and deployment remnants remain tracked
+in [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
+The Python MCP transport also retains the
+`x-contextforge-mcp-runtime: python` response header.
 
 Retain ADR-041, ADR-042, and ADR-043 as superseded historical records.
 The proposed modular runtime contracts remain design guidance, without an active Rust MCP reference implementation.
@@ -34,7 +48,6 @@ The proposed modular runtime contracts remain design guidance, without an active
 ## Consequences
 
 - Operators remove old Rust runtime settings and sidecars from deployments.
-- Existing Rust sessions require a drained cutover to new Python sessions.
 - Contributors use the Python build, validation, and profiling commands.
 - External plugins and native dependencies retain their own implementation languages and packaging.
 - A future protocol module requires its own implementation and conformance evidence.
