@@ -6026,9 +6026,7 @@ class TestGetGatewayOauthToken:
         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.oauth_token_retrieval_enabled = True
             with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                # Calling the handler directly bypasses FastAPI's dependency resolution,
-                # so the Query(...) default must be passed explicitly here.
-                result = await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db, threshold_seconds=600)
+                result = await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
 
         assert result["gateway_id"] == "gateway123"
         assert result["access_token"] == "live-access-tok"
@@ -6043,36 +6041,13 @@ class TestGetGatewayOauthToken:
         # The credential-bearing response must not be cached by an intermediary.
         assert mock_response.headers["Cache-Control"] == "no-store"
 
-    @pytest.mark.asyncio
-    async def test_custom_threshold_seconds_is_forwarded(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):
-        """A caller-supplied threshold_seconds overrides the 10-minute default."""
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-
-        mock_storage = AsyncMock()
-        mock_storage.get_user_token = AsyncMock(return_value="live-access-tok")
-        mock_storage.get_token_info = AsyncMock(return_value={"scopes": [], "expires_at": None})
-
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db, threshold_seconds=3600)
-
-        mock_storage.get_user_token.assert_awaited_once_with("gateway123", "test@example.com", threshold_seconds=3600)
-
-    def test_threshold_seconds_query_param_is_bounded(self):
-        """The route's `threshold_seconds` Query declares 0-3600 bounds (default 600)."""
+    def test_refresh_threshold_is_not_caller_controllable(self):
+        """The route declares no query parameters, so a caller cannot choose the refresh threshold."""
         from mcpgateway.routers.oauth_router import get_gateway_oauth_token, oauth_router
 
         route = next(r for r in oauth_router.routes if r.endpoint is get_gateway_oauth_token)
-        field = next(f for f in route.dependant.query_params if f.alias == "threshold_seconds")
 
-        constraints = {type(c).__name__: c for c in field.field_info.metadata}
-
-        assert field.field_info.default == 600
-        assert constraints["Ge"].ge == 0
-        assert constraints["Le"].le == 3600
+        assert route.dependant.query_params == []
 
     @pytest.mark.asyncio
     async def test_happy_path_missing_token_info_defaults_to_none(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):

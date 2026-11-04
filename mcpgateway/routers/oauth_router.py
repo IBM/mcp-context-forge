@@ -1728,6 +1728,9 @@ async def get_oauth_status_batch(
     return results
 
 
+OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS = 600
+
+
 @oauth_router.get("/token/{gateway_id}")
 @require_permission(Permissions.GATEWAYS_UPDATE)
 async def get_gateway_oauth_token(
@@ -1736,24 +1739,19 @@ async def get_gateway_oauth_token(
     response: Response,
     current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-    threshold_seconds: int = Query(
-        default=600,
-        ge=0,
-        le=3600,
-        description="Refresh the token first if it is within this many seconds of expiring (default 600 = 10 minutes; max 3600).",
-    ),
 ) -> dict:
     """Return the caller's own current OAuth access token for a gateway.
 
     This endpoint is **disabled by default** and must be explicitly enabled via
     ``OAUTH_TOKEN_RETRIEVAL_ENABLED=true``. It resolves the stored OAuth
     token for the *authenticated caller's own* session against the given gateway,
-    refreshing it first if it is within ``threshold_seconds`` of expiring (default 600,
-    i.e. 10 minutes), and returns only the ``access_token`` -- the ``refresh_token`` is
-    never included in the response. The success response is marked
-    ``Cache-Control: no-store`` so the credential isn't retained by intermediate caches,
-    and issuance is logged (gateway/user, never the token itself) for forensic
-    traceability.
+    refreshing it first if it is within ``OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS``
+    (10 minutes) of expiring, and returns only the ``access_token`` -- the
+    ``refresh_token`` is never included in the response. The refresh threshold is fixed
+    server-side so a caller cannot force an upstream refresh on every request. The
+    success response is marked ``Cache-Control: no-store`` so the credential isn't
+    retained by intermediate caches, and issuance is logged (gateway/user, never the
+    token itself) for forensic traceability.
 
     Args:
         gateway_id: ID of the gateway whose stored token to resolve.
@@ -1761,8 +1759,6 @@ async def get_gateway_oauth_token(
         response: Response object used to mark the success response non-cacheable.
         current_user: Authenticated user (enforces authentication).
         db: Database session.
-        threshold_seconds: Seconds before expiry at which the token is proactively
-            refreshed rather than returned as-is (0-3600, default 600).
 
     Returns:
         dict: ``gateway_id``, ``access_token``, ``token_type``, ``expires_at``, and
@@ -1796,7 +1792,7 @@ async def get_gateway_oauth_token(
     user_context = _build_user_context(current_user, db=db)
     token_storage = TokenStorageService(db, user_context)
 
-    access_token = await token_storage.get_user_token(gateway_id, app_user_email, threshold_seconds=threshold_seconds)
+    access_token = await token_storage.get_user_token(gateway_id, app_user_email, threshold_seconds=OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS)
     if not access_token:
         raise HTTPException(
             status_code=404,
