@@ -4091,6 +4091,54 @@ class TestGatewayRefresh:
                 assert kwargs["pre_auth_headers"] == {"x-custom": "value"}
 
     @pytest.mark.asyncio
+    async def test_manual_refresh_managed_auth_blocks_upstream_auth_header(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Deny-path: a bearer gateway must not let X-Upstream-Authorization replace its stored token.
+
+        Security invariant: get_passthrough_headers() is called with the full gateway object so
+        _GATEWAY_MANAGED_AUTH_TYPES blocks the rename for oauth/bearer/basic/authheaders gateways.
+        """
+        mock_gateway_with_relations.auth_type = "bearer"
+        mock_gateway_with_relations.oauth_config = None
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with patch("mcpgateway.services.gateway_service.get_passthrough_headers") as mock_get_headers:
+                # Simulate the guard: the function returns base headers unchanged (no Authorization override).
+                stored_auth = {"Authorization": "Bearer stored-bearer-token"}
+                mock_get_headers.return_value = stored_auth
+                gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+                    return_value={
+                        "success": True,
+                        "tools_added": 0,
+                        "tools_removed": 0,
+                        "tools_updated": 0,
+                        "resources_added": 0,
+                        "resources_removed": 0,
+                        "resources_updated": 0,
+                        "prompts_added": 0,
+                        "prompts_removed": 0,
+                        "prompts_updated": 0,
+                        "duration_ms": 0,
+                    }
+                )
+
+                await gateway_service.refresh_gateway_manually(
+                    "gw-123",
+                    request_headers={"x-upstream-authorization": "Bearer attacker-token"},
+                )
+
+                # get_passthrough_headers must be called with the real DbGateway object so
+                # _GATEWAY_MANAGED_AUTH_TYPES can enforce the block inside the function.
+                call_args = mock_get_headers.call_args
+                assert call_args is not None
+                passed_gateway = call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("gateway")
+                assert passed_gateway is mock_gateway_with_relations, (
+                    "gateway_service must pass the real DbGateway to get_passthrough_headers; "
+                    "passing None or a bare dict would bypass the managed-auth-type guard."
+                )
+
+    @pytest.mark.asyncio
     async def test_manual_refresh_token_exchange_gateway_uses_exchanged_token(self, gateway_service, mock_gateway_with_relations, mock_db_session):
         """A token-exchange gateway must resolve a real exchanged token, never generic passthrough."""
         mock_gateway_with_relations.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as/token"}

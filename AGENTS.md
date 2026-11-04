@@ -522,7 +522,7 @@ Run from the worktree root, in order. Each command must pass, or the PR must doc
 | Command | Validates |
 |---------|-----------|
 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
-| `make test` | Full pytest suite |
+| `make test` | Full rstest suite |
 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | `make docker-nuke docker-prod testing-up` | Rebuilds and launches the production-style gateway stack |
 | `make test-e2e` | MCP protocol E2E and RBAC against the live gateway |
@@ -578,5 +578,5 @@ When `detect-secrets` identifies false positives:
 - `gh` for GitHub operations
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
-- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
+- Dev-group tools installed in the venv: `rstest`, `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
 - Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly
