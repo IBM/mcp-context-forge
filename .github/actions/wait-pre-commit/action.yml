@@ -17,8 +17,18 @@ runs:
         set -euo pipefail
         # shortcut: flat 20s poll, 25 min cap (pre-commit job timeout is 20); add backoff only if API rate limits bite.
         for _ in $(seq 75); do
-          conclusion=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?filter=latest&per_page=100" \
-            --jq "[.check_runs[] | select(.name == \"${CHECK_NAME}\")][0] | .conclusion // \"pending\"")
+          if resp=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?filter=latest&per_page=100" 2>/dev/null); then
+            conclusion=$(echo "${resp}" | jq -r '
+              if .check_runs? then
+                ([.check_runs[] | select(.name == "'"${CHECK_NAME}"'")] | sort_by(.id) | last | .conclusion) // "pending"
+              else
+                "pending"
+              end
+            ' 2>/dev/null || echo "pending")
+          else
+            conclusion="pending"
+          fi
+
           case "${conclusion}" in
             success) echo "pre-commit passed."; exit 0 ;;
             pending|null|"") sleep 20 ;;
