@@ -2442,6 +2442,28 @@ class TestBuildClientAssertion:
         assert decoded["jti"]
 
     @pytest.mark.asyncio
+    async def test_cimd_private_key_jwt_dynamic_load(self, oauth_manager, private_key_credentials):
+        public_pem = private_key_credentials.pop("_test_public_pem")
+        private_pem = private_key_credentials.pop("private_key")
+        private_key_credentials["registration_method"] = "cimd"
+
+        # Mock settings.jwt_algorithm to be RS256 (asymmetric) for the CIMD fallback default
+        with (
+            patch("mcpgateway.utils.jwt_config_helper.get_jwt_private_key_or_secret", return_value=private_pem),
+            patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings,
+        ):
+            mock_get_settings.return_value.jwt_algorithm = "RS256"
+            assertion = await oauth_manager._build_client_assertion(private_key_credentials)
+
+        header = jwt.get_unverified_header(assertion)
+        assert header["alg"] == "RS256"
+        assert header["kid"] == "current"
+
+        decoded = jwt.decode(assertion, public_pem, algorithms=["RS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == "test-client"
+        assert decoded["sub"] == "test-client"
+
+    @pytest.mark.asyncio
     async def test_custom_rsa_alg(self, oauth_manager, private_key_credentials):
         private_key_credentials["token_endpoint_auth_signing_alg"] = "PS256"
         public_pem = private_key_credentials.pop("_test_public_pem")
