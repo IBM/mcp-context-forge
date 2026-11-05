@@ -8,22 +8,22 @@ For client usage and deployment, see the [MCP Reverse Proxy user guide](../using
 
 ## What the service is
 
-The reverse-proxy service lets an external, separately maintained client ([contextforge-org/mcp-reverse-proxy](https://github.com/contextforge-org/mcp-reverse-proxy)) connect a downstream MCP server to the gateway without inbound network access. The client dials out over an authenticated WebSocket to `mcpgateway/routers/reverse_proxy.py`, and registers its downstream server metadata on a typed, owner-bound session. HTTP endpoints list sessions, send a request to a session, stream a session over SSE, and disconnect a session.
+The reverse-proxy service lets an external, separately maintained client ([contextforge-org/mcp-reverse-proxy](https://github.com/contextforge-org/mcp-reverse-proxy)) connect a downstream MCP server to the gateway without inbound network access. The client dials out over an authenticated WebSocket to `mcpgateway/routers/reverse_proxy.py`, registers its downstream server, and the gateway persists that registration as an internal `PROXIED` gateway with a stable identity derived from owner, scope, and the normalized server name.
 
 Key pieces:
 
 - **Typed wire protocol** (`mcpgateway/services/reverse_proxy_protocol.py`): the message contract between client and gateway. Registration, invocation, heartbeat, and teardown frames are validated against this protocol.
 - **Session manager** (`mcpgateway/services/reverse_proxy_sessions.py`): process-local and the sole authority for session routing. It owns the mapping from session to client WebSocket inside one worker.
-- **Connection lifecycle** (`mcpgateway/services/reverse_proxy_lifecycle.py`): the receive pump, register and heartbeat handling, and shielded teardown for one admitted connection.
-- **Heartbeat freshness and reaper**: client heartbeats keep a session fresh. A reaper evicts sessions that go silent past `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT`.
+- **PROXIED dispatch**: `tools/call`, `resources/read`, and `prompts/get` against a reverse-proxied server are dispatched over the owning WebSocket rather than an outbound HTTP connection. Stored downstream credentials are decrypted at dispatch time and forwarded to the downstream server; they are never logged.
+- **Heartbeat freshness and reaper**: client heartbeats keep a session fresh. A reaper evicts sessions that go silent past `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT`, which drives the reachability state of the catalog gateway.
 
 `MCPGATEWAY_REVERSE_PROXY_ENABLED` defaults to off.
 
 ### Security posture
 
 - **Two layers, always.** Layer 1 is token scoping, driven by the exact `_PERMISSION_PATTERNS` mappings on the reverse-proxy routes. Layer 2 is RBAC. Neither substitutes for the other.
-- **Server-owned identity.** The connection id and the session owner come from the server and the authenticated principal. The client cannot override them.
-- **Owner-bound HTTP endpoints.** Each session endpoint enforces its RBAC permission and checks session ownership.
+- **Fail-closed dispatch.** If no live connection exists for the gateway (for example, the client disconnected or was evicted), dispatch fails closed instead of guessing.
+- **Server-owned identity.** The `PROXIED` gateway identity (owner, scope, normalized name) is derived server-side and cannot be overridden by the client.
 
 ---
 
@@ -33,10 +33,12 @@ The reverse-proxy code is covered by focused unit tests:
 
 | Path | Covers |
 | ---- | ------ |
-| `tests/unit/mcpgateway/routers/test_reverse_proxy.py` | WebSocket admission, connection lifecycle, and HTTP session endpoints |
-| `tests/unit/mcpgateway/services/test_reverse_proxy_*.py` | Protocol and session services |
+| `tests/unit/mcpgateway/routers/test_reverse_proxy.py` | WebSocket endpoint admission and lifecycle |
+| `tests/unit/mcpgateway/services/test_reverse_proxy_*.py` | Protocol, sessions, catalog, and discovery services |
+| `tests/unit/mcpgateway/services/test_{tool,resource,prompt}_service_reverse_proxy.py` | PROXIED dispatch from the tool, resource, and prompt services |
 | `tests/unit/mcpgateway/middleware/test_token_scoping.py` | Layer-1 token scoping on the reverse-proxy routes |
 
+The registration lifecycle also has deterministic race and compensation regression tests, so ordering-sensitive bugs (concurrent registration, eviction) are pinned without needing live infrastructure.
 
 ---
 
