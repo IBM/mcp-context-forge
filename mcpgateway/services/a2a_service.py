@@ -12,6 +12,7 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import asyncio
 import base64
 import binascii
 from dataclasses import replace
@@ -304,6 +305,7 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
 # Client-credentials tokens for OAuth-protected agents, keyed by agent id + config fingerprint
 # so a changed oauth_config never reuses a token minted for the old one. Value: (token, monotonic expiry).
 _A2A_OAUTH_TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
+_A2A_OAUTH_ACQUIRE_LOCKS: Dict[str, asyncio.Lock] = {}
 _A2A_OAUTH_EXPIRY_SKEW_SECONDS = 30
 
 
@@ -312,6 +314,7 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
 
     Only the client_credentials grant is supported. Tokens are cached until shortly
     before their ``expires_in``; a token without a reported lifetime is not cached.
+    Concurrent callers with the same cache key share one token request.
 
     Args:
         agent_id: Agent identifier, used to scope the token cache.
@@ -336,16 +339,25 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
     if cached and cached[1] > time.monotonic():
         return f"Bearer {cached[0]}"
 
+    lock = _A2A_OAUTH_ACQUIRE_LOCKS.setdefault(cache_key, asyncio.Lock())
     try:
-        manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-        token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
-    except Exception as e:
-        raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e
+        async with lock:
+            cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
+            if cached and cached[1] > time.monotonic():
+                return f"Bearer {cached[0]}"
+            try:
+                manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
+            except Exception as e:
+                raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e
 
-    _A2A_OAUTH_TOKEN_CACHE.pop(cache_key, None)
-    if expires_in and expires_in > _A2A_OAUTH_EXPIRY_SKEW_SECONDS:
-        _A2A_OAUTH_TOKEN_CACHE[cache_key] = (token, time.monotonic() + expires_in - _A2A_OAUTH_EXPIRY_SKEW_SECONDS)
-    return f"Bearer {token}"
+            _A2A_OAUTH_TOKEN_CACHE.pop(cache_key, None)
+            if expires_in and expires_in > _A2A_OAUTH_EXPIRY_SKEW_SECONDS:
+                _A2A_OAUTH_TOKEN_CACHE[cache_key] = (token, time.monotonic() + expires_in - _A2A_OAUTH_EXPIRY_SKEW_SECONDS)
+            return f"Bearer {token}"
+    finally:
+        if not lock.locked():
+            _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
 
 
 class A2AAgentError(Exception):
@@ -974,9 +986,6 @@ class A2AAgentService(BaseService):
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
                 except RuntimeError:
@@ -1969,9 +1978,6 @@ class A2AAgentService(BaseService):
             await admin_stats_cache.invalidate_tags()
 
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 loop = asyncio.get_running_loop()
                 loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
             except RuntimeError:
@@ -2178,9 +2184,6 @@ class A2AAgentService(BaseService):
                 await admin_stats_cache.invalidate_tags()
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
                 except RuntimeError:
