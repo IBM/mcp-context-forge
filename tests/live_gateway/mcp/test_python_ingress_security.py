@@ -152,7 +152,7 @@ def test_running_affinity_consumer_rejects_untrusted_envelope(signature):
 
 @skip_no_gateway
 def test_cross_worker_protected_tool_denial_preserves_execution_sentinel():
-    """Public-only scope cannot execute a team tool through a real worker hop."""
+    """Public-only, wrong-team, and read-only callers cannot execute a protected team tool."""
     redis_url = os.getenv("MCP_AFFINITY_TEST_REDIS_URL")
     admin_token = os.getenv("MCP_INGRESS_TEST_TOKEN")
     if os.getenv("MCP_AFFINITY_SENTINEL_TESTS") != "true" or not redis_url or not admin_token:
@@ -180,13 +180,19 @@ def test_cross_worker_protected_tool_denial_preserves_execution_sentinel():
     thread = threading.Thread(target=backend.serve_forever, daemon=True)
     thread.start()
     rest_headers = {"authorization": f"Bearer {admin_token}"}
-    team_id = tool_id = server_id = session_id = None
+    team_id = other_team_id = tool_id = server_id = session_id = None
     mcp_headers = {**rest_headers, "accept": "application/json, text/event-stream"}
     suffix = uuid.uuid4().hex
     try:
         response = httpx.post(f"{BASE_URL}/teams/", headers=rest_headers, json={"name": f"affinity-sentinel-{suffix}"}, timeout=20)
         assert response.status_code in (200, 201), response.text
         team_id = response.json()["id"]
+        response = httpx.post(f"{BASE_URL}/teams/", headers=rest_headers, json={"name": f"affinity-other-{suffix}"}, timeout=20)
+        assert response.status_code in (200, 201), response.text
+        other_team_id = response.json()["id"]
+        response = httpx.get(f"{BASE_URL}/teams/{other_team_id}/members", headers=rest_headers, timeout=20)
+        assert response.status_code == 200, response.text
+        assert any(member["user_email"] == ADMIN_EMAIL and member["is_active"] for member in response.json())
         response = httpx.post(
             f"{BASE_URL}/tools",
             headers=rest_headers,
@@ -222,15 +228,13 @@ def test_cross_worker_protected_tool_denial_preserves_execution_sentinel():
         positive = _rpc_payload(response)
         assert "result" in positive and not positive["result"].get("isError"), positive
         assert len(calls) == 1, positive
-        for teams, scopes in [([], None), ([f"other-team-{suffix}"], None), (None, {"permissions": ["servers.use", "tools.read"]})]:
+        for teams, scopes, error_code in [([], None, -32601), ([other_team_id], None, -32601), (None, {"permissions": ["servers.use", "tools.read"]}, -32003)]:
             restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=teams, scopes=scopes, secret=JWT_SECRET)
             denied_headers = {**mcp_headers, "authorization": f"Bearer {restricted}"}
             response = httpx.post(url, headers=denied_headers, json=body, timeout=20)
-            if response.status_code == 200:
-                payload = _rpc_payload(response)
-                assert "error" in payload or payload.get("result", {}).get("isError") is True, payload
-            else:
-                assert response.status_code in (401, 403), response.text
+            assert response.status_code == 200, response.text
+            payload = _rpc_payload(response)
+            assert payload["error"]["code"] == error_code, payload
             assert len(calls) == 1, "Denied requests must never reach the backend"
         with Redis.from_url(redis_url) as redis, redis.pubsub() as responses:
             assert len(redis.pubsub_channels("mcpgw:pool_http:*")) >= 2
@@ -268,6 +272,8 @@ def test_cross_worker_protected_tool_denial_preserves_execution_sentinel():
             httpx.delete(f"{BASE_URL}/tools/{tool_id}", headers=rest_headers, timeout=10)
         if team_id:
             httpx.delete(f"{BASE_URL}/teams/{team_id}", headers=rest_headers, timeout=10)
+        if other_team_id:
+            httpx.delete(f"{BASE_URL}/teams/{other_team_id}", headers=rest_headers, timeout=10)
         backend.shutdown()
         backend.server_close()
         thread.join(timeout=5)
