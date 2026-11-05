@@ -643,6 +643,32 @@ class TestGetManager:
             result = await factory.get_manager("ctx")
             assert result is mock_manager
 
+    @pytest.mark.asyncio
+    async def test_cancelling_one_waiter_does_not_cancel_shared_build(self, factory):
+        mock_manager = AsyncMock()
+        release = asyncio.Event()
+
+        async def slow_build(context_id):
+            await release.wait()
+            factory._managers[context_id] = mock_manager
+            return mock_manager
+
+        with patch.object(factory, "_build_manager", side_effect=slow_build):
+            first = asyncio.create_task(factory.get_manager("team::tool"))
+            second = asyncio.create_task(factory.get_manager("team::tool"))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert "team::tool" in factory._inflight
+
+            release.set()
+            assert await second is mock_manager
+
+        assert "team::tool" not in factory._inflight
+
 
 # ---------------------------------------------------------------------------
 # reload_tenant

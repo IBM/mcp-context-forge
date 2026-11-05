@@ -146,7 +146,8 @@ class TenantPluginManagerFactory:
                 self._inflight[context_id] = inflight
 
         try:
-            manager = await inflight
+            # Shield the shared build so one cancelled waiter does not cancel it for the others.
+            manager = await asyncio.shield(inflight)
             async with self._lock:
                 entry = self._managers.get(context_id)
                 if entry is not None:
@@ -154,7 +155,7 @@ class TenantPluginManagerFactory:
                 return manager
         finally:
             async with self._lock:
-                if self._inflight.get(context_id) is inflight:
+                if inflight.done() and self._inflight.get(context_id) is inflight:
                     self._inflight.pop(context_id, None)
 
     @staticmethod
