@@ -1457,6 +1457,23 @@ def _check_url_scheme_compliance() -> None:
         raise SystemExit(f"STRICT_SCHEME_ENFORCEMENT is enabled and {len(violations)} record(s) violate the URL scheme allowlist. Fix records or disable enforcement to start.")
 
 
+async def _run_reverse_proxy_reaper() -> None:
+    """Evict reverse-proxy sessions whose heartbeat has gone stale."""
+    from mcpgateway.services.reverse_proxy_sessions import get_reverse_proxy_session_manager  # pylint: disable=import-outside-toplevel
+
+    timeout_seconds = settings.mcpgateway_reverse_proxy_heartbeat_timeout
+    interval_seconds = timeout_seconds / 3
+    session_manager = await get_reverse_proxy_session_manager()
+    while True:
+        await asyncio.sleep(interval_seconds)
+        await session_manager.reap_stale(now=datetime.now(tz=timezone.utc), timeout_seconds=timeout_seconds)
+
+
+def _reverse_proxy_reaper_enabled() -> bool:
+    """Return whether lifespan should own a reverse-proxy stale-session task."""
+    return settings.mcpgateway_reverse_proxy_enabled and settings.mcpgateway_reverse_proxy_heartbeat_timeout > 0
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1480,6 +1497,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
+    reverse_proxy_reaper_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
 
@@ -1734,6 +1752,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
+        if _reverse_proxy_reaper_enabled():
+            reverse_proxy_reaper_task = asyncio.create_task(_run_reverse_proxy_reaper())
+
         # Start heartbeat, RPC listener, and notification service for
         # multi-worker session affinity. The upstream-session pool is
         # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
@@ -1936,6 +1957,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+
+        if reverse_proxy_reaper_task is not None:
+            reverse_proxy_reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reverse_proxy_reaper_task
 
         # Stop the plugin invalidation listener before the factory so in-flight
         # messages don't race with a half-torn-down cache.
