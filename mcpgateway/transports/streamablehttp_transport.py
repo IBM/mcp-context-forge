@@ -119,7 +119,7 @@ from mcpgateway.utils.verify_credentials import (
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
-    verify_credentials,
+    verify_credentials_cached,
     verify_oauth_access_token,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -6101,7 +6101,7 @@ class _StreamableHttpAuthHandler:
             requests are rejected with 401 regardless of the global setting.
           - Valid tokens get full scoped access based on their teams.
           - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
-        - If a Bearer token is present, it is verified using ``verify_credentials``.
+        - If a Bearer token is present, it is verified using ``verify_credentials_cached``.
 
         Returns:
             True if authentication passes or is skipped.
@@ -6223,8 +6223,9 @@ class _StreamableHttpAuthHandler:
         """Verify a JWT Bearer token and populate the user context.
 
         Routes to ContextForge-issued or IdP-issued (OAuth) verification based
-        on the token's ``iss`` claim. IdP-issued tokens are only accepted for
-        virtual servers with ``oauth_enabled=True``.
+        on the token's ``iss`` claim. IdP-issued tokens go to the OAuth path
+        for virtual servers with ``oauth_enabled=True``. Trusted external-IdP
+        tokens (``SSO_API_TOKEN_AUTH_ENABLED``) are verified as on ``/rpc``.
 
         Args:
             token: Bearer token value extracted from the Authorization header.
@@ -6237,7 +6238,7 @@ class _StreamableHttpAuthHandler:
             return routed
 
         try:
-            user_payload = await verify_credentials(token)
+            user_payload = await verify_credentials_cached(token)
             # Store enriched user context with normalized teams
             if not isinstance(user_payload, dict):
                 return True
@@ -6472,8 +6473,8 @@ class _StreamableHttpAuthHandler:
                 auth_method="jwt",
                 team_name=trace_team_name,
             )
-        except HTTPException:
-            # Internal JWT verification failed (expired, malformed, bad signature, etc.)
+        except HTTPException as exc:
+            logger.debug("MCP bearer token rejected: %s", sanitize_for_log(str(exc.detail)))
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         except SQLAlchemyError:
             # DB failure during team resolution or membership validation
@@ -6504,17 +6505,17 @@ class _StreamableHttpAuthHandler:
         Returns:
             True on successful OAuth verification (user context populated).
             False when an error response has already been sent. ``None`` when
-            the caller should continue with ContextForge-issued JWT
-            verification (undecodable token, internal ``iss``, or an
-            IdP-issued token on a server that does not handle it).
+            the caller should continue with ``verify_credentials_cached()``
+            (undecodable token, internal ``iss``, or an IdP-issued token on a
+            server that does not handle it).
         """
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
         except jwt.DecodeError:
-            # Undecodable bearer token. Flow through to verify_credentials()
+            # Undecodable bearer token. Flow through to verify_credentials_cached()
             # which will emit the canonical 401. Log at DEBUG only — auth
             # floods would otherwise pollute WARN-level observability.
-            logger.debug("Bearer token is not a decodable JWT; deferring to internal verify_credentials")
+            logger.debug("Bearer token is not a decodable JWT; deferring to verify_credentials_cached")
             return None
 
         if unverified.get("iss", "") == settings.jwt_issuer:
@@ -6539,16 +6540,9 @@ class _StreamableHttpAuthHandler:
         if oauth_result is OAuthAuthResult.FAILED:
             oauth_verify_events_counter.labels(outcome="failed").inc()
             return False  # Error response already sent
-        # OAuthAuthResult.NOT_APPLICABLE — this handler is not responsible for
-        # the token (target server is not oauth_enabled, token's issuer is
-        # outside the allowlist, or the URL carries no server id). When
-        # internal issuer verification is enabled, an iss mismatch will be
-        # rejected by verify_credentials() anyway, so short-circuit with the
-        # canonical 401. When it is disabled, fall through so legacy internal
-        # JWTs whose iss differs from settings.jwt_issuer remain accepted.
+        # NOT_APPLICABLE: verify_credentials_cached() decides. It accepts trusted
+        # external-IdP tokens and rejects any other foreign issuer.
         oauth_verify_events_counter.labels(outcome="not_applicable").inc()
-        if settings.jwt_issuer_verification:
-            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         return None
 
     async def _try_oauth_access_token(self, token: str, unverified: Optional[Dict[str, Any]] = None) -> OAuthAuthResult:  # noqa: PLR0911
