@@ -5124,10 +5124,32 @@ class ServerInterfaceInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     protocol: str = Field(..., min_length=1, max_length=50, description="Interface protocol, for example 'a2a'")
-    binding: str = Field(..., min_length=1, max_length=255, description="Protocol binding, for example 'JSONRPC' or 'HTTP+JSON'")
+    binding: str = Field(..., min_length=1, max_length=255, description="Agent endpoint URL that the interface publishes, for example 'https://agent.example.com/a2a'")
     version: Optional[str] = Field(None, max_length=20, description="Protocol version")
     tenant: Optional[str] = Field(None, max_length=255, description="Optional tenant identifier")
     enabled: bool = Field(True, description="Whether the interface is active")
+
+    @field_validator("binding")
+    @classmethod
+    def validate_binding(cls, v: str) -> str:
+        """Validate the binding as an endpoint URL.
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as a safe URL
+
+        Examples:
+            >>> ServerInterfaceInput.validate_binding("https://agent.example.com/a2a")
+            'https://agent.example.com/a2a'
+            >>> try:
+            ...     ServerInterfaceInput.validate_binding("JSONRPC")
+            ... except ValueError:
+            ...     print("rejected")
+            rejected
+        """
+        return validate_core_url(v, "Interface binding")
 
 
 def _reject_duplicate_interfaces(interfaces: Optional[List["ServerInterfaceInput"]]) -> Optional[List["ServerInterfaceInput"]]:
