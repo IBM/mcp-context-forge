@@ -22,7 +22,7 @@ def server_keys(server, pattern):
     return fakeredis.FakeRedis(server=server).keys(pattern)
 
 
-def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_request(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
 
