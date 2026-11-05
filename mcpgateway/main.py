@@ -133,10 +133,10 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
-    A2AFetchCardRequest,
-    A2AFetchCardResponse,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
@@ -182,8 +182,8 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_card_import import fetch_agent_card
+from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
@@ -5174,24 +5174,27 @@ async def create_a2a_agent(
 @a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
 @require_permission("a2a.create")
 async def fetch_a2a_agent_card(
-    request: A2AFetchCardRequest,
+    payload: A2AFetchCardRequest,
+    request: Request,  # pylint: disable=unused-argument
     user=Depends(get_current_user_with_permissions),
 ) -> A2AFetchCardResponse:
     """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
 
     A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
     ``auth_required`` or ``unreachable``. A blocked address and a network failure both
-    return ``unreachable``, so the route cannot be used to probe which hosts the gateway can reach.
+    return ``unreachable``. An unsafe ``path`` or ``baseUrl`` returns 422.
 
     Args:
-        request (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        payload (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        request (Request): The FastAPI request object, used by the RBAC check.
         user: The authenticated user making the request.
 
     Returns:
         A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
     """
-    logger.debug(f"User {safe_log_user(user)} is fetching an A2A agent card")
-    return await fetch_agent_card(str(request.base_url), request.path, request.headers)
+    result = await fetch_agent_card(str(payload.base_url), payload.path, payload.headers)
+    logger.info(f"User {safe_log_user(user)} fetched A2A agent card from {sanitize_url_for_logging(str(payload.base_url))}: {result.outcome}")
+    return result
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)

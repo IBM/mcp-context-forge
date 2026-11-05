@@ -12,6 +12,7 @@ cannot reveal which hosts the gateway can or cannot reach.
 """
 
 # Standard
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,7 +24,7 @@ import orjson
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.schemas import A2AFetchCardResponse
+from mcpgateway.schemas import A2AFetchCardResponse, validate_a2a_card_path
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
@@ -33,12 +34,11 @@ logger = logging.getLogger(__name__)
 CARD_PATH_V1 = "/.well-known/agent-card.json"
 CARD_PATH_LEGACY = "/.well-known/agent.json"
 MAX_CARD_BYTES = 1024 * 1024
-NOT_FOUND_REASON = "No A2A Agent Card was found at the given location."
-AUTH_REQUIRED_REASON = "The agent requires credentials to return its Agent Card."
-UNREACHABLE_REASON = "The agent could not be reached."
+_NOT_FOUND_REASON = "No A2A Agent Card was found at the given location."
+_AUTH_REQUIRED_REASON = "The agent requires credentials to return its Agent Card."
+_UNREACHABLE_REASON = "The agent could not be reached."
 
 _AUTH_SCHEME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,32}$")
-_SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 _DEFAULT_PROTOCOL_BINDING = "JSONRPC"
 
 _AUTH_TYPE_BY_HTTP_SCHEME = {"basic": "basic", "bearer": "bearer"}
@@ -78,12 +78,13 @@ def build_candidate_urls(base_url: str, path: Optional[str]) -> List[str]:
         mcpgateway.services.a2a_card_import.CardPathError: Card path is not allowed
     """
     base = base_url.strip()
-    parsed = urlparse(base)
     if path:
-        if not _SAFE_PATH_RE.match(path) or any(segment in ("..", ".") for segment in path.split("/")):
-            raise CardPathError("Card path is not allowed")
+        try:
+            validate_a2a_card_path(path)
+        except ValueError as exc:
+            raise CardPathError("Card path is not allowed") from exc
         return [f"{base.rstrip('/')}/{path.lstrip('/')}"]
-    if parsed.path.lower().endswith(".json"):
+    if urlparse(base).path.lower().endswith(".json"):
         return [base]
     root = base.rstrip("/")
     return [f"{root}{CARD_PATH_V1}", f"{root}{CARD_PATH_LEGACY}"]
@@ -143,6 +144,21 @@ def _convert_legacy_requirements(security: List[Dict[str, List[str]]]) -> List[D
     return requirements
 
 
+def _convert_legacy_skill(skill: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert the pre-1.0 ``security`` of one skill to 1.0 ``securityRequirements``.
+
+    Args:
+        skill: A 0.3 ``AgentSkill`` object.
+
+    Returns:
+        A copy of the skill in the 1.0 shape.
+    """
+    converted = {key: value for key, value in skill.items() if key != "security"}
+    if skill.get("security"):
+        converted["securityRequirements"] = _convert_legacy_requirements(skill["security"])
+    return converted
+
+
 def _normalize_legacy_card(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a pre-1.0 card to the 1.0 shape.
 
@@ -170,8 +186,10 @@ def _normalize_legacy_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         capabilities["extensions"] = legacy_caps["extensions"]
 
     card: Dict[str, Any] = {
-        key: raw[key] for key in ("name", "description", "version", "provider", "documentationUrl", "iconUrl", "defaultInputModes", "defaultOutputModes", "skills", "signatures") if key in raw
+        key: raw[key] for key in ("name", "description", "version", "provider", "documentationUrl", "iconUrl", "defaultInputModes", "defaultOutputModes", "signatures") if key in raw
     }
+    if "skills" in raw:
+        card["skills"] = [_convert_legacy_skill(skill) for skill in raw["skills"]]
     card["supportedInterfaces"] = interfaces
     card["capabilities"] = capabilities
 
@@ -184,6 +202,86 @@ def _normalize_legacy_card(raw: Dict[str, Any]) -> Dict[str, Any]:
         card["securitySchemes"] = schemes
         card["securityRequirements"] = _convert_legacy_requirements(raw.get("security") or [])
     return card
+
+
+def _is_dict_of_dicts(value: Any) -> bool:
+    """Report whether ``value`` is absent or a mapping whose values are all mappings.
+
+    Args:
+        value: Candidate document fragment.
+
+    Returns:
+        True for ``None``, or a dict containing only dict values.
+    """
+    return value is None or (isinstance(value, dict) and all(isinstance(item, dict) for item in value.values()))
+
+
+def _has_valid_requirements(requirements: Any, legacy: bool) -> bool:
+    """Report whether security requirements have the shape the spec defines.
+
+    Args:
+        requirements: ``securityRequirements`` (1.0) or ``security`` (0.3) value.
+        legacy: True for the 0.3 shape ``[{scheme: [scopes]}]``.
+
+    Returns:
+        True when absent or well formed.
+    """
+    if requirements is None:
+        return True
+    if not isinstance(requirements, list):
+        return False
+    for entry in requirements:
+        if not isinstance(entry, dict):
+            return False
+        if legacy:
+            if not all(isinstance(scopes, list) for scopes in entry.values()):
+                return False
+        elif not _is_dict_of_dicts(entry.get("schemes")):
+            return False
+    return True
+
+
+def _has_valid_flows(scheme: Dict[str, Any]) -> bool:
+    """Report whether the OAuth flows of a scheme, if any, are mappings with mapping scopes.
+
+    Args:
+        scheme: A 1.0 or 0.3 security scheme object.
+
+    Returns:
+        True when no OAuth flows are declared or they are well formed.
+    """
+    body = scheme
+    for key, value in scheme.items():
+        if key.endswith("SecurityScheme") and isinstance(value, dict):
+            body = value
+    flows = body.get("flows")
+    if flows is None:
+        return True
+    return _is_dict_of_dicts(flows) and all(isinstance(flow.get("scopes"), dict) or flow.get("scopes") is None for flow in flows.values())
+
+
+def _is_well_formed(raw: Dict[str, Any]) -> bool:
+    """Report whether the nested card fields have the types normalization relies on.
+
+    Args:
+        raw: Card as fetched, already known to satisfy ``is_agent_card``.
+
+    Returns:
+        True when normalization and mapping can run without a type error.
+    """
+    if not isinstance(raw.get("capabilities") or {}, dict) or not isinstance(raw.get("additionalInterfaces") or [], list):
+        return False
+    if not _is_dict_of_dicts(raw.get("securitySchemes")) or not all(_has_valid_flows(scheme) for scheme in (raw.get("securitySchemes") or {}).values()):
+        return False
+    skills = raw.get("skills")
+    if skills is not None and (not isinstance(skills, list) or not all(isinstance(skill, dict) for skill in skills)):
+        return False
+    skill_dicts = skills or []
+    legacy = not isinstance(raw.get("supportedInterfaces"), list)
+    skill_key = "security" if legacy else "securityRequirements"
+    if not _has_valid_requirements(raw.get("security" if legacy else "securityRequirements"), legacy):
+        return False
+    return all(_has_valid_requirements(skill.get(skill_key), legacy) for skill in skill_dicts)
 
 
 def is_agent_card(raw: Any) -> bool:
@@ -253,8 +351,9 @@ def _select_interface(card: Dict[str, Any]) -> Dict[str, Any]:
 def _suggest_auth(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """Choose one ``A2AAgentCreate`` auth configuration from the declared security.
 
-    ContextForge stores one ``auth_type``. When the card offers several alternatives,
-    the first requirement that maps to a supported type wins and the rest are reported.
+    Requirement objects are alternatives. The schemes inside one requirement apply together.
+    ContextForge stores one ``auth_type``, so only a requirement with a single supported
+    scheme is representable. The first such requirement wins and the others are reported.
 
     Args:
         card: Card in the 1.0 shape.
@@ -266,7 +365,12 @@ def _suggest_auth(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     warnings: List[str] = []
     chosen: Dict[str, Any] = {}
     for requirement in card.get("securityRequirements") or []:
-        for name, scopes in (requirement.get("schemes") or {}).items():
+        required = requirement.get("schemes") or {}
+        names = ", ".join(f"'{name}'" for name in required)
+        if len(required) > 1:
+            warnings.append(f"Security schemes {names} are required together. ContextForge stores one auth type, so this requirement was not mapped.")
+            continue
+        for name, scopes in required.items():
             key, body = _scheme_key(schemes.get(name) or {})
             fields = _auth_fields(key, body, scopes)
             if fields and not chosen:
@@ -301,10 +405,10 @@ def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
         return {}
     if key == "oauth2SecurityScheme":
         flows = body.get("flows") or {}
-        wanted = scopes.get("list", []) if isinstance(scopes, dict) else []
+        required_scopes = list(scopes.get("list") or []) if isinstance(scopes, dict) else []
         if "clientCredentials" in flows:
             flow = flows["clientCredentials"]
-            return {"auth_type": "oauth", "oauth_config": {"grant_type": "client_credentials", "token_url": flow.get("tokenUrl"), "scopes": wanted or list((flow.get("scopes") or {}).keys())}}
+            return {"auth_type": "oauth", "oauth_config": {"grant_type": "client_credentials", "token_url": flow.get("tokenUrl"), "scopes": required_scopes}}
         if "authorizationCode" in flows:
             flow = flows["authorizationCode"]
             return {
@@ -313,10 +417,32 @@ def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
                     "grant_type": "authorization_code",
                     "authorization_url": flow.get("authorizationUrl"),
                     "token_url": flow.get("tokenUrl"),
-                    "scopes": wanted or list((flow.get("scopes") or {}).keys()),
+                    "scopes": required_scopes,
                 },
             }
     return {}
+
+
+def _oauth_host_warnings(fields: Dict[str, Any], endpoint_url: str) -> List[str]:
+    """Warn when an OAuth URL from the card points at a different host than the agent.
+
+    A card is untrusted input. The client secret a user later enters goes to these URLs.
+
+    Args:
+        fields: Suggested auth fields.
+        endpoint_url: The selected agent endpoint.
+
+    Returns:
+        One warning per OAuth URL on a foreign host.
+    """
+    agent_host = urlparse(endpoint_url).hostname
+    warnings = []
+    for key in ("authorization_url", "token_url"):
+        url = (fields.get("oauth_config") or {}).get(key)
+        host = urlparse(url).hostname if isinstance(url, str) else None
+        if host and host != agent_host:
+            warnings.append(f"The card's OAuth {key} points to '{host}', which differs from the agent host. Verify it before entering a client secret.")
+    return warnings
 
 
 def suggest_agent_fields(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
@@ -365,19 +491,20 @@ def suggest_agent_fields(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str
     auth_fields, auth_warnings = _suggest_auth(card)
     fields.update(auth_fields)
     warnings.extend(auth_warnings)
+    warnings.extend(_oauth_host_warnings(auth_fields, interface["url"]))
     return {key: value for key, value in fields.items() if value is not None}, warnings
 
 
-def not_found() -> A2AFetchCardResponse:
+def _not_found() -> A2AFetchCardResponse:
     """Build the response for a reachable host that serves no Agent Card.
 
     Returns:
         A response with outcome ``no_card`` and a fixed reason.
     """
-    return A2AFetchCardResponse(found=False, outcome="no_card", reason=NOT_FOUND_REASON)
+    return A2AFetchCardResponse(found=False, outcome="no_card", reason=_NOT_FOUND_REASON)
 
 
-def unreachable() -> A2AFetchCardResponse:
+def _unreachable() -> A2AFetchCardResponse:
     """Build the response for a blocked address or a failed connection.
 
     Both causes share this response, so the route cannot probe which hosts the gateway reaches.
@@ -385,10 +512,10 @@ def unreachable() -> A2AFetchCardResponse:
     Returns:
         A response with outcome ``unreachable`` and a fixed reason.
     """
-    return A2AFetchCardResponse(found=False, outcome="unreachable", reason=UNREACHABLE_REASON)
+    return A2AFetchCardResponse(found=False, outcome="unreachable", reason=_UNREACHABLE_REASON)
 
 
-def auth_required(challenge: Optional[str]) -> A2AFetchCardResponse:
+def _auth_required(challenge: Optional[str]) -> A2AFetchCardResponse:
     """Build the response for a card endpoint that answered 401 or 403.
 
     Args:
@@ -397,7 +524,7 @@ def auth_required(challenge: Optional[str]) -> A2AFetchCardResponse:
     Returns:
         A response with outcome ``auth_required`` and the challenge scheme name.
     """
-    return A2AFetchCardResponse(found=False, outcome="auth_required", reason=AUTH_REQUIRED_REASON, auth_scheme=_challenge_scheme(challenge))
+    return A2AFetchCardResponse(found=False, outcome="auth_required", reason=_AUTH_REQUIRED_REASON, auth_scheme=_challenge_scheme(challenge))
 
 
 def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
@@ -413,8 +540,38 @@ def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
     return parts[0] if parts and _AUTH_SCHEME_RE.match(parts[0]) else None
 
 
+async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[str, str]) -> Tuple[Optional[int], Any, Optional[str]]:
+    """Stream one response and parse it, bounding the raw (undecoded) bytes read.
+
+    Args:
+        client: Isolated HTTP client.
+        url: Candidate card URL, for logging.
+        target: Pinned target from the outbound policy.
+        request_headers: Headers to send.
+
+    Returns:
+        ``(status, document, challenge)`` as described by ``_get_json``.
+    """
+    async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
+        if response.status_code != 200:
+            return response.status_code, None, response.headers.get("www-authenticate")
+        if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
+            logger.warning("A2A card from %s is content-encoded and was discarded", sanitize_url_for_logging(url))
+            return 200, None, None
+        body = bytearray()
+        async for chunk in response.aiter_raw():
+            body.extend(chunk)
+            if len(body) > MAX_CARD_BYTES:
+                logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
+                return 200, None, None
+    return 200, orjson.loads(bytes(body)), None
+
+
 async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Optional[int], Any, Optional[str]]:
     """GET one URL under the outbound policy and parse a size-capped JSON body.
+
+    The request asks for an identity encoding and discards a content-encoded response, so
+    a small compressed body cannot expand past the size cap. The whole read has a total deadline.
 
     Args:
         url: Candidate card URL.
@@ -431,19 +588,11 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
         return None, None, None
 
-    request_headers = target.apply_headers({"Accept": "application/json", **(headers or {})})
+    request_headers = target.apply_headers({"Accept": "application/json", "Accept-Encoding": "identity", **(headers or {})})
     try:
-        async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
-            async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
-                if response.status_code != 200:
-                    return response.status_code, None, response.headers.get("www-authenticate")
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_CARD_BYTES:
-                        logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
-                        return 200, None, None
-        return 200, orjson.loads(bytes(body)), None
+        async with asyncio.timeout(float(settings.federation_timeout)):
+            async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
+                return await _read_body(client, url, target, request_headers)
     except orjson.JSONDecodeError:
         return 200, None, None
     except Exception as exc:  # pylint: disable=broad-except
@@ -451,11 +600,42 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         return None, None, None
 
 
+def _build_found_response(url: str, document: Dict[str, Any]) -> Optional[A2AFetchCardResponse]:
+    """Normalize and map a fetched document.
+
+    Args:
+        url: URL the document came from.
+        document: Parsed document that satisfies ``is_agent_card``.
+
+    Returns:
+        The ``found`` response, or ``None`` when the document is malformed.
+    """
+    if not _is_well_formed(document):
+        return None
+    try:
+        card, version = normalize_card(document)
+        fields, warnings = suggest_agent_fields(card)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        logger.warning("A2A card from %s is malformed", sanitize_url_for_logging(url))
+        return None
+    return A2AFetchCardResponse(
+        found=True,
+        outcome="found",
+        source_url=url,
+        detected_version=version,
+        card=card,
+        raw_card=None if card is document else document,
+        suggested_agent=fields,
+        warnings=warnings,
+    )
+
+
 async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Fetch, validate and normalize an Agent Card from an unregistered endpoint.
 
-    Falls back to the pre-1.0 well-known path only on a 404 from the 1.0 path. A 401 or 403
-    stops the search with ``auth_required`` so the caller can retry with credentials.
+    Tries each candidate URL in order. Any answer other than a card moves to the next
+    candidate, except a 401 or 403, which stops with ``auth_required`` so the caller can
+    retry with credentials, and a blocked or failed request, which stops with ``unreachable``.
 
     Args:
         base_url: Endpoint or direct card URL.
@@ -465,22 +645,15 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     Returns:
         The normalized card with a suggested agent mapping, or a response naming why no card was returned.
     """
-    try:
-        candidates = build_candidate_urls(base_url, path)
-    except CardPathError:
-        return not_found()
-
-    for url in candidates:
+    for url in build_candidate_urls(base_url, path):
         status, document, challenge = await _get_json(url, headers)
         if status is None:
-            return unreachable()
+            return _unreachable()
         if status in (401, 403):
-            return auth_required(challenge)
-        if status == 404:
-            continue
+            return _auth_required(challenge)
         if document is None or not is_agent_card(document):
-            return not_found()
-        card, version = normalize_card(document)
-        fields, warnings = suggest_agent_fields(card)
-        return A2AFetchCardResponse(found=True, outcome="found", source_url=url, detected_version=version, card=card, raw_card=document, suggested_agent=fields, warnings=warnings)
-    return not_found()
+            continue
+        found = _build_found_response(url, document)
+        if found:
+            return found
+    return _not_found()
