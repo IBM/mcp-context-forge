@@ -7,6 +7,7 @@ Unit tests for A2A Agent Card fetch, normalization and agent-field mapping (#473
 """
 
 # Standard
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -57,6 +58,32 @@ LEGACY_CARD = {
     "securitySchemes": {"key": {"type": "apiKey", "in": "header", "name": "X-API-Key"}},
     "security": [{"key": []}],
 }
+
+
+V1_BASE = {"name": "a", "supportedInterfaces": [{"url": "https://bad.example.com/rpc", "protocolBinding": "JSONRPC"}]}
+LEGACY_BASE = {"name": "a", "url": "https://bad.example.com/rpc"}
+MALFORMED_CARDS = [
+    {**V1_BASE, "securityRequirements": ["x"]},
+    {**V1_BASE, "securityRequirements": [{"schemes": ["x"]}]},
+    {**V1_BASE, "securityRequirements": [{"schemes": {"s": "x"}}]},
+    {**V1_BASE, "securitySchemes": ["x"]},
+    {**V1_BASE, "securitySchemes": {"s": "x"}},
+    {**V1_BASE, "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {"clientCredentials": "x"}}}}},
+    {**V1_BASE, "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {"clientCredentials": {"scopes": ["x"]}}}}}},
+    {**V1_BASE, "capabilities": ["x"]},
+    {**V1_BASE, "capabilities": "invalid"},
+    {**V1_BASE, "skills": "x"},
+    {**V1_BASE, "skills": ["x"]},
+    {**V1_BASE, "skills": [{"id": "s", "securityRequirements": ["x"]}]},
+    {**LEGACY_BASE, "capabilities": ["x"]},
+    {**LEGACY_BASE, "capabilities": "invalid"},
+    {**LEGACY_BASE, "securitySchemes": ["x"]},
+    {**LEGACY_BASE, "securitySchemes": {"s": "x"}},
+    {**LEGACY_BASE, "security": ["x"]},
+    {**LEGACY_BASE, "security": [{"s": "x"}]},
+    {**LEGACY_BASE, "additionalInterfaces": 5},
+    {**LEGACY_BASE, "skills": [{"id": "s", "security": ["x"]}]},
+]
 
 
 @pytest.fixture
@@ -161,6 +188,15 @@ class TestNormalize:
         """Anything without a name and an endpoint is not a card."""
         assert is_agent_card(doc) is False
 
+    def test_legacy_skill_security_becomes_security_requirements(self):
+        """Each legacy skill's security is converted and the raw card is untouched."""
+        raw = {**LEGACY_CARD, "skills": [{"id": "s", "name": "S", "description": "d", "tags": [], "security": [{"key": ["read"]}]}, {"id": "t", "name": "T", "description": "d", "tags": []}]}
+        card, _ = normalize_card(raw)
+        assert card["skills"][0]["securityRequirements"] == [{"schemes": {"key": {"list": ["read"]}}}]
+        assert "security" not in card["skills"][0]
+        assert "securityRequirements" not in card["skills"][1]
+        assert raw["skills"][0]["security"] == [{"key": ["read"]}]
+
 
 class TestSuggestedMapping:
     """Card to A2AAgentCreate field mapping."""
@@ -253,6 +289,17 @@ class TestAuthFields:
         fields, _ = suggest_agent_fields(card)
         assert {k: v for k, v in fields.items() if k.startswith("auth_")} == expected
 
+    def test_scheme_without_a_known_variant_suggests_nothing(self):
+        """A scheme object with no ``*SecurityScheme`` key maps to no auth."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"s": {"unknown": {}}},
+            "securityRequirements": [{"schemes": {"s": {}}}],
+        }
+        fields, warnings = suggest_agent_fields(card)
+        assert "auth_type" not in fields and warnings
+
     def test_oauth_authorization_code_maps_flow(self):
         """An authorization-code flow keeps its URLs and requested scopes."""
         flow = {"authorizationUrl": "https://idp/a", "tokenUrl": "https://idp/t", "scopes": {"read": "r"}}
@@ -264,6 +311,53 @@ class TestAuthFields:
         }
         fields, _ = suggest_agent_fields(card)
         assert fields["oauth_config"] == {"grant_type": "authorization_code", "authorization_url": "https://idp/a", "token_url": "https://idp/t", "scopes": ["write"]}
+
+    def test_schemes_in_one_requirement_are_not_mapped_separately(self):
+        """Schemes in one requirement apply together, so no single auth type is suggested."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"bearer": {"httpAuthSecurityScheme": {"scheme": "bearer"}}, "key": {"apiKeySecurityScheme": {"location": "header", "name": "X-Key"}}},
+            "securityRequirements": [{"schemes": {"bearer": {}, "key": {}}}],
+        }
+        fields, warnings = suggest_agent_fields(card)
+        assert "auth_type" not in fields
+        assert any("'bearer', 'key'" in warning and "together" in warning for warning in warnings)
+
+    def test_single_scheme_alternative_still_wins_beside_a_combined_requirement(self):
+        """A representable alternative is chosen when another requirement needs several schemes."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"bearer": {"httpAuthSecurityScheme": {"scheme": "bearer"}}, "key": {"apiKeySecurityScheme": {"location": "header", "name": "X-Key"}}},
+            "securityRequirements": [{"schemes": {"bearer": {}, "key": {}}}, {"schemes": {"bearer": {}}}],
+        }
+        fields, _ = suggest_agent_fields(card)
+        assert fields["auth_type"] == "bearer"
+
+    @pytest.mark.parametrize("flow_name, extra", [("clientCredentials", {}), ("authorizationCode", {"authorizationUrl": "https://a.example.com/auth"})])
+    def test_empty_required_scopes_are_not_widened_to_advertised_scopes(self, flow_name, extra):
+        """A requirement with no scopes requests none, even when the flow advertises some."""
+        flow = {"tokenUrl": "https://a.example.com/t", "scopes": {"read": "r", "admin": "a"}, **extra}
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {flow_name: flow}}}},
+            "securityRequirements": [{"schemes": {"s": {}}}],
+        }
+        fields, _ = suggest_agent_fields(card)
+        assert fields["oauth_config"]["scopes"] == []
+
+    def test_oauth_url_on_foreign_host_warns(self):
+        """A token URL that leaves the agent host is flagged before a client secret is entered."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com/rpc", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {"clientCredentials": {"tokenUrl": "https://evil.example.net/t"}}}}},
+            "securityRequirements": [{"schemes": {"s": {}}}],
+        }
+        _, warnings = suggest_agent_fields(card)
+        assert any("evil.example.net" in warning for warning in warnings)
 
 
 class TestRoundTrip:
@@ -308,7 +402,7 @@ class TestRoundTrip:
         assert is_agent_card(published)
         fields, warnings = suggest_agent_fields(normalize_card(published)[0])
 
-        assert warnings == []
+        assert [w for w in warnings if "OAuth" not in w] == []
         assert fields["name"] == agent.name
         assert fields["description"] == agent.description
         assert fields["endpoint_url"] == agent.endpoint_url
@@ -322,7 +416,7 @@ class TestRoundTrip:
             assert fields["auth_query_param_key"] == "api_key"
         if agent.auth_type == "oauth":
             assert fields["oauth_config"]["token_url"] == "https://idp/token"
-            assert fields["oauth_config"]["scopes"] == ["read"]
+            assert fields["oauth_config"]["scopes"] == []
 
 
 @pytest.mark.asyncio
@@ -335,7 +429,7 @@ class TestFetch:
         result = await fetch_agent_card("https://agent.example.com", None, None)
         assert result.found and result.detected_version == "1.0"
         assert result.source_url == "https://agent.example.com/.well-known/agent-card.json"
-        assert result.raw_card == V1_CARD
+        assert result.card == V1_CARD and result.raw_card is None
         assert result.suggested_agent["endpoint_url"] == "https://agent.example.com/rpc"
 
     async def test_falls_back_to_legacy_path_on_404(self, fetch):
@@ -345,11 +439,33 @@ class TestFetch:
         assert result.found and result.detected_version == "0.3"
         assert [url for url, _ in fetch.seen] == ["https://old.example.com/.well-known/agent-card.json", "https://old.example.com/.well-known/agent.json"]
 
-    async def test_no_fallback_when_1_0_path_returns_non_card(self, fetch):
-        """Only a 404 triggers fallback; a non-card 200 stops the search."""
-        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, {"hello": "world"}, None)
+    @pytest.mark.parametrize("first", [(200, {"hello": "world"}, None), (200, None, None), (301, None, None), (405, None, None), (500, None, None)])
+    async def test_legacy_path_tried_after_any_non_card_answer(self, fetch, first):
+        """Any answer other than a card, auth challenge or failure moves on to the pre-1.0 path."""
+        fetch.responses["https://old.example.com/.well-known/agent-card.json"] = first
+        fetch.responses["https://old.example.com/.well-known/agent.json"] = (200, LEGACY_CARD, None)
+        result = await fetch_agent_card("https://old.example.com", None, None)
+        assert result.found and result.detected_version == "0.3" and len(fetch.seen) == 2
+
+    async def test_v1_card_omits_duplicate_raw_card(self, fetch):
+        """A 1.0 card is already in the normalized shape, so rawCard is not repeated."""
+        fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (200, V1_CARD, None)
         result = await fetch_agent_card("https://agent.example.com", None, None)
-        assert result.found is False and len(fetch.seen) == 1
+        assert result.card == V1_CARD and result.raw_card is None
+
+    async def test_legacy_card_keeps_raw_card(self, fetch):
+        """A converted card returns the document as fetched."""
+        fetch.responses["https://old.example.com/.well-known/agent.json"] = (200, LEGACY_CARD, None)
+        result = await fetch_agent_card("https://old.example.com", None, None)
+        assert result.raw_card == LEGACY_CARD
+
+    @pytest.mark.parametrize("bad", MALFORMED_CARDS)
+    async def test_malformed_nested_fields_return_no_card(self, fetch, bad):
+        """A card with wrongly typed nested fields yields no_card, never an exception."""
+        fetch.responses["https://bad.example.com/.well-known/agent-card.json"] = (200, bad, None)
+        fetch.responses["https://bad.example.com/.well-known/agent.json"] = (404, None, None)
+        result = await fetch_agent_card("https://bad.example.com", None, None)
+        assert result.found is False and result.outcome == "no_card"
 
     async def test_forwards_headers(self, fetch):
         """Caller headers reach the fetch for authenticated cards."""
@@ -402,7 +518,7 @@ class TestFetch:
         fetch.responses["https://agent.example.com/.well-known/agent-card.json"] = (None, None, None)
         first = await fetch_agent_card("https://agent.example.com", None, None)
         second = await fetch_agent_card("https://agent.example.com", None, None)
-        assert first.model_dump() == second.model_dump() == a2a_card_import.unreachable().model_dump()
+        assert first.model_dump() == second.model_dump() == a2a_card_import._unreachable().model_dump()
 
     async def test_unreachable_on_legacy_path_after_404(self, fetch):
         """A 404 on the 1.0 path followed by a failure on the legacy path reports unreachable."""
@@ -410,10 +526,11 @@ class TestFetch:
         result = await fetch_agent_card("https://agent.example.com", None, None)
         assert result.outcome == "unreachable"
 
-    async def test_unsafe_path_returns_no_card(self, fetch):
-        """A rejected path never reaches the network."""
-        result = await fetch_agent_card("https://agent.example.com", "/../x", None)
-        assert result.found is False and fetch.seen == []
+    async def test_unsafe_path_never_reaches_the_network(self, fetch):
+        """A path rejected by the candidate builder is not fetched."""
+        with pytest.raises(CardPathError):
+            await fetch_agent_card("https://agent.example.com", "/../x", None)
+        assert fetch.seen == []
 
 
 @pytest.mark.asyncio
@@ -439,8 +556,9 @@ class TestGetJson:
 
         class _Resp:
             status_code = 200
+            headers = {}
 
-            async def aiter_bytes(self):
+            async def aiter_raw(self):
                 yield b"x" * (a2a_card_import.MAX_CARD_BYTES + 1)
 
         class _Stream:
@@ -504,7 +622,7 @@ class _Resp:
         self._body = body
         self.headers = headers or {}
 
-    async def aiter_bytes(self):
+    async def aiter_raw(self):
         yield self._body
 
 
@@ -516,6 +634,32 @@ class TestGetJsonOutcomes:
         """A 200 response with a JSON body yields the parsed document."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
         assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == (200, {"name": "a"}, None)  # pylint: disable=protected-access
+
+    @pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "zstd"])
+    async def test_content_encoded_response_is_discarded(self, monkeypatch, encoding):
+        """A compressed body is never decoded, so it cannot expand past the size cap."""
+        _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}', headers={"content-encoding": encoding}))
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+
+    async def test_requests_identity_encoding(self, monkeypatch):
+        """The request asks for an uncompressed body."""
+        _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
+        target = a2a_card_import.resolve_pinned_target.return_value
+        await a2a_card_import._get_json("https://a.example.com/card.json", None)  # pylint: disable=protected-access
+        assert target.apply_headers.call_args.args[0]["Accept-Encoding"] == "identity"
+
+    async def test_slow_response_hits_total_deadline(self, monkeypatch):
+        """A server that drips bytes past the total deadline is abandoned as unreachable."""
+        monkeypatch.setattr(a2a_card_import.settings, "federation_timeout", 0.05)
+
+        class _Slow(_Resp):
+            async def aiter_raw(self):
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    yield b" "
+
+        _stub_stream(monkeypatch, _Slow(200))
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
 
     async def test_non_200_returns_status_only(self, monkeypatch):
         """A non-200 status is reported without reading the body."""
@@ -547,6 +691,31 @@ class TestRequestSchema:
         with pytest.raises(ValueError):
             A2AFetchCardRequest(baseUrl="https://a.example.com", headers=headers)
 
+    @pytest.mark.parametrize("path", ["../etc/passwd", "/../x", "/%2e%2e/x", "/%2E%2E/x", "/a?b=c", "/a#f", "/a b"])
+    def test_unsafe_path_rejected(self, path):
+        """Traversal, percent-encoding, query and fragment fail validation."""
+        with pytest.raises(ValueError):
+            A2AFetchCardRequest(baseUrl="https://a.example.com", path=path)
+
+    @pytest.mark.parametrize("base", ["https://a.example.com/?a=b", "https://a.example.com/#f", "https://user:pw@a.example.com/"])  # pragma: allowlist secret
+    def test_base_url_with_query_fragment_or_userinfo_rejected(self, base):
+        """A base URL that would build a wrong candidate or carry credentials fails validation."""
+        with pytest.raises(ValueError):
+            A2AFetchCardRequest(baseUrl=base)
+
+    @pytest.mark.parametrize("headers", [{"Content-Length": "1"}, {"Transfer-Encoding": "chunked"}, {"Connection": "close"}, {"Upgrade": "h2c"}, {"Proxy-Authorization": "x"}, {"Accept-Encoding": "gzip"}])
+    def test_framing_headers_rejected(self, headers):
+        """Hop-by-hop and framing headers fail validation."""
+        with pytest.raises(ValueError):
+            A2AFetchCardRequest(baseUrl="https://a.example.com", headers=headers)
+
+    def test_header_count_and_size_are_capped(self):
+        """Too many headers, or too many bytes of headers, fail validation."""
+        with pytest.raises(ValueError):
+            A2AFetchCardRequest(baseUrl="https://a.example.com", headers={f"X-{i}": "v" for i in range(21)})
+        with pytest.raises(ValueError):
+            A2AFetchCardRequest(baseUrl="https://a.example.com", headers={"X-Big": "v" * 9000})
+
     def test_accepts_camel_case_body(self):
         """The documented camelCase body parses."""
         req = A2AFetchCardRequest(**{"baseUrl": "https://a.example.com", "path": "/c.json", "headers": {"Authorization": "Bearer t"}})
@@ -571,7 +740,7 @@ class TestRouteAuthorization:
         db = MagicMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), user={"email": "u@example.com", "db": db})
+            await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), request=MagicMock(spec=Request), user={"email": "u@example.com", "db": db})
 
         assert exc_info.value.status_code == 403
         fetch_mock.assert_not_awaited()
@@ -584,7 +753,7 @@ class TestRouteAuthorization:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), user=None)
+            await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), request=request, user=None)
         assert exc_info.value.status_code in (401, 403)
         del request
 
@@ -598,11 +767,35 @@ class TestRouteAuthorization:
         permission_service.check_permission = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: permission_service)
         monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
-        expected = a2a_card_import.not_found()
+        expected = a2a_card_import._not_found()
         fetch_mock = AsyncMock(return_value=expected)
         monkeypatch.setattr(main, "fetch_agent_card", fetch_mock)
 
-        result = await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com", path="/card.json", headers={"X-K": "v"}), user={"email": "u@example.com", "db": MagicMock()})
+        result = await main.fetch_a2a_agent_card(
+            A2AFetchCardRequest(baseUrl="https://a.example.com", path="/card.json", headers={"X-K": "v"}),
+            request=MagicMock(spec=Request),
+            user={"email": "u@example.com", "db": MagicMock()},
+        )
 
         assert result is expected
         fetch_mock.assert_awaited_once_with("https://a.example.com/", "/card.json", {"X-K": "v"})
+
+    @pytest.mark.asyncio
+    async def test_permission_plugin_receives_request_when_body_has_no_headers(self, monkeypatch):
+        """With a permission-check plugin, RBAC gets the FastAPI request, not the body's optional headers."""
+        # First-Party
+        from mcpgateway import main
+
+        seen = {}
+
+        async def _check(user_context, permission, **kwargs):  # pylint: disable=unused-argument
+            seen["request"] = kwargs.get("request")
+            return True
+
+        monkeypatch.setattr("mcpgateway.middleware.rbac.check_permission_inline", _check)
+        monkeypatch.setattr(main, "fetch_agent_card", AsyncMock(return_value=a2a_card_import._not_found()))  # pylint: disable=protected-access
+        request = MagicMock(spec=Request)
+
+        await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), request=request, user={"email": "u@example.com", "db": MagicMock()})
+
+        assert seen["request"] is request
