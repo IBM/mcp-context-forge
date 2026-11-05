@@ -37,6 +37,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.reverse_proxy_lifecycle import _LockedConnectionIO, _persist_unreachable_best_effort, ReverseProxyAuthenticatedContext, run_proxied_connection
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest, JsonValue
+from mcpgateway.services.reverse_proxy_relay_models import RelaySessionEntry
 from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, ReverseProxySession
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
@@ -231,10 +232,15 @@ async def list_sessions(
     """
     await _require_http_permission(request, credentials, Permissions.GATEWAYS_READ)
     requesting_user, is_admin = get_request_identity(request, credentials)
-    session_manager = await get_reverse_proxy_session_manager()
-    sessions = session_manager.list_sessions()
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        sessions = await (await get_reverse_proxy_relay()).list_session_entries()
+    else:
+        session_manager = await get_reverse_proxy_session_manager()
+        sessions = session_manager.list_sessions()
     visible = sessions if is_admin else tuple(session for session in sessions if not session.owner_email or session.owner_email == requesting_user)
-    payload = [_session_payload(session) for session in visible]
+    payload = [_session_payload(session) if isinstance(session, ReverseProxySession) else _relay_session_payload(session) for session in visible]
     return {"sessions": payload, "total": len(payload)}
 
 
@@ -245,6 +251,19 @@ def _session_payload(session: ReverseProxySession) -> dict[str, JsonValue]:
         "server_info": dict(session.server_info),
         "connected_at": session.connected_at.isoformat(),
         "last_activity": session.last_activity.isoformat(),
+        "message_count": session.message_count,
+        "bytes_transferred": session.bytes_transferred,
+        "user": session.owner_email,
+    }
+
+
+def _relay_session_payload(session: RelaySessionEntry) -> dict[str, JsonValue]:
+    """Serialize distributed directory metadata using the established response shape."""
+    return {
+        "session_id": session.connection_id,
+        "server_info": dict(session.server_info),
+        "connected_at": session.connected_at,
+        "last_activity": session.last_activity,
         "message_count": session.message_count,
         "bytes_transferred": session.bytes_transferred,
         "user": session.owner_email,
@@ -275,6 +294,17 @@ async def disconnect_session(
     """
     await _require_http_permission(request, credentials, Permissions.GATEWAYS_DELETE)
     session_manager = await get_reverse_proxy_session_manager()
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        session = session_manager.get_session(ConnectionId(session_id)) or await relay.get_session_entry(ConnectionId(session_id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        _validate_session_ownership(session, credentials, "disconnect", request=request)
+        if not await relay.disconnect_session(ConnectionId(session_id)):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        return {"status": "disconnected", "session_id": session_id}
     session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
@@ -286,6 +316,11 @@ async def disconnect_session(
     # closed immediately, then close the socket bounded
     # and best-effort: a stalled or already-lost connection cannot block cleanup.
     disconnected_stable_ids = await session_manager.disconnect(ConnectionId(session_id))
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay, release_reverse_proxy_owners_best_effort  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        await release_reverse_proxy_owners_best_effort(relay, disconnected_stable_ids)
     await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
     try:
         with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
@@ -322,6 +357,20 @@ async def send_request_to_session(
     """
     await _require_http_permission(request, credentials, Permissions.TOOLS_EXECUTE)
     session_manager = await get_reverse_proxy_session_manager()
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        session = session_manager.get_session(ConnectionId(session_id)) or await relay.get_session_entry(ConnectionId(session_id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        _validate_session_ownership(session, credentials, "send request to", request=request)
+        try:
+            await relay.send_request_by_connection_id_nowait(ConnectionId(session_id), mcp_request, timeout_seconds=float(settings.tool_timeout))
+            return {"status": "sent", "session_id": session_id}
+        except Exception:
+            LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
     session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
@@ -358,7 +407,7 @@ def _get_user_from_credentials(credentials: str | dict[str, Any] | None) -> tupl
     return None, False
 
 
-def _validate_session_ownership(session: ReverseProxySession, credentials: str | dict[str, Any] | None, action: str, *, request: Request | None = None) -> None:
+def _validate_session_ownership(session: ReverseProxySession | RelaySessionEntry, credentials: str | dict[str, Any] | None, action: str, *, request: Request | None = None) -> None:
     """Validate that the requesting user owns the session or is admin.
 
     Args:
@@ -414,7 +463,11 @@ async def sse_endpoint(
     """
     await _require_http_permission(request, credentials, Permissions.GATEWAYS_READ)
     session_manager = await get_reverse_proxy_session_manager()
-    session = session_manager.get_session(ConnectionId(session_id))
+    session: ReverseProxySession | RelaySessionEntry | None = session_manager.get_session(ConnectionId(session_id))
+    if session is None and settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        session = await (await get_reverse_proxy_relay()).get_session_entry(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
