@@ -5476,3 +5476,138 @@ class TestADFSProvider:
 
         assert result is not None
         assert result["email"] == "user@adfs.com"
+
+
+@pytest.mark.parametrize("skip_ssl_verify,expected_verify", [(False, True), (True, False)])
+def test_jwks_fetch_uses_default_verify(monkeypatch, skip_ssl_verify, expected_verify):
+    """JWKS requests honor the shared TLS setting and preserve request options."""
+    from mcpgateway.config import settings
+    from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", skip_ssl_verify)
+    uri = "https://issuer.example.com/jwks"
+    headers = {"Accept": "application/json"}
+    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+        http_client = mock_client.return_value.__enter__.return_value
+        http_client.get.return_value.json.return_value = {"keys": []}
+
+        assert _NoRedirectPyJWKClient(uri, timeout=12, headers=headers).fetch_data() == {"keys": []}
+
+        mock_client.assert_called_once_with(follow_redirects=False, timeout=12, verify=expected_verify)
+        http_client.get.assert_called_once_with(uri, headers=headers)
+
+
+def test_jwks_fetch_warns_when_tls_verification_disabled(monkeypatch, caplog):
+    """A JWKS fetch with SKIP_SSL_VERIFY=true logs one warning that names the jwks_uri."""
+    import logging
+
+    from mcpgateway.config import settings
+    from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", True)
+    uri = "https://issuer.example.com/jwks"
+    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+            _NoRedirectPyJWKClient(uri).fetch_data()
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and uri in r.getMessage()]
+    assert len(warnings) == 1
+    assert "SKIP_SSL_VERIFY" in warnings[0].getMessage()
+
+
+def test_jwks_fetch_no_warning_when_tls_verification_enabled(monkeypatch, caplog):
+    """A JWKS fetch with TLS verification on does not log the verification warning."""
+    import logging
+
+    from mcpgateway.config import settings
+    from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", False)
+    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+            _NoRedirectPyJWKClient("https://issuer.example.com/jwks").fetch_data()
+
+    assert not [r for r in caplog.records if "TLS verification disabled" in r.getMessage()]
+
+
+@pytest.fixture
+def self_signed_jwks_url(tmp_path):
+    """Serve a JWKS document over HTTPS with a self-signed certificate on localhost."""
+    import datetime
+    import ipaddress
+    import json
+    import ssl
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_file = tmp_path / "cert.pem"
+    key_file = tmp_path / "key.pem"
+    cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = json.dumps({"keys": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_file, key_file)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://127.0.0.1:{server.server_address[1]}/jwks"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_jwks_fetch_self_signed_server_rejected_when_verification_on(monkeypatch, self_signed_jwks_url):
+    """A self-signed JWKS server fails with the default TLS verification."""
+    import jwt
+
+    from mcpgateway.config import settings
+    from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", False)
+    with pytest.raises(jwt.exceptions.PyJWKClientConnectionError):
+        _NoRedirectPyJWKClient(self_signed_jwks_url).fetch_data()
+
+
+def test_jwks_fetch_self_signed_server_accepted_when_verification_off(monkeypatch, self_signed_jwks_url):
+    """A self-signed JWKS server succeeds when SKIP_SSL_VERIFY is true."""
+    from mcpgateway.config import settings
+    from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", True)
+    assert _NoRedirectPyJWKClient(self_signed_jwks_url).fetch_data() == {"keys": []}

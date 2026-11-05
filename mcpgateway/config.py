@@ -1248,7 +1248,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = Field(
         default=False,
         description="Skip SSL certificate verification for ALL outbound HTTPS requests "
-        "(federation, MCP servers, LLM providers, A2A agents). "
+        "(federation, MCP servers, LLM providers, A2A agents, SSO and OIDC discovery, JWKS key fetches). "
         "WARNING: Only enable in dev environments with self-signed certificates.",
     )
     cors_enabled: bool = True
