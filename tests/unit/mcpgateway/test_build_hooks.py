@@ -7,10 +7,12 @@ Unit tests for mcpgateway/build_hooks.py.
 """
 
 # Standard
+import importlib
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 from unittest.mock import MagicMock, patch
 import zipfile
 
@@ -67,6 +69,17 @@ def anchored(project, monkeypatch):
     fake_file.write_text("")
     monkeypatch.setattr(bh_module, "__file__", str(fake_file))
     return project
+
+
+def test_build_py_configuration() -> None:
+    """Resolve the configured hook and verify its container build copy."""
+    project_root = Path(__file__).resolve().parents[3]
+    config = tomllib.loads((project_root / "pyproject.toml").read_text())
+    module_name, class_name = config["tool"]["setuptools"]["cmdclass"]["build_py"].rsplit(".", 1)
+    assert getattr(importlib.import_module(module_name), class_name) is BuildPyWithUI
+
+    hook_path = f"{module_name.replace('.', '/')}.py"
+    assert f"COPY {hook_path} /app/{hook_path}" in (project_root / "Containerfile").read_text().splitlines()
 
 
 # ---------------------------------------------------------------------------
