@@ -112,6 +112,8 @@ class RelaySessionEntry(_RelayModel):
     message_count: int = Field(ge=0)
     bytes_transferred: int = Field(ge=0)
     server_info: dict[StrictStr, JsonValue]
+    protocol_era: StrictStr = "handshake"
+    protocol_version: StrictStr | None = None
 
 
 class RelayAuth(_RelayModel):

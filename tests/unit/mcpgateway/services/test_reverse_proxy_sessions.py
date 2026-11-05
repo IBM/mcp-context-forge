@@ -14,7 +14,7 @@ import anyio
 from anyio.lowlevel import checkpoint
 import pytest
 
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse, MODERN_PROTOCOL_META_KEY, MODERN_PROTOCOL_VERSION, ProtocolEra, ResponseMessage
 from mcpgateway.services.reverse_proxy_sessions import (
     ConnectionClosedError,
     ConnectionId,
@@ -513,6 +513,106 @@ async def test_send_notification_rejects_inactive_connection() -> None:
 
     with pytest.raises(ConnectionNotFoundError):
         await manager.send_notification(ConnectionId("inactive"), _notification_payload(), timeout_seconds=1)
+
+
+def _sent_payload(websocket: "RecordingWebSocket", index: int = 0) -> dict:
+    """Decode the JSON-RPC payload of one recorded outbound frame."""
+    return json.loads(websocket.frames[index])["payload"]
+
+
+@pytest.mark.asyncio
+async def test_modern_era_send_request_injects_protocol_version_meta() -> None:
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("modern-1"))
+    await manager.record_protocol_era(session.connection_id, ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)
+
+    async def send() -> None:
+        await manager.send_request(session.connection_id, _request_payload("modern-1"), timeout_seconds=1)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        manager.resolve_response(session.connection_id, _response("modern-1"))
+
+    assert _sent_payload(websocket)["params"] == {"_meta": {MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}
+    current = manager.get_session(session.connection_id)
+    assert current is not None
+    assert current.protocol_era is ProtocolEra.MODERN
+    assert current.protocol_version == MODERN_PROTOCOL_VERSION
+
+
+@pytest.mark.asyncio
+async def test_modern_era_injection_merges_existing_meta() -> None:
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("modern-2"))
+    await manager.record_protocol_era(session.connection_id, ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": "modern-2", "method": "tools/list", "params": {"cursor": "c-1", "_meta": {"caller": "kept"}}})
+
+    async def send() -> None:
+        await manager.send_request(session.connection_id, payload, timeout_seconds=1)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        manager.resolve_response(session.connection_id, _response("modern-2"))
+
+    assert _sent_payload(websocket)["params"] == {"cursor": "c-1", "_meta": {"caller": "kept", MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}
+
+
+@pytest.mark.asyncio
+async def test_handshake_era_send_request_leaves_payload_untouched() -> None:
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("legacy-1"))
+
+    async def send() -> None:
+        await manager.send_request(session.connection_id, _request_payload("legacy-1"), timeout_seconds=1)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        manager.resolve_response(session.connection_id, _response("legacy-1"))
+
+    assert "params" not in _sent_payload(websocket)
+    current = manager.get_session(session.connection_id)
+    assert current is not None
+    assert current.protocol_era is ProtocolEra.HANDSHAKE
+    assert current.protocol_version is None
+
+
+@pytest.mark.asyncio
+async def test_modern_era_send_request_nowait_injects_protocol_version_meta() -> None:
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("modern-3"))
+    await manager.record_protocol_era(session.connection_id, ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)
+
+    await manager.send_request_nowait(session.connection_id, _request_payload("modern-3"), timeout_seconds=1)
+
+    assert _sent_payload(websocket)["params"] == {"_meta": {MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_modern_era_notification_is_not_injected() -> None:
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("modern-4"))
+    await manager.record_protocol_era(session.connection_id, ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)
+
+    await manager.send_notification(session.connection_id, _notification_payload(), timeout_seconds=1)
+
+    assert "params" not in _sent_payload(websocket)
+
+
+@pytest.mark.asyncio
+async def test_record_protocol_era_rejects_inactive_connection() -> None:
+    manager = ReverseProxySessionManager()
+
+    with pytest.raises(ConnectionNotFoundError):
+        await manager.record_protocol_era(ConnectionId("inactive"), ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,8 @@ from mcpgateway.services.reverse_proxy_protocol import (
     JsonRpcNotification,
     JsonRpcRequest,
     JsonRpcSuccessResponse,
+    MODERN_PROTOCOL_META_KEY,
+    MODERN_PROTOCOL_VERSION,
     NotificationMessage,
     RegisterMessage,
     RegisterCompleteMessage,
@@ -30,6 +32,7 @@ from mcpgateway.services.reverse_proxy_protocol import (
     register_ack,
     register_complete,
     request,
+    with_modern_protocol_meta,
 )
 
 
@@ -197,3 +200,44 @@ def test_outgoing_error_constructor_matches_contract() -> None:
         "sessionId": "connection-1",
         "message": "invalid frame",
     }
+
+
+def test_with_modern_protocol_meta_creates_meta_when_params_absent() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+
+    injected = with_modern_protocol_meta(payload, MODERN_PROTOCOL_VERSION)
+
+    assert injected.params == {"_meta": {MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}
+    assert payload.params is None
+
+
+def test_with_modern_protocol_meta_merges_existing_meta_and_params() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"cursor": "c-1", "_meta": {"caller": "kept"}}})
+
+    injected = with_modern_protocol_meta(payload, MODERN_PROTOCOL_VERSION)
+
+    assert injected.params == {"cursor": "c-1", "_meta": {"caller": "kept", MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}
+
+
+def test_with_modern_protocol_meta_leaves_list_params_untouched() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": ["positional"]})
+
+    assert with_modern_protocol_meta(payload, MODERN_PROTOCOL_VERSION) is payload
+
+
+def test_with_modern_protocol_meta_leaves_non_mapping_meta_untouched() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": "opaque"}})
+
+    assert with_modern_protocol_meta(payload, MODERN_PROTOCOL_VERSION) is payload
+
+
+def test_with_modern_protocol_meta_is_idempotent_for_matching_version() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": {MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION}}})
+
+    assert with_modern_protocol_meta(payload, MODERN_PROTOCOL_VERSION) is payload
+
+
+def test_with_modern_protocol_meta_without_version_is_a_noop() -> None:
+    payload = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+
+    assert with_modern_protocol_meta(payload, None) is payload

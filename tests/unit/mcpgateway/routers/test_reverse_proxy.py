@@ -35,7 +35,7 @@ from mcpgateway.services.gateway_service import GatewayCatalogReconcileResult
 from mcpgateway.routers.reverse_proxy import router
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
-from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest, MODERN_PROTOCOL_VERSION, ProtocolEra
 from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError, ReverseProxyRelay
 from mcpgateway.services.reverse_proxy_relay_models import RelayOwner, RelaySessionEntry
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
@@ -123,19 +123,28 @@ class ScriptedReverseProxyWebSocket:
 
 
 class DiscoveryAnsweringWebSocket(ScriptedReverseProxyWebSocket):
-    """Scripted client that answers the discovery initialize handshake.
+    """Scripted handshake-era client answering the era probe and initialize.
 
-    Advertises empty capabilities so the handshake needs no list pagination.
+    Answers ``server/discover`` with a -32601 error and ``initialize`` with
+    empty capabilities, so negotiation falls back to the handshake and needs
+    no list pagination.
     """
 
     async def send_text(self, data: str) -> None:
-        """Capture the server frame and reply to the initialize request."""
+        """Capture the server frame and reply to discovery requests."""
         frame = orjson.loads(data)
         self.sent_frames.append(frame)
         frame_type = frame.get("type")
         if frame_type == "request":
             payload = frame["payload"]
-            if payload.get("method") == "initialize":
+            if payload.get("method") == "server/discover":
+                self.queue_client_frame(
+                    {
+                        "type": "response",
+                        "payload": {"jsonrpc": "2.0", "id": payload["id"], "error": {"code": -32601, "message": "method not found"}},
+                    }
+                )
+            elif payload.get("method") == "initialize":
                 self.queue_client_frame(
                     {
                         "type": "response",
@@ -1148,11 +1157,12 @@ class TestWebSocketRegistrationIntegration:
             await websocket_endpoint(cast(WebSocket, websocket), mock_db)
 
         frame_types = [frame["type"] for frame in websocket.sent_frames]
-        assert frame_types == ["register_ack", "request", "request", "register_complete"]
+        assert frame_types == ["register_ack", "request", "request", "request", "register_complete"]
         assert websocket.sent_frames[0]["status"] == "processing"
-        assert websocket.sent_frames[1]["payload"]["method"] == "initialize"
-        assert websocket.sent_frames[2]["payload"]["method"] == "notifications/initialized"
-        assert websocket.sent_frames[3]["status"] == "success"
+        assert websocket.sent_frames[1]["payload"]["method"] == "server/discover"
+        assert websocket.sent_frames[2]["payload"]["method"] == "initialize"
+        assert websocket.sent_frames[3]["payload"]["method"] == "notifications/initialized"
+        assert websocket.sent_frames[4]["status"] == "success"
         assert websocket.closed_code is None
 
         catalog_service.register.assert_awaited_once()
@@ -2507,6 +2517,7 @@ class TestHTTPEndpoints:
         """The typed manager is the only listing authority and preserves response fields."""
         typed_manager = ReverseProxySessionManager()
         first = asyncio.run(typed_manager.connect(Mock(), LocalSessionId("owned"), owner_email="test-user", now=datetime(2026, 8, 13, tzinfo=timezone.utc)))
+        asyncio.run(typed_manager.record_protocol_era(first.connection_id, ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION))
         asyncio.run(typed_manager.connect(Mock(), LocalSessionId("other"), owner_email="other-user"))
 
         with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
@@ -2523,6 +2534,8 @@ class TestHTTPEndpoints:
                     "message_count": 0,
                     "bytes_transferred": 0,
                     "user": "test-user",
+                    "protocol_era": "modern",
+                    "protocol_version": MODERN_PROTOCOL_VERSION,
                 }
             ],
             "total": 1,
@@ -2541,6 +2554,8 @@ class TestHTTPEndpoints:
             message_count=2,
             bytes_transferred=10,
             server_info={"name": "remote"},
+            protocol_era="modern",
+            protocol_version=MODERN_PROTOCOL_VERSION,
         )
         relay = MagicMock(list_session_entries=AsyncMock(return_value=(entry,)))
         with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)):
@@ -2548,6 +2563,8 @@ class TestHTTPEndpoints:
 
         assert response.status_code == 200
         assert response.json()["sessions"][0]["session_id"] == "remote-session"
+        assert response.json()["sessions"][0]["protocol_era"] == "modern"
+        assert response.json()["sessions"][0]["protocol_version"] == MODERN_PROTOCOL_VERSION
 
     def test_distributed_post_and_delete_route_remote_connection(self, client, monkeypatch):
         """POST and DELETE resolve a remote connection instead of returning worker-local 404."""
