@@ -163,7 +163,7 @@ CRUD endpoints for managing providers and models. See [LLM Provider Settings](..
 | `/llm/models` | POST, GET | Create / list models |
 | `/llm/models/{id}` | GET, PATCH, DELETE | Model details, update, delete |
 | `/llm/models/{id}/state` | POST | Toggle model enabled state |
-| `/llm/gateway/models` | GET | Chat dropdown model list |
+| `/llm/gateway/models` | GET | Chat dropdown model list (requires `llm.read`) |
 
 ## Admin Router (UI Backing)
 
