@@ -21,8 +21,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.reverse_proxy_dispatch import dispatch_proxied_rpc, ProxiedCallTelemetry
 from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError, StableGatewayId
 
 PROXIED_STABLE_ID = StableGatewayId("proxied-gw-1")
@@ -250,6 +252,52 @@ class TestDispatchProxiedRpcAuth:
         assert manager.send_request.await_args.kwargs["auth"] is auth
         all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_structured_logger.mock_calls)
         assert "dispatch-secret" not in all_logged_calls
+
+
+class TestDispatchProxiedRpcDistributed:
+    """Distributed flag: dispatch routes through the relay, never the local manager."""
+
+    @pytest.mark.asyncio
+    async def test_distributed_dispatch_uses_relay_stable_id_api(self, mock_structured_logger, monkeypatch):
+        """The relay owns routing; the process-local manager is never resolved."""
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(return_value=_success_response("req-1")))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with (
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(side_effect=AssertionError("local manager must not be resolved"))),
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)),
+        ):
+            response = await dispatch_proxied_rpc(
+                PROXIED_STABLE_ID,
+                _request(),
+                timeout_seconds=30.0,
+                error_factory=SampleDispatchError,
+                telemetry=_telemetry(),
+                auth=DownstreamAuth(headers={"authorization": "Bearer dispatch-secret"}, auth_type="headers"),
+            )
+
+        stable_id, request = relay.send_request_by_stable_id.await_args.args
+        assert stable_id == PROXIED_STABLE_ID
+        assert request.method == "tools/call"
+        assert relay.send_request_by_stable_id.await_args.kwargs["timeout_seconds"] == 30.0
+        assert response.payload.result == {"ok": True}
+        assert "mcp_call_started" in _structured_log_events(mock_structured_logger)
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_structured_logger.mock_calls)
+        assert "dispatch-secret" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_distributed_relay_unavailable_maps_via_error_factory(self, mock_structured_logger, monkeypatch):
+        """Relay infrastructure failure surfaces as the caller's typed error, code-only."""
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(side_effect=RelayUnavailableError()))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with (
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)),
+            pytest.raises(SampleDispatchError) as exc_info,
+        ):
+            await dispatch_proxied_rpc(PROXIED_STABLE_ID, _request(), timeout_seconds=30.0, error_factory=SampleDispatchError, telemetry=_telemetry())
+
+        assert str(exc_info.value) == "Reverse-proxy relay unavailable for gateway 'proxied-gw-1'"
 
 
 class TestProxiedCallTelemetry:
