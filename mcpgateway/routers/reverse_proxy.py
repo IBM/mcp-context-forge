@@ -25,16 +25,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocke
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import orjson
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.auth_context import get_jwt_user_email_from_payload, get_request_identity, get_user_email
 from mcpgateway.config import settings
-from mcpgateway.db import Permissions
+from mcpgateway.db import get_db, Permissions
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.reverse_proxy_lifecycle import _LockedConnectionIO, ReverseProxyAuthenticatedContext, run_proxied_connection
+from mcpgateway.services.reverse_proxy_lifecycle import _LockedConnectionIO, _persist_unreachable_best_effort, ReverseProxyAuthenticatedContext, run_proxied_connection
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest, JsonValue
 from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, ReverseProxySession
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
@@ -173,17 +174,24 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Reverse
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    db: Session = Depends(get_db),
+):
     """WebSocket endpoint for reverse proxy connections.
 
     Authentication always requires a Bearer token in the Authorization header.
     The maintained client contract drives the lifecycle: ``register`` is
-    acknowledged as ``register_ack(processing)`` and closed with
-    ``register_complete(success)``. Heartbeats are acknowledgements, not
-    pongs. One continuously-running receive pump owns every inbound frame.
+    acknowledged as ``register_ack(processing)`` before catalog persistence
+    and MCP discovery run, then ``register_complete(success|error)`` closes
+    the registration exchange. Heartbeats are acknowledgements, not pongs.
+    One continuously-running receive pump owns every inbound frame while
+    registration and discovery run as a sibling task, so the client's own
+    JSON-RPC discovery responses always resolve.
 
     Args:
         websocket: WebSocket connection.
+        db: Database session.
     """
     try:
         authenticated_context = await _authenticate_reverse_proxy_websocket(websocket)
@@ -201,7 +209,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # Wrap the transport in the connection's shared I/O lock, then hand the
     # accepted connection to the lifecycle service.
     connection_io = _LockedConnectionIO(websocket, anyio.Lock())
-    await run_proxied_connection(connection_io, authenticated_context)
+    await run_proxied_connection(connection_io, authenticated_context, db)
 
 
 @router.get("/sessions")
@@ -277,7 +285,8 @@ async def disconnect_session(
     # Clear typed session state first so stable mappings and pending calls fail
     # closed immediately, then close the socket bounded
     # and best-effort: a stalled or already-lost connection cannot block cleanup.
-    await session_manager.disconnect(ConnectionId(session_id))
+    disconnected_stable_ids = await session_manager.disconnect(ConnectionId(session_id))
+    await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
     try:
         with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
             await session.websocket.close()
