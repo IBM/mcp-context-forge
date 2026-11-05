@@ -1691,7 +1691,25 @@ const handleGatewayTestSubmit = async function (e) {
       body: JSON.stringify(payload),
     });
 
-    const result = await response.json();
+    let result = null;
+    try {
+      result = await response.json();
+    } catch (parseError) {
+      if (response.ok) {
+        throw parseError;
+      }
+    }
+
+    if (!response.ok) {
+      let detail = response.statusText;
+      if (result !== null) {
+        detail =
+          typeof result.detail === "string"
+            ? result.detail
+            : JSON.stringify(result.detail ?? result);
+      }
+      throw new Error(`HTTP ${response.status}: ${detail}`);
+    }
 
     const isSuccess =
       result.statusCode && result.statusCode >= 200 && result.statusCode < 300;

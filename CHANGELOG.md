@@ -22,6 +22,7 @@
     - A value with a `.` or `..` segment returns an error.
 - **LLM gateway models authorization** ([#7388](https://github.com/IBM/mcp-context-forge/pull/7388)) - `GET /llm/gateway/models` and `GET /v1/llm/gateway/models` now require the `llm.read` RBAC permission. Previously, authentication alone passed this route. It now matches `GET /llmchat/gateway/models` and `GET /v1/models`. All built-in roles hold `llm.read`. Principals without `llm.read` (no roles, custom roles, or a custom `DEFAULT_USER_ROLE`) now receive `403`.
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+- **Gateway test endpoints require `gateways.update` and ownership for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` return 403 when the target MCP server has a stored basic, bearer, custom-header, or OAuth credential. An OAuth authorization-code token is the caller's own and is not affected. To pass, the caller needs `gateways.update` in the MCP server's team and must pass the ownership check of `PUT /gateways/{gateway_id}`. The owner, a team owner of a team MCP server, and a platform admin pass that check. For an MCP server without a team, `gateways.update` must come from a global role. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
 ### Security
 
@@ -65,6 +66,10 @@
 - **A2A task and push notification config routes** ([#6702](https://github.com/IBM/mcp-context-forge/issues/6702)) - Clients can now read and manage A2A task data through `/v1/a2a/{agent_id}/tasks`. `GET` lists tasks with `pageSize`, `pageToken`, and `nextPageToken` pagination, `GET .../{task_id}` returns one task, and `POST .../{task_id}/cancel` cancels it. `POST`, `GET`, and `DELETE` on `.../{task_id}/pushNotificationConfigs` manage push notification configs. Reads require `a2a.read`, cancel requires `a2a.invoke`, and config writes require `a2a.update`. Routes apply the same team and visibility scoping as the internal handlers, and return 404 for tasks the caller cannot see. Responses never include `auth_token`. The `/_internal/a2a/*` routes are unchanged.
 
 - **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
+
+### Security
+
+- **Gateway connectivity test credential gate** - Gateway connectivity tests send stored MCP server credentials only for callers with `gateways.update` who pass the MCP server ownership check.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
