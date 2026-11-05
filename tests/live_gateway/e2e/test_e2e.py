@@ -64,7 +64,7 @@ from mcp import ClientSession, MCPError as McpError
 from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server.lowlevel.server import Server
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ListPromptsResult, ListToolsResult, PaginatedRequestParams, Prompt, Tool
 from mcp_types import LoggingMessageNotificationParams
 import pytest
@@ -501,9 +501,10 @@ def prompt_error_upstream() -> Generator[str, None, None]:
         raise McpError(code=-32602, message="Invalid params from the strict upstream")
 
     @app.prompt()
-    def custom() -> str:
+    def custom(ctx: Context) -> str:
         """Answer a JSON-RPC error with a server-defined code and data."""
-        raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later"})
+        arguments = (ctx.request_context.params or {}).get("arguments")
+        raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later", "arguments": arguments})
 
     listener = socket.socket()
     listener.bind(("0.0.0.0", 0))
@@ -1006,7 +1007,7 @@ class TestPromptErrorTranslation:
         """Check the failure shapes an authorized caller sees through ``get_prompt(name, arguments)``."""
         await self._expect_invalid_params(lambda: get_prompt(prompts["strict"], {}), "Invalid params from the strict upstream")
         custom = await self._json_rpc_error(lambda: get_prompt(prompts["custom"], {}))
-        assert (custom.code, custom.message, custom.data) == (-32001, "Custom upstream failure", {"hint": "retry later"}), custom
+        assert (custom.code, custom.message, custom.data) == (-32001, "Custom upstream failure", {"hint": "retry later", "arguments": {}}), custom
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"]), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {}), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"other": "x"}), "Missing required arguments: name")

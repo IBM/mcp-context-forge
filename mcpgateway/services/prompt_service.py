@@ -474,7 +474,7 @@ class PromptService(BaseService):
         gateway_id = str(getattr(gateway, "id", ""))
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
         registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-        prompt_arguments = arguments or None
+        prompt_arguments = arguments if arguments is not None else {}
         # CWE-400: Validate meta_data limits before forwarding to upstream
         _validate_meta_data(meta_data)
 

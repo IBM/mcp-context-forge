@@ -4059,7 +4059,8 @@ class TestFetchGatewayPromptRegistryPath:
         return prompt
 
     @pytest.mark.asyncio
-    async def test_fetch_gateway_prompt_uses_registry_when_downstream_session_id_present(self):
+    @pytest.mark.parametrize(("arguments", "expected"), [(None, {}), ({}, {}), ({"a": "b"}, {"a": "b"})])
+    async def test_fetch_gateway_prompt_uses_registry_when_downstream_session_id_present(self, arguments, expected):
         """Registry path runs when Mcp-Session-Id is in scope and the registry is initialised.
 
         Covers prompt_service.py:402-403, 405, 408-409, 416.
@@ -4090,11 +4091,12 @@ class TestFetchGatewayPromptRegistryPath:
         with (
             patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-xyz"),
             patch("mcpgateway.services.prompt_service.get_upstream_session_registry", return_value=fake_registry),
-            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result) as get_prompt,
         ):
-            result = await service._fetch_gateway_prompt_result(prompt, {"a": "b"}, meta_data=None)
+            result = await service._fetch_gateway_prompt_result(prompt, arguments, meta_data=None)
 
         fake_registry.acquire.assert_called_once()
+        get_prompt.assert_awaited_once_with(fake_upstream.session, "gw-prompt", expected, None)
         assert result.description == "from registry"
 
     @pytest.mark.asyncio
