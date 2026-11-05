@@ -2210,6 +2210,7 @@ class A2AAgentService(BaseService):
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
         bearer_token: Optional[str] = None,
+        authenticated_bearer_token: Optional[str] = None,
         content_type: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
@@ -2232,6 +2233,7 @@ class A2AAgentService(BaseService):
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
             bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
+            authenticated_bearer_token: Authenticated bearer exposed only through the opt-in OBO plugin bridge.
             content_type: Content-Type of the inbound request (for plugin context).
             request_headers: Inbound request headers (for plugin context in PRE_INVOKE hook).
 
@@ -2361,6 +2363,13 @@ class A2AAgentService(BaseService):
         # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
         # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
         plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
+        allowlisted_headers = {name.lower() for name in agent_passthrough_headers or []}
+        obo_bridge_active = bool(settings.a2a_obo_bearer_bridge_enabled and authenticated_bearer_token and "authorization" in allowlisted_headers)
+        if obo_bridge_active:
+            # _prepare_header_flows may return one dict for both flows; split them so the
+            # caller bearer is visible to the plugin only, never to the downstream request.
+            downstream_headers = dict(downstream_headers)
+            plugin_headers = {**plugin_headers, "authorization": f"Bearer {authenticated_bearer_token}"}
 
         # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
         # Counter metric enables alerting/aggregation without log volume explosion.
@@ -2522,11 +2531,25 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.headers is not None:
                         plugin_returned = pre_result.modified_payload.headers.model_dump()
                         plugin_returned_headers = {str(key): str(value) for key, value in plugin_returned.items()}
+                        if obo_bridge_active:
+                            # Only a genuinely exchanged credential may leave the gateway.
+                            plugin_returned_headers = {
+                                key: value for key, value in plugin_returned_headers.items() if not (key.lower() == "authorization" and value.strip() == f"Bearer {authenticated_bearer_token}")
+                            }
+                            if not any(key.lower() == "authorization" for key in plugin_returned_headers):
+                                plugin_returned_headers["authorization"] = ""
             except PluginViolationError as e:
-                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+                if obo_bridge_active:
+                    # Plugin text may echo token material while the bearer bridge is active.
+                    logger.error("Plugin RBAC violation during OBO bridge for A2A agent %s", agent_id)
+                else:
+                    logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {unexpected_error_detail(e)}") from e
             except Exception as e:
-                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
+                if obo_bridge_active:
+                    logger.error("Pre-invoke plugin error during OBO bridge for A2A agent %s", agent_id)
+                else:
+                    logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {unexpected_error_detail(e)}") from e
 
         if plugin_returned_headers is not None:

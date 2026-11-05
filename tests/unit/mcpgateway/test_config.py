@@ -38,6 +38,11 @@ def test_admin_ui_deprecation_notice_flag(monkeypatch, configured, expected):
     assert configured_settings.mcpgateway_ui_deprecation_notice_enabled is expected
 
 
+def test_a2a_obo_bearer_bridge_defaults_disabled():
+    """Keep the authenticated bearer bridge opt-in."""
+    assert Settings(_env_file=None).a2a_obo_bearer_bridge_enabled is False
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)
