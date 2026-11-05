@@ -9,7 +9,7 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 import base64
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 import logging
@@ -35,10 +35,11 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache, ToolLookupCache
 from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser
+from mcpgateway.db import Base, EmailUser
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import Base, Server as DbServer, server_tool_association
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _build_pinned_rest_http_client,
@@ -54,6 +55,7 @@ from mcpgateway.services.tool_service import (
     apply_mapping_into_target,
     extract_using_jq,
     TextContent,
+    TOOL_ERROR_CODE,
     ToolError,
     ToolInvocationError,
     ToolNameConflictError,
@@ -62,7 +64,6 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolTimeoutError,
     ToolValidationError,
-    TOOL_ERROR_CODE,
 )
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
@@ -2349,20 +2350,21 @@ class TestToolService:
 
         assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
 
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
-            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
-        )
+        assert (
+            settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds
+        ), f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
         budget = 0.5 * settings.regex_timeout_seconds
-        assert max(lateness) < budget, (
-            f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s -- a missing offload stalls near the sandbox's own timeout, not forever, so this must stay tight"
-        )
+        assert (
+            max(lateness) < budget
+        ), f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s -- a missing offload stalls near the sandbox's own timeout, not forever, so this must stay tight"
 
         assert preview_result.validated is False
-        assert any(w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings), (
-            f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
-        )
+        assert any(
+            w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings
+        ), f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
 
     @pytest.mark.timeout(30)
     @pytest.mark.asyncio
@@ -2419,9 +2421,9 @@ class TestToolService:
 
         assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
         max_supported_regex_timeout_seconds = 1.0
-        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
-            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
-        )
+        assert (
+            settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds
+        ), f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
         budget = 0.9 * settings.regex_timeout_seconds
         assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
         assert result.is_error, "the hostile output must fail validation, not pass"
@@ -3708,7 +3710,7 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp_creates_client_lifecycle_spans(self, tool_service, mock_tool, test_db):
-        """Non-pooled MCP calls should emit client call, initialize, and request spans in order."""
+        """Emit call and request spans while the proxy client owns initialization tracing."""
         # Standard
         from contextlib import contextmanager
         from types import SimpleNamespace
@@ -3787,7 +3789,6 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
-            patch("mcpgateway.services.tool_service.otel_context_active", return_value=True),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-123"),
         ):
             mock_settings.mcp_session_pool_enabled = False
@@ -3809,20 +3810,29 @@ class TestToolService:
             "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
             "source": "api-server-runs",
         }
-        assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
+        assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.request"]
         assert "mcp.client.request" in span_names
         assert "mcp.client.response" in span_names
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
-        """Registry-reused MCP sessions must NOT receive traceparent/tracestate (#4205).
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"])
+    @pytest.mark.parametrize("failed", [False, True])
+    async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db, monkeypatch, transport, failed):
+        """Reuse traced sessions with isolated per-call metadata and correct outcomes."""
+        # Third-Party
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        from opentelemetry.trace import StatusCode
 
-        The registry reuses one upstream ClientSession across multiple tool calls
-        in a downstream session. Per-request trace headers would be pinned to the
-        first call and replayed on unrelated later ones, corrupting distributed
-        traces. The tool_service therefore skips per-request header injection
-        on the registry path.
-        """
+        # First-Party
+        from mcpgateway import observability
+
+        provider = TracerProvider()
+        exporter = InMemorySpanExporter()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer(__name__)
+        monkeypatch.setattr(observability, "_TRACER", tracer)
         mock_gateway = SimpleNamespace(
             id="42",
             name="test_gateway",
@@ -3834,11 +3844,11 @@ class TestToolService:
             auth_type="bearer",
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
-            transport="STREAMABLEHTTP",
+            transport=transport,
             passthrough_headers=[],
         )
         mock_tool.integration_type = "MCP"
-        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.request_type = "SSE" if transport == "SSE" else "StreamableHTTP"
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_type = None
         mock_tool.auth_value = None
@@ -3861,7 +3871,7 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
+        expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")], is_error=failed)
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
         upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
@@ -3871,15 +3881,11 @@ class TestToolService:
         @asynccontextmanager
         async def mock_registry_acquire(**kwargs):
             captured_registry_headers.update(kwargs.get("headers") or {})
-            upstream = SimpleNamespace(session=upstream_session_mock)
+            upstream = SimpleNamespace(session=upstream_session_mock, upstream_session_id="upstream-assigned")
             yield upstream
 
         mock_registry = MagicMock()
         mock_registry.acquire = mock_registry_acquire
-
-        @contextmanager
-        def noop_span(name, _attributes=None):
-            yield MagicMock()
 
         # Pin a downstream session id in the ContextVar so the registry path is taken.
         # First-Party
@@ -3892,15 +3898,18 @@ class TestToolService:
                 patch("mcpgateway.services.tool_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
-                patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
-                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
                 patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
             ):
                 mock_settings.default_passthrough_headers = []
                 mock_settings.tool_timeout = 60
 
-                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+                metadata = {"traceparent": "stale", "TraceState": "stale=value", "baggage": "password=stale", "source": "client"}
+                for _ in range(2):
+                    returns[:] = [mock_tool, mock_gateway, mock_gateway]
+                    with tracer.start_as_current_span("incoming"):
+                        result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None, meta_data=metadata)
+                assert metadata["traceparent"] == "stale"
         finally:
             request_headers_var.reset(headers_token)
 
@@ -3911,6 +3920,25 @@ class TestToolService:
         assert "traceparent" not in captured_registry_headers, "traceparent must not be injected into registry-reused sessions"
         assert "tracestate" not in captured_registry_headers, "tracestate must not be injected into registry-reused sessions"
         assert "X-Correlation-ID" not in captured_registry_headers, "X-Correlation-ID must not be injected into registry-reused sessions"
+
+        spans = exporter.get_finished_spans()
+        requests = [item for item in spans if item.name == "mcp.client.request"]
+        calls = [item for item in spans if item.name == "mcp.client.call"]
+        invokes = [item for item in spans if item.name == "tool.invoke"]
+        assert len(requests) == len(calls) == len(invokes) == 2
+        assert requests[0].context.trace_id != requests[1].context.trace_id
+        assert not any(item.name == "mcp.client.initialize" for item in spans)
+        for request_span, call_span, invoke_span, invocation in zip(requests, calls, invokes, upstream_session_mock.call_tool.await_args_list):
+            assert request_span.parent.span_id == call_span.context.span_id
+            gateway_span = next(item for item in spans if item.context.span_id == call_span.parent.span_id)
+            assert gateway_span.name == "tool.gateway_call"
+            assert gateway_span.parent.span_id == invoke_span.context.span_id
+            sent_meta = invocation.kwargs["meta"]
+            assert sent_meta == {"source": "client", "traceparent": f"00-{request_span.context.trace_id:032x}-{request_span.context.span_id:016x}-{int(request_span.context.trace_flags):02x}"}
+            for item in (request_span, call_span, invoke_span):
+                assert item.attributes["gateway.upstream.session_id"] == "upstream-assigned"
+                assert item.status.status_code == (StatusCode.ERROR if failed else StatusCode.OK)
+        provider.shutdown()
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_two_downstream_sessions_hit_registry_with_distinct_ids(self, tool_service, mock_tool, test_db):
@@ -10717,6 +10745,7 @@ class TestInvokeToolDirect:
         """
         # Use a gateway with query_param auth so the snapshot code in invoke_tool_direct
         # builds a decrypted param dict that sanitize_exception_message can redact.
+        # First-Party
         from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
 
         secret_token = "super-secret-api-key"  # pragma: allowlist secret
@@ -11023,7 +11052,9 @@ class TestInvokeToolDirectProxyViaHeader:
             mock_settings.mcp_session_pool_enabled = False
             mock_settings.default_passthrough_headers = []
 
-            result = await tool_service.invoke_tool(test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"])
+            result = await tool_service.invoke_tool(
+                test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"]
+            )
 
         assert result.is_error is True
         assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
@@ -12017,3 +12048,15 @@ class TestGrpcToolInvocation:
 #   converts cancellation into TimeoutError in some Python event-loop states. Since the
 #   pattern is structurally identical in all three branches, protecting it in one branch
 #   (gRPC) is sufficient to detect a regression that would affect all three.
+
+
+@pytest.mark.parametrize("carrier", [{}, {"traceparent": "invalid"}, {"traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01", "tracestate": "vendor=current", "baggage": "tenant.id=current"}])
+def test_upstream_call_metadata_replaces_reserved_fields_without_mutation(carrier):
+    """Drop stale propagation fields while preserving unrelated caller metadata."""
+    # First-Party
+    from mcpgateway.services.tool_service import _upstream_call_meta
+
+    original = {"TraceParent": "old", "TraceState": "old", "Baggage": "old", "source": "client"}
+    result = _upstream_call_meta(original, carrier)
+    assert result == {"source": "client", **(carrier if carrier.get("tracestate") else {})}
+    assert original == {"TraceParent": "old", "TraceState": "old", "Baggage": "old", "source": "client"}
