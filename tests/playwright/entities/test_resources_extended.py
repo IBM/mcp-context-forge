@@ -11,6 +11,7 @@ and status badges.
 
 # Standard
 import logging
+import re
 import uuid
 
 # Third-Party
@@ -941,3 +942,50 @@ class TestResourcesStatusBadges:
         third_badge = badges.nth(2)
         status_text = third_badge.text_content().strip()
         assert "Active" in status_text or "Inactive" in status_text, f"Unexpected status badge: '{status_text}'"
+
+
+@pytest.mark.ui
+@pytest.mark.resources
+class TestResourceDuplicateUriFormValidation:
+    """Preserve URI conflict attribution through the shipped resource form."""
+
+    def test_duplicate_resource_uri_shows_inline_error_and_focus(self, resources_page: ResourcesPage, admin_api):
+        """Duplicate submission preserves the original row and focuses the highlighted URI field."""
+        resources_page.navigate_to_resources_tab()
+        resources_page.wait_for_resources_table_loaded()
+        suffix = uuid.uuid4().hex
+        uri = f"file://duplicate-{suffix}.txt"
+        names = [f"original-{suffix}", f"duplicate-{suffix}"]
+        resource_id = None
+        try:
+            for index, name in enumerate(names):
+                with resources_page.page.expect_response(lambda response: response.url.endswith("/admin/resources") and response.request.method == "POST") as received:
+                    resources_page.create_resource(uri=uri, name=name, mime_type="text/plain", description="Conflict regression")
+                response = received.value
+                assert response.status == (200 if index == 0 else 409), response.text()
+                if index == 0:
+                    listing = admin_api.get("/resources?limit=0")
+                    assert listing.status == 200
+                    rows = listing.json()
+                    if isinstance(rows, dict):
+                        rows = rows["resources"]
+                    resource_id = next(row["id"] for row in rows if row["uri"] == uri)
+
+            message = response.json()["message"]
+            assert message == f"Public resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
+            error = resources_page.add_resource_form.locator('p[data-error-message-for="uri"]')
+            expect(error).to_be_visible()
+            expect(error).to_have_text(message)
+            expect(resources_page.resource_uri_input).to_have_class(re.compile(r"border-red-500"))
+            expect(resources_page.resource_uri_input).to_be_focused()
+            listing = admin_api.get("/resources?limit=0")
+            assert listing.status == 200
+            rows = listing.json()
+            if isinstance(rows, dict):
+                rows = rows["resources"]
+            matching = [row for row in rows if row["uri"] == uri]
+            assert [(row["id"], row["name"]) for row in matching] == [(resource_id, names[0])]
+        finally:
+            if resource_id:
+                deleted = admin_api.delete(f"/resources/{resource_id}")
+                assert deleted.status == 200, deleted.text()

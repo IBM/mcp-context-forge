@@ -5794,3 +5794,76 @@ async def test_catalog_continuation_cross_replica(jwt_token: str) -> None:
             for endpoint, item_id in reversed(owned):
                 response = await _pagination_fixture_request(api, "DELETE", f"{BASE_URL}/{endpoint}/{item_id}")
                 assert response.status_code in (200, 204, 404), response.text
+
+
+@pytest.mark.parametrize("visibility", ["public", "team", "private"])
+def test_resource_uri_conflict_http_contract(admin_api: APIRequestContext, rbac_team: dict[str, Any], visibility: str) -> None:
+    """Resource creation and update retain conflict responses and persisted state."""
+    suffix = uuid.uuid4().hex
+    uri = f"file://conflict-{suffix}.txt"
+    scope = {"visibility": visibility, "team_id": rbac_team["id"]}
+    ids = []
+    try:
+        first = admin_api.post("/resources", data={"resource": {"uri": uri, "name": f"original-{suffix}", "content": "test"}, **scope})
+        assert first.status == 200, first.text()
+        original = first.json()
+        ids.append(original["id"])
+        target_uri = f"file://available-{suffix}.txt"
+        target = admin_api.post("/resources", data={"resource": {"uri": target_uri, "name": original["name"], "content": "test"}, **scope})
+        assert target.status == 200, target.text()
+        target_id = target.json()["id"]
+        ids.append(target_id)
+        for inactive in (False, True):
+            if inactive:
+                state = admin_api.post(f"/resources/{original['id']}/state?activate=false")
+                assert state.status == 200, state.text()
+            message = f"{visibility.capitalize()} resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
+            if inactive:
+                message += f" (currently inactive, ID: {original['id']})"
+            duplicate = admin_api.post("/resources", data={"resource": {"uri": uri, "name": f"duplicate-{suffix}", "content": "test"}, **scope})
+            assert duplicate.status == 409, duplicate.text()
+            assert duplicate.json() == {"detail": message}
+            update = admin_api.put(f"/resources/{target_id}", data={"uri": uri})
+            assert update.status == 409, update.text()
+            assert update.json() == {"detail": message}
+            info = admin_api.get(f"/resources/{target_id}/info")
+            assert info.status == 200, info.text()
+            assert info.json()["uri"] == target_uri
+        unchanged = admin_api.put(f"/resources/{target_id}", data={"uri": target_uri, "description": "Updated description"})
+        assert unchanged.status == 200, unchanged.text()
+        assert unchanged.json()["description"] == "Updated description"
+    finally:
+        for resource_id in reversed(ids):
+            response = admin_api.delete(f"/resources/{resource_id}")
+            assert response.status == 200, response.text()
+
+
+def test_resource_uri_conflict_http_denials(admin_api: APIRequestContext, playwright: Playwright, create_user: Any) -> None:
+    """Unauthenticated and unprivileged callers receive no URI conflict details."""
+    suffix = uuid.uuid4().hex
+    ids = []
+    email, _, user = create_user()
+    assert user.status == 201, user.text()
+    try:
+        for name in ("occupied", "target"):
+            response = admin_api.post(
+                "/resources",
+                data={"resource": {"uri": f"file://{name}-{suffix}.txt", "name": f"{name}-{suffix}", "content": "test"}, "visibility": "public"},
+            )
+            assert response.status == 200, response.text()
+            ids.append(response.json()["id"])
+        for token in ("", _make_jwt(email, teams=[])):
+            context = ApiTestHelper.new_context(playwright, BASE_URL, token)
+            try:
+                response = context.put(f"/resources/{ids[1]}", data={"uri": f"file://occupied-{suffix}.txt"})
+                assert response.status == 403, response.text()
+                assert "already exists" not in response.text()
+            finally:
+                context.dispose()
+        response = admin_api.get(f"/resources/{ids[1]}/info")
+        assert response.status == 200, response.text()
+        assert response.json()["uri"] == f"file://target-{suffix}.txt"
+    finally:
+        for resource_id in reversed(ids):
+            response = admin_api.delete(f"/resources/{resource_id}")
+            assert response.status == 200, response.text()
