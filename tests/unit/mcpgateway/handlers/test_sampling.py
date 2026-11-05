@@ -195,7 +195,7 @@ async def test_auth_all_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
-    """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
+    """When verify_credentials_cached raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
     # Third-Party
     from fastapi import HTTPException  # noqa: E402
@@ -227,7 +227,7 @@ async def test_auth_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_valid_token(monkeypatch):
-    # Simulate verify_credentials always succeeding
+    # Simulate verify_credentials_cached always succeeding
     async def fake_verify(token):
         assert token == "good-token"
         return {"ok": True}
@@ -246,7 +246,7 @@ async def test_auth_valid_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_invalid_token_raises(monkeypatch):
-    # Simulate verify_credentials raising (invalid token scenario)
+    # Simulate verify_credentials_cached raising (invalid token scenario)
     # Third-Party
     from fastapi import HTTPException  # noqa: E402
 

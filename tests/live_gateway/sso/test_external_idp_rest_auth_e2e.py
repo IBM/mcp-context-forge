@@ -25,7 +25,7 @@ Requirements:
       default (-p no:playwright), so pass -p playwright to pytest.
     - The positive tests (trusted tokens on GET /tools, POST /rpc and POST /mcp/) also need an https Keycloak. verify_oauth_access_token accepts
       only an https issuer and jwks_uri, and the Keycloak of the sso compose profile is plain
-      http, so these four tests skip against it.
+      http, so these tests skip against it.
 
 Usage, deny paths only (sso compose profile):
     SSO_API_TOKEN_AUTH_ENABLED=true docker compose --profile sso up -d

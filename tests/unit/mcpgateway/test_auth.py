@@ -6760,7 +6760,7 @@ class TestRouteIdpIssuedToken:
 
         assert result is None
         assert called is False
-        assert responses == []  # Downstream verify_credentials produces the 401.
+        assert responses == []  # Downstream verify_credentials_cached produces the 401.
 
     @pytest.mark.asyncio
     async def test_idp_token_routes_to_oauth_even_when_issuer_verification_disabled(self, monkeypatch):
@@ -7211,14 +7211,17 @@ class TestAuthJwtExternalIdp:
     SERVICE_EMAIL = "svc-svc-client@keycloak.service.local"
 
     @staticmethod
-    def _setup(monkeypatch, *, sso_enabled=True):
-        """Configure settings and the OAuth router stub for a foreign-issuer token."""
+    def _setup(monkeypatch, *, sso_enabled=True, stub_oauth=True):
+        """Configure settings and, unless ``stub_oauth`` is false, the OAuth router stub for a foreign-issuer token."""
         monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
         monkeypatch.setattr(settings, "jwt_issuer_verification", True)
         monkeypatch.setattr(settings, "sso_api_token_auth_enabled", sso_enabled)
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
         monkeypatch.setattr(settings, "require_user_in_db", False)
+
+        if not stub_oauth:
+            return
 
         async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
             return OAuthAuthResult.NOT_APPLICABLE
@@ -7237,8 +7240,47 @@ class TestAuthJwtExternalIdp:
         claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
         identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
         verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        resolve_teams = AsyncMock(return_value=[])
 
         with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.utils.verify_credentials.build_external_identity", AsyncMock(return_value=identity)),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+            patch("mcpgateway.auth.resolve_session_teams", resolve_teams),
+        ):
+            result = await handler._auth_jwt(token=tok)
+
+        assert result is True
+        verify_external.assert_awaited_once()
+        resolve_teams.assert_awaited_once()
+        assert self.SERVICE_EMAIL in resolve_teams.await_args.args
+        assert user_context_var.get()["email"] == self.SERVICE_EMAIL
+        assert not any(m["type"] == "http.response.start" for m in responses)
+
+    @pytest.mark.asyncio
+    async def test_oauth_server_out_of_allowlist_trusted_issuer_accepted(self, monkeypatch):
+        """On an ``oauth_enabled`` server whose allowlist excludes the issuer, a trusted-provider token is accepted."""
+        self._setup(monkeypatch, stub_oauth=False)
+        handler, responses = _make_handler()
+        tok = _make_idp_token()
+        claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
+        identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
+        verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": ["https://other-idp.example.com"]}
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server
+        db_cm = MagicMock()
+        db_cm.__aenter__ = AsyncMock(return_value=db_mock)
+        db_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=db_cm),
             patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
             patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
             patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
@@ -7252,23 +7294,25 @@ class TestAuthJwtExternalIdp:
 
         assert result is True
         verify_external.assert_awaited_once()
-        assert user_context_var.get()["email"] == self.SERVICE_EMAIL
         assert not any(m["type"] == "http.response.start" for m in responses)
 
     @pytest.mark.asyncio
-    async def test_untrusted_foreign_issuer_still_rejected(self, monkeypatch):
-        """A foreign issuer that ``verify_credentials_cached`` rejects yields a canonical 401."""
+    async def test_untrusted_issuer_real_dispatch_rejected(self, monkeypatch):
+        """A foreign issuer that no trusted provider verifies yields a canonical 401 through the real dispatch."""
         self._setup(monkeypatch)
         handler, responses = _make_handler()
-        tok = _make_idp_token()
+        verify_external = AsyncMock(return_value=(None, None))
 
-        with patch(
-            "mcpgateway.transports.streamablehttp_transport.verify_credentials_cached",
-            AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")),
+        with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
         ):
-            result = await handler._auth_jwt(token=tok)
+            result = await handler._auth_jwt(token=_make_idp_token())
 
         assert result is False
+        verify_external.assert_awaited_once()
         start = next(m for m in responses if m["type"] == "http.response.start")
         assert start["status"] == 401
         assert (b"www-authenticate", b"Bearer") in start["headers"]

@@ -6568,8 +6568,10 @@ class _StreamableHttpAuthHandler:
             resolution succeeded, ``FAILED`` when an error response has
             already been sent, ``NOT_APPLICABLE`` when the target virtual
             server does not use OAuth *or* when this server is not the right
-            handler for the token (issuer outside the allowlist); in the
-            latter case the caller should defer to internal JWT verification.
+            handler for the token (issuer outside the allowlist). The caller
+            then defers to ``verify_credentials_cached()``. That function
+            accepts trusted external-IdP issuers and rejects all other
+            foreign issuers.
         """
         if unverified is None:
             try:
@@ -6624,21 +6626,17 @@ class _StreamableHttpAuthHandler:
 
         # Check whether this server is the right handler for the token. If
         # the issuer is not in the allowlist (including tokens with a
-        # missing/empty iss), return NOT_APPLICABLE so the caller can fall
-        # through to internal JWT verification. This preserves legacy
-        # behaviour on ``oauth_enabled`` servers for gateway-issued JWTs
-        # whose iss is missing or predates the current ``settings.jwt_issuer``
-        # value — those tokens would previously have been accepted by
-        # ``verify_credentials()`` when ``JWT_ISSUER_VERIFICATION=false``,
-        # and rejecting them here would be a regression. Tokens with a
-        # non-matching iss that are *not* legitimate internal JWTs will
-        # still fail signature verification in the internal path and be
-        # rejected there.
+        # missing/empty iss), return NOT_APPLICABLE so the caller defers to
+        # ``verify_credentials_cached()``. This preserves legacy behaviour on
+        # ``oauth_enabled`` servers for gateway-issued JWTs whose iss is
+        # missing or predates the current ``settings.jwt_issuer`` value.
+        # ``verify_credentials_cached()`` accepts trusted external-IdP issuers
+        # and rejects all other foreign issuers.
         token_issuer = unverified.get("iss")
         normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
         if not isinstance(token_issuer, str) or token_issuer.rstrip("/") not in normalized_allowed:
             logger.info(
-                "Token issuer %s not in allowlist for server %s; deferring to internal verify",
+                "Token issuer %s not in allowlist for server %s; deferring to verify_credentials_cached",
                 sanitize_for_log(token_issuer) if token_issuer else "<missing>",
                 server_id_log,
             )
