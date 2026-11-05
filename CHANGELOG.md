@@ -20,7 +20,9 @@
     - A space in a path placeholder used to fail URL validation and now goes out as `%20`.
     - A value that already holds `%XX` (for example `42%2F43`) used to pass and now returns an error.
     - A value with a `.` or `..` segment returns an error.
+- **LLM gateway models authorization** ([#7388](https://github.com/IBM/mcp-context-forge/pull/7388)) - `GET /llm/gateway/models` and `GET /v1/llm/gateway/models` now require the `llm.read` RBAC permission. Previously, authentication alone passed this route. It now matches `GET /llmchat/gateway/models` and `GET /v1/models`. All built-in roles hold `llm.read`. Principals without `llm.read` (no roles, custom roles, or a custom `DEFAULT_USER_ROLE`) now receive `403`.
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
+- **Gateway test endpoints require `gateways.update` and ownership for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` return 403 when the target MCP server has a stored basic, bearer, custom-header, or OAuth credential. An OAuth authorization-code token is the caller's own and is not affected. To pass, the caller needs `gateways.update` in the MCP server's team and must pass the ownership check of `PUT /gateways/{gateway_id}`. The owner, a team owner of a team MCP server, and a platform admin pass that check. For an MCP server without a team, `gateways.update` must come from a global role. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
 ### Security
 
@@ -29,7 +31,11 @@
 ### Fixed
 
 - **Anthropic requests omit the provider default temperature** ([#7385](https://github.com/IBM/mcp-context-forge/issues/7385)) - A chat completion to an Anthropic provider that does not set `temperature` no longer receives the provider-wide `default_temperature`; current Claude models (Opus 4.7+, Sonnet 5, Haiku 5.5) reject a non-default value with HTTP 400. An explicit client `temperature` is still forwarded.
+
+- **OIDC JWKS fetches honor `SKIP_SSL_VERIFY`** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026)) - JWKS retrieval for SSO and external-IdP token verification now uses the shared TLS verification setting, like OIDC discovery, token exchange, and user info. Before, an identity provider with a self-signed certificate failed at JWKS retrieval even with `SKIP_SSL_VERIFY=true`. With the flag set, the gateway logs a warning on each JWKS fetch, because unverified JWKS keys let a network attacker forge tokens. Use the flag in development only. Per-provider CA bundles remain open under #4026.
 - **REST URL template reuses a placeholder** - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
+
+- **Actionable error when an upstream MCP server redirects** ([#7163](https://github.com/IBM/mcp-context-forge/issues/7163)) - Health checks, gateway registration, Test Connection, and the handshake test now report `Upstream redirected to <scheme://host/path>; update the gateway URL to the redirect target.` for an upstream 301, 302, 303, 307, or 308 response. The message drops the query string, fragment, and userinfo of the `Location` header. Before, the gateway showed a generic error. The gateway still does not follow the redirect, to keep SSRF and credential-forwarding protection. Register the redirect target URL directly, for example `https://host/mcp/` instead of `https://host/mcp`.
 
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
@@ -41,8 +47,10 @@
 
 - **Gateway description-only update keeps credentials** - `PUT /gateways/{gateway_id}` with only unrelated fields, such as `description`, no longer wipes `auth_value`.
 
-- **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The new `PLUGIN_MANAGER_CACHE_TTL` setting (default `300` seconds, was a fixed 30 seconds) controls how long a manager is cached; `0` disables expiry. The invalidation listener now rebuilds managers after each Redis resubscribe.
+- **Plugin manager rebuilds** ([#6532](https://github.com/IBM/mcp-context-forge/issues/6532)) - Tools of a team without tool-specific plugin bindings share one cached plugin manager, so external plugins such as OPA initialise once per team instead of once per tool. Tools with their own bindings keep their own manager. The invalidation listener now rebuilds managers after each Redis resubscribe.
 - **LLM Chat loads MCP tools with the MCP SDK client** ([#7090](https://github.com/IBM/mcp-context-forge/issues/7090), [#7332](https://github.com/IBM/mcp-context-forge/pull/7332)) - `langchain-mcp-adapters` has no release compatible with MCP SDK 2.x and is removed from the `llmchat` extra; LLM Chat lists and calls tools through `mcp.client.Client`.
+
+- **Bearer token precedence over auth cookies** - When a request carries both a Bearer token in the configured auth header (`AUTH_HEADER_NAME`, default `Authorization`) and a `jwt_token` or `access_token` cookie, every auth layer (token scoping, `require_auth`, `require_admin_auth`, `/admin/*`, LLM chat `connect`) now authenticates the Bearer principal, and token scopes apply to that credential. Cookie-only and `Authorization: Basic` requests keep cookie authentication. LLM chat `connect` also accepts the `access_token` cookie.
 
 ### Changed
 
@@ -59,6 +67,10 @@
 - **A2A task and push notification config routes** ([#6702](https://github.com/IBM/mcp-context-forge/issues/6702)) - Clients can now read and manage A2A task data through `/v1/a2a/{agent_id}/tasks`. `GET` lists tasks with `pageSize`, `pageToken`, and `nextPageToken` pagination, `GET .../{task_id}` returns one task, and `POST .../{task_id}/cancel` cancels it. `POST`, `GET`, and `DELETE` on `.../{task_id}/pushNotificationConfigs` manage push notification configs. Reads require `a2a.read`, cancel requires `a2a.invoke`, and config writes require `a2a.update`. Routes apply the same team and visibility scoping as the internal handlers, and return 404 for tasks the caller cannot see. Responses never include `auth_token`. The `/_internal/a2a/*` routes are unchanged.
 
 - **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
+
+### Security
+
+- **Gateway connectivity test credential gate** - Gateway connectivity tests send stored MCP server credentials only for callers with `gateways.update` who pass the MCP server ownership check.
 
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 

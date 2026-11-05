@@ -1657,11 +1657,14 @@ class TestIssuerPinningOnAudienceLearning:
         mock_token_storage.store_tokens.return_value = mock_token_record
         oauth_manager.token_storage = mock_token_storage
 
+        from mcpgateway.services.dcr_service import DcrError
+
         with (
             patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
             patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
             patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
             patch.object(oauth_manager, "_extract_aud_and_iss", return_value=aud_iss),
+            patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new_callable=AsyncMock, side_effect=DcrError("discovery unavailable")),
         ):
             result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials)
 

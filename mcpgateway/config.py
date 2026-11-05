@@ -1248,7 +1248,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = Field(
         default=False,
         description="Skip SSL certificate verification for ALL outbound HTTPS requests "
-        "(federation, MCP servers, LLM providers, A2A agents). "
+        "(federation, MCP servers, LLM providers, A2A agents, SSO and OIDC discovery, JWKS key fetches). "
         "WARNING: Only enable in dev environments with self-signed certificates.",
     )
     cors_enabled: bool = True
@@ -1394,15 +1394,6 @@ class Settings(BaseSettings):
             "user by rewriting the Authorization header. Only enable when all loaded plugins are "
             "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
             "Requires a server restart to take effect."
-        ),
-    )
-    plugin_manager_cache_ttl: int = Field(
-        default=300,
-        ge=0,
-        description=(
-            "TTL in seconds for per-context plugin manager cache entries. "
-            "The TTL bounds staleness when a Redis invalidation message is missed. "
-            "0 disables expiry; managers then change only through explicit invalidation."
         ),
     )
 

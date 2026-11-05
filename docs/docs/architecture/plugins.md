@@ -1670,7 +1670,7 @@ The gateway caches one `TenantPluginManager` per context. Initialising a manager
 
 - Tools of a team that have no tool-specific `ToolPluginBinding` rows share one manager, cached under `<team_id>::*`. Wildcard (`*`) bindings apply to the shared manager.
 - A tool with its own bindings keeps its own manager and never receives the shared one.
-- A manager lives for `PLUGIN_MANAGER_CACHE_TTL` seconds (default `300`; `0` disables expiry). Redis pub/sub invalidation rebuilds managers earlier when bindings or plugin modes change. The TTL and the rebuild after each pub/sub resubscribe cover missed messages.
+- A manager lives for the worker lifetime and changes only through explicit invalidations (`invalidate_all`, `invalidate_team`, and `reload_tenant`). Redis pub/sub invalidation broadcasts updates across workers when bindings or plugin modes change, and the rebuild after each pub/sub resubscribe covers missed messages. Multi-worker deployments without Redis require a worker restart after binding changes.
 
 ### Optimization Strategies
 
