@@ -302,3 +302,15 @@ It uses a temporary database and generated test secrets. No existing stack or cr
 Both request-only and system-tracing configurations run. The test verifies tenant baggage, sensitive baggage redaction,
 unsampled parents, health-cycle suppression, and the absence of empty exports.
 Gateway logs, upstream logs, and decoded collector batches remain in the pytest temporary directory after failures.
+
+## Persistent upstream session tracing
+
+```bash
+uv run --extra plugins --extra observability pytest tests/live_gateway/mcp/test_persistent_session_tracing.py -v
+```
+
+The suite starts an authenticated gateway, stateful SSE or Streamable HTTP upstream, and recording OTLP collector.
+It verifies counter state, upstream session IDs, per-call trace parents, baggage, error status, negotiation modes,
+concurrent session isolation, authorization denials, and gateway-tracing-disabled behavior.
+The HTTP `auto` case verifies fallback to a legacy stateful upstream; the SSE case uses modern negotiation.
+Temporary databases and generated secrets keep the tests independent of existing gateway deployments.

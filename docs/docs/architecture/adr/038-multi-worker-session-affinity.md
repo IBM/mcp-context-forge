@@ -17,6 +17,11 @@
 > surface is unchanged beyond the `pool_` / `streamable_http_` prefixes
 > being dropped from public method names. ADR-032 has been superseded.
 
+Upstream session reuse also supports active OpenTelemetry tracing in the Python runtime.
+Enable `USE_STATEFUL_SESSIONS=true` and configure affinity so calls reach the owning worker.
+See [persistent upstream sessions with tracing](../observability-otel.md#persistent-upstream-sessions-with-tracing)
+for per-call spans, upstream session IDs, and metadata propagation.
+
 ## Context
 
 ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway needs to pin each downstream MCP session to one worker so the worker-local `UpstreamSessionRegistry` (see #4205) can serve subsequent calls without rebuilding upstream state.
