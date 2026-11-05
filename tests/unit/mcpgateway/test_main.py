@@ -60,6 +60,7 @@ from mcpgateway.schemas import (
     ToolRead,
 )
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -267,6 +268,23 @@ def _make_validation_error() -> ValidationError:
 
 VALIDATION_ERROR = _make_validation_error()
 INTEGRITY_ERROR = sa.exc.IntegrityError("stmt", {}, Exception("orig"))
+
+RESOURCE_ERROR_CASES = [
+    pytest.param(
+        ResourceURIConflictError("file://handler-order.txt"),
+        409,
+        "Public resource already exists with URI: file://handler-order.txt — resource URIs must be unique within this scope (names may repeat).",
+        id="active-uri-conflict",
+    ),
+    pytest.param(
+        ResourceURIConflictError("file://handler-order.txt", enabled=False, resource_id="existing-resource"),
+        409,
+        "Public resource already exists with URI: file://handler-order.txt — resource URIs must be unique within this scope (names may repeat). (currently inactive, ID: existing-resource)",
+        id="inactive-uri-conflict",
+    ),
+    pytest.param(ResourceValidationError("Invalid resource scope"), 422, "Invalid resource scope", id="resource-validation"),
+    pytest.param(ResourceError("General resource error"), 400, "General resource error", id="general-resource-error"),
+]
 
 
 def _make_a2a_agent_read(**overrides):
@@ -1586,6 +1604,42 @@ class TestToolEndpoints:
 # Resource Management Tests                             #
 # ----------------------------------------------------- #
 class TestResourceEndpoints:
+    @pytest.mark.parametrize("error,status_code,detail", RESOURCE_ERROR_CASES)
+    @patch("mcpgateway.main.resource_service.register_resource", new_callable=AsyncMock)
+    def test_create_resource_exception_order_contract(
+        self, mock_register: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Resource creation preserves specialized statuses and exact error bodies."""
+        mock_register.side_effect = error
+        payload = {"resource": {"uri": "file://handler-order.txt", "name": "Handler order", "content": "test"}, "team_id": None, "visibility": "private"}
+
+        response = test_client.post("/resources/", json=payload, headers=auth_headers)
+
+        mock_register.assert_awaited_once()
+        assert response.status_code == status_code
+        assert response.json() == {"detail": detail}
+
+    @pytest.mark.parametrize(
+        "error,status_code,detail",
+        [
+            *RESOURCE_ERROR_CASES,
+            pytest.param(ResourceNotFoundError("Missing resource"), 404, "Missing resource", id="resource-not-found"),
+            pytest.param(PermissionError("Permission denied"), 403, "Permission denied", id="permission-denied"),
+        ],
+    )
+    @patch("mcpgateway.main.resource_service.update_resource", new_callable=AsyncMock)
+    def test_update_resource_exception_order_contract(
+        self, mock_update: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Resource updates preserve specialized statuses and exact error bodies."""
+        mock_update.side_effect = error
+
+        response = test_client.put("/resources/handler-order", json={"description": "Updated description"}, headers=auth_headers)
+
+        mock_update.assert_awaited_once()
+        assert response.status_code == status_code
+        assert response.json() == {"detail": detail}
+
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_not_found(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 404 if resource not found."""
