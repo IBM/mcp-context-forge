@@ -1,37 +1,54 @@
-# Rust MCP Runtime (Removed)
+# Rust MCP Runtime Removal
 
-The Rust MCP runtime sidecar is removed under
-[EPIC #5817](https://github.com/IBM/mcp-context-forge/issues/5817).
-The gateway in this repository serves MCP requests through the Python transport.
-The separate external Rust dataplane is outside this removal.
+The in-repository Rust MCP and A2A sidecars are removed. The Python gateway serves
+MCP and A2A requests. Remove sidecar environment variables from deployments.
 
-## Removed Runtime Interfaces
+The separate external Rust dataplane, `DATAPLANE_PUBLISHER`, and `/contextforge-rs`
+ingress remain outside this removal.
 
-Remove the old sidecar and Rust runtime configuration from deployments.
-The runtime mode override APIs and their health status fields are removed.
-The Python transport retains the `x-contextforge-mcp-runtime: python` response header.
-Use the standard Python gateway image and
-[deployment configuration](../deployment/index.md).
+## Internal dispatch caller audit
 
-## Runtime Mode Override
+Python session affinity still calls `POST /_internal/mcp/rpc` through
+`mcpgateway.utils.internal_http.post_rpc_in_process()`. Both the Streamable HTTP
+transport and the session-affinity Redis consumer use this helper. It dispatches
+inside the session owner worker, preserving that worker's upstream connections.
 
-The MCP and A2A runtime mode override APIs are removed. The gateway no longer
-selects between Python and Rust runtimes.
+The removed sidecars were the only production callers of the other internal MCP
+handlers and all internal A2A handlers. Those handlers are removed, including
+`/_internal/mcp/authenticate`, the per-method and direct-execution authorization
+routes, and the A2A resolve, task, push, and event bridges. Public MCP, RPC, and A2A
+routes retain their Python handlers.
 
-The `/_internal/mcp/*` endpoints remain for Python session affinity.
-The trust boundary is the derived shared-secret header
-(`x-contextforge-mcp-runtime-auth`) plus the forwarded auth context when required.
-The header is a static SHA-256 value derived from `AUTH_ENCRYPTION_SECRET`.
-It is not a per-request HMAC. Requests also check the runtime marker.
-The loopback address check is defense in depth:
-`ProxyHeaders(trusted_hosts="*")` lets external callers influence `request.client.host`.
-Do not route `/_internal/*` from external listeners; deny it at the reverse proxy.
-Treat `AUTH_ENCRYPTION_SECRET` as the credential for internal dispatch.
-Rotate it if exposed.
+## Retained Python affinity trust boundary
 
-Rust marker branches and deployment remnants remain tracked in
-[#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
+`/_internal/mcp/rpc` accepts only the `affinity` marker. The retired `rust` marker
+cannot grant internal trust. The route requires the shared-secret HMAC, a
+non-empty forwarded auth context, and a loopback client address. Middleware uses
+the same trust gate, including deployments with a root path.
 
-[ADR-043](adr/043-rust-mcp-runtime-sidecar-mode-model.md) preserves the historical
-design. [ADR-058](adr/058-remove-rust-runtime-and-workspace.md) records its removal.
-See [Deprecations](../deprecations.md#removed) for the removal registry.
+Redis consumers verify the signature over the complete forwarded envelope before
+in-process dispatch. Forwarded client-IP headers are stripped. The owner worker
+validates the decoded context and retains team visibility, token server scope,
+scoped permissions, and RBAC checks. Anonymous contexts remain public-only.
+
+The existing `x-contextforge-mcp-runtime` and
+`x-contextforge-mcp-runtime-auth` header names remain part of this Python internal
+contract. The Python transport also reports `x-contextforge-mcp-runtime: python`
+on responses. These headers do not enable a sidecar.
+
+## Deployment cleanup
+
+Compose no longer forwards `A2A_RUST_*` variables or derives sidecar credentials
+from gateway secrets. The Helm nginx A2A upstream targets the Python gateway
+directly. SSO audience seeding no longer filters retired runtime variables.
+
+## Verification
+
+The affinity trust regressions live in
+`tests/unit/mcpgateway/test_internal_runtime_trust.py`. The live ingress and
+multi-worker regressions live in
+`tests/live_gateway/mcp/test_python_ingress_security.py`. The multi-worker check
+requires an isolated stateful gateway with at least two workers, Redis affinity,
+`MCP_AFFINITY_TEST_REDIS_URL`, `MCP_AFFINITY_TEST_PEER_URL`, and
+`MCP_INGRESS_TEST_TOKEN`. The peer URL addresses a different worker directly. Enable
+`MCP_AFFINITY_SENTINEL_TESTS=true` to verify protected backend execution denials.

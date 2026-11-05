@@ -3,142 +3,129 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for the consolidated internal-runtime trust gate.
-
-Covers the shared helper in ``auth_context`` (``is_trusted_internal_runtime_request`` /
-``is_trusted_internal_mcp_request``), the path-aware auth-context rule, the A2A
-feature guard, the affinity marker, the HMAC-is-the-trust-boundary property, and
-that the forwarded/client-IP headers are stripped from loopback passthrough.
+Regression tests for the Python affinity trust boundary.
 """
 
+# Standard
+from unittest.mock import AsyncMock, MagicMock
+
 # Third-Party
+from fastapi import HTTPException
+import orjson
 import pytest
 from starlette.requests import Request
 
 # First-Party
-from mcpgateway.auth_context import (
-    _expected_internal_mcp_runtime_auth_header,
-    _internal_path_requires_auth_context,
-    is_trusted_internal_mcp_request,
-    is_trusted_internal_runtime_request,
-)
+from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context, is_trusted_internal_mcp_request
 
-def _req(path, *, marker="rust", hmac="valid", ctx="ctx", client="127.0.0.1", extra=None):
-    """Build a synthetic internal request."""
+
+def _req(path="/_internal/mcp/rpc", *, marker="affinity", hmac="valid", ctx="ctx", client="127.0.0.1", extra=None):
+    """Build an internal request with independent trust gates."""
     headers = []
     if marker is not None:
         headers.append((b"x-contextforge-mcp-runtime", marker.encode()))
     if hmac is not None:
-        # Derive the expected HMAC at call time, not module-import time. Other tests in the suite
-        # mutate ``settings.auth_encryption_secret`` (the HMAC's input), so a value captured at import
-        # would go stale and the gate would correctly reject the now-mismatched header.
-        valid_hmac = _expected_internal_mcp_runtime_auth_header()
-        headers.append((b"x-contextforge-mcp-runtime-auth", (valid_hmac if hmac == "valid" else hmac).encode()))
+        signature = _expected_internal_mcp_runtime_auth_header() if hmac == "valid" else hmac
+        headers.append((b"x-contextforge-mcp-runtime-auth", signature.encode()))
     if ctx is not None:
         headers.append((b"x-contextforge-auth-context", ctx.encode()))
-    for k, v in (extra or []):
-        headers.append((k, v))
-    scope = {"type": "http", "method": "POST", "path": path, "raw_path": path.encode(),
-             "query_string": b"", "headers": headers, "client": (client, 12345) if client else None}
-    return Request(scope)
+    headers.extend(extra or [])
+    return Request({"type": "http", "method": "POST", "path": path, "query_string": b"", "headers": headers, "client": (client, 12345) if client else None})
 
 
-# --- path-aware auth-context rule ------------------------------------------
-
-@pytest.mark.parametrize("path,expected", [
-    ("/_internal/mcp/authenticate", False),
-    ("/_internal/mcp/authenticate/", False),
-    ("/_internal/a2a/authenticate", False),
-    ("/_internal/mcp/rpc", True),
-    ("/_internal/mcp/initialize", True),
-    ("/_internal/a2a/tasks/get", True),
-])
-def test_path_requires_auth_context(path, expected):
-    assert _internal_path_requires_auth_context(path) is expected
+@pytest.mark.parametrize("path", ["/_internal/mcp/rpc", "/_internal/mcp/rpc/"])
+@pytest.mark.parametrize("client", ["127.0.0.1", "::1"])
+def test_rpc_trusts_authenticated_affinity(path, client):
+    """Both loopback families accept the retained affinity route."""
+    assert is_trusted_internal_mcp_request(_req(path, client=client)) is True
 
 
-# --- MCP gate: allow --------------------------------------------------------
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"marker": None, "hmac": None, "ctx": None},
+        {"marker": "rust"},
+        {"marker": "bogus"},
+        {"hmac": None},
+        {"hmac": "forged"},
+        {"ctx": None},
+        {"ctx": ""},
+        {"client": "10.0.0.9"},
+        {"client": None},
+        {"hmac": "forged", "extra": [(b"x-forwarded-for", b"127.0.0.1")]},
+    ],
+)
+@pytest.mark.asyncio
+async def test_untrusted_rpc_cannot_reach_dispatch(monkeypatch, overrides):
+    """Each failed gate rejects dispatch before database access or execution."""
+    # First-Party
+    from mcpgateway import main
 
-def test_rpc_trusted_with_rust_marker_hmac_and_ctx():
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc")) is True
-
-
-def test_rpc_trusted_with_affinity_marker():
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc", marker="affinity")) is True
-
-
-def test_authenticate_trusted_without_ctx():
-    # /authenticate creates the context, so no ctx required.
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/authenticate", ctx=None)) is True
-
-
-# --- MCP gate: deny ---------------------------------------------------------
-
-def test_deny_bad_hmac_even_on_loopback_with_ctx():
-    # The HMAC is the trust boundary: loopback + marker + ctx but a bad HMAC is denied.
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc", hmac="not-the-real-hmac")) is False
-
-
-def test_deny_wrong_marker():
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc", marker="bogus")) is False
-
-
-def test_deny_non_loopback_client():
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc", client="10.0.0.9")) is False
-
-
-def test_deny_rpc_missing_ctx():
-    assert is_trusted_internal_mcp_request(_req("/_internal/mcp/rpc", ctx=None)) is False
-
-
-def test_deny_non_internal_prefix():
-    assert is_trusted_internal_mcp_request(_req("/servers/x/mcp")) is False
+    db_factory = MagicMock()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main, "SessionLocal", db_factory)
+    monkeypatch.setattr(main, "_handle_rpc_authenticated", dispatch)
+    request = _req(**overrides)
+    assert is_trusted_internal_mcp_request(request) is False
+    with pytest.raises(HTTPException) as exc:
+        await main.handle_internal_mcp_rpc(request)
+    assert exc.value.status_code == 403
+    db_factory.assert_not_called()
+    dispatch.assert_not_awaited()
 
 
-def test_xff_cannot_make_untrusted_request_trusted():
-    # Even with a spoofed X-Forwarded-For and a loopback client, a bad HMAC is denied:
-    # loopback is defense-in-depth, the HMAC is the boundary.
-    req = _req("/_internal/mcp/rpc", hmac="forged", extra=[(b"x-forwarded-for", b"127.0.0.1")])
-    assert is_trusted_internal_mcp_request(req) is False
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("path", ["/_internal/mcp/authenticate", "/_internal/mcp/initialize", "/_internal/mcp/rpc/extra", "/_internal/a2a/authenticate", "/_internal/a2a/tasks/get", "/rpc"])
+def test_sidecar_paths_never_gain_internal_trust(monkeypatch, enabled, path):
+    """Removed routes gain no trust even with valid affinity headers and A2A enabled."""
+    monkeypatch.setattr("mcpgateway.auth_context.settings.mcpgateway_a2a_enabled", enabled)
+    assert is_trusted_internal_mcp_request(_req(path)) is False
 
 
-# --- A2A feature guard ------------------------------------------------------
+def test_only_affinity_rpc_routes_remain():
+    """The application exposes no retired internal MCP or A2A handler."""
+    # First-Party
+    from mcpgateway.main import utility_router
 
-def test_a2a_trusted_when_enabled(monkeypatch):
-    monkeypatch.setattr("mcpgateway.auth_context.settings.mcpgateway_a2a_enabled", True)
-    assert is_trusted_internal_mcp_request(_req("/_internal/a2a/tasks/get")) is True
-
-
-def test_a2a_denied_when_disabled(monkeypatch):
-    monkeypatch.setattr("mcpgateway.auth_context.settings.mcpgateway_a2a_enabled", False)
-    assert is_trusted_internal_mcp_request(_req("/_internal/a2a/tasks/get")) is False
+    paths = {route.path for route in utility_router.routes if route.path.startswith(("/_internal/mcp", "/_internal/a2a"))}
+    assert paths == {"/_internal/mcp/rpc", "/_internal/mcp/rpc/"}
 
 
-# --- generic helper: explicit require_auth_context + prefixes ---------------
-
-def test_generic_helper_respects_prefix_allowlist():
-    req = _req("/_internal/mcp/rpc")
-    assert is_trusted_internal_runtime_request(req, allowed_prefixes=("/_internal/a2a",), require_auth_context=True) is False
-    assert is_trusted_internal_runtime_request(req, allowed_prefixes=("/_internal/mcp",), require_auth_context=True) is True
-
-
-# --- token_scoping now trusts the affinity marker ---------------------------
-
-def test_token_scoping_trusts_affinity_hop():
+def test_token_scoping_trusts_affinity_with_normalized_path():
+    """Token scoping accepts the same gate after removing a deployment root path."""
     # First-Party
     from mcpgateway.middleware.token_scoping import token_scoping_middleware
 
-    req = _req("/_internal/mcp/rpc", marker="affinity")
+    req = _req("/gateway/_internal/mcp/rpc")
     assert token_scoping_middleware._is_trusted_internal_mcp_runtime_request(req, "/_internal/mcp/rpc") is True
 
 
-# --- forwarded / client-IP headers are stripped from loopback passthrough ---
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denial", ["permission", "server_scope"])
+async def test_affinity_preserves_authorization_denials(monkeypatch, denial):
+    """Authenticated affinity calls retain token permissions and server restrictions."""
+    # First-Party
+    from mcpgateway import main
 
-@pytest.mark.parametrize("header", [
-    "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
-    "x-forwarded-port", "x-forwarded-prefix", "x-real-ip", "cf-connecting-ip", "true-client-ip",
-])
+    context = {"email": "user@example.com", "teams": ["team-a"], "is_authenticated": True, "is_admin": False, "scoped_permissions": ["tools.read"]}
+    if denial == "server_scope":
+        context["scoped_server_id"] = "allowed-server"
+    request = _req(ctx=encode_internal_mcp_auth_context(context))
+    request.body = AsyncMock(return_value=orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "protected", "server_id": "other-server"}}))
+    db = MagicMock()
+    invoke = AsyncMock()
+    monkeypatch.setattr(main, "SessionLocal", lambda: db)
+    monkeypatch.setattr(main.tool_service, "invoke_tool", invoke)
+    response = await main.handle_internal_mcp_rpc(request)
+    payload = orjson.loads(response.body) if hasattr(response, "body") else response
+    assert payload["error"]["code"] == -32003
+    invoke.assert_not_awaited()
+    db.close.assert_called()
+
+
+@pytest.mark.parametrize("header", ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-forwarded-prefix", "x-real-ip", "cf-connecting-ip", "true-client-ip"])
 def test_loopback_passthrough_strips_forwarded_headers(header):
+    """Client address headers cannot influence internal loopback dispatch."""
     # First-Party
     from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers
 

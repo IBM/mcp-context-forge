@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Changed
 
+- Route nginx A2A requests directly to the Python gateway. Remove the retired Rust sidecar upstream on port 8788.
+
 #### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
 
 Aligned `values.yaml` with `config.py` secure defaults and tightened for production deployments.

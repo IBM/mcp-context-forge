@@ -20,7 +20,7 @@ import orjson
 from redis import Redis
 
 # Local
-from mcpgateway.auth_context import encode_internal_mcp_auth_context, sign_redis_forward_envelope
+from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context, sign_redis_forward_envelope
 from tests.helpers.auth import make_test_jwt
 from tests.live_gateway.helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, build_initialize, JWT_SECRET, skip_no_gateway
 
@@ -58,6 +58,19 @@ def test_running_gateway_rejects_untrusted_affinity_dispatch(signature):
     assert response.status_code in (401, 403)
 
 
+@skip_no_gateway
+def test_running_gateway_rejects_retired_rust_marker():
+    """A retired marker cannot use valid HMAC and admin context to dispatch RPC."""
+    context = encode_internal_mcp_auth_context({"email": ADMIN_EMAIL, "teams": None, "is_authenticated": True, "is_admin": True})
+    headers = {
+        "x-contextforge-mcp-runtime": "rust",
+        "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+        "x-contextforge-auth-context": context,
+    }
+    response = httpx.post(f"{BASE_URL}/_internal/mcp/rpc", headers=headers, json={"jsonrpc": "2.0", "method": "ping", "id": 1}, timeout=10)
+    assert response.status_code in (401, 403)
+
+
 def _rpc_payload(response):
     """Decode a JSON or SSE JSON-RPC response from the running transport."""
     if "text/event-stream" in response.headers.get("content-type", ""):
@@ -70,8 +83,9 @@ def test_stateful_python_session_crosses_workers():
     """A stateful Python session retains successful dispatch across a real Redis affinity hop."""
     redis_url = os.getenv("MCP_AFFINITY_TEST_REDIS_URL")
     token = os.getenv("MCP_INGRESS_TEST_TOKEN")
-    if not redis_url or not token:
-        pytest.skip("Requires two stateful affinity-enabled workers, MCP_AFFINITY_TEST_REDIS_URL, and MCP_INGRESS_TEST_TOKEN")
+    peer_url = os.getenv("MCP_AFFINITY_TEST_PEER_URL")
+    if not redis_url or not token or not peer_url:
+        pytest.skip("Requires two separately addressable stateful workers, MCP_AFFINITY_TEST_REDIS_URL, MCP_AFFINITY_TEST_PEER_URL, and MCP_INGRESS_TEST_TOKEN")
     headers = {"accept": "application/json, text/event-stream", "authorization": f"Bearer {token}"}
     with Redis.from_url(redis_url) as redis:
         assert len(redis.pubsub_channels("mcpgw:pool_http:*")) >= 2
@@ -89,7 +103,7 @@ def test_stateful_python_session_crosses_workers():
                 assert response.status_code == 202
                 observed = False
                 for request_id in range(2, 22):
-                    response = httpx.post(f"{BASE_URL}/mcp/", headers=headers, json={"jsonrpc": "2.0", "method": "ping", "id": request_id}, timeout=10)
+                    response = httpx.post(f"{peer_url}/mcp/", headers=headers, json={"jsonrpc": "2.0", "method": "ping", "id": request_id}, timeout=10)
                     assert response.status_code == 200
                     payload = _rpc_payload(response)
                     assert payload.get("result") == {}, payload
@@ -97,7 +111,7 @@ def test_stateful_python_session_crosses_workers():
                     if message and orjson.loads(message["data"]).get("mcp_session_id") == session_id:
                         observed = True
                         break
-                assert observed, "No Redis affinity hop observed across fresh HTTP connections"
+                assert observed, "No Redis affinity hop observed through the peer worker"
             finally:
                 httpx.delete(f"{BASE_URL}/mcp/", headers=headers, timeout=10)
 
@@ -208,12 +222,16 @@ def test_cross_worker_protected_tool_denial_preserves_execution_sentinel():
         positive = _rpc_payload(response)
         assert "result" in positive and not positive["result"].get("isError"), positive
         assert len(calls) == 1, positive
-        restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=[], secret=JWT_SECRET)
-        denied_headers = {**mcp_headers, "authorization": f"Bearer {restricted}"}
-        response = httpx.post(url, headers=denied_headers, json=body, timeout=20)
-        assert response.status_code == 200, response.text
-        payload = _rpc_payload(response)
-        assert "error" in payload or payload.get("result", {}).get("isError") is True, payload
+        for teams, scopes in [([], None), ([f"other-team-{suffix}"], None), (None, {"permissions": ["servers.use", "tools.read"]})]:
+            restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=teams, scopes=scopes, secret=JWT_SECRET)
+            denied_headers = {**mcp_headers, "authorization": f"Bearer {restricted}"}
+            response = httpx.post(url, headers=denied_headers, json=body, timeout=20)
+            if response.status_code == 200:
+                payload = _rpc_payload(response)
+                assert "error" in payload or payload.get("result", {}).get("isError") is True, payload
+            else:
+                assert response.status_code in (401, 403), response.text
+            assert len(calls) == 1, "Denied requests must never reach the backend"
         with Redis.from_url(redis_url) as redis, redis.pubsub() as responses:
             assert len(redis.pubsub_channels("mcpgw:pool_http:*")) >= 2
             owner = redis.get(f"mcpgw:pool_owner:{session_id}").decode()
