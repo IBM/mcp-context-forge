@@ -277,7 +277,7 @@ def client_and_db():
     db.commit()
     db.close()
 
-    test_client = TestClient(main_mod.app, raise_server_exceptions=False)
+    test_client = TestClient(main_mod.app, client=("127.0.0.1", 0), raise_server_exceptions=False)
     try:
         yield test_client
     finally:
@@ -434,21 +434,14 @@ class TestAdminBypassOwnerVisibilityRpcCompletion:
 
 
 class TestAdminBypassOwnerVisibilityInternalMcp:
-    """Same Layer-1 change on the trusted internal MCP dispatch path.
-
-    The six ``handle_internal_mcp_*`` handlers previously nulled ``user_email`` too.
-    They are reachable only from the local Rust runtime, so the trust gate is stubbed;
-    everything below it - the forwarded auth context, the Layer-1 derivation, the
-    service and the database - is real.
-    """
+    """Preserve owner visibility through authenticated Python affinity RPC dispatch."""
 
     @staticmethod
-    def _post_prompts_list(test_client, monkeypatch, *, email, is_admin, teams):
-        """Call the internal prompts/list endpoint with a forged trusted auth context.
+    def _post_prompts_list(test_client, *, email, is_admin, teams):
+        """List prompts through affinity RPC with a trusted auth context.
 
         Args:
             test_client: Client bound to the temp-DB app.
-            monkeypatch: Fixture used to stub the runtime trust gate.
             email: Email carried in the forwarded auth context.
             is_admin: Admin flag carried in the forwarded auth context.
             teams: Team scope carried in the forwarded context (``None`` = unrestricted).
@@ -457,9 +450,8 @@ class TestAdminBypassOwnerVisibilityInternalMcp:
             The set of prompt names in the response.
         """
         # First-Party
-        from mcpgateway.auth_context import encode_internal_mcp_auth_context
+        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context
 
-        monkeypatch.setattr(main_mod, "_is_trusted_internal_mcp_runtime_request", lambda _request: True)
         header = encode_internal_mcp_auth_context(
             {
                 "email": email,
@@ -469,39 +461,42 @@ class TestAdminBypassOwnerVisibilityInternalMcp:
             }
         )
         resp = test_client.post(
-            "/_internal/mcp/prompts/list",
+            "/_internal/mcp/rpc",
             json={"jsonrpc": "2.0", "id": "owner-vis-mcp", "method": "prompts/list", "params": {}},
-            headers={"x-contextforge-auth-context": header},
+            headers={
+                "x-contextforge-mcp-runtime": "affinity",
+                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                "x-contextforge-auth-context": header,
+            },
         )
         assert resp.status_code == 200, resp.text
-        return {p.get("name") for p in resp.json().get("prompts", [])}
+        return {p["name"] for p in resp.json()["result"]["prompts"]}
 
-    def test_admin_sees_own_private_prompt(self, client_and_db, monkeypatch):
+    def test_admin_sees_own_private_prompt(self, client_and_db):
         """An unrestricted admin context lists the admin's own private prompt."""
-        names = self._post_prompts_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+        names = self._post_prompts_list(client_and_db, email=ADMIN_EMAIL, is_admin=True, teams=None)
 
         assert ADMIN_PRIVATE_PROMPT in names
 
-    def test_admin_does_not_see_another_users_private_prompt(self, client_and_db, monkeypatch):
+    def test_admin_does_not_see_another_users_private_prompt(self, client_and_db):
         """Admin bypass on the internal path still excludes another user's private prompt."""
-        names = self._post_prompts_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+        names = self._post_prompts_list(client_and_db, email=ADMIN_EMAIL, is_admin=True, teams=None)
 
         assert OTHER_PRIVATE_PROMPT not in names
 
-    def test_non_admin_context_sees_no_private_prompts(self, client_and_db, monkeypatch):
+    def test_non_admin_context_sees_no_private_prompts(self, client_and_db):
         """A non-admin forwarded context is held to public-only visibility."""
-        names = self._post_prompts_list(client_and_db, monkeypatch, email=OTHER_EMAIL, is_admin=False, teams=[])
+        names = self._post_prompts_list(client_and_db, email=OTHER_EMAIL, is_admin=False, teams=[])
 
         assert ADMIN_PRIVATE_PROMPT not in names
         assert OTHER_PRIVATE_PROMPT not in names
 
     @staticmethod
-    def _post_resources_list(test_client, monkeypatch, *, email, is_admin, teams):
-        """Call the internal resources/list endpoint with a forged trusted auth context.
+    def _post_resources_list(test_client, *, email, is_admin, teams):
+        """List resources through affinity RPC with a trusted auth context.
 
         Args:
             test_client: Client bound to the temp-DB app.
-            monkeypatch: Fixture used to stub the runtime trust gate.
             email: Email carried in the forwarded auth context.
             is_admin: Admin flag carried in the forwarded auth context.
             teams: Team scope carried in the forwarded context (``None`` = unrestricted).
@@ -510,28 +505,31 @@ class TestAdminBypassOwnerVisibilityInternalMcp:
             The set of resource URIs in the response.
         """
         # First-Party
-        from mcpgateway.auth_context import encode_internal_mcp_auth_context
+        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context
 
-        monkeypatch.setattr(main_mod, "_is_trusted_internal_mcp_runtime_request", lambda _request: True)
         header = encode_internal_mcp_auth_context(
             {"email": email, "teams": teams, "is_admin": is_admin, "is_authenticated": True}
         )
         resp = test_client.post(
-            "/_internal/mcp/resources/list",
+            "/_internal/mcp/rpc",
             json={"jsonrpc": "2.0", "id": "owner-vis-res", "method": "resources/list", "params": {}},
-            headers={"x-contextforge-auth-context": header},
+            headers={
+                "x-contextforge-mcp-runtime": "affinity",
+                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                "x-contextforge-auth-context": header,
+            },
         )
         assert resp.status_code == 200, resp.text
-        return {r.get("uri") for r in resp.json().get("resources", [])}
+        return {r["uri"] for r in resp.json()["result"]["resources"]}
 
-    def test_admin_sees_own_private_resource(self, client_and_db, monkeypatch):
+    def test_admin_sees_own_private_resource(self, client_and_db):
         """resources/list is a second internal-MCP surface with the same behavior change."""
-        uris = self._post_resources_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+        uris = self._post_resources_list(client_and_db, email=ADMIN_EMAIL, is_admin=True, teams=None)
 
         assert ADMIN_PRIVATE_RESOURCE in uris
 
-    def test_admin_does_not_see_another_users_private_resource(self, client_and_db, monkeypatch):
+    def test_admin_does_not_see_another_users_private_resource(self, client_and_db):
         """Admin bypass on resources/list still excludes another user's private resource."""
-        uris = self._post_resources_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+        uris = self._post_resources_list(client_and_db, email=ADMIN_EMAIL, is_admin=True, teams=None)
 
         assert OTHER_PRIVATE_RESOURCE not in uris
