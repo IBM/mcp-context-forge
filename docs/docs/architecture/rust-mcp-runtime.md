@@ -18,9 +18,17 @@ Use the standard Python gateway image and
 The MCP and A2A runtime mode override APIs are removed. The gateway no longer
 selects between Python and Rust runtimes.
 
-The `/_internal/mcp/*` endpoints remain for Python session affinity. Internal
-dispatch retains its shared-secret HMAC, trusted runtime marker, forwarded auth
-context, and loopback checks. Keep network controls around these endpoints.
+The `/_internal/mcp/*` endpoints remain for Python session affinity.
+The trust boundary is the derived shared-secret header
+(`x-contextforge-mcp-runtime-auth`) plus the forwarded auth context when required.
+The header is a static SHA-256 value derived from `AUTH_ENCRYPTION_SECRET`.
+It is not a per-request HMAC. Requests also check the runtime marker.
+The loopback address check is defense in depth:
+`ProxyHeaders(trusted_hosts="*")` lets external callers influence `request.client.host`.
+Do not route `/_internal/*` from external listeners; deny it at the reverse proxy.
+Treat `AUTH_ENCRYPTION_SECRET` as the credential for internal dispatch.
+Rotate it if exposed.
+
 Rust marker branches and deployment remnants remain tracked in
 [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
 

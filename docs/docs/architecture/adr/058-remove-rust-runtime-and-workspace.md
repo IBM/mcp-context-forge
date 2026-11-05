@@ -33,9 +33,15 @@ The verified removals include:
 - `crates/mcp_runtime`, the root Cargo manifests, toolchain configuration, and supply-chain files.
 
 The `/_internal/mcp/*` dispatch endpoints remain for Python session affinity.
-Internal MCP and A2A requests require a trusted runtime marker, a shared-secret
-HMAC, and a loopback client address. Forwarded dispatch also requires an auth
-context. Keep these trust checks and network controls in place.
+The trust boundary is the derived shared-secret header
+(`x-contextforge-mcp-runtime-auth`) plus the forwarded auth context when required.
+The header is a static SHA-256 value derived from `AUTH_ENCRYPTION_SECRET`.
+It is not a per-request HMAC. Requests also check the runtime marker.
+The loopback address check is defense in depth:
+`ProxyHeaders(trusted_hosts="*")` lets external callers influence `request.client.host`.
+Do not route `/_internal/*` from external listeners; deny it at the reverse proxy.
+Treat `AUTH_ENCRYPTION_SECRET` as the credential for internal dispatch.
+Rotate it if exposed.
 
 Rust marker branches, internal handlers, and deployment remnants remain tracked
 in [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).

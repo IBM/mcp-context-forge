@@ -15,3 +15,5 @@
     Use the Python MCP transport and Python A2A invocation path. Remove old
     Rust runtime settings and sidecars from deployments. See
     [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md).
+    Deployment cleanup remains tracked in
+    [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
