@@ -5141,8 +5141,8 @@ class ServerInterfaceInput(BaseModel):
             str: Value if validated as a safe URL
 
         Examples:
-            >>> ServerInterfaceInput.validate_binding("https://agent.example.com/a2a")
-            'https://agent.example.com/a2a'
+            >>> ServerInterfaceInput.validate_binding("https://8.8.8.8/a2a")
+            'https://8.8.8.8/a2a'
             >>> try:
             ...     ServerInterfaceInput.validate_binding("JSONRPC")
             ... except ValueError:
