@@ -3181,7 +3181,7 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go).
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip).
 # help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
 # help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
@@ -3538,6 +3538,7 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+# Go builds external linters: actionlint, reviewdog, chart-testing, and kube-linter.
 LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
@@ -3830,9 +3831,6 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
-			'$(CURDIR)/.cache/go-cache' \
-			'$(CURDIR)/.cache/go-mod' \
-			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
 		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
@@ -3844,9 +3842,6 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
 		PIP_USE_PEP517='0' \
 		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
