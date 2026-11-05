@@ -8,6 +8,7 @@ Live-gateway checks for the product-terminology request aliases (issue #6544).
 1. ``POST /servers`` accepts ``virtual_server`` and the record reads back.
 2. The list filters accept ``mcp_server_id`` as an alias of ``gateway_id``.
 3. Conflicting spellings return 422.
+4. Tool, resource and prompt responses carry ``mcpServerId`` next to ``gatewayId``.
 """
 
 # Future
@@ -93,3 +94,16 @@ def test_create_server_rejects_conflicting_body_keys(auth_headers):
     with httpx.Client(base_url=BASE_URL, headers=auth_headers, timeout=30) as client:
         response = client.post("/servers", json={"server": {"name": "a"}, "virtual_server": {"name": "b"}})
         assert response.status_code == 422
+
+
+@skip_no_gateway
+@pytest.mark.parametrize("path", ["/v1/tools", "/v1/resources", "/v1/prompts"])
+def test_list_responses_carry_mcp_server_id(auth_headers, path):
+    """Every returned record repeats gatewayId under mcpServerId."""
+    with httpx.Client(base_url=BASE_URL, headers=auth_headers, timeout=30) as client:
+        response = client.get(path, params={"limit": 50})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        records = body if isinstance(body, list) else next(value for value in body.values() if isinstance(value, list))
+        for record in records:
+            assert record["mcpServerId"] == record["gatewayId"]
