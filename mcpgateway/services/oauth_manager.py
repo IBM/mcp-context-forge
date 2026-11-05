@@ -45,6 +45,7 @@ from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runt
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
@@ -954,16 +955,20 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("No access_token in token response.", error_code=response_oauth_code(response) or "token_exchange_failed")
 
                 logger.info("""Successfully exchanged authorization code for access token""")
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
-                if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
-                await asyncio.sleep(2**attempt)  # Exponential backoff
+                error_response = getattr(e, "response", None)
+                error_code = "token_url_unreachable" if isinstance(e, httpx.RequestError) else (response_oauth_code(error_response) if error_response is not None else None) or "token_exchange_failed"
+                failure = oauth_failure(error_code)
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, failure.code)
+                permanent_failure = isinstance(error_response, httpx.Response) and 400 <= error_response.status_code < 500
+                if attempt == self.max_retries - 1 or permanent_failure:
+                    raise OAuthError(failure.message, error_code=failure.code) from None
+                await asyncio.sleep(2**attempt)
 
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
@@ -2146,16 +2151,20 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("No access_token in token response.", error_code=response_oauth_code(response) or "token_exchange_failed")
 
                 logger.info("""Successfully exchanged authorization code for tokens""")
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
-                if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
-                await asyncio.sleep(2**attempt)  # Exponential backoff
+                error_response = getattr(e, "response", None)
+                error_code = "token_url_unreachable" if isinstance(e, httpx.RequestError) else (response_oauth_code(error_response) if error_response is not None else None) or "token_exchange_failed"
+                failure = oauth_failure(error_code)
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, failure.code)
+                permanent_failure = isinstance(error_response, httpx.Response) and 400 <= error_response.status_code < 500
+                if attempt == self.max_retries - 1 or permanent_failure:
+                    raise OAuthError(failure.message, error_code=failure.code) from None
+                await asyncio.sleep(2**attempt)
 
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
@@ -2419,6 +2428,18 @@ class OAuthError(Exception):
         ...     isinstance(e, OAuthError)
         True
     """
+
+    def __init__(self, message: str, *, error_code: str = "oauth_error"):
+        """Preserve safe structured failure evidence for callback consumers.
+
+        Args:
+            message: Internal error description.
+            error_code: Allowlisted provider or internal error code.
+        """
+        super().__init__(message)
+        failure = oauth_failure(error_code)
+        self.error_code = failure.code
+        self.reauthorization_required = failure.reauthorization_required
 
 
 class OAuthInvalidGrantError(OAuthError):
