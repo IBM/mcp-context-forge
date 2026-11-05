@@ -11,7 +11,7 @@ The OTEL integration provides:
 - **Request-Root Spans**: Every HTTP request creates a root span in the observability middleware
 - **MCP Client Spans**: Detailed tracing of MCP protocol operations (initialize, request, response)
 - **Plugin Hook Spans**: Visibility into plugin execution lifecycle
-- **Session Pool Awareness**: Non-pooled sessions propagate trace context and baggage; pooled sessions skip per-request propagation to prevent context pollution
+- **Persistent Session Tracing**: Reused sessions propagate per-call MCP metadata while transport defaults exclude request-specific tracing headers
 
 ## Architecture
 
@@ -116,22 +116,14 @@ The middleware:
 
 ### Outbound Propagation
 
-When making MCP client calls, trace context is automatically injected:
-
-```python
-# Automatic injection in tool_service.py
-pooled_headers = inject_trace_context_headers(headers)
-```
-
-This ensures:
-- Upstream MCP servers receive `traceparent` header
-- Distributed traces span multiple services
-- End-to-end visibility across the call chain
+Registry-backed MCP calls carry fresh trace context in each tool call's `_meta` dictionary.
+Persistent HTTP transport defaults exclude request-specific propagation headers.
+Per-call fallback connections also inject HTTP trace headers. Optional HTTP auto-instrumentation
+can add HTTP spans and their propagation headers.
 
 ### MCP `_meta.traceparent`
 
-For non-pooled remote MCP tool calls, ContextForge also propagates the active
-trace context in the MCP tool-call `_meta` payload:
+Both reused and per-call MCP connections propagate trace context through tool-call metadata:
 
 ```json
 {
@@ -141,15 +133,11 @@ trace context in the MCP tool-call `_meta` payload:
 }
 ```
 
-The `_meta.traceparent` value is synchronized with the final outbound
-`traceparent` HTTP header after trace-context injection. This keeps the trace ID
-and parent span ID consistent for upstream MCP servers that inspect either the
-HTTP headers or the MCP protocol payload. Existing `_meta` fields, such as
-identity or tenant context, are preserved when the trace context is added.
-
-Pooled or registry-backed MCP sessions deliberately skip per-request
-`_meta.traceparent` synchronization because those transports reuse pinned
-headers and do not propagate per-request trace context upstream.
+The gateway replaces stale propagation fields without changing unrelated caller metadata.
+The MCP SDK can create a child send span and use that span's context in `_meta`.
+An HTTP instrumentation span can supply a different parent span ID within the same call trace.
+Upstream servers must extract MCP metadata to establish the supported message-level trace relationship.
+See [persistent upstream sessions with tracing](#persistent-upstream-sessions-with-tracing) for details.
 
 ## W3C Baggage Support
 
@@ -490,71 +478,71 @@ merged into the active request context.
 | `OTEL_BAGGAGE_LOG_REJECTED` | `true` | Logs rejected headers and baggage keys |
 | `OTEL_BAGGAGE_LOG_SANITIZATION` | `true` | Logs when values are altered by sanitization |
 
-## Session Pooling with Tracing
+<a id="session-pooling-with-tracing"></a>
 
-### Design Decision and Trade-off
+## Persistent Upstream Sessions with Tracing
 
-**Current Behavior:**
-```python
-# Session pool enabled only when tracing context is inactive
-if settings.mcp_session_pool_enabled and not otel_context_active():
-    # Use base headers without trace context injection
-    async with pool.session(url=server_url, headers=headers) as pooled:
-        # Pool provides 10-20x latency improvement
-        # But per-request trace context and baggage do NOT propagate upstream
+The Python gateway reuses upstream MCP sessions while OpenTelemetry tracing is active.
+SSE and Streamable HTTP use the upstream session registry, keyed by downstream MCP session ID and gateway ID.
+Set `USE_STATEFUL_SESSIONS=true` to establish downstream sessions; its default remains `false`.
+Calls retain upstream state when they reach the owning worker. Configure session affinity for multi-worker deployments.
+The registry falls back to per-call connections when the downstream session ID or gateway ID is unavailable,
+or the registry is not initialized. Tracing does not change this selection.
+
+### Spans and Session IDs
+
+Each call uses its current request trace. A persistent session can carry many independent traces:
+
+```text
+gateway request
+└─ tool.invoke
+   └─ tool.gateway_call
+      └─ mcp.client.call
+         ├─ mcp.client.initialize  (new connections only)
+         ├─ mcp.client.request
+         └─ mcp.client.response
 ```
 
-### Why Trace Headers Are Not Injected
+`mcp.client.call` includes connection acquisition and invocation time. `mcp.client.initialize` measures
+actual connection setup and protocol negotiation. Request spans measure tool execution, including the response wait.
+Tool errors set error status even when the MCP call returns an `isError` result without raising an exception.
+The MCP SDK can add `MCP send ...` spans beneath request and initialization spans. Upstream metadata extraction
+then links to the SDK send span within the same call trace.
+Existing identity capture settings control user and team attributes.
 
-The MCP SDK pins headers at transport creation time. If we inject per-request
-trace headers (`traceparent`, `X-Correlation-ID`) or baggage before pooling:
+`gateway.upstream.session_id` identifies the upstream session on tool and client spans once the upstream assigns it.
+Streamable HTTP IDs come from upstream `Mcp-Session-Id` response headers. SSE IDs come from the SDK session callback.
+Reused connections retain the ID. Recreated connections report their new ID. Stateless upstreams omit this attribute.
+The conditional `langfuse.session.id` attribute continues to identify the downstream session.
 
-1. **Trace Corruption**: The first request's trace context gets pinned to the transport
-2. **Context Leakage**: Later unrelated requests reuse the same trace ID
-3. **Broken Distributed Tracing**: Upstream servers see wrong parent spans
-4. **Correlation ID Leakage**: Different requests appear correlated when they're not
-5. **Baggage Leakage**: Tenant or request metadata from one request bleeds into another
+### Gateway Tracing and Upstream Propagation
 
-### The Trade-off
+Gateway-side spans require no upstream tracing support. Reused connections propagate current `traceparent`,
+`tracestate`, and permitted `baggage` through each tool call's MCP `_meta` dictionary.
+Upstream servers must extract this metadata to join the call's trace. HTTP-only extraction does not establish
+this linkage when HTTP auto-instrumentation is disabled.
 
-| Aspect | Pooled Sessions | Non-Pooled Sessions |
-|--------|----------------|---------------------|
-| **Latency** | 10-20x faster (reuse connection) | Slower (new connection each time) |
-| **Trace Propagation** | ❌ No upstream propagation | ✅ Full W3C trace context |
-| **Baggage Propagation** | ❌ No upstream propagation | ✅ Optional W3C baggage propagation |
-| **Correlation IDs** | ❌ Not sent to upstream | ✅ Sent per-request |
-| **Use Case** | High-throughput, internal tracing | Distributed tracing across services |
+Persistent transport defaults exclude `traceparent`, `tracestate`, `baggage`, and `X-Correlation-ID`.
+This prevents earlier calls' headers from being replayed. Lifecycle tasks exclude caller identity and baggage;
+individual messages retain their sender context through the MCP SDK.
 
-### When to Use Each
+`OTEL_BAGGAGE_ENABLED` and `OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL` continue to control external baggage propagation.
+Baggage uses the existing sanitization and allowlist policy. Caller metadata is copied before propagation fields
+are replaced. Unrelated metadata remains intact.
 
-**Use Session Pooling** (default):
-- High request volume to same MCP servers
-- Internal observability is sufficient
-- 10-20x latency improvement is critical
-- Upstream servers don't need trace context or baggage
+Per-call fallback connections retain HTTP trace propagation and current MCP trace metadata.
+`OTEL_HTTPX_INSTRUMENTATION_ENABLED` remains optional. HTTP auto-instrumentation can add HTTP spans and headers;
+metadata propagation is the supported tracing link for reused sessions. No new configuration flag is required.
 
-**Disable Session Reuse** (for distributed tracing):
+### Compatibility
 
-The upstream session registry automatically falls back to per-call sessions when:
-- Tracing is active (distributed tracing requires per-request headers)
-- No `Mcp-Session-Id` header is present (no downstream session to bind to)
-- Registry is not initialized (tests, early startup)
-
-Use cases for per-call sessions:
-- Need end-to-end distributed tracing
-- Upstream MCP servers participate in traces
-- Need downstream baggage propagation
-- Correlation IDs must reach upstream
-- Latency is acceptable trade-off
-
-### Implementation Details
-
-The session pool:
-- Reuses transports with pinned headers (base headers only)
-- Does NOT inject per-request trace headers or baggage
-- Provides 10-20x latency improvement
-- Maintains internal trace context within gateway
-- Upstream servers do not receive trace or baggage propagation
+This behavior applies to the Python runtime and is validated with MCP SDK 2.3.0.
+Both `MCP_CLIENT_CONNECT_MODE=legacy` and `auto` retain their negotiation behavior.
+Session IDs and persistent upstream state require a stateful upstream protocol. Modern stateless HTTP negotiation
+can omit upstream session IDs; `auto` can also fall back to a legacy stateful upstream.
+No new MCP protocol revision or database migration is required. Rust runtime behavior remains unchanged.
+Operators that previously relied on active tracing to force fresh connections now receive registry reuse
+when downstream session binding is available. Update upstream trace extraction to read MCP metadata.
 
 ## Security Considerations
 
@@ -656,7 +644,7 @@ the same baggage values are emitted as `tenant.id` and `user.id`.
 
 ### Overview
 
-When the upstream session registry is used (when a downstream `Mcp-Session-Id` header is present and tracing is inactive), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
+When the upstream session registry is used (when a downstream session ID and gateway ID are available), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
 
 ### Error Categories
 
@@ -757,7 +745,7 @@ This ensures operators see actionable error information without needing to parse
 
 ### Fallback Behavior
 
-When the upstream session registry is **not used** (no `Mcp-Session-Id` header, or tracing is active, or registry initialization failed), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping and error sanitization. Both paths provide consistent error diagnostics and credential redaction.
+When the upstream session registry is **not used** (no downstream session ID or gateway ID, or registry initialization failed), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping and error sanitization. Both paths provide consistent error diagnostics and credential redaction.
 
 ### Observability Best Practices
 
@@ -803,7 +791,7 @@ OTEL_BSP_MAX_QUEUE_SIZE=4096
 
 ### No Traces Appearing
 
-1. **Check OTEL is enabled**: `OBSERVABILITY_ENABLED=true`
+1. **Check OTEL is enabled**: `OTEL_ENABLE_OBSERVABILITY=true`
 2. **Verify exporter endpoint**: Test connectivity to OTLP endpoint
 3. **Check service name**: Ensure `OTEL_SERVICE_NAME` is set correctly
 4. **Review logs**: Look for "OpenTelemetry initialized" message
@@ -811,8 +799,8 @@ OTEL_BSP_MAX_QUEUE_SIZE=4096
 ### Broken Trace Context
 
 1. **Verify header injection**: Check that `inject_trace_context_headers()` is called
-2. **Session pool headers**: Ensure headers are injected before `pool.session()`
-3. **Upstream support**: Verify upstream MCP server supports W3C trace context
+2. **Persistent sessions**: Inspect per-call MCP `_meta`; keep propagation headers out of persistent defaults
+3. **Upstream support**: Verify upstream MCP servers extract trace context from MCP metadata
 
 ### Performance Issues
 

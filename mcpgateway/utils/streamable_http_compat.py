@@ -29,6 +29,7 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
@@ -38,7 +39,54 @@ from mcp.shared.exceptions import MCPError
 from mcp_types import jsonrpc_message_adapter, JSONRPCError
 from pydantic import ValidationError
 
+# First-Party
+from mcpgateway.observability import set_span_attribute
+
 REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+@dataclass
+class UpstreamSessionInfo:
+    """Track the session ID assigned by one upstream connection."""
+
+    session_id: str | None = None
+
+    def capture_sse(self, session_id: str) -> None:
+        """Capture the session ID supplied by the SSE transport.
+
+        Args:
+            session_id: Upstream-assigned session ID.
+        """
+        self.session_id = session_id
+
+    async def capture_response(self, response: httpx2.Response) -> None:
+        """Capture an upstream session ID without retaining response headers.
+
+        Args:
+            response: Upstream HTTP response.
+        """
+        session_id = response.headers.get("Mcp-Session-Id")
+        if session_id and response.is_success:
+            self.session_id = session_id
+
+    def install(self, client: httpx2.AsyncClient) -> None:
+        """Install session capture on this connection's HTTP client.
+
+        Args:
+            client: Connection-local HTTP client.
+        """
+        client.event_hooks.setdefault("response", []).append(self.capture_response)
+
+    def annotate(self, *spans: Any) -> None:
+        """Add the assigned upstream session ID to available spans.
+
+        Args:
+            spans: Spans to annotate when an upstream ID is available.
+        """
+        if self.session_id:
+            for span in spans:
+                if span is not None:
+                    set_span_attribute(span, "gateway.upstream.session_id", self.session_id)
 
 
 class ErrorResponseHook:
@@ -131,6 +179,7 @@ async def streamable_http_client(
     timeout: float | httpx2.Timeout | None = None,
     auth: httpx2.Auth | None = None,
     httpx_client_factory: Callable[..., httpx2.AsyncClient] | None = None,
+    session_info: UpstreamSessionInfo | None = None,
 ) -> AsyncIterator[Any]:
     """Yield ``(read_stream, write_stream)`` from the mcp 2.x streamable transport.
 
@@ -148,6 +197,7 @@ async def streamable_http_client(
             are forwarded as keyword arguments to the factory; otherwise a fresh
             ``httpx2.AsyncClient`` is created here with ``follow_redirects=True``
             (matching v1's internal client behavior).
+        session_info: Optional connection-local upstream session ID tracker.
 
     Yields:
         2-tuple of ``(read_stream, write_stream)``.
@@ -164,6 +214,8 @@ async def streamable_http_client(
             kwargs["auth"] = auth
         http_client = httpx2.AsyncClient(**kwargs)
 
+    if session_info is not None:
+        session_info.install(http_client)
     error_hook = ErrorResponseHook().install(http_client)
     async with http_client:
         try:
