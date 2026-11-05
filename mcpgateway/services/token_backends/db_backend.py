@@ -221,7 +221,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 raise TokenReauthorizationRequired() from exc
             except TokenReauthorizationRequired:
                 raise
-            except OAuthError:
+            except Exception:
                 if self._is_token_expired(token_record, 0):
                     raise
         if access_token is None:

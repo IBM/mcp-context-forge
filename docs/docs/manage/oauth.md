@@ -56,6 +56,10 @@ See the flow details and security model in the architecture docs.
 OAUTH_REQUEST_TIMEOUT=30      # Seconds
 OAUTH_MAX_RETRIES=3           # Retries for transient failures
 
+# Retrieval of the caller's stored access token
+OAUTH_TOKEN_RETRIEVAL_ENABLED=false
+OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS=600  # Seconds, range 0–3600
+
 # Secret encryption for stored OAuth client secrets (and tokens if enabled)
 AUTH_ENCRYPTION_SECRET=<strong-random-key>
 ```
@@ -64,6 +68,44 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
     Always run ContextForge over HTTPS when using OAuth. Never transmit client secrets or authorization codes over insecure channels.
 
 ---
+
+## Retrieve Your Stored Access Token
+
+Enable `OAUTH_TOKEN_RETRIEVAL_ENABLED=true` to expose `GET /oauth/token/{gateway_id}`.
+The endpoint supports gateways configured for the Authorization Code flow.
+Complete `/oauth/authorize/{gateway_id}` before requesting a stored token.
+
+The caller must authenticate, have visibility of the gateway, and hold `tokens.create`.
+An explicitly scoped API token must also grant `tokens.create`.
+`GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read` instead.
+Token retrieval requires the token permission because it discloses a live bearer token, rather than status metadata.
+The endpoint always resolves the authenticated caller's stored token.
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  "https://gateway.example.com/oauth/token/${GATEWAY_ID}"
+```
+
+The response contains `gateway_id`, `access_token`, `token_type`, `expires_at`, and `scopes`.
+`expires_at` and `scopes` can be `null` when unavailable. The response excludes `refresh_token`
+and sets `Cache-Control: no-store`. Treat the returned access token as a secret.
+
+Operators set `OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS` to a value from `0` through `3600` seconds.
+The default is `600` seconds. This is a server setting; there is no `threshold_seconds` query parameter.
+The endpoint refreshes a token within this expiry window when a refresh token exists.
+A transient refresh failure preserves a still-valid access token. An invalid refresh grant requires reauthorization.
+The endpoint never returns an expired token.
+
+| HTTP status | Meaning |
+|-------------|---------|
+| `400` | The gateway lacks Authorization Code OAuth configuration. |
+| `401` | The caller is unauthenticated or has no usable identity. |
+| `403` | The caller lacks gateway access or the required permission. |
+| `404` | The gateway or the caller's stored OAuth token does not exist. |
+| `409` | OAuth reauthorization is required. |
+| `502` | The provider cannot refresh an expired access token. |
+| `503` | Retrieval is disabled or token storage is unavailable. |
 
 ## Configure a Gateway (Admin UI)
 

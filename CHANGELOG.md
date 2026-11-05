@@ -70,6 +70,8 @@
 
 ### Added
 
+- **OAuth access token retrieval** ([#6966](https://github.com/IBM/mcp-context-forge/issues/6966)) - `GET /oauth/token/{gateway_id}` returns the caller's own access token and requires `tokens.create`. `OAUTH_TOKEN_RETRIEVAL_ENABLED` defaults to `false`. `OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS` controls refresh timing, defaults to `600`, and accepts `0`–`3600`. The response excludes refresh tokens.
+
 - **Webhook HMAC replay protection** (internal issue 1149, PSIRT ADV0369535) - The `webhook_notification` plugin accepts `hmac_include_timestamp: true`. The signature then covers `{timestamp}.{delivery_id}.{body}`, and the plugin sends `X-Timestamp` and `X-Delivery-Id` headers. Each retry is signed again with a fresh timestamp. The default stays `false`, so existing receivers keep verifying `HMAC(body)`. The default flips to `true` in a later minor release.
 
 #### **API & Platform**

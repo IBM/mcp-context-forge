@@ -58,6 +58,13 @@ logger = logging.getLogger(__name__)
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
+OAUTH_STATUS_BATCH_MAX_IDS = 100
+# Upper bound on how long the batch endpoint will wait for the whole
+# get_token_info_bulk() call, so a slow/unresponsive backend (worst case:
+# OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried
+# with exponential backoff) can't hold the request open indefinitely. On
+# timeout every pending id reports "unknown" rather than failing the batch.
+OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS = 15.0
 
 
 def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
@@ -1611,16 +1618,6 @@ async def get_oauth_status(
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
-OAUTH_STATUS_BATCH_MAX_IDS = 100
-
-# Upper bound on how long the batch endpoint will wait for the whole
-# get_token_info_bulk() call, so a slow/unresponsive backend (worst case:
-# OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried
-# with exponential backoff) can't hold the request open indefinitely. On
-# timeout every pending id reports "unknown" rather than failing the batch.
-OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS = 15.0
-
-
 @oauth_router.get("/status")
 @require_permission(Permissions.GATEWAYS_READ)
 async def get_oauth_status_batch(
@@ -1729,11 +1726,8 @@ async def get_oauth_status_batch(
     return results
 
 
-OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS = 600
-
-
 @oauth_router.get("/token/{gateway_id}")
-@require_permission(Permissions.GATEWAYS_UPDATE)
+@require_permission(Permissions.TOKENS_CREATE)
 async def get_gateway_oauth_token(
     gateway_id: str,
     request: Request,
@@ -1747,9 +1741,9 @@ async def get_gateway_oauth_token(
     ``OAUTH_TOKEN_RETRIEVAL_ENABLED=true``. It resolves the stored OAuth
     token for the *authenticated caller's own* session against the given gateway,
     refreshing it first if it is within ``OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS``
-    (10 minutes) of expiring, and returns only the ``access_token`` -- the
-    ``refresh_token`` is never included in the response. The refresh threshold is fixed
-    server-side so a caller cannot force an upstream refresh on every request. The
+    (600 seconds by default) of expiring, and returns only the ``access_token`` -- the
+    ``refresh_token`` is never included in the response. Operators configure the threshold
+    server-side within 0–3600 seconds. Callers cannot override it per request. The
     success response is marked ``Cache-Control: no-store`` so the credential isn't
     retained by intermediate caches, and issuance is logged (gateway/user, never the
     token itself) for forensic traceability.
@@ -1764,14 +1758,16 @@ async def get_gateway_oauth_token(
     Returns:
         dict: ``gateway_id``, ``access_token``, ``token_type``, ``expires_at``, and
             ``scopes`` for the caller's own token.
-
     Raises:
-        HTTPException: 503 if the feature flag is disabled; 404 if the gateway is not
-            found or no OAuth token is stored for the caller; 400 if the gateway has no
-            OAuth configuration or its grant type is not ``authorization_code``; 401 if
-            the caller's identity cannot be resolved; 403 if the caller lacks access to
-            this gateway; 409 if OAuth reauthorization is required; 502 if the provider
-            fails; 503 if token storage fails.
+        HTTPException:
+                503 if the feature flag is disabled;
+                404 if the gateway is not found
+                400 if the gateway has no OAuth configuration
+                401 if the caller's identity cannot be resolved
+                403 if the caller lacks access to this gateway
+                409 if OAuth reauthorization is required
+                502 if the providerfails
+                503 if token storage fails.
     """
     if not settings.oauth_token_retrieval_enabled:
         raise HTTPException(
@@ -1798,13 +1794,15 @@ async def get_gateway_oauth_token(
     user_context = _build_user_context(current_user, db=db)
     try:
         token_storage = TokenStorageService(db, user_context)
-        token_details = await token_storage.get_user_token_details(gateway_id, app_user_email, threshold_seconds=OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS)
+        token_details = await token_storage.get_user_token_details(gateway_id, app_user_email, threshold_seconds=settings.oauth_token_refresh_threshold_seconds)
     except TokenReauthorizationRequired as exc:
         raise HTTPException(status_code=409, detail="OAuth reauthorization required for this gateway and user") from exc
     except OAuthError as exc:
         raise HTTPException(status_code=502, detail="OAuth provider could not refresh the access token") from exc
     except Exception as exc:
-        logger.error("OAuth token storage retrieval failed")
+        # Backend exception messages and chains can contain tokens; retain only the type and traceback locations.
+        diagnostic = RuntimeError(type(exc).__name__)
+        logger.error("OAuth token storage retrieval failed", exc_info=(RuntimeError, diagnostic, exc.__traceback__))
         raise HTTPException(status_code=503, detail="OAuth token storage unavailable") from exc
     if token_details is None:
         raise HTTPException(

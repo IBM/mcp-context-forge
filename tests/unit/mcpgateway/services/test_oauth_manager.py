@@ -1660,6 +1660,11 @@ class TestIssuerPinningOnAudienceLearning:
         from mcpgateway.services.dcr_service import DcrError
 
         with (
+            patch(
+                "mcpgateway.services.oauth_manager.DcrService.discover_as_metadata",
+                new_callable=AsyncMock,
+                return_value={"issuer": credentials.get("issuer"), "authorization_response_iss_parameter_supported": False},
+            ) as discovery,
             patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
             patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
             patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
@@ -1669,6 +1674,10 @@ class TestIssuerPinningOnAudienceLearning:
             result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials)
 
         assert result["success"] is True
+        if credentials.get("issuer"):
+            discovery.assert_awaited_once_with(credentials["issuer"])
+        else:
+            discovery.assert_not_awaited()
         mock_token_storage.store_tokens.assert_called_once()
         return mock_token_storage.store_tokens.call_args[1]
 

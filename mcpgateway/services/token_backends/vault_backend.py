@@ -437,7 +437,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         Raises:
             TokenReauthorizationRequired: The stored grant needs authorization.
             OAuthError: The provider cannot refresh an expired token.
-            ValueError: Stored token data is incomplete.
+            ValueError: Stored token expiry is invalid.
         """
         mcp_url = self._resolve_mcp_url(gateway_id)
         path = self._construct_vault_path(team_id, mcp_url, app_user_email)
@@ -447,9 +447,9 @@ class VaultTokenBackend(AbstractTokenBackend):
             if result is None:
                 return None
             data = result["data"]["data"]
-            token = data.get("token", {})
-            if not token.get("access_token"):
-                raise ValueError("Vault OAuth token data is incomplete")
+            token = data.get("token")
+            if not isinstance(token, dict) or not token.get("access_token"):
+                return None
             expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00")) if data.get("expires_at") else None
             if expires_at and (expires_at - datetime.now(timezone.utc)).total_seconds() < threshold_seconds and token.get("refresh_token"):
                 try:
@@ -459,7 +459,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                     raise TokenReauthorizationRequired() from exc
                 except TokenReauthorizationRequired:
                     raise
-                except OAuthError:
+                except Exception:
                     if expires_at <= datetime.now(timezone.utc):
                         raise
             if expires_at and expires_at <= datetime.now(timezone.utc):

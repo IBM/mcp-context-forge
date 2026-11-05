@@ -228,8 +228,16 @@ def test_viewer_and_wrong_team_are_denied(token_gateway: TokenGateway, user: str
     assert "access-for-" not in response.text
 
 
-def test_read_only_api_token_is_denied(token_gateway: TokenGateway) -> None:
-    """A developer's API token scoped to gateways.read cannot disclose a provider token."""
-    response = _get(token_gateway, token_gateway.headers("owner", ["gateways.read"]))
+@pytest.mark.parametrize("permission", ["gateways.read", "gateways.update"])
+def test_gateway_only_api_token_is_denied(token_gateway: TokenGateway, permission: str) -> None:
+    """Gateway permissions alone cannot disclose a provider token."""
+    response = _get(token_gateway, token_gateway.headers("owner", [permission]))
     assert response.status_code == 403, response.text
     assert "access-for-" not in response.text
+
+
+def test_tokens_create_api_token_can_retrieve(token_gateway: TokenGateway) -> None:
+    """A visible gateway and tokens.create allow retrieval of the caller's token."""
+    response = _get(token_gateway, token_gateway.headers("owner", ["tokens.create"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["access_token"] == "access-for-owner"

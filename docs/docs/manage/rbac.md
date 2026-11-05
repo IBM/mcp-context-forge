@@ -512,6 +512,15 @@ which validates and resolves a tool call without dispatching it (no REST/MCP/A2A
 `TOOL_POST_INVOKE` hook). A role granted `tools.preview` but not `tools.execute` can validate a
 tool call but never actually invoke it.
 
+### OAuth Token Retrieval Permissions
+
+`GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read`.
+`GET /oauth/token/{gateway_id}` requires `tokens.create` because it returns a live access token.
+Explicit API token scopes must grant the same permission. Gateway visibility checks still apply.
+The token lookup uses the authenticated caller's identity, so callers can retrieve only their own stored token.
+The endpoint is disabled unless `OAUTH_TOKEN_RETRIEVAL_ENABLED=true`.
+See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for configuration and response details.
+
 !!! note "Registered OAuth clients require un-narrowed admin scope"
     `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate the DCR management routes
     (`GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`,

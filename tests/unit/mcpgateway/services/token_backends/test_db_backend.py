@@ -12,10 +12,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
 from mcpgateway.db import OAuthToken
+from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
 
 
@@ -412,13 +414,17 @@ async def test_token_details_return_token_and_metadata(backend_no_encryption, mo
 
 
 @pytest.mark.asyncio
-async def test_token_details_keep_valid_token_when_refresh_fails(backend_no_encryption, mock_db):
+@pytest.mark.parametrize("error", [OAuthError("unavailable"), httpx.ConnectError("unavailable"), ValueError("decryption failed")])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_token_details_keep_valid_token_when_refresh_fails(backend_no_encryption, mock_db, error, expired):
     """A transient refresh failure preserves the current usable access token."""
-    from mcpgateway.services.oauth_manager import OAuthError
-
-    record = _make_token_record(access_token="still-valid", expires_at=datetime.now(timezone.utc) + timedelta(seconds=60))
+    record = _make_token_record(access_token="still-valid", expires_at=datetime.now(timezone.utc) + timedelta(seconds=-60 if expired else 60))
     mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=OAuthError("Provider unavailable"))):
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=error)):
+        if expired:
+            with pytest.raises(type(error)):
+                await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+            return
         result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
 
     assert result.access_token == "still-valid"

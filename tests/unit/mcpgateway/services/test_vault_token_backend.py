@@ -59,17 +59,33 @@ async def test_token_details_preserve_vault_failure(details_backend, error):
 
 
 @pytest.mark.asyncio
-async def test_token_details_preserve_valid_token_on_transient_refresh_failure(details_backend):
+@pytest.mark.parametrize("error", [OAuthError("unavailable"), httpx.ConnectError("unavailable"), ValueError("decryption failed")])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_token_details_preserve_valid_token_on_transient_refresh_failure(details_backend, error, expired):
     """Return a still-valid token when the provider cannot refresh it."""
-    expiry = datetime.now(timezone.utc) + timedelta(seconds=60)
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=-60 if expired else 60)
     data = {"token": {"access_token": "caller-access", "refresh_token": "caller-refresh", "scopes": ["read"]}, "expires_at": expiry.isoformat()}
     with (
         patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})),
-        patch.object(details_backend, "_refresh_token_details", new=AsyncMock(side_effect=OAuthError("unavailable"))),
+        patch.object(details_backend, "_refresh_token_details", new=AsyncMock(side_effect=error)),
     ):
+        if expired:
+            with pytest.raises(type(error)):
+                await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+            return
         result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
 
     assert result.access_token == "caller-access"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [{"headers": {"X-Api-Key": "example"}}, {"token": None}, {"token": []}, {"token": "invalid"}, {"token": {}}, {"token": {"refresh_token": "example"}}])
+async def test_token_details_return_none_without_access_token(details_backend, data):
+    """Header-only and incomplete records contain no retrievable OAuth token."""
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result is None
 
 
 class TestVaultTokenBackendInit:
