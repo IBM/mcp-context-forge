@@ -1,13 +1,13 @@
 # MCP Reverse Proxy
 
-The MCP Reverse Proxy enables local MCP servers to be accessible through remote gateways without requiring inbound network access. This is similar to SSH reverse tunneling or ngrok, but specifically designed for the MCP protocol.
+The MCP Reverse Proxy makes local MCP servers reachable through remote gateways. It needs no inbound network access. It works like SSH reverse tunneling or ngrok, but it serves the MCP protocol.
 
 ## Overview
 
-The reverse proxy establishes an outbound connection from a local environment to a remote gateway, then tunnels all MCP protocol messages through this persistent connection. This allows:
+The reverse proxy establishes an outbound connection from a local environment to a remote gateway. It then tunnels all MCP protocol messages through this persistent connection. This gives you:
 
 - **Firewall traversal**: Share MCP servers without opening inbound ports
-- **NAT bypass**: Work seamlessly behind corporate or home NATs
+- **NAT bypass**: Work behind corporate or home NATs
 - **Edge deployments**: Connect edge servers to central management
 - **Development testing**: Test local servers with cloud-hosted gateways
 
@@ -15,7 +15,7 @@ The reverse proxy establishes an outbound connection from a local environment to
 
 ```
 ┌─────────────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Local MCP Server  │ stdio   │  Reverse Proxy   │ WS/SSE  │   Remote    │
+│   Local MCP Server  │ stdio   │  Reverse Proxy   │   WS    │   Remote    │
 │  (uvx mcp-server)   │ <-----> │     Client       │ <-----> │   Gateway   │
 └─────────────────────┘         └──────────────────┘         └─────────────┘
                                                                      ↑
@@ -33,25 +33,25 @@ Connect a local MCP server to a remote gateway:
 
 ```bash
 # Set gateway URL and authentication
-export REVERSE_PROXY_GATEWAY=https://gateway.example.com
+export REVERSE_PROXY_GATEWAY=wss://gateway.example.com/reverse-proxy/ws
 export REVERSE_PROXY_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret your-secret-key)
+    --username admin@example.com --exp 10080 --secret your-secret-key)
 
 # Run the reverse proxy
-python3 -m mcpgateway.reverse_proxy \
+mcp-reverse-proxy \
     --local-stdio "uvx mcp-server-git"
 ```
 
 ### 2. Command Line Options
 
 ```bash
-python3 -m mcpgateway.reverse_proxy \
+mcp-reverse-proxy \
     --local-stdio "uvx mcp-server-fetch" \
     --gateway https://gateway.example.com \
     --token your-bearer-token \
     --reconnect-delay 2 \
     --max-retries 10 \
-    --keepalive 30 \
+    --keepalive 2 \
     --log-level DEBUG
 ```
 
@@ -62,7 +62,7 @@ Options:
 - `--token`: Bearer token for authentication (or use REVERSE_PROXY_TOKEN env var)
 - `--reconnect-delay`: Initial reconnection delay in seconds (default: 1)
 - `--max-retries`: Maximum reconnection attempts, 0=infinite (default: 0)
-- `--keepalive`: Heartbeat interval in seconds (default: 30)
+- `--keepalive`: Heartbeat interval in seconds (default: 2)
 - `--log-level`: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - `--verbose`: Enable verbose logging (same as --log-level DEBUG)
 - `--config`: Configuration file (YAML or JSON)
@@ -78,14 +78,14 @@ gateway: "https://gateway.example.com"
 token: "your-bearer-token"
 reconnect_delay: 2
 max_retries: 0
-keepalive: 30
+keepalive: 2
 log_level: "INFO"
 ```
 
 Run with configuration:
 
 ```bash
-python3 -m mcpgateway.reverse_proxy --config reverse-proxy.yaml
+mcp-reverse-proxy --config reverse-proxy.yaml
 ```
 
 ## Environment Variables
@@ -100,18 +100,20 @@ python3 -m mcpgateway.reverse_proxy --config reverse-proxy.yaml
 
 ### Single Container
 
+The published image `ghcr.io/contextforge-org/mcp-reverse-proxy:latest` covers stock deployments - pull it instead of building locally. Build a custom client image only when you must include your own downstream servers or tooling:
+
 ```dockerfile
 FROM python:3.11-slim
 
-# Install MCP gateway and server
-RUN pip install mcp-contextforge-gateway mcp-server-git
+# Install the maintained reverse-proxy client and local MCP server
+RUN pip install mcp-reverse-proxy mcp-server-git
 
 # Set environment
-ENV REVERSE_PROXY_GATEWAY=https://gateway.example.com
+ENV REVERSE_PROXY_GATEWAY=wss://gateway.example.com/reverse-proxy/ws
 ENV REVERSE_PROXY_TOKEN=your-token
 
 # Run reverse proxy
-CMD ["python", "-m", "mcpgateway.reverse_proxy", \
+CMD ["mcp-reverse-proxy", \
      "--local-stdio", "mcp-server-git"]
 ```
 
@@ -122,24 +124,22 @@ version: '3.8'
 
 services:
   reverse-proxy-git:
-    image: mcp-gateway:latest
+    image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
     environment:
-      REVERSE_PROXY_GATEWAY: https://gateway.example.com
+      REVERSE_PROXY_GATEWAY: wss://gateway.example.com/reverse-proxy/ws
       REVERSE_PROXY_TOKEN: ${TOKEN}
     command: >
-      python -m mcpgateway.reverse_proxy
       --local-stdio "mcp-server-git"
-      --keepalive 30
+      --keepalive 2
       --log-level INFO
     restart: unless-stopped
 
   reverse-proxy-fetch:
-    image: mcp-gateway:latest
+    image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
     environment:
-      REVERSE_PROXY_GATEWAY: https://gateway.example.com
+      REVERSE_PROXY_GATEWAY: wss://gateway.example.com/reverse-proxy/ws
       REVERSE_PROXY_TOKEN: ${TOKEN}
     command: >
-      python -m mcpgateway.reverse_proxy
       --local-stdio "uvx mcp-server-fetch"
     restart: unless-stopped
 ```
@@ -164,11 +164,11 @@ spec:
       containers:
 
       - name: reverse-proxy
-        image: mcp-gateway:latest
+        image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
         env:
 
         - name: REVERSE_PROXY_GATEWAY
-          value: "https://gateway.example.com"
+          value: "wss://gateway.example.com/reverse-proxy/ws"
 
         - name: REVERSE_PROXY_TOKEN
           valueFrom:
@@ -176,10 +176,7 @@ spec:
               name: mcp-credentials
               key: token
         command:
-
-        - python
-        - -m
-        - mcpgateway.reverse_proxy
+        - mcp-reverse-proxy
         args:
 
         - --local-stdio
@@ -200,6 +197,21 @@ The remote gateway must have the reverse proxy endpoints enabled:
 # Required on the gateway
 MCPGATEWAY_REVERSE_PROXY_ENABLED=true
 ```
+
+### Multi-worker deployments
+
+A single gateway worker can keep reverse-proxy session ownership in process. Deployments with 2 or more workers must enable the Redis-backed distributed relay. The relay carries an MCP call from a non-owner worker to the worker that owns the client WebSocket:
+
+```bash
+MCPGATEWAY_REVERSE_PROXY_ENABLED=true
+MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED=true
+CACHE_TYPE=redis
+REDIS_URL=redis://redis:6379/0
+```
+
+Distributed mode fails at startup unless you enable both the reverse-proxy feature and the Redis cache. Redis stores short-lived owner generations, worker heartbeats, and signed request/response envelopes. The WebSocket remains local to its owner worker. If Redis becomes unavailable, cross-worker dispatch fails closed. The gateway does not guess ownership.
+
+Set `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT` to the silence limit for a client. When the limit passes, the gateway evicts the session, and the catalog gateway becomes unreachable. The default is 90 seconds. A value of `0` disables heartbeat eviction. Use a value appropriate for the client's keepalive interval and network jitter.
 
 ### 1. WebSocket Endpoint
 
@@ -226,16 +238,16 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ### 3. Virtual Server Registration
 
-Reverse-proxied servers automatically appear in the gateway's server catalog and can be accessed like any other MCP server.
+Reverse-proxied servers appear in the gateway's server catalog automatically. Access them like any other MCP server.
 
 ## Security Considerations
 
 ### Authentication
 
 - Always use authentication tokens in production
-- Tokens should have appropriate expiration times
-- WebSocket auth accepts bearer tokens from the `Authorization` header only (`?token=` query auth is not supported)
-- Consider using mutual TLS for additional security
+- Give tokens appropriate expiration times
+- WebSocket auth accepts bearer tokens from the `Authorization` header only. The `?token=` query parameter is not supported.
+- Use mutual TLS for additional security
 
 ### Network Security
 
@@ -285,7 +297,7 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
 
 3. **Enable debug logging**:
    ```bash
-   python3 -m mcpgateway.reverse_proxy \
+   mcp-reverse-proxy \
        --local-stdio "uvx mcp-server-git" \
        --log-level DEBUG
    ```
@@ -299,6 +311,8 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
 | `WebSocket connection failed` | Firewall blocking WSS | Check outbound port 443 |
 | `Subprocess not running` | Local server crashed | Check server command and logs |
 | `Max retries exceeded` | Persistent network issue | Check network stability |
+| `reverse-proxy relay unavailable` | Redis unavailable in distributed mode | Restore Redis connectivity. Requests fail closed until ownership is authoritative again. |
+| Gateway starts on one worker but calls fail on another | Distributed relay disabled | Enable `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED` and configure Redis |
 
 ### Performance Tuning
 
@@ -332,11 +346,11 @@ servers:
 
   - name: git-server
     command: "uvx mcp-server-git"
-    gateway: "https://gateway1.example.com"
+    gateway: "wss://gateway1.example.com/reverse-proxy/ws"
 
   - name: fetch-server
     command: "uvx mcp-server-fetch"
-    gateway: "https://gateway2.example.com"
+    gateway: "wss://gateway2.example.com/reverse-proxy/ws"
 ```
 
 ### Load Balancing
@@ -345,14 +359,14 @@ Connect the same server to multiple gateways:
 
 ```bash
 # Primary gateway
-python3 -m mcpgateway.reverse_proxy \
+mcp-reverse-proxy \
     --local-stdio "uvx mcp-server-git" \
-    --gateway https://gateway1.example.com &
+    --gateway wss://gateway1.example.com/reverse-proxy/ws &
 
 # Backup gateway
-python3 -m mcpgateway.reverse_proxy \
+mcp-reverse-proxy \
     --local-stdio "uvx mcp-server-git" \
-    --gateway https://gateway2.example.com &
+    --gateway wss://gateway2.example.com/reverse-proxy/ws &
 ```
 
 ### Monitoring Integration
@@ -362,7 +376,7 @@ Export metrics for monitoring systems:
 ```python
 # Custom monitoring wrapper
 import asyncio
-from mcpgateway.reverse_proxy import ReverseProxyClient
+from mcp_reverse_proxy.client import ReverseProxyClient
 
 class MonitoredReverseProxy(ReverseProxyClient):
     async def connect(self):
@@ -370,6 +384,16 @@ class MonitoredReverseProxy(ReverseProxyClient):
         prometheus_client.Counter('reverse_proxy_connections_total').inc()
         await super().connect()
 ```
+
+## Developer Resources
+
+For work on the gateway-side service or the wire protocol, see the [Reverse Proxy developer guide](../development/reverse-proxy.md). The guide covers the internals, the unit test surface, and the live end-to-end harness. The harness runs the real client against a containerized multi-worker gateway:
+
+```bash
+RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
+```
+
+Invoke the harness manually. It is not part of `make test` or CI. See the developer guide for prerequisites and overrides.
 
 ## Related Documentation
 
