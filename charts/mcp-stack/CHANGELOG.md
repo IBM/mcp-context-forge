@@ -174,8 +174,8 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
   - Account lockout: `MAX_FAILED_LOGIN_ATTEMPTS`, `ACCOUNT_LOCKOUT_DURATION_MINUTES`
   - Argon2id hashing: `ARGON2ID_TIME_COST/MEMORY_COST/PARALLELISM`
 * **SSO Integration** - Single Sign-On support for multiple providers:
-  - GitHub OAuth: `SSO_GITHUB_*` configuration options
-  - Google OAuth: `SSO_GOOGLE_*` configuration options
+  - GitHub OAuth: `SSO_GITHUB_*` configuration options <!-- pragma: allowlist secret -->
+  - Google OAuth: `SSO_GOOGLE_*` configuration options <!-- pragma: allowlist secret -->
   - IBM Security Verify: `SSO_IBM_VERIFY_*` configuration options
   - Okta OIDC: `SSO_OKTA_*` configuration options
   - SSO policies: `SSO_AUTO_CREATE_USERS`, `SSO_TRUSTED_DOMAINS`, `SSO_REQUIRE_ADMIN_APPROVAL`
@@ -197,7 +197,7 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 * **Plugin Framework Configuration** - Plugin system support:
   - `PLUGINS_ENABLED/CONFIG_FILE/CLI_COMPLETION/CLI_MARKUP_MODE`
 * **Enhanced Security Features** - Additional security configurations:
-  - MCP client auth: `MCP_CLIENT_AUTH_ENABLED/TRUST_PROXY_AUTH/PROXY_USER_HEADER`
+  - MCP client auth: `MCP_CLIENT_AUTH_ENABLED/TRUST_PROXY_AUTH/PROXY_USER_HEADER` <!-- pragma: allowlist secret -->
   - OAuth settings: `OAUTH_REQUEST_TIMEOUT/MAX_RETRIES`
   - Header passthrough: `ENABLE_HEADER_PASSTHROUGH/DEFAULT_PASSTHROUGH_HEADERS`
   - JWT enhancements: `JWT_AUDIENCE/ISSUER`, `REQUIRE_TOKEN_EXPIRATION`
