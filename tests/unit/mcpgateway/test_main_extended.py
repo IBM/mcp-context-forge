@@ -2052,6 +2052,44 @@ class TestAdminAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_admin_auth_bearer_principal_wins_over_cookie(self, monkeypatch):
+        """The Authorization bearer principal is authorized, not the cookie principal."""
+        middleware = AdminAuthMiddleware(None)
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        users = {
+            "admin-tok": MagicMock(email="admin@example.com", is_admin=True, full_name="Admin"),
+            "user-tok": MagicMock(email="user@example.com", is_admin=False, full_name="User"),
+        }
+
+        async def _validate(_request, token):
+            return users[token]
+
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
+
+        for bearer, cookie, expect_allowed in (("user-tok", "admin-tok", False), ("admin-tok", "user-tok", True)):
+            request = _make_request(
+                "/admin/tools",
+                headers={"accept": "application/json", "authorization": f"Bearer {bearer}"},
+                cookies={"jwt_token": cookie},
+            )
+            call_next = AsyncMock(return_value="ok")
+            with (
+                patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=_validate)),
+                patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
+                patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+            ):
+                response = await middleware.dispatch(request, call_next)
+
+            if expect_allowed:
+                assert response == "ok"
+                call_next.assert_called_once()
+            else:
+                assert response.status_code == 403
+                call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_admin_auth_api_token_revoked_and_success(self, monkeypatch):
         """Cover API token revoked and valid branches (when JWT validation fails)."""
         middleware = AdminAuthMiddleware(None)
@@ -11909,66 +11947,6 @@ class TestRemainingCoverageGaps:
             await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 422
 
-    async def test_module_level_router_registration_branches(self, monkeypatch):
-        """Import main.py under unique name to cover module-level wiring branches."""
-        # Standard
-        from types import ModuleType
-
-        # Third-Party
-        from fastapi import APIRouter
-
-        # Provide lightweight router modules to avoid importing heavy optional dependencies.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
-
-        # Force ImportError branches for optional routers.
-        force_error = {
-            "mcpgateway.routers.oauth_router",
-            "mcpgateway.routers.reverse_proxy",
-            "mcpgateway.routers.llmchat_router",
-            "mcpgateway.routers.llm_admin_router",
-            "mcpgateway.routers.llm_config_router",
-            "mcpgateway.routers.llm_proxy_router",
-            "mcpgateway.routers.toolops_router",
-        }
-
-        overrides = {
-            "environment": "production",
-            "allowed_origins": [],
-            "compression_enabled": False,
-            "validation_middleware_enabled": False,
-            "email_auth_enabled": False,
-            "security_logging_enabled": True,
-            "observability_enabled": True,
-            "db_query_log_enabled": True,
-            "cache_type": "redis",
-            "redis_url": "redis://localhost:6379",
-            "redis_ssl": False,
-            "structured_logging_enabled": False,
-            "mcpgateway_a2a_enabled": False,
-            "mcpgateway_tool_cancellation_enabled": False,
-            "mcpgateway_admin_api_enabled": False,
-            "mcpgateway_ui_enabled": False,
-            "llmchat_enabled": True,
-            "toolops_enabled": True,
-        }
-
-        # Ensure REDIS_AVAILABLE reflects actual install state; prior tests that
-        # reload session_registry with redis.asyncio=None pollute this flag in-place.
-        monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
-
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "true"}, force_import_error=force_error)
-
-        # Allow the import-time bootstrap_db create_task (running-loop branch) to complete.
-        await asyncio.sleep(0)
-
-        # root_info exists only when UI is disabled (no version/admin status exposed).
-        info = await mod.root_info()
-        assert "name" in info
-        assert "version" not in info
-        assert "admin_api_enabled" not in info
-
     @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_baggage"])
     def test_module_level_middleware_registration_branches(self, monkeypatch, variant):
         """Exercise the middleware registration gates against a bare app.
@@ -12736,35 +12714,47 @@ class TestRemainingCoverageGaps:
             async with main_mod.lifespan(main_mod.app):
                 pass
 
-    async def test_module_level_structured_logging_and_static_mount_errors(self, monkeypatch):
-        # Standard
-        from types import ModuleType
+    @pytest.mark.parametrize("variant", ["ui_missing_dir", "ui_valid_dir", "ui_disabled"])
+    async def test_module_level_ui_routes_branches(self, monkeypatch, tmp_path, variant):
+        """Exercise the UI-route registration branches against a bare app.
 
+        Runs ``_register_ui_routes`` under three matrices: UI enabled with a
+        missing static directory, UI enabled with a valid directory, and UI
+        disabled. The matrix covers the static-mount success and failure
+        branches, the favicon redirect, and the API-info root route.
+        """
         # Third-Party
-        from fastapi import APIRouter
+        from fastapi import FastAPI
 
-        # Keep router imports light.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
+        # First-Party
+        import mcpgateway.main as main_module
 
         overrides = {
-            "structured_logging_enabled": True,
-            "mcpgateway_tool_cancellation_enabled": True,
             "mcpgateway_ui_enabled": True,
             "static_dir": "/tmp/definitely-missing-static-dir",
         }
-        force_error = {
-            "mcpgateway.routers.log_search",
-            "mcpgateway.routers.cancellation_router",
-        }
+        if variant == "ui_valid_dir":
+            overrides["static_dir"] = tmp_path
+        elif variant == "ui_disabled":
+            overrides["mcpgateway_ui_enabled"] = False
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
-        await asyncio.sleep(0)
+        bare_app = FastAPI()
+        main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
 
-        # Cover favicon redirect logic (only registered when UI is enabled).
-        resp = await mod.favicon_redirect()
-        assert resp.status_code == 301
+        mounted = any(getattr(route, "path", None) == "/static" for route in bare_app.routes)
+        if variant == "ui_disabled":
+            assert not mounted
+            root = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
+            info = await root.endpoint()
+            assert "name" in info
+            assert "version" not in info
+        else:
+            assert mounted == (variant == "ui_valid_dir")
+            favicon = next(route for route in bare_app.routes if getattr(route, "path", "") == "/favicon.ico")
+            resp = await favicon.endpoint()
+            assert resp.status_code == 301
 
     async def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
         # Standard

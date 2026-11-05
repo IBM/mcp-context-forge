@@ -1561,6 +1561,7 @@ def test_no_redirect_jwks_client_uses_httpx_no_follow_redirects(monkeypatch):
     follow_redirects=False so an HTTP redirect from the same-origin jwks_uri
     cannot escape the SSRF same-origin check performed before key fetch."""
     # First-Party
+    from mcpgateway.services import sso_service
     from mcpgateway.utils import verify_credentials as vc
 
     captured: dict = {}
@@ -1585,7 +1586,7 @@ def test_no_redirect_jwks_client_uses_httpx_no_follow_redirects(monkeypatch):
         def get(self, *_a, **_kw):
             return _FakeResponse()
 
-    monkeypatch.setattr(vc.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(sso_service.httpx, "Client", _FakeClient)
 
     client = vc._NoRedirectPyJWKClient("https://idp.example.com/.well-known/jwks.json")
     client.fetch_data()

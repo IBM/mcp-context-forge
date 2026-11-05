@@ -55,7 +55,7 @@ import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Literal, Optional, Set, TYPE_CHECKING, Union
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 import uuid
 
 # Third-Party
@@ -102,7 +102,6 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.schemas import (
     GATEWAY_SUPPORTED_TRANSPORTS,
     GatewayCreate,
@@ -122,13 +121,14 @@ from mcpgateway.schemas import (
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
+from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.services.server_service import server_service
@@ -139,6 +139,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.pagination import unified_paginate
@@ -151,13 +152,12 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.ssrf_pinning import SniPinningTransport as _SniPinningTransport
+from mcpgateway.utils.streamable_http_compat import REDIRECT_STATUS_CODES as _REDIRECT_STATUS_CODES
 from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 
 class MCPListMethod(Enum):
@@ -216,6 +216,38 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
     return list(unique_responses.values())
 
 
+_REDIRECT_LOCATION_MAX_CHARS = 200
+
+
+def _redirect_error_text(status_code: int, location: Optional[str]) -> str:
+    """Build the operator-facing message for an upstream 3xx response that was not followed.
+
+    The ``Location`` header is upstream-controlled and can echo the credential the
+    gateway appended to the probed URL. The message keeps only scheme, host, and path.
+    Userinfo, query, and fragment are dropped. Non-printable characters are removed
+    and the result is truncated. An unparsable value falls back to the status code.
+
+    Args:
+        status_code: The 3xx status code of the upstream response.
+        location: The raw ``Location`` header value, or None.
+
+    Returns:
+        The message that tells the operator to register the redirect target directly.
+
+    """
+    target = None
+    if location:
+        try:
+            parts = urlsplit(location.strip())
+            host = parts.netloc.rpartition("@")[2]
+            target = urlunsplit((parts.scheme, host, parts.path, "", ""))
+            target = "".join(ch for ch in target if ch.isprintable())[:_REDIRECT_LOCATION_MAX_CHARS]
+        except ValueError:
+            target = None
+    destination = f"to {target}" if target else f"with HTTP {status_code}"
+    return f"Upstream redirected {destination}; update the gateway URL to the redirect target."
+
+
 def _safe_connection_error_text(exc: BaseException) -> str:
     """Describe a gateway connection failure without exposing library exception text.
 
@@ -245,6 +277,10 @@ def _safe_connection_error_text(exc: BaseException) -> str:
         'An unexpected error occurred'
         >>> _safe_connection_error_text(UnicodeEncodeError("ascii", "tok\u2060en", 3, 4, "ordinal not in range(128)"))
         'contains a character that is not valid ASCII (position 3)'
+        >>> _safe_connection_error_text(httpx.HTTPStatusError("Redirect", request=httpx.Request("GET", "http://example.com"), response=httpx.Response(307, headers={"Location": "http://example.com/mcp/"})))
+        'Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target.'
+        >>> _safe_connection_error_text(httpx.HTTPStatusError("Redirect", request=httpx.Request("GET", "http://example.com"), response=httpx.Response(307)))
+        'Upstream redirected with HTTP 307; update the gateway URL to the redirect target.'
     """
     if isinstance(exc, (UnicodeEncodeError, UnicodeDecodeError)):
         return f"contains a character that is not valid {exc.encoding.upper()} (position {exc.start})"
@@ -264,8 +300,67 @@ def _safe_connection_error_text(exc: BaseException) -> str:
     if isinstance(exc, TimeoutError):
         return "connection timed out"
     if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        if exc.response.status_code in _REDIRECT_STATUS_CODES:
+            return _redirect_error_text(exc.response.status_code, exc.response.headers.get("Location"))
         return f"server responded with HTTP {exc.response.status_code}"
     return unexpected_error_detail(exc)
+
+
+def _is_redirect_error(exc: BaseException) -> bool:
+    """Check whether an exception or exception group root cause represents a 3xx redirect status.
+
+    Args:
+        exc: The exception to inspect.
+
+    Returns:
+        True if the exception or unwrapped root cause is an HTTP 3xx redirect status error.
+
+    Examples:
+        >>> import httpx
+        >>> req = httpx.Request("GET", "http://example.com/mcp")
+        >>> resp = httpx.Response(307, request=req)
+        >>> _is_redirect_error(httpx.HTTPStatusError("307", request=req, response=resp))
+        True
+        >>> _is_redirect_error(RuntimeError("failed"))
+        False
+    """
+    root = exc
+    while isinstance(root, BaseExceptionGroup) and root.exceptions:
+        root = root.exceptions[0]
+    return isinstance(root, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root.response.status_code in _REDIRECT_STATUS_CODES
+
+
+def _safe_log_exception_text(exc: BaseException, auth_query_params: Optional[Dict[str, str]] = None) -> str:
+    """Format an exception for logging without leaking redirect query params or credentials.
+
+    For an HTTP 3xx redirect status error, returns the sanitized redirect guidance
+    from :func:`_safe_connection_error_text` so unknown query parameters in the
+    upstream's ``Location`` header cannot leak into log files (CWE-532).
+    For all other errors, sanitizes embedded URLs using :func:`sanitize_exception_message`.
+
+    Args:
+        exc: The exception to format.
+        auth_query_params: Optional dictionary of known auth query parameters to redact.
+
+    Returns:
+        The sanitized exception description safe for log emission.
+
+    Examples:
+        >>> import httpx
+        >>> req = httpx.Request("GET", "http://example.com/mcp")
+        >>> resp = httpx.Response(307, headers={"Location": "http://example.com/mcp/?leak=secret"}, request=req)
+        >>> err = httpx.HTTPStatusError("307 Temporary Redirect", request=req, response=resp)
+        >>> _safe_log_exception_text(err)
+        'Upstream redirected to http://example.com/mcp/; update the gateway URL to the redirect target.'
+        >>> _safe_log_exception_text(RuntimeError("Connection failed"))
+        'Connection failed'
+    """
+    root = exc
+    while isinstance(root, BaseExceptionGroup) and root.exceptions:
+        root = root.exceptions[0]
+    if isinstance(root, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root.response.status_code in _REDIRECT_STATUS_CODES:
+        return _safe_connection_error_text(root)
+    return sanitize_exception_message(str(exc) or type(exc).__name__, auth_query_params)
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
@@ -5070,7 +5165,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.error(
                     "Gateway %s health-check error: %s",
                     SecurityValidator.sanitize_log_message(gateway.name),
-                    sanitize_exception_message(str(error) or type(error).__name__, auth_query_params or getattr(gateway, "auth_query_params", None)),
+                    _safe_log_exception_text(error, auth_query_params or getattr(gateway, "auth_query_params", None)),
                 )
             # Reset before the DB call: if set_gateway_state raises, a stale
             # count would retry the deactivation (and its audit entry) forever.
@@ -5508,7 +5603,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             timeout=timeout,
                             extensions=pinned_target.extensions,
                         ) as response:
-                            # This will raise immediately if status is 4xx/5xx
+                            # This will raise immediately if status is 3xx/4xx/5xx
                             response.raise_for_status()
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
@@ -5652,7 +5747,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             set_span_error(span, e)
 
                         # Set the logger as debug as this check happens for each interval
-                        safe_error = sanitize_exception_message(str(exc_to_inspect), auth_query_params_decrypted or gateway_auth_query_params)
+                        safe_error = _safe_log_exception_text(exc_to_inspect, auth_query_params_decrypted or gateway_auth_query_params)
                         logger.debug("Health check failed for gateway %s: %s", gateway_name, safe_error)
                         await self._handle_gateway_failure(gateway, error=exc_to_inspect, auth_query_params=auth_query_params_decrypted)
 
@@ -5934,7 +6029,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise root_cause
 
             sanitized_error = _safe_connection_error_text(root_cause)
-            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitize_exception_message(str(root_cause) or type(root_cause).__name__, auth_query_params), exc_info=True)
+            logger.error(
+                "Gateway initialization failed for %s: %s",
+                sanitized_url,
+                _safe_log_exception_text(root_cause, auth_query_params),
+                exc_info=not _is_redirect_error(root_cause),
+            )
 
             # A header value that reaches the HTTP client encoding step is either an
             # OAuth-derived value or something else this method didn't sanitize up front.
@@ -6358,7 +6458,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active.is_(True))).scalar_one_or_none()
         if not target_user:
             raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
@@ -7965,7 +8065,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
             sanitized_error = _safe_connection_error_text(e)
-            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitize_exception_message(str(e)), exc_info=True)
+            logger.error(
+                "SSE connection error details: %s: %s",
+                type(e).__name__,
+                _safe_log_exception_text(e),
+                exc_info=not _is_redirect_error(e),
+            )
 
             # Surface diagnostic context for likely auth rejections (401/403)
             error_str = str(e).lower()
@@ -8329,6 +8434,7 @@ _HANDSHAKE_PROTOCOL_COPY = (
     "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
 )
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
+STORED_CREDENTIAL_DENIED = "Testing an MCP server with its stored credentials requires gateways.update and ownership of the MCP server"
 
 
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
@@ -8372,6 +8478,32 @@ def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
         visibility_filters.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(token_teams)))
     visibility_filters.append(and_(DbGateway.visibility == "private", DbGateway.owner_email == scoped_user_email))
     return visibility_filters
+
+
+async def _require_stored_credential_authority(user: Any, gateway: DbGateway, db: Session) -> None:
+    """Require update authority over a gateway before a test request uses its stored credential.
+
+    The test endpoints need only ``gateways.read``, but the caller chooses the method, path,
+    body, and headers of the outbound request. Attaching a stored credential therefore needs
+    ``gateways.update`` on the gateway's own team (token scopes deny first) and ownership of the gateway.
+
+    Args:
+        user: Authenticated user context dict.
+        gateway: The registered gateway whose stored credential the request would carry.
+        db: Database session.
+
+    Raises:
+        PermissionError: If the caller lacks ``gateways.update`` on the gateway's team or does not own the gateway.
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+    from mcpgateway.middleware.rbac import check_permission_inline  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+    if not await check_permission_inline(user, "gateways.update", team_id=gateway.team_id, check_any_team=False, db=db, allow_admin_bypass=False):
+        raise PermissionError(STORED_CREDENTIAL_DENIED)
+    if not await PermissionService(db).check_resource_ownership(get_user_email(user), gateway):
+        raise PermissionError(STORED_CREDENTIAL_DENIED)
 
 
 def _gateway_test_endpoint_url(base_url: str, path_suffix: str) -> str:
@@ -8520,8 +8652,11 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     Returns:
         Tuple of (failure_class, actionable error copy).
     """
-    if isinstance(root_cause, httpx.HTTPStatusError) and root_cause.response.status_code in (401, 403):
-        return "auth", _HANDSHAKE_AUTH_COPY
+    if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        if root_cause.response.status_code in _REDIRECT_STATUS_CODES:
+            return "transport", _HANDSHAKE_TRANSPORT_COPY
+        if root_cause.response.status_code in (401, 403):
+            return "auth", _HANDSHAKE_AUTH_COPY
     if isinstance(root_cause, (httpx.RequestError, OSError)):
         return "transport", _HANDSHAKE_TRANSPORT_COPY
     if isinstance(root_cause, MCPError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
@@ -8624,6 +8759,9 @@ def _handshake_form_header_allowlist() -> frozenset[str]:
     Returns:
         The set of lowercased header names an explicit body override may set.
     """
+    # First-Party
+    from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel
+
     return frozenset({"authorization", _resolve_auth_header_name(settings).lower()})
 
 
@@ -8768,7 +8906,7 @@ async def test_server_handshake(
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
                     copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
-                logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, sanitize_exception_message(str(root_cause)))
+                logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, _safe_log_exception_text(root_cause))
                 return _failure(failure_class, copy)
     except TimeoutError:
         return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)
@@ -8794,6 +8932,10 @@ async def test_gateway_connectivity(
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body.
+
+    Raises:
+        PermissionError: If the request would carry a stored credential the caller may not use.
+            Raised before any outbound request or OAuth token fetch.
 
     Examples:
         >>> import asyncio
@@ -8887,6 +9029,7 @@ async def test_gateway_connectivity(
                     )
             else:
                 # For Client Credentials flow, get token directly
+                await _require_stored_credential_authority(user, gateway, db)
                 try:
                     oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
                     access_token: str = await oauth_manager.get_access_token(
@@ -8902,6 +9045,7 @@ async def test_gateway_connectivity(
                         body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            await _require_stored_credential_authority(user, gateway, db)
             if isinstance(gateway.auth_value, dict):
                 headers.update({key: value for key, value in gateway.auth_value.items() if not caller_supplies_accept or key.lower() != "accept"})
             elif isinstance(gateway.auth_value, str):
@@ -8944,6 +9088,9 @@ async def test_gateway_connectivity(
             response_body: Union[Dict[str, Any], str] = response.json()
         except ValueError:
             response_body = {"details": response.text}
+        if response.status_code in _REDIRECT_STATUS_CODES:
+            upstream_body = response_body if isinstance(response_body, dict) else {"details": response_body}
+            response_body = {**upstream_body, "error": _redirect_error_text(response.status_code, response.headers.get("Location"))}
 
         # Structured logging: Log successful gateway test
         structured_logger.log(
@@ -9023,6 +9170,10 @@ async def test_gateway_handshake(
         GatewayHandshakeResponse: The handshake outcome, including negotiation path,
             server identity, capabilities, component counts, and failure classification.
 
+    Raises:
+        PermissionError: If the request shapes the path or headers while carrying a stored credential
+            and the caller lacks ``gateways.update`` on the gateway's team or does not own the gateway.
+
     Examples:
         >>> import asyncio
         >>> callable(test_gateway_handshake)
@@ -9086,6 +9237,17 @@ async def test_gateway_handshake(
     # pinned address, and a differently-cased key would be sent as a second Host header.
     form_headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
     candidate_only = request.credential_mode == "candidate_only"
+    uses_stored_credential = (
+        not candidate_only
+        and gateway is not None
+        and (
+            (gateway.auth_type == "oauth" and gateway.oauth_config and gateway.oauth_config.get("grant_type", "client_credentials") != "authorization_code")
+            or (gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value)
+            or gateway.client_cert
+        )
+    )
+    if uses_stored_credential and (path_suffix or form_headers):
+        await _require_stored_credential_authority(user, gateway, db)
     # A form-supplied Authorization header replaces stored credentials, so don't fail the
     # handshake on an unobtainable stored OAuth token the caller is not going to use.
     form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)
@@ -9211,8 +9373,11 @@ async def test_gateway_handshake(
                     try:
                         response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
                     except httpx.RequestError as e:
-                        logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
+                        logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), _safe_log_exception_text(e))
                         return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
+
+                    if response.status_code in _REDIRECT_STATUS_CODES:
+                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_redirect_error_text(response.status_code, response.headers.get('Location'))}")
 
                     if response.status_code in (401, 403):
                         return _failure("auth", _HANDSHAKE_AUTH_COPY)
@@ -9310,7 +9475,7 @@ async def test_gateway_handshake(
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
                     copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
-                logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(root_cause)))
+                logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), _safe_log_exception_text(root_cause))
                 return _failure(failure_class, copy)
     except TimeoutError:
         return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)

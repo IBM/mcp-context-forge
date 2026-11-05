@@ -1561,6 +1561,13 @@ def team_b_gateway_db():
 
 
 @pytest.fixture
+def grant_stored_credential_authority(monkeypatch):
+    """Grant the caller ``gateways.update`` and gateway ownership for stored-credential handshake tests."""
+    monkeypatch.setattr("mcpgateway.middleware.rbac.check_permission_inline", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", AsyncMock(return_value=True))
+
+
+@pytest.fixture
 def narrowed_user() -> dict[str, Any]:
     """Non-admin user context narrowed to team-a only."""
     return {
@@ -1588,7 +1595,7 @@ async def test_handshake_narrowed_token_cannot_borrow_other_teams_credentials(ha
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.usefixtures("configure_handshake_env", "grant_stored_credential_authority")
 async def test_handshake_token_scoped_to_owning_team_uses_stored_credentials(handshake_request, team_b_gateway_db):
     """A token scoped to the owning team still resolves that team's stored credentials."""
     db = team_b_gateway_db()
@@ -1729,7 +1736,7 @@ async def test_handshake_registered_only_allowlist_excludes_other_teams_gateways
     mock_client.request.assert_not_called()
 
 
-@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.usefixtures("configure_handshake_env", "grant_stored_credential_authority")
 @pytest.mark.asyncio
 async def test_handshake_registered_only_allowlist_keeps_public_gateways_probeable(handshake_request, narrowed_user, team_b_gateway_db, monkeypatch):
     """registered_only=True: a public gateway stays probeable by a narrowed token, since public is platform-wide scope."""
@@ -2006,7 +2013,7 @@ def test_handshake_request_rejects_control_characters_in_path():
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.usefixtures("configure_handshake_env", "grant_stored_credential_authority")
 @pytest.mark.parametrize("registered_url", ["http://example.com", "http://example.com/"])
 async def test_handshake_matches_registered_root_url_either_spelling(handshake_request, team_b_gateway_db, registered_url):
     """A root gateway resolves its stored credentials whether or not it was registered with a trailing slash."""
@@ -2039,7 +2046,7 @@ async def test_handshake_does_not_alias_non_root_registered_paths(team_b_gateway
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_handshake_env")
+@pytest.mark.usefixtures("configure_handshake_env", "grant_stored_credential_authority")
 async def test_handshake_matches_registered_root_url_with_query_string(team_b_gateway_db):
     """A root URL carrying a query keeps the query in both candidate spellings."""
     db = team_b_gateway_db(url="http://example.com?tenant=one")

@@ -733,7 +733,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 | Setting                   | Description                    | Default                                        | Options    |
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
-| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification, including SSO/OIDC and JWKS key fetches | `false`                                        | bool       |
 | `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
 | `APP_DOMAIN`              | Domain for production CORS origins | `http://localhost:4444`                     | string     |
 | `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |
@@ -1439,7 +1439,6 @@ plugins are fully trusted.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------- | ------- |
 | `PLUGINS_CAN_OVERRIDE_RBAC`         | Allow `HTTP_AUTH_CHECK_PERMISSION` plugin hooks to short-circuit built-in RBAC grants. When disabled, plugin grant decisions are audit-only. | `false` | bool    |
 | `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`  | Allow pre-request plugin hooks to override auth-sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `Proxy-Authorization`) that the client already sent. Required for plugin-driven token exchange workflows (e.g. WXO auth). | `false` | bool    |
-| `PLUGIN_MANAGER_CACHE_TTL`           | Seconds a cached plugin manager lives before the next request rebuilds it. The TTL bounds staleness when a Redis invalidation message is missed. `0` disables expiry. | `300` | int (≥ 0) |
 
 !!! danger "Security Impact"
     Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
