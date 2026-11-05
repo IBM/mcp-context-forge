@@ -42,6 +42,7 @@ from starlette.websockets import WebSocketDisconnect
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
+from mcpgateway.services.tool_service import ToolUpstreamError
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -3298,6 +3299,37 @@ class TestRootEndpoints:
 # ----------------------------------------------------- #
 class TestRPCEndpoints:
     """Tests for JSON-RPC functionality and utility endpoints."""
+
+    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock)
+    def test_rpc_denied_call_hides_upstream_auth_details(self, mock_invoke, _mock_permission, test_client, auth_headers):
+        """Deny tool execution before upstream authorization details become available."""
+        mock_invoke.side_effect = ToolUpstreamError(401, 'Bearer resource_metadata="https://private.example/metadata"')
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "test_tool"}}, headers=auth_headers)
+        assert response.json()["error"]["code"] == -32003
+        assert "private.example" not in response.text
+        mock_invoke.assert_not_awaited()
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    @pytest.mark.parametrize("status_code", [401, 403])
+    @pytest.mark.parametrize("challenge", [None, 'Bearer error="invalid_token", scope="openid email"'])
+    def test_rpc_upstream_authorization_error(self, mock_invoke, test_client, auth_headers, status_code, challenge):
+        """Return upstream authorization details in a specific JSON-RPC error."""
+        mock_invoke.side_effect = ToolUpstreamError(status_code, challenge)
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "test_tool"}},
+            headers=auth_headers,
+        )
+        expected_data = {"status": status_code}
+        if challenge:
+            expected_data["www_authenticate"] = challenge
+        assert response.status_code == 200
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "error": {"code": -32000, "message": "Upstream tool authorization failed", "data": expected_data},
+        }
 
     @patch("mcpgateway.main.tool_service.invoke_tool")
     @pytest.mark.parametrize("structured, kept", [pytest.param({"a": 1}, True, id="object_kept"), pytest.param([1, 2, 3], False, id="list_dropped"), pytest.param("text", False, id="string_dropped")])
