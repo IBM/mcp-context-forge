@@ -11,6 +11,8 @@
 
 ### Added
 
+- **`mcpServerId` in responses** (#6544) - Tool, resource, and prompt records, the MCP-server refresh result, and the impact preview now carry `mcpServerId` next to `gatewayId`. Both keys hold the same value. `gatewayId` stays.
+
 - **`subscriptions/listen` server support** ([#6573](https://github.com/IBM/mcp-context-forge/issues/6573)) - 2026-07-28 clients on streamable HTTP can open a `subscriptions/listen` stream and receive `tools`, `prompts`, and `resources` list-changed events. Each requested kind passes the same token-scope gate as its `*/list` call. Streams end at the token expiry or after `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default `3600`); the gateway sends `notifications/cancelled` naming the listen request, then the completion result. Each worker limits concurrent streams to `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` (default `32`) per authenticated principal and `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` (default `256`, `0` refuses anonymous streams) for all anonymous callers together; a stream past a limit gets `-32603` `Subscription limit reached`. Events cross workers only with `CACHE_TYPE=redis`. `POST /rpc` returns `-32601` for `subscriptions/listen`.
 
 ### Changed
