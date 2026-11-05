@@ -1458,15 +1458,26 @@ def _check_url_scheme_compliance() -> None:
 
 
 async def _run_reverse_proxy_reaper() -> None:
-    """Evict reverse-proxy sessions whose heartbeat has gone stale."""
+    """Evict stale reverse-proxy sessions and persist their gateway reachability."""
+    from mcpgateway.services.reverse_proxy_catalog import ReverseProxyCatalogService  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.reverse_proxy_sessions import get_reverse_proxy_session_manager  # pylint: disable=import-outside-toplevel
 
     timeout_seconds = settings.mcpgateway_reverse_proxy_heartbeat_timeout
     interval_seconds = timeout_seconds / 3
     session_manager = await get_reverse_proxy_session_manager()
+    catalog = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
     while True:
         await asyncio.sleep(interval_seconds)
-        await session_manager.reap_stale(now=datetime.now(tz=timezone.utc), timeout_seconds=timeout_seconds)
+        seen_at = datetime.now(tz=timezone.utc)
+        evictions = await session_manager.reap_stale(now=seen_at, timeout_seconds=timeout_seconds)
+        try:
+            await catalog.mark_reverse_proxy_gateways_unreachable(
+                session_manager,
+                evictions,
+                seen_at=seen_at,
+            )
+        except Exception as persistence_error:  # best-effort observability state must not stop session cleanup
+            logger.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)
 
 
 def _reverse_proxy_reaper_enabled() -> bool:
