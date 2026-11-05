@@ -473,6 +473,7 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 - **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using `app_user_email` field) to prevent token sharing between users
 - Store tokens per gateway + user combination with unique constraints
 - Auto-refresh using refresh tokens when near expiry
+- Refresh each token once per host with the database backend: concurrent requests and worker processes wait for one refresh and reuse its result
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
 - Foreign key relationships ensure token cleanup when users are deleted
 
@@ -489,6 +490,8 @@ Stored tokens are deleted selectively — only when the Authorization Server exp
 | `error: invalid_client`, `invalid_request`, etc. | **Preserved** — configuration error, not a token failure | RFC 6749 §5.2 |
 | `client_secret` decryption failure | **Preserved** — `AUTH_ENCRYPTION_SECRET` mismatch, not a token failure | — |
 | Network / transient error | **Preserved** — retry on next cycle | — |
+
+With the database backend, `invalid_grant` deletes the token only if the stored refresh token is still the one that was sent. If another request or worker replaced it in the meantime, the rejection applies to the old refresh token and the stored token is kept.
 
 !!! tip
     If a gateway's refresh loop is failing with `invalid_client` after rotating `AUTH_ENCRYPTION_SECRET`, the token is preserved but refresh cannot succeed until the secret is re-encrypted with the current key. Re-save the gateway in the Admin UI to re-encrypt the `client_secret`.

@@ -7,16 +7,31 @@ Unit tests for DatabaseTokenBackend.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+from filelock import FileLock
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.db import OAuthToken
+from mcpgateway.config import get_settings
+from mcpgateway.db import Base, EmailUser, Gateway, OAuthToken
+from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
+from mcpgateway.services.token_backends import db_backend
 from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+
+@pytest.fixture(autouse=True)
+def _refresh_lock_files_in_tmp_path(tmp_path, monkeypatch):
+    """Keep the refresh lock files of every test in the test's temp directory."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
 @pytest.fixture
@@ -465,6 +480,8 @@ async def test_get_user_token_expired_with_refresh(backend_with_encryption, mock
         expires_at=past_time
     )
     mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+    stored_row = SimpleNamespace(expires_at=past_time, updated_at=token_record.updated_at, access_token="stored_access", refresh_token="stored_refresh")
+    mock_db.execute.return_value.one_or_none.return_value = stored_row
 
     # Mock _refresh_access_token to return a new token
     with patch.object(backend_with_encryption, "_refresh_access_token", new_callable=AsyncMock) as mock_refresh:
@@ -477,7 +494,7 @@ async def test_get_user_token_expired_with_refresh(backend_with_encryption, mock
             threshold_seconds=0,
         )
 
-        mock_refresh.assert_called_once_with(token_record)
+        mock_refresh.assert_called_once_with(token_record, "stored_refresh")
         assert result == "refreshed_token"
 
 
@@ -697,6 +714,7 @@ async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_enc
     mock_gateway.client_cert = None
     mock_gateway.client_key = None
     mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+    mock_db.execute.return_value.one_or_none.return_value = SimpleNamespace(refresh_token="encrypted_refresh")
 
     # Mock refresh token decryption success but client_secret returns None (wrong key)
     async def decrypt_side_effect(value):
@@ -1182,3 +1200,301 @@ def test_db_backend_encryption_attribute_error():
     with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=AttributeError("no attr")):
         backend = DatabaseTokenBackend(db, settings)
     assert backend.encryption is None
+
+
+# ---------- concurrent refresh against a rotating token endpoint (#7207) ----------
+
+TOKEN_OWNER = "owner@test.com"
+
+
+@pytest.fixture
+def token_db(tmp_path):
+    """SQLite file database with one gateway and one expired token that has a refresh token.
+
+    Each session opens its own connection, like a separate request or worker.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'tokens.db'}")
+    Base.metadata.create_all(engine, tables=[EmailUser.__table__, Gateway.__table__, OAuthToken.__table__])
+    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with session_factory() as db:
+        gateway = Gateway(
+            name="rotating",
+            slug="rotating",
+            url="https://mcp.example.com/mcp",
+            capabilities={},
+            oauth_config={"grant_type": "authorization_code", "client_id": "cid", "token_url": "https://auth.example.com/token"},
+        )
+        db.add(gateway)
+        db.flush()
+        db.add(
+            OAuthToken(
+                gateway_id=gateway.id,
+                user_id="oauth-user",
+                app_user_email=TOKEN_OWNER,
+                access_token="access-0",
+                refresh_token="refresh-0",
+                expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                scopes=[],
+            )
+        )
+        db.commit()
+        gateway_id = gateway.id
+    yield session_factory, gateway_id
+    engine.dispose()
+
+
+class _RotatingTokenEndpoint:
+    """Token endpoint that issues a new refresh token on each refresh and accepts each refresh token once."""
+
+    def __init__(self, expires_in=3600):
+        self.valid_refresh_token = "refresh-0"
+        self.received = []
+        self.issued = 0
+        self.expires_in = expires_in
+
+    async def refresh_token(self, refresh_token, _credentials, **_kwargs):
+        self.received.append(refresh_token)
+        # Hold the request open so that a concurrent caller can reach the endpoint too.
+        await asyncio.sleep(0.05)
+        if refresh_token != self.valid_refresh_token:
+            raise OAuthInvalidGrantError("invalid_grant: refresh token was already used")
+        self.issued += 1
+        self.valid_refresh_token = f"refresh-{self.issued}"
+        return {"access_token": f"access-{self.issued}", "refresh_token": self.valid_refresh_token, "expires_in": self.expires_in}
+
+
+class _LatestIssuedWinsEndpoint:
+    """Token endpoint that accepts a used refresh token again, but only the latest issued one stays valid.
+
+    Two refreshes with the same refresh token both succeed. The pair issued first is
+    then superseded, as in the provider log of #7207.
+    """
+
+    def __init__(self):
+        self.valid_refresh_tokens = {"refresh-0"}
+        self.received = []
+        self.issued = 0
+
+    async def refresh_token(self, refresh_token, _credentials, **_kwargs):
+        self.received.append(refresh_token)
+        await asyncio.sleep(0.05)
+        if refresh_token not in self.valid_refresh_tokens:
+            raise OAuthInvalidGrantError("invalid_grant: refresh token was superseded")
+        self.issued += 1
+        new_refresh_token = f"refresh-{self.issued}"
+        self.valid_refresh_tokens = {refresh_token, new_refresh_token}
+        return {"access_token": f"access-{self.issued}", "refresh_token": new_refresh_token, "expires_in": 3600}
+
+
+class _OneLockPerCall:
+    """Stands in for the per-process lock map: each call gets its own lock, as in separate worker processes."""
+
+    def setdefault(self, _key, default):
+        return default
+
+
+def _separate_worker_processes():
+    return patch.object(DatabaseTokenBackend, "_refresh_locks", _OneLockPerCall(), create=True)
+
+
+def _patch_token_endpoint(endpoint):
+    return patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=endpoint)
+
+
+async def _get_token(session, gateway_id):
+    return await DatabaseTokenBackend(session, get_settings()).get_user_token(gateway_id, "team-1", TOKEN_OWNER)
+
+
+def _store_refresh_from_other_worker(session_factory, gateway_id, access_token, refresh_token):
+    """Commit a refreshed token pair through another session, as a second worker does."""
+    with session_factory() as db:
+        record = db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id)).scalar_one()
+        record.access_token = access_token
+        record.refresh_token = refresh_token
+        record.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        db.commit()
+
+
+def _stored_token_pair(session_factory, gateway_id):
+    with session_factory() as db:
+        record = db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id)).scalar_one_or_none()
+        return (record.access_token, record.refresh_token) if record else None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_refresh_rotating_token_once(token_db):
+    """Two requests that find the same expired token send its refresh token to the endpoint once."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint()
+
+    with session_factory() as db_a, session_factory() as db_b, _patch_token_endpoint(endpoint):
+        results = await asyncio.gather(_get_token(db_a, gateway_id), _get_token(db_b, gateway_id))
+
+    assert endpoint.received == ["refresh-0"]
+    assert results == ["access-1", "access-1"]
+    assert _stored_token_pair(session_factory, gateway_id) == ("access-1", "refresh-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint_class", [_RotatingTokenEndpoint, _LatestIssuedWinsEndpoint])
+async def test_separate_worker_processes_refresh_token_once(token_db, endpoint_class):
+    """Requests in separate worker processes send the refresh token once, for both kinds of rotating endpoint."""
+    session_factory, gateway_id = token_db
+    endpoint = endpoint_class()
+
+    with session_factory() as db_a, session_factory() as db_b, _separate_worker_processes(), _patch_token_endpoint(endpoint):
+        results = await asyncio.gather(_get_token(db_a, gateway_id), _get_token(db_b, gateway_id))
+
+    assert endpoint.received == ["refresh-0"]
+    assert results == ["access-1", "access-1"]
+    assert _stored_token_pair(session_factory, gateway_id) == ("access-1", "refresh-1")
+
+
+@pytest.mark.asyncio
+async def test_waiting_request_uses_token_that_expires_within_threshold(token_db):
+    """A waiting request uses a new token even when its lifetime is shorter than the refresh threshold."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint(expires_in=60)
+
+    with session_factory() as db_a, session_factory() as db_b, _patch_token_endpoint(endpoint):
+        results = await asyncio.gather(_get_token(db_a, gateway_id), _get_token(db_b, gateway_id))
+
+    assert endpoint.received == ["refresh-0"]
+    assert results == ["access-1", "access-1"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_proceeds_when_refresh_lock_stays_busy(token_db, caplog):
+    """A refresh lock held past the wait limit delays the refresh but does not stop it."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint()
+    other_process_lock = FileLock(db_backend._refresh_lock_path(gateway_id, TOKEN_OWNER))
+    other_process_lock.acquire()
+    try:
+        with session_factory() as db, _patch_token_endpoint(endpoint), patch.object(db_backend, "_REFRESH_LOCK_WAIT_SECONDS", 0.1), caplog.at_level(logging.WARNING):
+            result = await _get_token(db, gateway_id)
+    finally:
+        other_process_lock.release()
+
+    assert result == "access-1"
+    assert endpoint.received == ["refresh-0"]
+    assert "still busy" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_refresh_proceeds_when_refresh_lock_file_fails(token_db, caplog):
+    """A lock file that cannot be opened does not stop the refresh."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint()
+    broken_lock = MagicMock()
+    broken_lock.acquire.side_effect = PermissionError("read-only temp directory")
+
+    with session_factory() as db, _patch_token_endpoint(endpoint), patch.object(db_backend, "FileLock", return_value=broken_lock), caplog.at_level(logging.WARNING):
+        result = await _get_token(db, gateway_id)
+
+    assert result == "access-1"
+    assert endpoint.received == ["refresh-0"]
+    broken_lock.release.assert_not_called()
+    assert "not usable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_expired_read_uses_token_refreshed_by_other_worker(token_db):
+    """A request that read the expired row before another worker refreshed it uses the stored token."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint()
+
+    with session_factory() as db, _patch_token_endpoint(endpoint):
+        expired_read = db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id)).scalar_one()
+        assert expired_read.refresh_token == "refresh-0"
+        with session_factory() as other_worker_db:
+            assert await _get_token(other_worker_db, gateway_id) == "access-1"
+        result = await _get_token(db, gateway_id)
+
+    assert result == "access-1"
+    assert endpoint.received == ["refresh-0"]
+    assert _stored_token_pair(session_factory, gateway_id) == ("access-1", "refresh-1")
+
+
+@pytest.mark.asyncio
+async def test_invalid_grant_keeps_token_refreshed_by_other_worker(token_db):
+    """invalid_grant does not delete a token that another worker refreshed while the request was open."""
+    session_factory, gateway_id = token_db
+
+    async def other_worker_uses_refresh_token_first(*_args, **_kwargs):
+        _store_refresh_from_other_worker(session_factory, gateway_id, "access-1", "refresh-1")
+        raise OAuthInvalidGrantError("invalid_grant: refresh token was already used")
+
+    endpoint = MagicMock(refresh_token=AsyncMock(side_effect=other_worker_uses_refresh_token_first))
+    with session_factory() as db, _patch_token_endpoint(endpoint):
+        result = await _get_token(db, gateway_id)
+        assert not db.in_transaction()
+
+    assert result == "access-1"
+    assert _stored_token_pair(session_factory, gateway_id) == ("access-1", "refresh-1")
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_token_stored_by_other_worker(token_db):
+    """A refresh response does not overwrite tokens that another worker stored while the request was open."""
+    session_factory, gateway_id = token_db
+
+    async def other_worker_stores_first(*_args, **_kwargs):
+        _store_refresh_from_other_worker(session_factory, gateway_id, "access-1", "refresh-1")
+        return {"access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 3600}
+
+    endpoint = MagicMock(refresh_token=AsyncMock(side_effect=other_worker_stores_first))
+    with session_factory() as db, _patch_token_endpoint(endpoint):
+        result = await _get_token(db, gateway_id)
+        assert not db.in_transaction()
+
+    assert result == "access-1"
+    assert _stored_token_pair(session_factory, gateway_id) == ("access-1", "refresh-1")
+
+
+@pytest.mark.asyncio
+async def test_refresh_does_not_restore_token_revoked_during_refresh(token_db):
+    """A refresh response does not bring back a token that was revoked while the request was open."""
+    session_factory, gateway_id = token_db
+
+    async def user_revokes_during_refresh(*_args, **_kwargs):
+        with session_factory() as other_db:
+            assert await DatabaseTokenBackend(other_db, get_settings()).revoke_user_tokens(gateway_id, "team-1", TOKEN_OWNER)
+        return {"access_token": "access-1", "refresh_token": "refresh-1", "expires_in": 3600}
+
+    endpoint = MagicMock(refresh_token=AsyncMock(side_effect=user_revokes_during_refresh))
+    with session_factory() as db, _patch_token_endpoint(endpoint):
+        result = await _get_token(db, gateway_id)
+        assert not db.in_transaction()
+
+    assert result is None
+    assert _stored_token_pair(session_factory, gateway_id) is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_grant_deletes_unchanged_token(token_db):
+    """invalid_grant for the refresh token that is still stored deletes the token, as before."""
+    session_factory, gateway_id = token_db
+    endpoint = MagicMock(refresh_token=AsyncMock(side_effect=OAuthInvalidGrantError("invalid_grant: refresh token revoked")))
+
+    with session_factory() as db, _patch_token_endpoint(endpoint):
+        result = await _get_token(db, gateway_id)
+
+    assert result is None
+    endpoint.refresh_token.assert_awaited_once()
+    assert _stored_token_pair(session_factory, gateway_id) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_send_revoked_refresh_token_once(token_db):
+    """A request that waits for a refresh rejected with invalid_grant does not send the refresh token again."""
+    session_factory, gateway_id = token_db
+    endpoint = _RotatingTokenEndpoint()
+    endpoint.valid_refresh_token = None
+
+    with session_factory() as db_a, session_factory() as db_b, _patch_token_endpoint(endpoint):
+        results = await asyncio.gather(_get_token(db_a, gateway_id), _get_token(db_b, gateway_id))
+
+    assert endpoint.received == ["refresh-0"]
+    assert results == [None, None]
+    assert _stored_token_pair(session_factory, gateway_id) is None
