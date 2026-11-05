@@ -33,6 +33,8 @@
 
 - **REST URL template reuses a placeholder** - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
 
+- **Actionable error when an upstream MCP server redirects** ([#7163](https://github.com/IBM/mcp-context-forge/issues/7163)) - Health checks, gateway registration, Test Connection, and the handshake test now report `Upstream redirected to <scheme://host/path>; update the gateway URL to the redirect target.` for an upstream 301, 302, 303, 307, or 308 response. The message drops the query string, fragment, and userinfo of the `Location` header. Before, the gateway showed a generic error. The gateway still does not follow the redirect, to keep SSRF and credential-forwarding protection. Register the redirect target URL directly, for example `https://host/mcp/` instead of `https://host/mcp`.
+
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
 - **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.
