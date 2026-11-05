@@ -8,6 +8,7 @@ Tests for LLM proxy service.
 
 # Standard
 from contextlib import asynccontextmanager
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,10 +20,12 @@ import pytest
 from mcpgateway.db import LLMProviderType
 from mcpgateway.llm_schemas import ChatCompletionRequest, ChatMessage
 from mcpgateway.services.llm_proxy_service import (
+    _AnthropicStreamState,
     LLMModelNotFoundError,
+    LLMProviderNotFoundError,
+    LLMProxyInvalidRequestError,
     LLMProxyRequestError,
     LLMProxyService,
-    LLMProviderNotFoundError,
 )
 
 
@@ -296,13 +299,14 @@ def test_transform_ollama_response_done(service):
 def test_transform_anthropic_stream_chunk(service):
     text_delta = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}}
     stop_event = {"type": "message_stop"}
+    state = _AnthropicStreamState()
 
-    chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model")
-    stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model")
+    chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model", state)
+    stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model", state)
 
     assert '"content":"hi"' in chunk
     assert '"finish_reason":"stop"' in stop_chunk
-    assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model") is None
+    assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model", state) is None
 
 
 def test_transform_ollama_stream_chunk(service):
@@ -1236,26 +1240,126 @@ def test_build_ollama_openai_compat_no_defaults(service):
     assert "max_tokens" not in body
 
 
-def test_transform_anthropic_response_non_text_block(service):
-    """Anthropic response with non-text content block (branch 610->609 false)."""
+def test_transform_anthropic_parallel_tool_calls(service):
+    """Preserve text, distinct call IDs, and JSON arguments from one assistant turn."""
     data = {
         "id": "resp",
-        "content": [{"type": "tool_use", "id": "t1", "name": "fn"}, {"type": "text", "text": "ok"}],
+        "content": [
+            {"type": "text", "text": "Checking both."},
+            {"type": "thinking", "thinking": "Private reasoning"},
+            {"type": "tool_use", "id": "t1", "name": "search", "input": {"query": "MCP"}},
+            {"type": "tool_use", "id": "t2", "name": "list_sources", "input": {}},
+        ],
         "usage": {"input_tokens": 1, "output_tokens": 1},
+        "stop_reason": "tool_use",
     }
 
-    result = service._transform_anthropic_response(data, "claude")
+    choice = service._transform_anthropic_response(data, "claude").choices[0]
+    assert choice.finish_reason == "tool_calls"
+    assert choice.message.content == "Checking both."
+    assert [(call["id"], call["type"], call["function"]["name"], json.loads(call["function"]["arguments"])) for call in choice.message.tool_calls] == [
+        ("t1", "function", "search", {"query": "MCP"}),
+        ("t2", "function", "list_sources", {}),
+    ]
+    request = ChatCompletionRequest(
+        model="claude",
+        messages=[choice.message, ChatMessage(role="tool", tool_call_id="t2", content="index"), ChatMessage(role="tool", tool_call_id="t1", content="document")],
+    )
+    _, _, body = service._build_anthropic_request(request, _make_provider(), _make_model())
+    assert body["messages"] == [
+        {"role": "assistant", "content": [block for block in data["content"] if block["type"] != "thinking"]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "index"}, {"type": "tool_result", "tool_use_id": "t1", "content": "document"}]},
+    ]
 
-    assert result.choices[0].message.content == "ok"
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [("auto", {"type": "auto"}), ("required", {"type": "any"}), ("none", {"type": "none"}), ({"type": "function", "function": {"name": "search"}}, {"type": "tool", "name": "search"})],
+)
+def test_anthropic_tool_schema_and_choice(service, choice, expected):
+    """Pass the tool's schema and the caller's tool selection to the provider."""
+    schema = {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "claude",
+            "messages": [{"role": "user", "content": "Find MCP documents."}],
+            "tools": [{"type": "function", "function": {"name": "search", "description": "Search documents", "parameters": schema}}],
+            "tool_choice": choice,
+        }
+    )
+    _, _, body = service._build_anthropic_request(request, _make_provider(), _make_model())
+    assert body["tools"] == [{"name": "search", "description": "Search documents", "input_schema": schema}]
+    assert body["tool_choice"] == expected
 
 
 def test_transform_anthropic_stream_chunk_non_text_delta(service):
     """Anthropic stream chunk with non-text-delta type (branch 692->718 false)."""
     data = {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}}
 
-    result = service._transform_anthropic_stream_chunk(data, "id", 1, "model")
+    result = service._transform_anthropic_stream_chunk(data, "id", 1, "model", _AnthropicStreamState())
 
     assert result is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {"name": "search", "arguments": "{"}}]},
+        {"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {"name": "search", "arguments": "[]"}}]},
+        {"role": "assistant", "tool_calls": [{"type": "function", "function": {"name": "search", "arguments": "{}"}}]},
+        {"role": "tool", "content": "document"},
+    ],
+)
+def test_anthropic_rejects_invalid_tool_history(service, message):
+    """Reject invalid calls and results before sending a request to the provider."""
+    request = ChatCompletionRequest(model="claude", messages=[message])
+    with pytest.raises(LLMProxyInvalidRequestError):
+        service._build_anthropic_request(request, _make_provider(), _make_model())
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_invalid_tool_choice(service):
+    """Report invalid tool choices through the stream before opening an upstream connection."""
+    service._client = MagicMock()
+    service._resolve_model = MagicMock(return_value=(_make_provider(provider_type=LLMProviderType.ANTHROPIC), _make_model()))
+    request = ChatCompletionRequest(model="claude", messages=[{"role": "user", "content": "search"}], tool_choice={"type": "custom"}, stream=True)
+    error, done = [chunk async for chunk in service.chat_completion_stream(MagicMock(), request)]
+    assert json.loads(error.removeprefix("data: "))["error"]["type"] == "invalid_request_error"
+    assert done == "data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_parallel_tool_calls(service, monkeypatch):
+    """Assign consecutive tool indices and preserve partial JSON and empty arguments."""
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC)
+    service._resolve_model = MagicMock(return_value=(provider, _make_model()))
+    service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
+    events = [
+        {"type": "message_start"},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Checking."}},
+        {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "t1", "name": "search", "input": {}}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"query":'}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '"café"}'}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "content_block_start", "index": 2, "content_block": {"type": "thinking"}},
+        {"type": "content_block_start", "index": 3, "content_block": {"type": "tool_use", "id": "t2", "name": "list_sources", "input": {}}},
+        {"type": "content_block_stop", "index": 3},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        {"type": "message_delta", "usage": {"output_tokens": 28}},
+        {"type": "message_stop"},
+    ]
+    service._client.stream = MagicMock(return_value=DummyStreamResponse([f"data: {json.dumps(event)}" for event in events]))
+    request = ChatCompletionRequest(model="claude", messages=[{"role": "user", "content": "search"}], stream=True)
+    chunks = [chunk async for chunk in service.chat_completion_stream(MagicMock(), request)]
+    assert chunks.pop() == "data: [DONE]\n\n"
+    choices = [json.loads(chunk.removeprefix("data: "))["choices"][0] for chunk in chunks]
+    assert choices[0]["delta"] == {"role": "assistant"}
+    assert choices[1]["delta"] == {"content": "Checking."}
+    calls = [call for choice in choices for call in choice["delta"].get("tool_calls", [])]
+    assert [(call["index"], call["id"], call["function"]["name"]) for call in calls if "id" in call] == [(0, "t1", "search"), (1, "t2", "list_sources")]
+    assert [json.loads("".join(call["function"]["arguments"] for call in calls if call["index"] == index)) for index in (0, 1)] == [{"query": "café"}, {}]
+    assert [choice["finish_reason"] for choice in choices if choice["finish_reason"]] == ["tool_calls"]
 
 
 @pytest.mark.asyncio

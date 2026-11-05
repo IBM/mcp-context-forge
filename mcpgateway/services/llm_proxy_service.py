@@ -11,6 +11,7 @@ formats and handles streaming responses.
 """
 
 # Standard
+from dataclasses import dataclass, field
 import time
 from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 import uuid
@@ -99,6 +100,92 @@ class LLMProxyAuthError(LLMProxyError):
 
 class LLMProxyRequestError(LLMProxyError):
     """Raised when request to provider fails."""
+
+
+class LLMProxyInvalidRequestError(LLMProxyError):
+    """Raised when the proxy cannot represent a client's request at the provider."""
+
+
+def _anthropic_tool_choice(choice: str | dict[str, Any]) -> dict[str, str]:
+    """Translate an OpenAI tool selection into an Anthropic tool choice.
+
+    Args:
+        choice: An automatic, required, disabled, or named function selection.
+
+    Returns:
+        The provider's tool choice.
+
+    Raises:
+        LLMProxyInvalidRequestError: If the choice does not identify a supported selection.
+    """
+    match choice:
+        case "auto" | "none":
+            return {"type": choice}
+        case "required":
+            return {"type": "any"}
+        case {"type": "function", "function": {"name": str(name)}} if name:
+            return {"type": "tool", "name": name}
+        case _:
+            raise LLMProxyInvalidRequestError("Unsupported tool_choice for Anthropic")
+
+
+def _anthropic_tool_use(call: dict[str, Any]) -> dict[str, Any]:
+    """Convert one historical assistant function call to a tool_use block.
+
+    Args:
+        call: An OpenAI function call with JSON-encoded arguments.
+
+    Returns:
+        The tool_use block with the original call ID.
+
+    Raises:
+        LLMProxyInvalidRequestError: If the call is incomplete or its arguments are not a JSON object.
+    """
+    match call:
+        case {"type": "function", "id": str(call_id), "function": {"name": str(name), "arguments": str(arguments)}} if call_id and name:
+            try:
+                tool_input = orjson.loads(arguments)
+            except orjson.JSONDecodeError as exc:
+                raise LLMProxyInvalidRequestError("Tool call arguments must be a JSON object") from exc
+            if not isinstance(tool_input, dict):
+                raise LLMProxyInvalidRequestError("Tool call arguments must be a JSON object")
+            return {"type": "tool_use", "id": call_id, "name": name, "input": tool_input}
+        case _:
+            raise LLMProxyInvalidRequestError("Tool calls require an ID, a function name, and JSON arguments")
+
+
+@dataclass
+class _AnthropicStreamState:
+    """Track OpenAI tool indices and argument fragments for one provider response."""
+
+    indices: dict[int, int] = field(default_factory=dict)
+    empty_inputs: set[int] = field(default_factory=set)
+    tool_stop: bool = False
+
+    def tool_delta(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        """Translate a tool block event into an indexed OpenAI tool-call delta.
+
+        Args:
+            event: An Anthropic stream event.
+
+        Returns:
+            A tool-call delta, or None for events without new tool data.
+        """
+        match event:
+            case {"type": "content_block_start", "index": int(index), "content_block": {"type": "tool_use", "id": call_id, "name": name} as block}:
+                self.indices[index] = len(self.indices)
+                arguments = orjson.dumps(block["input"]).decode() if block.get("input") else ""
+                if not arguments:
+                    self.empty_inputs.add(index)
+                return {"index": self.indices[index], "id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+            case {"type": "content_block_delta", "index": int(index), "delta": {"type": "input_json_delta", "partial_json": str(fragment)}} if index in self.indices and fragment:
+                self.empty_inputs.discard(index)
+                return {"index": self.indices[index], "function": {"arguments": fragment}}
+            case {"type": "content_block_stop", "index": int(index)} if index in self.empty_inputs:
+                self.empty_inputs.remove(index)
+                return {"index": self.indices[index], "function": {"arguments": "{}"}}
+            case _:
+                return None
 
 
 class LLMProxyService:
@@ -335,6 +422,9 @@ class LLMProxyService:
 
         Returns:
             Tuple of (url, headers, body).
+
+        Raises:
+            LLMProxyInvalidRequestError: If a tool selection, call, or result is invalid.
         """
         api_key = self._get_api_key(provider)
         base_url = provider.api_base or "https://api.anthropic.com"
@@ -353,10 +443,22 @@ class LLMProxyService:
 
         # Convert messages to Anthropic format
         system_message = None
-        messages = []
+        messages: list[dict[str, Any]] = []
         for msg in request.messages:
             if msg.role == "system":
                 system_message = msg.content
+            elif msg.role == "assistant" and msg.tool_calls:
+                content: list[dict[str, Any]] = [{"type": "text", "text": msg.content}] if msg.content else []
+                content.extend(_anthropic_tool_use(call) for call in msg.tool_calls)
+                messages.append({"role": "assistant", "content": content})
+            elif msg.role == "tool":
+                if not msg.tool_call_id:
+                    raise LLMProxyInvalidRequestError("Tool results require tool_call_id")
+                result = {"type": "tool_result", "tool_use_id": msg.tool_call_id, "content": msg.content or ""}
+                if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+                    messages[-1]["content"].append(result)
+                else:
+                    messages.append({"role": "user", "content": [result]})
             else:
                 messages.append(
                     {
@@ -373,6 +475,13 @@ class LLMProxyService:
 
         if system_message:
             body["system"] = system_message
+
+        if request.tools:
+            body["tools"] = [
+                {**tool.function.model_dump(exclude={"parameters"}, exclude_none=True), "input_schema": tool.function.parameters or {"type": "object", "properties": {}}} for tool in request.tools
+            ]
+        if request.tool_choice is not None:
+            body["tool_choice"] = _anthropic_tool_choice(request.tool_choice)
 
         if request.temperature is not None:
             body["temperature"] = request.temperature
@@ -456,6 +565,7 @@ class LLMProxyService:
 
         Raises:
             LLMProxyRequestError: If request fails.
+            LLMProxyInvalidRequestError: If the provider cannot represent the requested tool exchange.
         """
         if not self._client:
             await self.initialize()
@@ -566,7 +676,13 @@ class LLMProxyService:
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:
             url, headers, body = self._build_azure_request(request, provider, model)
         elif provider.provider_type == LLMProviderType.ANTHROPIC:
-            url, headers, body = self._build_anthropic_request(request, provider, model)
+            try:
+                url, headers, body = self._build_anthropic_request(request, provider, model)
+            except LLMProxyInvalidRequestError as exc:
+                error = {"error": {"type": "invalid_request_error", "message": str(exc)}}
+                yield f"data: {orjson.dumps(error).decode()}\n\n"
+                yield "data: [DONE]\n\n"
+                return
         elif provider.provider_type == LLMProviderType.OLLAMA:
             url, headers, body = self._build_ollama_request(request, provider, model)
         else:
@@ -582,6 +698,7 @@ class LLMProxyService:
 
         response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         created = int(time.time())
+        anthropic_state = _AnthropicStreamState()
         capture_output = is_output_capture_enabled("llm.proxy")
         captured_output = ""
 
@@ -635,7 +752,7 @@ class LLMProxyService:
                                 data = orjson.loads(data_str)
 
                                 if provider.provider_type == LLMProviderType.ANTHROPIC:
-                                    chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
+                                    chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id, anthropic_state)
                                 elif provider.provider_type == LLMProviderType.OLLAMA:
                                     base_url = (provider.api_base or "").rstrip("/")
                                     if base_url.endswith("/v1"):
@@ -649,6 +766,10 @@ class LLMProxyService:
                                     if capture_output and len(captured_output) < 65536:
                                         captured_output += chunk[: 65536 - len(captured_output)]
                                     yield f"data: {chunk}\n\n"
+
+                                if provider.provider_type == LLMProviderType.ANTHROPIC and data.get("type") == "message_stop":
+                                    yield "data: [DONE]\n\n"
+                                    break
 
                             except orjson.JSONDecodeError:
                                 continue
@@ -739,9 +860,12 @@ class LLMProxyService:
             ChatCompletionResponse in OpenAI format.
         """
         content = ""
+        tool_calls = []
         for block in data.get("content", []):
             if block.get("type") == "text":
                 content += block.get("text", "")
+            elif block.get("type") == "tool_use":
+                tool_calls.append({"id": block["id"], "type": "function", "function": {"name": block["name"], "arguments": orjson.dumps(block["input"]).decode()}})
 
         usage_data = data.get("usage", {})
 
@@ -752,8 +876,8 @@ class LLMProxyService:
             choices=[
                 ChatChoice(
                     index=0,
-                    message=ChatMessage(role="assistant", content=content),
-                    finish_reason=data.get("stop_reason", "stop"),
+                    message=ChatMessage(role="assistant", content=content if content or not tool_calls else None, tool_calls=tool_calls or None),
+                    finish_reason="tool_calls" if data.get("stop_reason") == "tool_use" else data.get("stop_reason", "stop"),
                 )
             ],
             usage=UsageStats(
@@ -806,6 +930,7 @@ class LLMProxyService:
         response_id: str,
         created: int,
         model_id: str,
+        state: _AnthropicStreamState,
     ) -> Optional[str]:
         """Transform Anthropic streaming chunk to OpenAI format.
 
@@ -814,41 +939,41 @@ class LLMProxyService:
             response_id: Response ID for the chunk.
             created: Timestamp for the response.
             model_id: Model ID to include in response.
+            state: Tool calls from this provider response.
 
         Returns:
             JSON string chunk in OpenAI format, or None if not applicable.
         """
         event_type = data.get("type")
 
-        if event_type == "content_block_delta":
-            delta = data.get("delta", {})
-            if delta.get("type") == "text_delta":
-                chunk = {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model_id,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": delta.get("text", "")},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                return orjson.dumps(chunk).decode()
-
+        finish_reason = None
+        delta: dict[str, Any]
+        if event_type == "message_start":
+            delta = {"role": "assistant"}
+        elif event_type == "content_block_delta" and data.get("delta", {}).get("type") == "text_delta":
+            delta = {"content": data["delta"].get("text", "")}
+        elif event_type == "message_delta":
+            if stop_reason := data.get("delta", {}).get("stop_reason"):
+                state.tool_stop = stop_reason == "tool_use"
+            return None
         elif event_type == "message_stop":
-            chunk = {
+            delta = {}
+            finish_reason = "tool_calls" if state.tool_stop else "stop"
+        else:
+            tool_delta = state.tool_delta(data)
+            if tool_delta is None:
+                return None
+            delta = {"tool_calls": [tool_delta]}
+
+        return orjson.dumps(
+            {
                 "id": response_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model_id,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
             }
-            return orjson.dumps(chunk).decode()
-
-        return None
+        ).decode()
 
     def _transform_ollama_stream_chunk(
         self,

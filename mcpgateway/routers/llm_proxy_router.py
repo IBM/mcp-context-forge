@@ -24,6 +24,7 @@ from mcpgateway.services.llm_provider_service import (
 )
 from mcpgateway.services.llm_proxy_service import (
     LLMProxyAuthError,
+    LLMProxyInvalidRequestError,
     LLMProxyRequestError,
     LLMProxyService,
 )
@@ -116,6 +117,8 @@ async def chat_completions(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",
         )
+    except LLMProxyInvalidRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except LLMProxyRequestError as e:
         logger.error(f"Proxy request error: {e}")
         raise HTTPException(
