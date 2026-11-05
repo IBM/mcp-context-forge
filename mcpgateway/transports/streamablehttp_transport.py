@@ -6399,7 +6399,9 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
             # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
             # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
-            effective_is_admin = db_user_is_admin or is_admin
+            # External-IdP identities are cached (60s TTL) with the DB is_admin at build time, so the
+            # payload copy can lag a demotion. They take admin from the DB only.
+            effective_is_admin = db_user_is_admin if user_payload.get("source") == "external_idp" else (db_user_is_admin or is_admin)
 
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)

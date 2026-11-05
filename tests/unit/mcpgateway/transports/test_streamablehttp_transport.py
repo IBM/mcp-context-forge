@@ -14746,6 +14746,41 @@ async def test_auth_jwt_session_token_platform_admin_escape_hatch(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("db_is_admin, expected_admin", [(False, False), (True, True)])
+async def test_auth_jwt_external_idp_admin_comes_from_db_not_cached_payload(monkeypatch, db_is_admin, expected_admin):
+    """A cached external-IdP payload with a stale is_admin=True must not outlive a DB demotion."""
+    handler = _auth_handler()
+    payload = {"sub": "ext@example.com", "email": "ext@example.com", "token_use": "session", "source": "external_idp", "is_admin": True, "jti": "jti-ext"}
+
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value=payload))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_user_by_email_sync",
+        lambda email: SimpleNamespace(
+            email=email,
+            is_admin=db_is_admin,
+            is_active=True,
+            password_hash="",
+            full_name="",
+            auth_provider="oidc",
+            password_hash_type="",
+            password_change_required=False,
+            email_verified_at=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=None if expected_admin else []))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    assert await handler._auth_jwt(token="tok") is True
+    assert tr.user_context_var.get()["is_admin"] is expected_admin
+
+
+@pytest.mark.asyncio
 async def test_auth_jwt_legacy_token_performs_no_subject_lookup(monkeypatch):
     """Legacy/API tokens must not incur an extra DB read on the auth hot path."""
     handler = _auth_handler()
