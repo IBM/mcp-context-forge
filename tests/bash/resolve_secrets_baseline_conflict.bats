@@ -215,6 +215,42 @@ EOF
     [ "$status" -eq 0 ]
 }
 
+@test "merge: rescanned file with no findings left loses its stale baseline entries" {
+    printf 'y = 2\n' > other.py
+    jq '.results = {"app.py": [{"hashed_secret": "0123456789abcdef0123456789abcdef01234567", "is_secret": false, "is_verified": false, "line_number": 1, "type": "Secret Keyword", "verified_result": null}]}' .secrets.baseline > .secrets.baseline.new  # pragma: allowlist secret
+    mv .secrets.baseline.new .secrets.baseline
+    commit_all "baseline with stale app.py entry"
+
+    DETECT_SECRETS_PATH=app.py GIT_DIFF_TARGET=main run_driver
+    [ "$status" -eq 0 ]
+    run jq -e '.results | has("app.py") | not' "$DRIVER_OUT"
+    [ "$status" -eq 0 ]
+}
+
+@test "merge: baseline entries for files outside the scan scope are kept" {
+    printf 'y = 2\n' > other.py
+    jq '.results = {"app.py": [{"hashed_secret": "0123456789abcdef0123456789abcdef01234567", "is_secret": false, "is_verified": false, "line_number": 1, "type": "Secret Keyword", "verified_result": null}]}' .secrets.baseline > .secrets.baseline.new  # pragma: allowlist secret
+    mv .secrets.baseline.new .secrets.baseline
+    commit_all "baseline with app.py entry"
+
+    DETECT_SECRETS_PATH=other.py GIT_DIFF_TARGET=main run_driver
+    [ "$status" -eq 0 ]
+    run jq -e '.results | has("app.py")' "$DRIVER_OUT"
+    [ "$status" -eq 0 ]
+}
+
+@test "merge: result file keys stay sorted" {
+    printf 'y = 2\n' > zeta.py
+    write_fake_secret alpha.py
+    jq '.results = {"zeta.py": [{"hashed_secret": "0123456789abcdef0123456789abcdef01234567", "is_secret": false, "is_verified": false, "line_number": 1, "type": "Secret Keyword", "verified_result": null}]}' .secrets.baseline > .secrets.baseline.new  # pragma: allowlist secret
+    mv .secrets.baseline.new .secrets.baseline
+    commit_all "baseline with zeta.py entry"
+
+    DETECT_SECRETS_PATH=alpha.py GIT_DIFF_TARGET=main run_driver
+    run jq -e '(.results | keys_unsorted) as $k | ($k | length) == 2 and $k == ($k | sort)' "$DRIVER_OUT"
+    [ "$status" -eq 0 ]
+}
+
 # --- %B verdict preservation ---------------------------------------------------
 
 @test "verdicts: %B entry audited real is lost when its file is gone" {
