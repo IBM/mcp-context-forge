@@ -10,12 +10,15 @@ and status badges.
 """
 
 # Standard
+from collections.abc import Iterator
 import logging
 import re
+from typing import Any
+from urllib.parse import urlsplit
 import uuid
 
 # Third-Party
-from playwright.sync_api import expect
+from playwright.sync_api import APIRequestContext, expect, Response
 import pytest
 
 # Local
@@ -944,48 +947,106 @@ class TestResourcesStatusBadges:
         assert "Active" in status_text or "Inactive" in status_text, f"Unexpected status badge: '{status_text}'"
 
 
+def _resources_for_uri(admin_api: APIRequestContext, uri: str) -> list[dict[str, Any]]:
+    """Return all visible rows for the exact test URI, including inactive rows.
+
+    Args:
+        admin_api: Authenticated API context for the disposable gateway.
+        uri: Unique URI owned by this test.
+
+    Returns:
+        Matching resource rows.
+    """
+    response = admin_api.get("/resources?limit=0&include_inactive=true")
+    assert response.status == 200, response.text()
+    rows = response.json()
+    if isinstance(rows, dict):
+        rows = rows["resources"]
+    assert isinstance(rows, list), "Resource listing must contain a list"
+    return [row for row in rows if row["uri"] == uri]
+
+
+def _is_resource_create_response(response: Response) -> bool:
+    """Match resource creation independently of query parameters.
+
+    Args:
+        response: Observed browser response.
+
+    Returns:
+        Whether the response belongs to a resource creation request.
+    """
+    return response.request.method == "POST" and urlsplit(response.url).path.endswith("/admin/resources")
+
+
+@pytest.fixture(name="resource_uri_conflict_case")
+def _resource_uri_conflict_case(admin_api: APIRequestContext) -> Iterator[tuple[str, str, str]]:
+    """Isolate resource data and clean every matching row after the test.
+
+    Args:
+        admin_api: Authenticated API context for the disposable gateway.
+
+    Yields:
+        Unique URI and the original and duplicate resource names.
+    """
+    suffix = uuid.uuid4().hex
+    uri = f"file://duplicate-{suffix}.txt"
+    yield uri, f"original-{suffix}", f"duplicate-{suffix}"
+
+    failures = []
+    for row in _resources_for_uri(admin_api, uri):
+        try:
+            response = admin_api.delete(f"/resources/{row['id']}")
+            if response.status not in (200, 404):
+                failures.append(f"Resource {row['id']} deletion returned HTTP {response.status}")
+        except Exception as error:
+            failures.append(f"Resource {row['id']} deletion failed: {type(error).__name__}")
+    if _resources_for_uri(admin_api, uri):
+        failures.append("Resource rows remain for the test URI")
+    assert not failures, "; ".join(failures)
+
+
 @pytest.mark.ui
 @pytest.mark.resources
 class TestResourceDuplicateUriFormValidation:
     """Preserve URI conflict attribution through the shipped resource form."""
 
-    def test_duplicate_resource_uri_shows_inline_error_and_focus(self, resources_page: ResourcesPage, admin_api):
-        """Duplicate submission preserves the original row and focuses the highlighted URI field."""
+    def test_duplicate_resource_uri_shows_inline_error_and_focus(self, resources_page: ResourcesPage, admin_api: APIRequestContext, resource_uri_conflict_case: tuple[str, str, str]) -> None:
+        """Duplicate submission preserves the original row and focuses the URI field.
+
+        Args:
+            resources_page: Authenticated resource management page.
+            admin_api: Authenticated API context for persistence checks.
+            resource_uri_conflict_case: Unique URI and names with automatic cleanup.
+        """
+        uri, original_name, duplicate_name = resource_uri_conflict_case
         resources_page.navigate_to_resources_tab()
         resources_page.wait_for_resources_table_loaded()
-        suffix = uuid.uuid4().hex
-        uri = f"file://duplicate-{suffix}.txt"
-        names = [f"original-{suffix}", f"duplicate-{suffix}"]
-        resource_id = None
-        try:
-            for index, name in enumerate(names):
-                with resources_page.page.expect_response(lambda response: response.url.endswith("/admin/resources") and response.request.method == "POST") as received:
-                    resources_page.create_resource(uri=uri, name=name, mime_type="text/plain", description="Conflict regression")
-                response = received.value
-                assert response.status == (200 if index == 0 else 409), response.text()
-                if index == 0:
-                    listing = admin_api.get("/resources?limit=0")
-                    assert listing.status == 200
-                    rows = listing.json()
-                    if isinstance(rows, dict):
-                        rows = rows["resources"]
-                    resource_id = next(row["id"] for row in rows if row["uri"] == uri)
+        resources_page.add_resource_form.locator('input[name="visibility"][value="public"]').check()
 
-            message = response.json()["message"]
-            assert message == f"Public resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
-            error = resources_page.add_resource_form.locator('p[data-error-message-for="uri"]')
-            expect(error).to_be_visible()
-            expect(error).to_have_text(message)
-            expect(resources_page.resource_uri_input).to_have_class(re.compile(r"border-red-500"))
-            expect(resources_page.resource_uri_input).to_be_focused()
-            listing = admin_api.get("/resources?limit=0")
-            assert listing.status == 200
-            rows = listing.json()
-            if isinstance(rows, dict):
-                rows = rows["resources"]
-            matching = [row for row in rows if row["uri"] == uri]
-            assert [(row["id"], row["name"]) for row in matching] == [(resource_id, names[0])]
-        finally:
-            if resource_id:
-                deleted = admin_api.delete(f"/resources/{resource_id}")
-                assert deleted.status == 200, deleted.text()
+        with resources_page.page.expect_event("domcontentloaded"):
+            with resources_page.page.expect_response(_is_resource_create_response) as created:
+                resources_page.create_resource(uri=uri, name=original_name, mime_type="text/plain", description="Conflict regression")
+            assert created.value.status == 200, created.value.text()
+
+        resources_page.wait_for_resources_table_loaded()
+        expect(resources_page.add_resource_form).to_be_visible()
+        expect(resources_page.resource_uri_input).to_have_value("")
+        original = _resources_for_uri(admin_api, uri)
+        assert len(original) == 1
+        assert original[0]["name"] == original_name
+        resource_id = original[0]["id"]
+        resources_page.add_resource_form.locator('input[name="visibility"][value="public"]').check()
+
+        with resources_page.page.expect_response(_is_resource_create_response) as duplicate:
+            resources_page.create_resource(uri=uri, name=duplicate_name, mime_type="text/plain", description="Conflict regression")
+        response = duplicate.value
+        message = f"Public resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
+        assert response.status == 409, response.text()
+        assert response.json() == {"message": message, "success": False}
+        error = resources_page.add_resource_form.locator('p[data-error-message-for="uri"]')
+        expect(error).to_be_visible()
+        expect(error).to_have_text(message)
+        expect(resources_page.resource_uri_input).to_have_class(re.compile(r"border-red-500"))
+        expect(resources_page.resource_uri_input).to_be_focused()
+        matching = _resources_for_uri(admin_api, uri)
+        assert [(row["id"], row["uri"], row["name"]) for row in matching] == [(resource_id, uri, original_name)]
