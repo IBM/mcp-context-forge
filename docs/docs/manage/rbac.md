@@ -63,8 +63,8 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, gateways.token_read, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, gateways.token_read, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, tools.preview, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, metrics:read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
@@ -498,7 +498,7 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Tools** | tools.create, tools.read, tools.update, tools.delete, tools.execute, tools.preview |
 | **Plugins** | plugins.read |
 | **Resources** | resources.create, resources.read, resources.update, resources.delete, resources.share |
-| **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete |
+| **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete, gateways.token_read |
 | **Prompts** | prompts.create, prompts.read, prompts.update, prompts.delete, prompts.execute |
 | **Servers** | servers.create, servers.read, servers.use, servers.update, servers.delete, servers.manage |
 | **Tokens** | tokens.create, tokens.read, tokens.update, tokens.revoke |
@@ -515,9 +515,10 @@ tool call but never actually invoke it.
 ### OAuth Token Retrieval Permissions
 
 `GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read`.
-`GET /oauth/token/{gateway_id}` requires both `tokens.create` and `gateways.update` because it returns a live access token.
+`GET /oauth/token/{gateway_id}` requires `gateways.token_read` because it returns a live access token.
 Viewers hold `tokens.create` for API-token self-service, so that permission alone does not authorize OAuth token retrieval.
-Explicit API token scopes must grant `tokens.create`. Gateway visibility checks still apply.
+The built-in `developer` and `team_admin` roles receive `gateways.token_read`; `platform_admin` retains its wildcard grant.
+Explicit API token scopes must grant `gateways.token_read` directly or through a wildcard. Gateway visibility checks still apply.
 The token lookup uses the authenticated caller's identity, so callers can retrieve only their own stored token.
 The endpoint is disabled unless `OAUTH_TOKEN_RETRIEVAL_ENABLED=true`.
 See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for configuration and response details.
@@ -910,7 +911,7 @@ Create a JSON file containing an array of role definitions:
 | Resources | `resources.create`, `resources.read`, `resources.update`, `resources.delete` |
 | Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
 | Servers | `servers.create`, `servers.read`, `servers.use`, `servers.update`, `servers.delete`, `servers.manage` |
-| Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete` |
+| Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete`, `gateways.token_read` |
 | OAuth clients | `admin.oauth_clients:read`, `admin.oauth_clients:delete` |
 | Teams | `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.join` |
 

@@ -75,11 +75,12 @@ Enable `OAUTH_TOKEN_RETRIEVAL_ENABLED=true` to expose `GET /oauth/token/{gateway
 The endpoint supports gateways configured for the Authorization Code flow.
 Complete `/oauth/authorize/{gateway_id}` before requesting a stored token.
 
-The caller must authenticate, have visibility of the gateway, and hold both `tokens.create` and `gateways.update`.
-An explicitly scoped API token must also grant `tokens.create`.
+The caller must authenticate, have visibility of the gateway, and hold `gateways.token_read`.
+An explicitly scoped API token must also grant `gateways.token_read` (directly or through a wildcard).
 `GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read` instead.
 Token retrieval requires the token permission because it discloses a live bearer token, rather than status metadata.
-The gateway update permission excludes viewers, who hold token permissions for API-token self-service.
+The built-in `developer` and `team_admin` roles receive this permission.
+`platform_admin` retains access through its wildcard grant. Viewer roles do not receive this permission.
 The endpoint always resolves the authenticated caller's stored token.
 
 ```bash

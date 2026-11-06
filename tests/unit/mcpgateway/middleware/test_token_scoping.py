@@ -431,10 +431,12 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/oauth/status", "GET", [Permissions.TOOLS_READ]) is False
 
     @pytest.mark.asyncio
-    async def test_oauth_token_path_requires_tokens_create(self, middleware):
-        """Scoped API tokens require tokens.create to retrieve an OAuth access token."""
-        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOKENS_CREATE]) is True
+    async def test_oauth_token_path_requires_gateway_token_read(self, middleware):
+        """Scoped API tokens require gateways.token_read to retrieve an OAuth access token."""
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["gateways.token_read"]) is True
         assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["gateways.*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOKENS_CREATE]) is False
         assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.GATEWAYS_READ]) is False
         assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.GATEWAYS_UPDATE]) is False
         assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOOLS_READ]) is False

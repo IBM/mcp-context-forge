@@ -59,19 +59,19 @@ def _seed() -> None:
     from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Gateway, OAuthToken, Role, SessionLocal, UserRole
 
     with SessionLocal() as db:
-        for user in ("owner", "other", "empty", "viewer", "outsider"):
+        for user in ("owner", "other", "empty", "viewer", "platform_viewer", "team_admin", "outsider"):
             db.add(EmailUser(email=f"{user}@example.com", full_name=user, is_admin=False, is_active=True))
         db.flush()
         for team in (_TEAM, "oauth-other-team"):
             db.add(EmailTeam(id=team, name=team, slug=team, created_by="owner@example.com"))
         db.flush()
-        for user in ("owner", "other", "empty", "viewer", "outsider"):
+        for user in ("owner", "other", "empty", "viewer", "platform_viewer", "team_admin", "outsider"):
             team = "oauth-other-team" if user == "outsider" else _TEAM
             email = f"{user}@example.com"
-            role_name = "viewer" if user == "viewer" else "developer"
+            role_name = user if user in {"viewer", "platform_viewer", "team_admin"} else "developer"
             role = db.execute(select(Role).where(Role.name == role_name, Role.is_active.is_(True))).scalar_one()
             db.add(EmailTeamMember(team_id=team, user_email=email, role="member"))
-            db.add(UserRole(user_email=email, role_id=role.id, scope="team", scope_id=team, granted_by="admin@example.com"))
+            db.add(UserRole(user_email=email, role_id=role.id, scope=role.scope, scope_id=team if role.scope == "team" else None, granted_by="admin@example.com"))
         db.add(
             Gateway(
                 id=_GATEWAY,
@@ -88,7 +88,7 @@ def _seed() -> None:
             )
         )
         db.flush()
-        for user in ("owner", "other", "viewer", "outsider"):
+        for user in ("owner", "other", "viewer", "platform_viewer", "team_admin", "outsider"):
             db.add(
                 OAuthToken(
                     gateway_id=_GATEWAY,
@@ -197,7 +197,7 @@ def test_unauthenticated_request_is_denied(token_gateway: TokenGateway) -> None:
     assert _get(token_gateway).status_code == 401
 
 
-@pytest.mark.parametrize("user", ["owner", "other"])
+@pytest.mark.parametrize("user", ["owner", "other", "team_admin"])
 def test_returns_only_callers_token(token_gateway: TokenGateway, user: str) -> None:
     """Each caller receives their own access token and non-sensitive metadata."""
     response = _get(token_gateway, token_gateway.headers(user))
@@ -220,7 +220,7 @@ def test_missing_token_returns_404(token_gateway: TokenGateway) -> None:
     assert "access-for-" not in response.text
 
 
-@pytest.mark.parametrize("user", ["viewer", "outsider"])
+@pytest.mark.parametrize("user", ["viewer", "platform_viewer", "outsider"])
 def test_viewer_and_wrong_team_are_denied(token_gateway: TokenGateway, user: str) -> None:
     """Read-only roles and other teams cannot retrieve stored tokens."""
     response = _get(token_gateway, token_gateway.headers(user))
@@ -228,23 +228,24 @@ def test_viewer_and_wrong_team_are_denied(token_gateway: TokenGateway, user: str
     assert "access-for-" not in response.text
 
 
-@pytest.mark.parametrize("permission", ["gateways.read", "gateways.update"])
-def test_gateway_only_api_token_is_denied(token_gateway: TokenGateway, permission: str) -> None:
-    """Gateway permissions alone cannot disclose a provider token."""
+@pytest.mark.parametrize("permission", ["gateways.read", "gateways.update", "tokens.create"])
+def test_unrelated_api_token_permission_is_denied(token_gateway: TokenGateway, permission: str) -> None:
+    """Unrelated permissions cannot disclose a provider token."""
     response = _get(token_gateway, token_gateway.headers("owner", [permission]))
     assert response.status_code == 403, response.text
     assert "access-for-" not in response.text
 
 
-def test_tokens_create_api_token_can_retrieve(token_gateway: TokenGateway) -> None:
-    """An authorized developer can retrieve their token with a tokens.create API scope."""
-    response = _get(token_gateway, token_gateway.headers("owner", ["tokens.create"]))
+def test_gateway_token_read_api_token_can_retrieve(token_gateway: TokenGateway) -> None:
+    """An authorized developer can retrieve their token with a gateways.token_read API scope."""
+    response = _get(token_gateway, token_gateway.headers("owner", ["gateways.token_read"]))
     assert response.status_code == 200, response.text
     assert response.json()["access_token"] == "access-for-owner"
 
 
-def test_viewer_cannot_elevate_permissions_with_api_token_scopes(token_gateway: TokenGateway) -> None:
-    """Explicit token scopes cannot grant gateway update permission to a viewer."""
-    response = _get(token_gateway, token_gateway.headers("viewer", ["gateways.update", "tokens.create"]))
+@pytest.mark.parametrize("user", ["viewer", "platform_viewer"])
+def test_viewer_cannot_elevate_permissions_with_api_token_scopes(token_gateway: TokenGateway, user: str) -> None:
+    """Explicit token scopes cannot grant provider-token access to a viewer."""
+    response = _get(token_gateway, token_gateway.headers(user, ["gateways.token_read"]))
     assert response.status_code == 403, response.text
     assert "access-for-" not in response.text
