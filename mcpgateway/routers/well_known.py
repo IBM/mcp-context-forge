@@ -27,6 +27,7 @@ from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cim
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
@@ -297,11 +298,14 @@ def get_jwks() -> dict:
 
 
 @router.get("/oauth/client-metadata.json")
-async def get_oauth_client_metadata() -> JSONResponse:
+async def get_oauth_client_metadata(request: Request) -> JSONResponse:
     """Serve the gateway's OAuth Client ID Metadata Document (CIMD).
 
     Authorization servers fetch this public document to learn the gateway's
-    client metadata. It is built from server-side configuration only and holds no secrets.
+    client metadata. It is built from server-side configuration and the ASGI root path, and holds no secrets.
+
+    Args:
+        request: Incoming request, used to resolve the reverse-proxy root path.
 
     Returns:
         JSONResponse: The Client ID Metadata Document.
@@ -313,7 +317,7 @@ async def get_oauth_client_metadata() -> JSONResponse:
         raise HTTPException(status_code=404, detail="Not found")
 
     headers = {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
-    return JSONResponse(content=CimdService().build_document(), headers=headers)
+    return JSONResponse(content=CimdService(root_path=resolve_root_path(request)).build_document(), headers=headers)
 
 
 @router.get("/oauth/client-metadata/jwks.json")
@@ -327,13 +331,23 @@ async def get_oauth_client_metadata_jwks() -> JSONResponse:
 
 
 @router.get("/.well-known/oauth-client")
-async def get_legacy_oauth_client_metadata() -> JSONResponse:
-    """Legacy endpoint for backward compatibility."""
+async def get_legacy_oauth_client_metadata(request: Request) -> JSONResponse:
+    """Legacy endpoint for backward compatibility.
+
+    Args:
+        request: Incoming request, used to resolve the reverse-proxy root path.
+
+    Returns:
+        JSONResponse: The Client ID Metadata Document.
+
+    Raises:
+        HTTPException: 404 if CIMD is disabled.
+    """
     if not settings.cimd_enabled:
         raise HTTPException(status_code=404, detail="Not found")
 
     headers = {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
-    return JSONResponse(content=CimdService().build_document(), headers=headers)
+    return JSONResponse(content=CimdService(root_path=resolve_root_path(request)).build_document(), headers=headers)
 
 
 def get_well_known_file_content(filename: str) -> PlainTextResponse:

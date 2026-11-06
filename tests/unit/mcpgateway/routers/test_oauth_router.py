@@ -495,6 +495,9 @@ class TestOAuthRouter:
             assert exc_info.value.status_code == 400
             assert "incomplete" in str(exc_info.value.detail).lower()
             mock_dcr_service.assert_not_called()
+            assert "DCR_ENABLED" in exc_info.value.detail
+            assert "DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS" in exc_info.value.detail
+            assert "CIMD_ENABLED" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):
@@ -5918,7 +5921,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.get_or_register_client = AsyncMock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/.well-known/oauth-client")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)
 
         with (
@@ -5947,7 +5950,7 @@ class TestCimdRegistrationPreference:
         self._gateway(mock_db)
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/.well-known/oauth-client")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)
 
         with patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr), patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd):
@@ -5973,7 +5976,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock()
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
         fake_cimd.is_applicable = AsyncMock(return_value=False)
 
         with (
@@ -6002,7 +6005,7 @@ class TestCimdRegistrationPreference:
         gateway = self._gateway(mock_db)
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)
 
         with (
@@ -6031,7 +6034,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock()
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
         fake_cimd.is_applicable = AsyncMock(return_value=False)
 
         with (
@@ -6058,7 +6061,7 @@ class TestCimdRegistrationPreference:
         gateway.oauth_config["registration_method"] = "cimd"
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.failed_guard = Mock(return_value=None)
         fake_cimd.is_applicable = AsyncMock(return_value=False)  # Normally fails auto selection
 
@@ -6085,7 +6088,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
         fake_dcr.get_or_register_client = AsyncMock()
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.failed_guard = Mock(return_value=guard)
 
         with (
@@ -6122,7 +6125,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)  # Normally would choose CIMD
 
         with (
@@ -6156,7 +6159,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock()
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
         fake_cimd.is_applicable = AsyncMock(return_value=False)
 
         with (
@@ -6185,7 +6188,7 @@ class TestCimdRegistrationPreference:
         gateway.oauth_config["registration_method"] = "bogus"
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)
 
         with (
@@ -6201,6 +6204,69 @@ class TestCimdRegistrationPreference:
         assert gateway.oauth_config["registration_method"] == "cimd"
 
     @pytest.mark.asyncio
+    async def test_cimd_reuses_applicability_metadata(self, mock_db, mock_request, mock_current_user):
+        """AS metadata fetched by is_applicable fills endpoints without a second discovery call."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock()
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"}
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=metadata)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_dcr.discover_as_metadata.assert_not_awaited()
+        assert gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/token"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "skip_reason,expected",
+        [("not_advertised", "does not advertise"), ("discovery_failed", "CIMD was skipped (discovery_failed)"), ("redirect_uri_mismatch", "CIMD was skipped (redirect_uri_mismatch)")],
+    )
+    async def test_dcr_fallback_warning_states_actual_reason(self, mock_db, mock_request, mock_current_user, caplog, skip_reason, expected):
+        """The fallback warning names why CIMD was skipped instead of blaming the issuer."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        self._gateway(mock_db)
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(as_metadata=None, skip_reason=skip_reason)
+        fake_cimd.is_applicable = AsyncMock(return_value=False)
+
+        with (
+            caplog.at_level("WARNING", logger="mcpgateway.routers.oauth_router"),
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(expected in msg for msg in warnings)
+
+    @pytest.mark.asyncio
     async def test_cimd_skips_discovery_when_endpoints_configured(self, mock_db, mock_request, mock_current_user):
         """Configured authorization and token URLs are kept and AS metadata is not fetched."""
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
@@ -6210,7 +6276,7 @@ class TestCimdRegistrationPreference:
         gateway.oauth_config["token_url"] = f"{_DCR_ISSUER}/configured-token"
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock()
-        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
         fake_cimd.is_applicable = AsyncMock(return_value=True)
 
         with (

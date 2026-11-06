@@ -704,9 +704,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
-| `CIMD_ENABLED`                             | Prefer Client ID Metadata Documents over DCR when the AS supports them | `true`                 | bool          |
+| `CIMD_ENABLED`                             | Prefer Client ID Metadata Documents over DCR when the AS supports them. On upgrade, gateways with an issuer but no `client_id` switch from DCR to CIMD; set `false` to keep DCR | `true`                 | bool          |
 | `CIMD_CLIENT_NAME`                         | `client_name` in the published Client ID Metadata Document     | `ContextForge`                 | string        |
-| `CIMD_CLIENT_METADATA_URL`                 | Optional explicit public URL of the metadata document (overrides auto-derived URL) | `None`                 | string        |
+| `CIMD_CLIENT_METADATA_URL`                 | Optional explicit public URL of the metadata document (overrides auto-derived URL). Must end with `/oauth/client-metadata.json` | `None`                 | string        |
 | `CIMD_TOKEN_ENDPOINT_AUTH_METHOD`         | Preferred token endpoint authentication method for CIMD clients | `none`                 | `none`, `private_key_jwt` |
 | `CIMD_PRIVATE_KEY_PATH`                   | Dedicated PEM private key for CIMD `private_key_jwt` assertions; never the JWT signing key | `""`                 | path          |
 | `CIMD_KEY_ID`                             | `kid` of the CIMD signing key in assertions and the CIMD JWKS  | `cimd-1`                       | string        |

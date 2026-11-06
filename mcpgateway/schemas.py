@@ -4448,6 +4448,11 @@ class GatewayRead(BaseModelWithConfigDict):
         None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
     )
 
+    registration_method: Optional[str] = Field(
+        None,
+        description="How the gateway registered as an OAuth client: auto, cimd, or dcr. Mirrors oauth_config.registration_method; null when none is recorded",
+    )
+
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
         None,
@@ -4566,6 +4571,17 @@ class GatewayRead(BaseModelWithConfigDict):
                     data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
                 return data_dict
         return data
+
+    @model_validator(mode="after")
+    def _populate_registration_method(self) -> Self:
+        """Mirror ``oauth_config.registration_method`` into the top-level read field.
+
+        Returns:
+            Self: The instance with ``registration_method`` set from ``oauth_config``.
+        """
+        method = self.oauth_config.get("registration_method") if isinstance(self.oauth_config, dict) else None
+        self.registration_method = method if isinstance(method, str) else None
+        return self
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")

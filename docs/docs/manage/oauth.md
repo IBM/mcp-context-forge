@@ -136,17 +136,22 @@ When connecting to upstream authorization servers where you have not pre-registe
 3. **Automatic Selection (`auto`)**:
    - The default mode. ContextForge queries the authorization server's `.well-known` configuration. If CIMD is supported, it uses CIMD. Otherwise, it falls back to Dynamic Client Registration (DCR).
 
+!!! warning "Upgrade behavior"
+    `CIMD_ENABLED` defaults to `true`. A gateway that has an issuer but no `client_id` and no stored registration switches from DCR to CIMD on upgrade when the authorization server advertises support. Set `CIMD_ENABLED=false`, or set `registration_method` to `dcr` on one gateway, to keep DCR. Gateways with configured credentials or a stored DCR registration are unchanged.
+
+The registration method is visible as `registration_method` in the gateway read API and on the gateway OAuth panel in the Admin UI.
+
 ### CIMD Behind Reverse Proxies
 
 By default, ContextForge derives the metadata document URL dynamically. If your gateway runs behind a reverse proxy, load balancer, or Kubernetes ingress, the auto-derived URL might reflect internal hostnames.
 
-Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the document is served (e.g., `https://my-gateway.example.com/oauth/client-metadata.json`) to guarantee the authorization server can reach and validate the gateway.
+The gateway resolves the reverse-proxy root path from the request, so the redirect URI follows the public path. Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the document is served (e.g., `https://my-gateway.example.com/oauth/client-metadata.json`) to guarantee the authorization server can reach and validate the gateway. The value must end with `/oauth/client-metadata.json`, the only path the gateway serves; other paths are rejected at startup. The redirect URI and JWKS URL derive from the part before that path.
 
 ### CIMD with Private-Key JWT (Confidential Client)
 
 To run as a confidential client using CIMD without any shared secrets:
 - Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
-- Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
+- Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. Startup fails without it. `JWT_ALGORITHM` (default `HS256`) is not used, so the default needs no change; the JWKS publishes only the CIMD key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
 - The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
 - The gateway serves the public key derived from the CIMD key (and `CIMD_PREVIOUS_PUBLIC_KEY_PATH`, if set, for key rotation) at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`) and `<CIMD_KEY_ID>-previous`.
 - All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
