@@ -5600,12 +5600,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
-                        async with client.stream(
+                        async with pinned_target.stream_async(
+                            client,
                             "GET",
-                            pinned_target.pin(gateway_url),
-                            headers=pinned_target.apply_headers(headers),
+                            gateway_url,
+                            headers=headers,
                             timeout=timeout,
-                            extensions=pinned_target.extensions,
                         ) as response:
                             # This will raise immediately if status is 3xx/4xx/5xx
                             response.raise_for_status()

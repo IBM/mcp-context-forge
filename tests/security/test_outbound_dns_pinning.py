@@ -8,8 +8,14 @@ Regression tests for outbound DNS pinning on SSRF-sensitive paths.
 
 # Standard
 from contextlib import asynccontextmanager, contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import pathlib
+import shutil
 import socket
 import ssl
+import subprocess
+import tempfile
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -818,7 +824,10 @@ async def test_oauth_token_post_with_custom_ca_uses_the_pinned_address(fake_reso
 
     await OAuthManager()._post_token_request("https://example.com/token", {"grant_type": "client_credentials"}, ca_certificate="ca-pem")
 
-    assert seen == {"verify": custom_ctx, "dialled_host": "93.184.216.34", "host_header": "example.com", "sni": "example.com"}
+    assert seen["verify"] is custom_ctx
+    assert seen["dialled_host"] == "93.184.216.34"
+    assert seen["host_header"] == "example.com"
+    assert seen["sni"] == "example.com"
 
 
 # First-Party
@@ -1416,3 +1425,204 @@ async def test_transport_restores_the_request_url_while_a_stream_is_still_open(m
 
     assert received == chunks, "every chunk must arrive intact and in order after the URL was restored"
     assert request.url.host == "example.com", "reading the still-open stream must not re-pin the request url"
+
+
+async def test_pinned_addresses_expose_every_validated_address(fake_resolver):
+    """Every policy-checked address stays a dial target; none is hidden from callers."""
+    fake_resolver(["::1", "127.0.0.1"])
+
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+
+    assert target.pinned_addresses == ("::1", "127.0.0.1")
+    assert sorted(target.pinned_addresses) == sorted(target.resolved_ips)
+
+
+async def test_connect_async_falls_back_to_ipv6_when_ipv4_refuses(fake_resolver):
+    """A peer bound to ::1 only is reached after the IPv4 attempt is refused.
+
+    Regression: ``pin()`` dialled ``resolved_ips[0]`` once and gave up, so an IPv6-only peer
+    behind a dual-family hostname was unreachable.
+    """
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            if "127.0.0.1" in url:
+                raise httpx.ConnectError("ipv4 refused")
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    response = await target.connect_async(_Client(), "POST", "http://localhost:8034/token", data={"grant_type": "x"})
+
+    assert response.status_code == 200
+    assert dialled == ["http://127.0.0.1:8034/token", "http://[::1]:8034/token"], "IPv4 first, then the IPv6 fallback"
+
+
+async def test_connect_async_falls_back_to_ipv4_when_ipv6_refuses(fake_resolver):
+    """The reported bug: localhost resolves to ::1 first and the peer listens on IPv4 only."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            if "[::1]" in url:
+                raise httpx.ConnectError("ipv6 refused")
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    response = await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert response.status_code == 200
+    assert dialled == ["http://[::1]:8034/token", "http://127.0.0.1:8034/token"]
+
+
+async def test_connect_async_raises_when_every_address_refuses(fake_resolver):
+    """All validated addresses are tried before the connection error surfaces."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    dialled = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            dialled.append(url)
+            raise httpx.ConnectError("refused")
+
+    with pytest.raises(httpx.ConnectError):
+        await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert len(dialled) == 2, "every validated address must be attempted"
+
+
+async def test_connect_async_keeps_validated_host_header_on_every_attempt(fake_resolver):
+    """Fallback attempts keep the validated authority in Host, never the dialled address."""
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    seen = []
+
+    class _Client:
+        async def post(self, url, headers=None, **kwargs):
+            seen.append(headers.get("Host"))
+            if "127.0.0.1" in url:
+                raise httpx.ConnectError("ipv4 refused")
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    await target.connect_async(_Client(), "POST", "http://localhost:8034/token")
+
+    assert seen == ["localhost:8034", "localhost:8034"]
+
+
+async def test_connect_async_without_pinning_passes_through(fake_resolver):
+    """An unpinned target sends the original URL and caller headers unchanged."""
+    fake_resolver(["93.184.216.34"])
+    seen = {}
+
+    class _Client:
+        async def get(self, url, headers=None, **kwargs):
+            seen["url"] = url
+            seen["headers"] = headers
+            return httpx.Response(200, json={}, request=httpx.Request("GET", url))
+
+    with patch("mcpgateway.utils.ssrf_pinning.settings") as mock_settings:
+        mock_settings.ssrf_protection_enabled = False
+        target = await resolve_pinned_target("https://example.com/mcp", "Gateway URL")
+
+    await target.connect_async(_Client(), "GET", "https://example.com/mcp", headers={"X-Keep": "1"})
+
+    assert seen["url"] == "https://example.com/mcp"
+    assert seen["headers"] == {"X-Keep": "1"}
+
+
+async def test_connect_async_passes_sni_hostname_on_every_attempt(fake_resolver):
+    """Every pinned attempt must carry sni_hostname so TLS verifies the hostname, not the IP.
+
+    Regression: the helpers dialled the IP literal without the extension, so httpcore used the
+    address as the TLS server name and any CA-issued certificate without an IP SAN failed
+    verification. MockTransport does no TLS, so this asserts the extension directly.
+    """
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("https://example.com/token", "OAuth token URL")
+    seen = []
+
+    class _Client:
+        async def post(self, url, headers=None, extensions=None, **kwargs):
+            seen.append((url, (extensions or {}).get("sni_hostname")))
+            if "127.0.0.1" in url:
+                raise httpx.ConnectError("ipv4 refused")
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    await target.connect_async(_Client(), "POST", "https://example.com/token")
+
+    assert [sni for _url, sni in seen] == ["example.com", "example.com"], "sni_hostname must survive the retry"
+
+
+async def test_connect_async_does_not_retry_a_tls_failure(fake_resolver):
+    """A certificate failure is raised at once; the next address would fail the same way."""
+    fake_resolver(["127.0.0.1", "::1"])
+    target = await resolve_pinned_target("https://example.com/token", "OAuth token URL")
+    attempts = []
+
+    def _tls_error() -> httpx.ConnectError:
+        exc = httpx.ConnectError("certificate verify failed")
+        exc.__cause__ = ssl.SSLCertVerificationError("IP address mismatch")
+        return exc
+
+    class _Client:
+        async def post(self, url, headers=None, extensions=None, **kwargs):
+            attempts.append(url)
+            raise _tls_error()
+
+    with pytest.raises(httpx.ConnectError):
+        await target.connect_async(_Client(), "POST", "https://example.com/token")
+
+    assert len(attempts) == 1, "a TLS failure must not be retried against another address"
+
+
+async def test_connect_async_reaches_a_hostname_only_tls_peer():
+    """End-to-end TLS: a certificate issued for the hostname verifies while dialling the IP.
+
+    This is the case MockTransport cannot cover, and the one the reviewer flagged: without
+    sni_hostname, verification fails with an IP-address mismatch.
+    """
+    cert_dir = tempfile.mkdtemp()
+    cert, key = pathlib.Path(cert_dir, "c.pem"), pathlib.Path(cert_dir, "k.pem")
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"],
+        check=True,
+        capture_output=True,
+    )
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - stdlib hook name
+            self.send_response(200)
+            self.send_header("content-length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args):  # noqa: D102 - silence the access log
+            return
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(cert), str(key))
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        target = await resolve_pinned_target(f"https://localhost:{port}/token", "OAuth token URL")
+        # Pin the validated address to the IPv4 loopback the test server actually binds.
+        target = PinnedTarget(validated_url=target.validated_url, hostname=target.hostname, original_authority=target.original_authority, resolved_ips=("127.0.0.1",))
+
+        async with httpx.AsyncClient(verify=ssl.create_default_context(cafile=str(cert))) as client:
+            response = await target.connect_async(client, "POST", f"https://localhost:{port}/token", data={"a": "b"})
+
+        assert response.status_code == 200
+        assert response.text == "ok"
+    finally:
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(cert_dir, ignore_errors=True)
