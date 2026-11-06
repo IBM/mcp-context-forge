@@ -117,12 +117,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import suppress
+from itertools import count
 import logging
 import os
 import shlex
 import signal
 import sys
-from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 import uuid
 
@@ -555,6 +556,100 @@ class StdIOEndpoint:
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
             raise
+
+
+class _PendingHttpRequest(NamedTuple):
+    """Client identity and reply destination for an outstanding stdio request."""
+
+    session_id: str | None
+    client_id: str | int
+    reply: asyncio.Future[dict[str, Any]]
+
+
+class _StdioHttpBridge(_PubSub):
+    """Route stdio replies to the originating HTTP request and publish other output to SSE."""
+
+    def __init__(self) -> None:
+        """Create a private request ID namespace for the shared stdio connection."""
+        super().__init__()
+        self._prefix = f"{uuid.uuid4().hex}:"
+        self._sequence = count()
+        self._pending: dict[str, _PendingHttpRequest] = {}
+
+    async def forward(self, stdio: StdIOEndpoint, message: Any, session_id: str | None) -> Response:
+        """Forward an HTTP message and restore the client's ID on its reply.
+
+        Args:
+            stdio: The shared child process.
+            message: The decoded JSON-RPC message.
+            session_id: The HTTP client's MCP session ID, if supplied.
+
+        Returns:
+            The JSON-RPC response, or an acknowledgement for a one-way message or timeout.
+        """
+        if isinstance(message, dict) and isinstance(message.get("method"), str) and type(message.get("id")) in (str, int):
+            wire_id = f"{self._prefix}{next(self._sequence)}"
+            reply: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+            self._pending[wire_id] = _PendingHttpRequest(session_id, message["id"], reply)
+            try:
+                await stdio.send(orjson.dumps({**message, "id": wire_id}).decode() + "\n")
+                try:
+                    response = await asyncio.wait_for(reply, timeout=10)
+                except TimeoutError:
+                    return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
+                return ORJSONResponse({**response, "id": message["id"]})
+            finally:
+                del self._pending[wire_id]
+
+        if isinstance(message, dict) and message.get("method") == "notifications/cancelled" and isinstance(params := message.get("params"), dict):
+            matches = [wire_id for wire_id, pending in self._pending.items() if pending.session_id == session_id and pending.client_id == params.get("requestId")]
+            # A stateless cancellation can name two clients' in-flight requests.
+            if len(matches) != 1:
+                return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
+            message = {**message, "params": {**params, "requestId": matches[0]}}
+
+        await stdio.send(orjson.dumps(message).decode() + "\n")
+        return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
+
+    def _deliver_reply(self, message: Any) -> bool:
+        """Consume a reply in the bridge namespace, including late or duplicate replies.
+
+        Args:
+            message: A decoded child message.
+
+        Returns:
+            Whether this reply belongs to the HTTP transport.
+        """
+        if not isinstance(message, dict) or "method" in message or ("result" not in message and "error" not in message):
+            return False
+        wire_id = message.get("id")
+        if not isinstance(wire_id, str) or not wire_id.startswith(self._prefix):
+            return False
+        pending = self._pending.get(wire_id)
+        if pending and not pending.reply.done():
+            pending.reply.set_result(message)
+        return True
+
+    async def publish(self, data: str) -> None:
+        """Deliver HTTP replies privately and forward remaining stdio output to SSE.
+
+        Args:
+            data: A line from the child process.
+        """
+        try:
+            message = orjson.loads(data)
+        except orjson.JSONDecodeError:
+            pass
+        else:
+            if isinstance(message, list):
+                remaining = [item for item in message if not self._deliver_reply(item)]
+                if len(remaining) != len(message):
+                    if not remaining:
+                        return
+                    data = orjson.dumps(remaining).decode() + "\n"
+            elif self._deliver_reply(message):
+                return
+        await super().publish(data)
 
 
 # ---------------------------------------------------------------------------#
@@ -1847,7 +1942,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     LOGGER.info(f"Protocols: SSE={expose_sse}, StreamableHTTP={expose_streamable_http}")
 
     # Create a shared pubsub whenever either protocol needs stdout observations
-    pubsub = _PubSub() if (expose_sse or expose_streamable_http) else None
+    http_bridge = _StdioHttpBridge() if expose_streamable_http else None
+    pubsub = http_bridge or (_PubSub() if expose_sse else None)
 
     # Create the stdio endpoint
     stdio = StdIOEndpoint(cmd, pubsub, header_mappings=header_mappings) if (expose_sse or expose_streamable_http) and pubsub else None
@@ -2009,7 +2105,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # layer that delegates `/mcp` scopes to the StreamableHTTPSessionManager if present.
     original_app = app
 
-    if expose_streamable_http:
+    if http_bridge is not None:
         # Create an MCP server instance
         streamable_server = MCPServer("stdio-proxy")
 
@@ -2028,9 +2124,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             Handles POST requests to the `/mcp` endpoint, forwarding JSON payloads to stdio
             and optionally waiting for a correlated response.
 
-            The request body is expected to be a JSON object or newline-delimited JSON.
-            If the JSON includes an "id" field, the function attempts to match it with
-            a response from stdio using a pubsub queue, within a timeout period.
+            Requests use private IDs on the shared stdio connection. The client
+            receives the original ID when the child responds.
 
             Args:
                 request (Request): The incoming FastAPI request containing the JSON payload.
@@ -2056,51 +2151,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             except Exception as exc:
                 return PlainTextResponse(f"Invalid JSON payload: {exc}", status_code=status.HTTP_400_BAD_REQUEST)
 
-            # Forward raw newline-delimited JSON to stdio
             if not stdio:
                 raise RuntimeError("Stdio endpoint not available")
-            await stdio.send(body.decode().rstrip() + "\n")
-
-            # If it's a request (has an id) -> attempt to correlate response from stdio
-            if isinstance(obj, dict) and "id" in obj:
-                if not pubsub:
-                    return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
-
-                queue = pubsub.subscribe()
-                try:
-                    timeout = 10.0  # seconds; tuneable
-                    deadline = asyncio.get_event_loop().time() + timeout
-                    remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-                    while remaining > 0:
-                        try:
-                            msg = await asyncio.wait_for(queue.get(), timeout=remaining)
-                        except asyncio.TimeoutError:
-                            break
-
-                        # stdio stdout lines may contain JSON objects or arrays
-                        try:
-                            parsed = orjson.loads(msg)
-                        except (orjson.JSONDecodeError, ValueError):
-                            # not JSON -> skip
-                            remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-                            continue
-
-                        candidates = parsed if isinstance(parsed, list) else [parsed]
-                        for candidate in candidates:
-                            if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
-                                # return the matched response as JSON
-                                return ORJSONResponse(candidate)
-
-                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-
-                    # timeout -> accept and return 202
-                    return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
-                finally:
-                    if pubsub:
-                        pubsub.unsubscribe(queue)
-
-            # Notification -> return 202
-            return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
+            return await http_bridge.forward(stdio, obj, request.headers.get("mcp-session-id"))
 
         # ASGI wrapper to route GET/other /mcp scopes to streamable_manager.handle_request
         async def mcp_asgi_wrapper(scope: Scope, receive: Receive, send: Send) -> None:
