@@ -210,11 +210,79 @@ class CimdService:
             doc["jwks_uri"] = self.jwks_uri
         return doc
 
+    def failed_guard(self, issuer: str, redirect_uri: str) -> Optional[str]:
+        """Return the name of the first failed CIMD guard, or ``None`` when all pass.
+
+        The guards are local checks that need no network call: CIMD enabled, HTTPS
+        ``client_id``, matching redirect URI, and the ``DCR_ALLOWED_ISSUERS`` allowlist.
+        They apply to automatic selection and to a forced ``registration_method``.
+
+        Args:
+            issuer: Authorization server issuer URL.
+            redirect_uri: Callback URL the authorization request will use.
+
+        Returns:
+            Optional[str]: ``cimd_disabled``, ``client_id_not_https``, ``redirect_uri_mismatch``,
+                ``issuer_not_allowed``, or ``None``.
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> service = CimdService()
+            >>> service.settings = Mock(
+            ...     cimd_enabled=True,
+            ...     app_domain="https://gw.example.com",
+            ...     app_root_path="",
+            ...     dcr_allowed_issuers=["https://other.example.com"],
+            ...     cimd_client_metadata_url=None,
+            ... )
+            >>> service.failed_guard("https://as.example.com", "https://gw.example.com/oauth/callback")
+            'issuer_not_allowed'
+            >>> service.failed_guard("https://other.example.com", "https://evil.example.net/oauth/callback")
+            'redirect_uri_mismatch'
+        """
+        if not self.settings.cimd_enabled:
+            return "cimd_disabled"
+        if not self.client_id.startswith("https://"):
+            logger.info("CIMD skipped for issuer %s: client_id %s is not HTTPS", issuer, self.client_id)
+            return "client_id_not_https"
+        if redirect_uri != self.redirect_uri:
+            logger.info(
+                "CIMD skipped for issuer %s: effective redirect_uri %s does not match published %s",
+                issuer,
+                redirect_uri,
+                self.redirect_uri,
+            )
+            return "redirect_uri_mismatch"
+        allowed = [i.rstrip("/") for i in self.settings.dcr_allowed_issuers]
+        if allowed and issuer.rstrip("/") not in allowed:
+            logger.info("CIMD skipped for issuer %s: issuer not in dcr_allowed_issuers allowlist", issuer)
+            return "issuer_not_allowed"
+        return None
+
+    @staticmethod
+    def supports_cimd(metadata: Optional[Dict[str, Any]]) -> bool:
+        """Return whether authorization server metadata advertises CIMD support.
+
+        Args:
+            metadata: Authorization server metadata, or ``None`` when discovery failed.
+
+        Returns:
+            bool: ``True`` only when ``client_id_metadata_document_supported`` is the boolean ``True``.
+
+        Examples:
+            >>> CimdService.supports_cimd({"client_id_metadata_document_supported": True})
+            True
+            >>> CimdService.supports_cimd({"client_id_metadata_document_supported": "true"})
+            False
+            >>> CimdService.supports_cimd(None)
+            False
+        """
+        return bool(metadata) and metadata.get(CIMD_METADATA_FLAG) is True
+
     async def is_applicable(self, issuer: str, redirect_uri: str) -> bool:
         """Return whether CIMD can register the gateway with ``issuer``.
 
-        CIMD applies only when it is enabled, the document is served over HTTPS, the
-        callback in use matches the published one, the issuer is permitted, and the
+        CIMD applies only when every guard in ``failed_guard`` passes and the
         authorization server advertises ``client_id_metadata_document_supported``.
         Any discovery failure returns ``False`` so the caller falls back to DCR.
 
@@ -244,22 +312,7 @@ class CimdService:
             >>> asyncio.run(service.is_applicable("https://as.example.com", "https://other.example.com/oauth/callback"))
             False
         """
-        if not self.settings.cimd_enabled:
-            return False
-        if not self.client_id.startswith("https://"):
-            logger.info("CIMD skipped for issuer %s: client_id %s is not HTTPS", issuer, self.client_id)
-            return False
-        if redirect_uri != self.redirect_uri:
-            logger.info(
-                "CIMD skipped for issuer %s: effective redirect_uri %s does not match published %s",
-                issuer,
-                redirect_uri,
-                self.redirect_uri,
-            )
-            return False
-        allowed = [i.rstrip("/") for i in self.settings.dcr_allowed_issuers]
-        if allowed and issuer.rstrip("/") not in allowed:
-            logger.info("CIMD skipped for issuer %s: issuer not in dcr_allowed_issuers allowlist", issuer)
+        if self.failed_guard(issuer, redirect_uri):
             return False
 
         if self._dcr_service is None:
@@ -269,4 +322,4 @@ class CimdService:
         except Exception as exc:  # pylint: disable=broad-except
             logger.debug("CIMD support check failed for %s: %s", issuer, type(exc).__name__)
             return False
-        return metadata.get(CIMD_METADATA_FLAG) is True
+        return self.supports_cimd(metadata)

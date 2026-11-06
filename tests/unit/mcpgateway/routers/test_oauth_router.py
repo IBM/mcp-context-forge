@@ -6051,7 +6051,7 @@ class TestCimdRegistrationPreference:
 
     @pytest.mark.asyncio
     async def test_registration_method_override_force_cimd(self, mock_db, mock_request, mock_current_user):
-        """Gateway config registration_method: 'cimd' forces CIMD bypass of AS metadata check."""
+        """Gateway config registration_method: 'cimd' forces CIMD bypass of AS metadata check but not of the local guards."""
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
         gateway = self._gateway(mock_db)
@@ -6059,6 +6059,7 @@ class TestCimdRegistrationPreference:
         fake_dcr = Mock()
         fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
         fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd.failed_guard = Mock(return_value=None)
         fake_cimd.is_applicable = AsyncMock(return_value=False)  # Normally fails auto selection
 
         with (
@@ -6072,6 +6073,38 @@ class TestCimdRegistrationPreference:
 
         assert gateway.oauth_config["client_id"] == fake_cimd.client_id
         assert gateway.oauth_config["registration_method"] == "cimd"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("guard", ["cimd_disabled", "client_id_not_https", "redirect_uri_mismatch", "issuer_not_allowed"])
+    async def test_registration_method_force_cimd_rejected_by_guard(self, mock_db, mock_request, mock_current_user, guard):
+        """A forced registration_method: 'cimd' is refused when a local CIMD guard fails."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "cimd"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_dcr.get_or_register_client = AsyncMock()
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd.failed_guard = Mock(return_value=guard)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock()
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert guard in exc_info.value.detail
+        assert "client_id" not in gateway.oauth_config
+        assert gateway.oauth_config["registration_method"] == "cimd"
+        fake_dcr.get_or_register_client.assert_not_called()
+        fake_dcr.discover_as_metadata.assert_not_called()
+        mock_oauth_mgr.return_value.initiate_authorization_code_flow.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_registration_method_override_force_dcr(self, mock_db, mock_request, mock_current_user):
