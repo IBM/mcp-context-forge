@@ -3824,18 +3824,14 @@ PREK_RUN             = $(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run
 .PHONY: pre-commit pre-commit-fast _prek
 pre-commit: uv                     ## 🪄  Run all pre-commit hooks on every file (prek)
 	@echo "🪄  Running pre-commit hooks on all files..."
-	@$(MAKE) --no-print-directory _prek
+	@$(MAKE) --no-print-directory _prek PREK_SCOPE=--all-files
 
-pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on files changed vs PRE_COMMIT_BASE_REF
-	@echo "🪄  Running pre-commit hooks on files changed vs $(PRE_COMMIT_BASE_REF)..."
-	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD 2>/dev/null)" || { \
+pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on commits since PRE_COMMIT_BASE_REF (committed changes only)
+	@echo "🪄  Running pre-commit hooks on commits since $(PRE_COMMIT_BASE_REF)..."
+	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD)" || { \
 		echo "❌  Cannot resolve PRE_COMMIT_BASE_REF=$(PRE_COMMIT_BASE_REF); fetch it or set PRE_COMMIT_BASE_REF."; exit 1; }; \
-	list="$$(mktemp)"; trap 'rm -f "$$list"' EXIT; \
-	{ git diff -z --name-only --diff-filter=d "$$base"; git ls-files -z -o --exclude-standard; } | sort -zu > "$$list"; \
-	if [ ! -s "$$list" ]; then echo "No changed files."; exit 0; fi; \
-	PREK_FILE_LIST="$$list" $(MAKE) --no-print-directory _prek
+	$(MAKE) --no-print-directory _prek PREK_SCOPE="--from-ref $$base --to-ref HEAD"
 
-# File names reach prek through a NUL-delimited list file in PREK_FILE_LIST, never through a shell string.
 _prek:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -3859,11 +3855,7 @@ _prek:
 			GOPATH='$(CURDIR)/.cache/go-cache' \
 			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
 			GOCACHE='$(CURDIR)/.cache/go-build'; \
-		if [ -n \"\$$PREK_FILE_LIST\" ]; then \
-			xargs -0 $(PREK_RUN) --files < \"\$$PREK_FILE_LIST\"; \
-		else \
-			$(PREK_RUN) --all-files; \
-		fi"
+		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
