@@ -79,7 +79,7 @@ async def test_token_details_preserve_valid_token_on_transient_refresh_failure(d
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("data", [{"headers": {"X-Api-Key": "example"}}, {"token": None}, {"token": []}, {"token": "invalid"}, {"token": {}}, {"token": {"refresh_token": "example"}}])
+@pytest.mark.parametrize("data", [{"headers": {"X-Api-Key": "example"}}, {"token": None}, {"token": []}, {"token": "invalid"}, {"token": {}}, {"token": {"refresh_token": "example"}}]) # pragma: allowlist secret
 async def test_token_details_return_none_without_access_token(details_backend, data):
     """Header-only and incomplete records contain no retrievable OAuth token."""
     with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
