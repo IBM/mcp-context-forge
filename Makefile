@@ -3817,16 +3817,25 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-.PHONY: pre-commit
-pre-commit: uv                     ## 🪄  Run pre-commit tool
-	@echo "🪄  Running pre-commit hooks..."
+PREK_VERSION         ?= 0.5.10
+PRE_COMMIT_BASE_REF  ?= origin/main
+PREK_RUN             = $(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run --config .pre-commit-config.yaml --show-diff-on-failure
+
+.PHONY: pre-commit pre-commit-fast _prek
+pre-commit: uv                     ## 🪄  Run all pre-commit hooks on every file (prek)
+	@echo "🪄  Running pre-commit hooks on all files..."
+	@$(MAKE) --no-print-directory _prek PREK_SCOPE=--all-files
+
+pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on commits since PRE_COMMIT_BASE_REF (committed changes only)
+	@echo "🪄  Running pre-commit hooks on commits since $(PRE_COMMIT_BASE_REF)..."
+	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD)" || { \
+		echo "❌  Cannot resolve PRE_COMMIT_BASE_REF=$(PRE_COMMIT_BASE_REF); fetch it or set PRE_COMMIT_BASE_REF."; exit 1; }; \
+	$(MAKE) --no-print-directory _prek PREK_SCOPE="--from-ref $$base --to-ref HEAD"
+
+_prek:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
-		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
-		$(UV_BIN) pip install --python "$(VENV_DIR)/bin/python" --quiet pre-commit; \
-	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
+		mkdir -p '$(CURDIR)/.cache/prek-home' \
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
@@ -3835,19 +3844,18 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
-		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
-		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
-		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
-		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
-		PATH='/usr/bin:$$PATH' \
-		TMPDIR='$(CURDIR)/.cache/tmp' \
-		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
-		PIP_USE_PEP517='0' \
-		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
+		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
+			XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+			XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+			VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+			TMPDIR='$(CURDIR)/.cache/tmp' \
+			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+			PIP_USE_PEP517='0' \
+			PIP_NO_BUILD_ISOLATION='1' \
+			GOPATH='$(CURDIR)/.cache/go-cache' \
+			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+			GOCACHE='$(CURDIR)/.cache/go-build'; \
+		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
