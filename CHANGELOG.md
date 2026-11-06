@@ -4,9 +4,26 @@
 
 ### Deprecation Notice
 
-- Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
+- The Rust MCP and A2A runtime sidecars are removed. Use the Python MCP transport and Python A2A invocation path.
+- ValidationMiddleware remains deprecated since 2026-06-11, past its 2026-07-07 sunset. Use endpoint-level Pydantic or protocol-specific validation. See [Deprecations](docs/docs/deprecations.md).
 
 ## [Unreleased]
+
+### Added
+
+- **Token exchange delegation** ([#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - A `token-exchange` gateway can send an RFC 8693 `actor_token` with each exchange. Set `oauth_config.actor_token_source` to `client_credentials` or `client_assertion`. The default `none` keeps impersonation, and the request body does not change. `actor_token_type` overrides the default token type. The optional `oauth_config.actor` object names a separate actor client through `client_id`, `client_secret`, `token_url`, and `token_endpoint_auth_method`. Delegation fails closed: when the actor token is unavailable, the call fails and no impersonation request is sent. Deploy the release to every worker before you enable delegation, because an older worker ignores `actor_token_source` and impersonates.
+
+### Changed
+
+- **Token exchange audit events carry `purpose` and `mode`** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236), [#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - Each `token-exchange` audit event has a `purpose` key (`invocation` or `discovery`) and a `mode` key (`impersonation` or `delegation`). The log message changes from `token-exchange succeeded user=...` to `token-exchange succeeded purpose=... mode=... user=...`, and the failure message changes the same way. Update log-text alert rules that match the old prefix. Structured consumers of `extra["token_exchange"]` are not affected.
+
+### Removed
+
+- **Repository-owned Rust runtime and workspace** ([#5817](https://github.com/IBM/mcp-context-forge/issues/5817)) - Remove `crates/mcp_runtime`, the root Cargo workspace, and Rust build infrastructure. The separate external Rust dataplane remains outside this removal.
+
+### Documentation
+
+- **Rust runtime removal** ([#5823](https://github.com/IBM/mcp-context-forge/issues/5823)) - Update deployment and contributor guidance, architecture diagrams, and the deprecation registry. ADR-058 records verified removals and remaining internal dispatch cleanup.
 
 ### Security
 
@@ -24,6 +41,8 @@
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
 - **Gateway test endpoints require `gateways.update` and ownership for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` return 403 when the target MCP server has a stored basic, bearer, custom-header, or OAuth credential. An OAuth authorization-code token is the caller's own and is not affected. To pass, the caller needs `gateways.update` in the MCP server's team and must pass the ownership check of `PUT /gateways/{gateway_id}`. The owner, a team owner of a team MCP server, and a platform admin pass that check. For an MCP server without a team, `gateways.update` must come from a global role. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
+- **Resource reads on token-exchange gateways fail closed** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236)) - `resources/read` on a `token-exchange` gateway now raises `ResourceError` when the request has no user JWT or the RFC 8693 exchange fails. Before, the read went upstream without an `Authorization` header. MCP clients and `GET /resources/{id}` callers now receive an error instead of an unauthenticated upstream response. Unauthenticated callers on deployments that set `MCP_REQUIRE_AUTH` to `false` and callers whose authorization server rejects the exchange are affected. Send an authenticated user JWT and verify the gateway's token-exchange configuration before upgrading.
+
 ### Security
 
 - **Per-gateway identity propagation on tool and resource calls** (internal issue 1149, PSIRT ADV0369535, CWE-200) - MCP and REST tool calls and resource reads ignored the gateway `identity_propagation` override and sent user identity headers when the global setting was on. A gateway set to `enabled: false` now receives no identity headers or `_meta`. Deployments with global propagation on and a gateway override of off no longer disclose user identity to that gateway.
@@ -33,9 +52,15 @@
 - **A2A invocation metrics count JSON-RPC errors as failures** ([#7348](https://github.com/IBM/mcp-context-forge/issues/7348)) - An A2A invocation that answers HTTP 200 but carries a JSON-RPC `error` member is now recorded with `success=False` and the error message, so `a2aAgents.successRate` from `GET /v1/metrics` no longer counts agent-reported failures as successes. The error envelope is still returned to the caller unchanged.
 
 - **OIDC JWKS fetches honor `SKIP_SSL_VERIFY`** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026)) - JWKS retrieval for SSO and external-IdP token verification now uses the shared TLS verification setting, like OIDC discovery, token exchange, and user info. Before, an identity provider with a self-signed certificate failed at JWKS retrieval even with `SKIP_SSL_VERIFY=true`. With the flag set, the gateway logs a warning on each JWKS fetch, because unverified JWKS keys let a network attacker forge tokens. Use the flag in development only. Per-provider CA bundles remain open under #4026.
+
+- **External-IdP tokens on `/mcp`** ([#7435](https://github.com/IBM/mcp-context-forge/issues/7435)) - Trusted external-IdP bearer tokens now authenticate on `/mcp`, matching `/rpc`. An `oauth_enabled` virtual server now also accepts trusted-provider tokens whose issuer is outside its `authorization_servers`. The gateway checks the audience against the provider `api_audience`, not the server `resource`. No per-server opt-out exists.
+
 - **REST URL template reuses a placeholder** - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
 
 - **Actionable error when an upstream MCP server redirects** ([#7163](https://github.com/IBM/mcp-context-forge/issues/7163)) - Health checks, gateway registration, Test Connection, and the handshake test now report `Upstream redirected to <scheme://host/path>; update the gateway URL to the redirect target.` for an upstream 301, 302, 303, 307, or 308 response. The message drops the query string, fragment, and userinfo of the `Location` header. Before, the gateway showed a generic error. The gateway still does not follow the redirect, to keep SSRF and credential-forwarding protection. Register the redirect target URL directly, for example `https://host/mcp/` instead of `https://host/mcp`.
+
+- Reuse one observability session per HTTP trace lifecycle while preserving independent span and trace completion ([#5073](https://github.com/IBM/mcp-context-forge/pull/5073)).
+- Recover trace completion after span persistence failures and redact credentials from HTTP trace URLs and exception stack traces.
 
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
@@ -67,6 +92,8 @@
 - **A2A task and push notification config routes** ([#6702](https://github.com/IBM/mcp-context-forge/issues/6702)) - Clients can now read and manage A2A task data through `/v1/a2a/{agent_id}/tasks`. `GET` lists tasks with `pageSize`, `pageToken`, and `nextPageToken` pagination, `GET .../{task_id}` returns one task, and `POST .../{task_id}/cancel` cancels it. `POST`, `GET`, and `DELETE` on `.../{task_id}/pushNotificationConfigs` manage push notification configs. Reads require `a2a.read`, cancel requires `a2a.invoke`, and config writes require `a2a.update`. Routes apply the same team and visibility scoping as the internal handlers, and return 404 for tasks the caller cannot see. Responses never include `auth_token`. The `/_internal/a2a/*` routes are unchanged.
 
 - **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
+
+- **Progress for modern requests in JSON mode** ([#6647](https://github.com/IBM/mcp-context-forge/issues/6647)) - With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` and accepts `text/event-stream` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. Legacy clients see no change. The gateway now relays upstream progress to modern clients on `resources/read` and `prompts/get` ([#6648](https://github.com/IBM/mcp-context-forge/issues/6648)), `completion/complete`, and direct-proxy `tools/call`. The gateway no longer forwards the client `progressToken` upstream on `resources/read`, `prompts/get`, and `completion/complete`, including legacy and `/rpc` completion. A retried upstream resource read sends no progress callback, so progress values never restart.
 
 ### Security
 

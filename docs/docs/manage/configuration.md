@@ -1159,6 +1159,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 `MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
+With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`. A body over `MCP_BODY_PEEK_MAX_BYTES` keeps the JSON response, with no progress.
+
 ### Federation
 
 | Setting                    | Description            | Default | Options    |
@@ -1511,11 +1513,8 @@ the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
 MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/list` return bounded pages.
 Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
 Python handles pagination for global and virtual-server catalogs.
-This change covers Python MCP endpoints. Rust runtime pagination remains outside this change.
 `MCP_LIST_PAGE_SIZE` controls protocol catalog pages. `PAGINATION_DEFAULT_PAGE_SIZE` controls REST and Admin pages.
 The separate defaults prevent REST configuration changes from altering MCP traversal behavior.
-The Rust tools bridge sends no request body. Python returns the complete authorized tools catalog for that bridge.
-Rust cursor support remains a separate part of [#6990](https://github.com/IBM/mcp-context-forge/issues/6990).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

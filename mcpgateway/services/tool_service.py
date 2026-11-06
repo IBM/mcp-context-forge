@@ -51,6 +51,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
@@ -98,6 +99,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
@@ -4176,6 +4178,7 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         user_context: Optional[UserContext] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -4192,6 +4195,7 @@ class ToolService(BaseService):
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
             user_context: Optional UserContext for identity propagation.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -4342,9 +4346,9 @@ class ToolService(BaseService):
                         # Call tool with meta if provided
                         if request_meta_data:
                             logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data, progress_callback=progress_callback)
                         else:
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, progress_callback=progress_callback)
                     with create_span(
                         "mcp.client.response",
                         {
@@ -4449,26 +4453,33 @@ class ToolService(BaseService):
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        # Delegation keys never collide with impersonation keys, so a mode change misses stale entries.
+        variant = exchange_cache_variant(oauth_config)
+        mode = exchange_mode(oauth_config)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
         # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
             # L6: record the degraded-mode denial so an outage burst is observable.
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
             raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
         # P1: single-flight. Only one coroutine exchanges per {gw,user,aud,subject}; the rest
         # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
             scopes = oauth_config.get("scopes") or []
             started = time.monotonic()
             try:
+                # Inside the try block: an actor acquisition failure takes the same negative-cache and audit path.
+                actor_token, actor_token_type = await resolve_actor_token(
+                    self.oauth_manager, oauth_config, gateway_id=gateway_id, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
+                )
                 response = await self.oauth_manager.token_exchange(
                     oauth_config=oauth_config,
                     subject_token=subject_token,
@@ -4479,12 +4490,15 @@ class ToolService(BaseService):
                     ca_certificate=ca_certificate,
                     client_cert=client_cert,
                     client_key=client_key,
+                    actor_token=actor_token,
+                    actor_token_type=actor_token_type,
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 # H1: caller gets a generic message; AS detail never echoed out.
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)  # P4
+                await invalidate_actor_token(gateway_id, oauth_config, e)
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)  # P4
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -4496,6 +4510,7 @@ class ToolService(BaseService):
                     latency_ms=latency_ms,
                     correlation_id=correlation_id,
                     request_id=request_id,
+                    mode=mode,
                 )
                 sec_logger.log(
                     level="WARNING",
@@ -4505,6 +4520,7 @@ class ToolService(BaseService):
                     custom_fields={
                         "gateway_id": gateway_id,
                         "target_audience": audience,
+                        "mode": mode,
                         "latency_ms": latency_ms,
                         "error": safe_reason,
                         "correlation_id": correlation_id,
@@ -4521,7 +4537,7 @@ class ToolService(BaseService):
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token, variant=variant)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -4533,6 +4549,7 @@ class ToolService(BaseService):
                 latency_ms=latency_ms,
                 correlation_id=correlation_id,
                 request_id=request_id,
+                mode=mode,
             )
             sec_logger.log(
                 level="INFO",
@@ -4542,6 +4559,7 @@ class ToolService(BaseService):
                 custom_fields={
                     "gateway_id": gateway_id,
                     "target_audience": audience,
+                    "mode": mode,
                     "expires_in": expires_in,
                     "latency_ms": latency_ms,
                     "correlation_id": correlation_id,
@@ -4600,7 +4618,7 @@ class ToolService(BaseService):
         subject_token = extract_inbound_bearer(request_headers)
         if not looks_like_jwt(subject_token):
             return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token)
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token, variant=exchange_cache_variant(oauth_config))
 
     async def _send_with_token_exchange_retry(
         self,

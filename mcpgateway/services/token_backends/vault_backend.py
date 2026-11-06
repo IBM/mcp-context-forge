@@ -26,7 +26,7 @@ from mcpgateway.config import Settings
 from mcpgateway.db import Gateway
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, TokenRecord
+from .base import AbstractTokenBackend, TokenRecord, ValidationToken
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
@@ -337,6 +337,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         # Build payload (nested token object for cleaner structure)
         payload = {
             "data": {
+                "gateway_id": gateway_id,
                 "email": app_user_email,
                 "team_id": team_id,
                 "mcp_url": mcp_url,  # ← Key difference: store mcp_url, not gateway_id
@@ -578,6 +579,35 @@ class VaultTokenBackend(AbstractTokenBackend):
                 str(e),
             )
             raise
+
+    async def read_validation_token(self, gateway_id: str, team_id: str | None, app_user_email: str) -> ValidationToken | None:
+        """Read an explicitly bound Vault token without refresh or cache access.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Authenticated token storage path context.
+            app_user_email: Authenticated caller identity.
+
+        Returns:
+            Token status and valid access token, or None when authorization is absent.
+        """
+        mcp_url = self._resolve_mcp_url(gateway_id)
+        result = await self._vault_request("GET", self._construct_vault_path(team_id, mcp_url, app_user_email))
+        if not result or "data" not in result:
+            return None
+        data = result["data"]["data"]
+        if data.get("gateway_id") != gateway_id or data.get("email") != app_user_email or data.get("mcp_url") != mcp_url:
+            return ValidationToken("unbound")
+        if data.get("expires_at"):
+            expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
+                return ValidationToken("expired")
+        token = data.get("token", {}).get("access_token")
+        if not isinstance(token, str) or not token or data.get("token_type", "Bearer").lower() != "bearer":
+            return ValidationToken("invalid")
+        return ValidationToken("valid", token)
 
     async def get_token_info(
         self,

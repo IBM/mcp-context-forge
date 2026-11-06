@@ -47,7 +47,3 @@ findings:
   check: sep-2575-server-unsupported-version-error
   name: ServerUnsupportedVersionError
   status: FAILURE
-- scenario: tools-call-with-progress
-  check: tools-call-with-progress
-  name: ToolsCallWithProgress
-  status: FAILURE
