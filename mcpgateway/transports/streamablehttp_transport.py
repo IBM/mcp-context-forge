@@ -119,7 +119,7 @@ from mcpgateway.utils.verify_credentials import (
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
-    verify_credentials,
+    verify_credentials_cached,
     verify_oauth_access_token,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -6101,7 +6101,7 @@ class _StreamableHttpAuthHandler:
             requests are rejected with 401 regardless of the global setting.
           - Valid tokens get full scoped access based on their teams.
           - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
-        - If a Bearer token is present, it is verified using ``verify_credentials``.
+        - If a Bearer token is present, it is verified using ``verify_credentials_cached``.
 
         Returns:
             True if authentication passes or is skipped.
@@ -6223,8 +6223,9 @@ class _StreamableHttpAuthHandler:
         """Verify a JWT Bearer token and populate the user context.
 
         Routes to ContextForge-issued or IdP-issued (OAuth) verification based
-        on the token's ``iss`` claim. IdP-issued tokens are only accepted for
-        virtual servers with ``oauth_enabled=True``.
+        on the token's ``iss`` claim. IdP-issued tokens go to the OAuth path
+        for virtual servers with ``oauth_enabled=True``. Trusted external-IdP
+        tokens (``SSO_API_TOKEN_AUTH_ENABLED``) are verified as on ``/rpc``.
 
         Args:
             token: Bearer token value extracted from the Authorization header.
@@ -6237,7 +6238,7 @@ class _StreamableHttpAuthHandler:
             return routed
 
         try:
-            user_payload = await verify_credentials(token)
+            user_payload = await verify_credentials_cached(token)
             # Store enriched user context with normalized teams
             if not isinstance(user_payload, dict):
                 return True
@@ -6398,7 +6399,9 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
             # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
             # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
-            effective_is_admin = db_user_is_admin or is_admin
+            # External-IdP identities are cached (60s TTL) with the DB is_admin at build time, so the
+            # payload copy can lag a demotion. They take admin from the DB only.
+            effective_is_admin = db_user_is_admin if user_payload.get("source") == "external_idp" else (db_user_is_admin or is_admin)
 
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
@@ -6472,8 +6475,8 @@ class _StreamableHttpAuthHandler:
                 auth_method="jwt",
                 team_name=trace_team_name,
             )
-        except HTTPException:
-            # Internal JWT verification failed (expired, malformed, bad signature, etc.)
+        except HTTPException as exc:
+            logger.debug("MCP bearer token rejected: %s", sanitize_for_log(str(exc.detail)))
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         except SQLAlchemyError:
             # DB failure during team resolution or membership validation
@@ -6504,17 +6507,17 @@ class _StreamableHttpAuthHandler:
         Returns:
             True on successful OAuth verification (user context populated).
             False when an error response has already been sent. ``None`` when
-            the caller should continue with ContextForge-issued JWT
-            verification (undecodable token, internal ``iss``, or an
-            IdP-issued token on a server that does not handle it).
+            the caller should continue with ``verify_credentials_cached()``
+            (undecodable token, internal ``iss``, or an IdP-issued token on a
+            server that does not handle it).
         """
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
         except jwt.DecodeError:
-            # Undecodable bearer token. Flow through to verify_credentials()
+            # Undecodable bearer token. Flow through to verify_credentials_cached()
             # which will emit the canonical 401. Log at DEBUG only — auth
             # floods would otherwise pollute WARN-level observability.
-            logger.debug("Bearer token is not a decodable JWT; deferring to internal verify_credentials")
+            logger.debug("Bearer token is not a decodable JWT; deferring to verify_credentials_cached")
             return None
 
         if unverified.get("iss", "") == settings.jwt_issuer:
@@ -6539,16 +6542,9 @@ class _StreamableHttpAuthHandler:
         if oauth_result is OAuthAuthResult.FAILED:
             oauth_verify_events_counter.labels(outcome="failed").inc()
             return False  # Error response already sent
-        # OAuthAuthResult.NOT_APPLICABLE — this handler is not responsible for
-        # the token (target server is not oauth_enabled, token's issuer is
-        # outside the allowlist, or the URL carries no server id). When
-        # internal issuer verification is enabled, an iss mismatch will be
-        # rejected by verify_credentials() anyway, so short-circuit with the
-        # canonical 401. When it is disabled, fall through so legacy internal
-        # JWTs whose iss differs from settings.jwt_issuer remain accepted.
+        # NOT_APPLICABLE: verify_credentials_cached() decides. It accepts trusted
+        # external-IdP tokens and rejects any other foreign issuer.
         oauth_verify_events_counter.labels(outcome="not_applicable").inc()
-        if settings.jwt_issuer_verification:
-            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         return None
 
     async def _try_oauth_access_token(self, token: str, unverified: Optional[Dict[str, Any]] = None) -> OAuthAuthResult:  # noqa: PLR0911
@@ -6574,8 +6570,10 @@ class _StreamableHttpAuthHandler:
             resolution succeeded, ``FAILED`` when an error response has
             already been sent, ``NOT_APPLICABLE`` when the target virtual
             server does not use OAuth *or* when this server is not the right
-            handler for the token (issuer outside the allowlist); in the
-            latter case the caller should defer to internal JWT verification.
+            handler for the token (issuer outside the allowlist). The caller
+            then defers to ``verify_credentials_cached()``. That function
+            accepts trusted external-IdP issuers and rejects all other
+            foreign issuers.
         """
         if unverified is None:
             try:
@@ -6630,21 +6628,17 @@ class _StreamableHttpAuthHandler:
 
         # Check whether this server is the right handler for the token. If
         # the issuer is not in the allowlist (including tokens with a
-        # missing/empty iss), return NOT_APPLICABLE so the caller can fall
-        # through to internal JWT verification. This preserves legacy
-        # behaviour on ``oauth_enabled`` servers for gateway-issued JWTs
-        # whose iss is missing or predates the current ``settings.jwt_issuer``
-        # value — those tokens would previously have been accepted by
-        # ``verify_credentials()`` when ``JWT_ISSUER_VERIFICATION=false``,
-        # and rejecting them here would be a regression. Tokens with a
-        # non-matching iss that are *not* legitimate internal JWTs will
-        # still fail signature verification in the internal path and be
-        # rejected there.
+        # missing/empty iss), return NOT_APPLICABLE so the caller defers to
+        # ``verify_credentials_cached()``. This preserves legacy behaviour on
+        # ``oauth_enabled`` servers for gateway-issued JWTs whose iss is
+        # missing or predates the current ``settings.jwt_issuer`` value.
+        # ``verify_credentials_cached()`` accepts trusted external-IdP issuers
+        # and rejects all other foreign issuers.
         token_issuer = unverified.get("iss")
         normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
         if not isinstance(token_issuer, str) or token_issuer.rstrip("/") not in normalized_allowed:
             logger.info(
-                "Token issuer %s not in allowlist for server %s; deferring to internal verify",
+                "Token issuer %s not in allowlist for server %s; deferring to verify_credentials_cached",
                 sanitize_for_log(token_issuer) if token_issuer else "<missing>",
                 server_id_log,
             )
