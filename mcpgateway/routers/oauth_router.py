@@ -789,6 +789,10 @@ async def initiate_oauth_flow(
 
             cimd_service = CimdService()
             if reg_method == "cimd":
+                failed_guard = cimd_service.failed_guard(issuer, oauth_config["redirect_uri"])
+                if failed_guard:
+                    logger.warning(f"CIMD registration refused for gateway {safe_gateway_id}: guard {failed_guard} failed")
+                    raise HTTPException(status_code=400, detail=f"CIMD registration is not permitted for this gateway ({failed_guard})")
                 use_cimd = True
             elif reg_method == "dcr":
                 use_dcr = True
