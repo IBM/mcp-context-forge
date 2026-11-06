@@ -86,7 +86,9 @@ class TokenBlocklistService:
 
         Args:
             jti: JWT ID to revoke
-            revoked_by: Email of user revoking the token
+            revoked_by: Canonical user_id of the revoking principal, or a system
+                sentinel string ("system:idle-timeout", "system:logout",
+                "system:admin-logout"). No foreign key is enforced (#5901).
             reason: Reason for revocation (logout, idle_timeout, security, token_refresh, etc.)
             token_expiry: Original token expiry for cleanup scheduling
             last_activity: Last activity timestamp for audit trail
