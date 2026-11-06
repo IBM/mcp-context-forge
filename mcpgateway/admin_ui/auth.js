@@ -397,7 +397,10 @@ export function loadAuthHeaders(containerId, headers, options = {}) {
  * @param {string} gatewayName - Name of the gateway for display purposes
  */
 export async function fetchToolsForGateway(gatewayId, gatewayName) {
-  const button = safeGetElement(`fetch-tools-${gatewayId}`);
+  // Token-exchange gateway rows render the button as `fetch-tools-te-{id}`.
+  const button =
+    safeGetElement(`fetch-tools-${gatewayId}`, true) ||
+    safeGetElement(`fetch-tools-te-${gatewayId}`, true);
   if (!button) {
     return;
   }
@@ -587,6 +590,91 @@ export function handleAuthTypeChange() {
       // "none" or unknown type — keep everything hidden
       break;
   }
+
+  if (!isA2A) {
+    refreshTokenExchangeFields(prefix);
+  }
+}
+
+/**
+ * Recompute the token-exchange field group of a gateway form from its current
+ * auth type and grant type selections.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ */
+export function refreshTokenExchangeFields(prefix) {
+  const grantType =
+    safeGetElement(`oauth-grant-type-${prefix}`, true)?.value || "";
+  toggleTokenExchangeFields(prefix, grantType);
+}
+
+const TOKEN_EXCHANGE_DEFAULTS = {
+  "oauth-token-endpoint-auth-method": "client_secret_post",
+  "oauth-subject-token-type": "urn:ietf:params:oauth:token-type:jwt",
+  "oauth-requested-token-type": "urn:ietf:params:oauth:token-type:access_token",
+  "oauth-subject-token-source": "inbound_user_jwt",
+};
+
+/**
+ * Show or hide the token-exchange field group for a gateway form and toggle
+ * its required inputs. The group is active only while the auth type is OAuth
+ * and the grant type is token-exchange, so hidden inputs never block submit.
+ * Blank inputs receive the RFC 8693 defaults.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ * @param {string} grantType - Selected OAuth grant type
+ */
+export function toggleTokenExchangeFields(prefix, grantType) {
+  const group = safeGetElement(`oauth-token-exchange-fields-${prefix}`, true);
+  if (!group) {
+    return;
+  }
+  const authTypeSelect = safeGetElement(`auth-type-${prefix}`, true);
+  const isOAuth = !authTypeSelect || authTypeSelect.value === "oauth";
+  const active = isOAuth && grantType === "token-exchange";
+  group.style.display = active ? "block" : "none";
+
+  const audience = safeGetElement(`oauth-target-audience-${prefix}`, true);
+  if (audience) {
+    audience.required = active;
+  }
+  const form = group.closest("form");
+  const tokenUrl = form?.querySelector('input[name="oauth_token_url"]');
+  if (tokenUrl) {
+    tokenUrl.required = active;
+  }
+
+  if (active) {
+    Object.entries(TOKEN_EXCHANGE_DEFAULTS).forEach(([idBase, value]) => {
+      const field = safeGetElement(`${idBase}-${prefix}`, true);
+      if (field && !field.value) {
+        field.value = value;
+      }
+    });
+  }
+}
+
+/**
+ * Show or hide the discovery credential fields of a token-exchange gateway form.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ * @param {boolean} enabled - Whether the discovery credential checkbox is set
+ */
+export function toggleDiscoveryFields(prefix, enabled) {
+  const fields = safeGetElement(`oauth-discovery-fields-${prefix}`, true);
+  if (fields) {
+    fields.style.display = enabled ? "block" : "none";
+  }
+}
+
+/**
+ * Bind the discovery checkbox of a gateway form to its field group.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ */
+export function bindDiscoveryToggle(prefix) {
+  const checkbox = safeGetElement(`oauth-discovery-enabled-${prefix}`, true);
+  if (checkbox) {
+    checkbox.addEventListener("change", () =>
+      toggleDiscoveryFields(prefix, checkbox.checked),
+    );
+  }
 }
 
 export function handleOAuthGrantTypeChange() {
@@ -600,6 +688,10 @@ export function handleOAuthGrantTypeChange() {
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+  if (!isA2A) {
+    toggleTokenExchangeFields(prefix, grantType);
+  }
 
   // Handle Authorization Code flow
   if (authCodeFields) {
@@ -667,6 +759,10 @@ export function handleEditOAuthGrantTypeChange() {
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+  if (prefix === "gw-edit") {
+    toggleTokenExchangeFields(prefix, grantType);
+  }
 
   // === Handle Authorization Code grant ===
   if (authCodeFields) {

@@ -246,7 +246,15 @@ from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import PUBLIC_REASON_CODES, ErrorFormatter, extract_reason_code, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
+from mcpgateway.utils.error_formatter import (
+    PUBLIC_REASON_CODES,
+    ErrorFormatter,
+    extract_reason_code,
+    PublicValidationError,
+    safe_error_detail,
+    sanitize_validation_error_for_log,
+    unexpected_error_detail,
+)
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
@@ -7939,6 +7947,8 @@ async def register_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway registration rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -8080,6 +8090,8 @@ async def update_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway update rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
