@@ -9,7 +9,7 @@ Every test in this file exercises the trusted-claims merge (#5899) through
 the trust branch in get_current_user (#5900).
 
 Real-entry-point conversion (#6753 / F4): the tests previously patched
-``verify_jwt_token_cached`` with a pre-decoded payload and derived
+``verify_credentials_cached`` with a pre-decoded payload and derived
 permissions manually from the roles table. They now mint externally-signed
 RS256 tokens from Task 9's local OIDC issuer key and drive the FULL
 decorator chain — ``get_current_user`` (real ingress dispatch ->
