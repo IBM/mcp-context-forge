@@ -64,7 +64,7 @@ You can bump the version manually or automate it via Git tags or CI/CD.
 
 ### Building PyPI Packages
 
-The project uses a custom build hook (`build_hooks/__init__.py`) that automatically generates UI assets during packaging:
+The project uses a custom build hook (`mcpgateway/build_hooks.py`) that automatically generates UI assets during packaging:
 
 ```bash
 make dist

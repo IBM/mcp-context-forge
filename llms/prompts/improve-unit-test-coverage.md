@@ -217,7 +217,7 @@ These source files have **zero** test coverage:
 
 ## Source Files with No Corresponding Test File
 
-These 38 files have no `test_*.py` counterpart — create test files for the important ones:
+These files have no `test_*.py` counterpart — create test files for the important ones:
 
 ```
 cache/a2a_stats_cache.py              services/email_auth_service.py
@@ -231,8 +231,8 @@ middleware/security_headers.py        services/token_storage_service.py
 plugins/framework/constants.py        toolops/utils/db_util.py
 plugins/framework/decorator.py        toolops/utils/format_conversion.py
 plugins/framework/external/mcp/...    toolops/utils/llm_util.py
-plugins/framework/hooks/agents.py     tools/builder/factory.py
-plugins/framework/hooks/prompts.py    tools/builder/pipeline.py
+plugins/framework/hooks/agents.py
+plugins/framework/hooks/prompts.py
 plugins/framework/hooks/resources.py  utils/base_models.py
 plugins/framework/hooks/tools.py      utils/create_slug.py
 plugins/framework/loader/plugin.py    utils/display_name.py

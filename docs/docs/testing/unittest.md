@@ -132,7 +132,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/test_observability.py                                                     |     31 |       1 |       32 |
 | tests/unit/mcpgateway/test_postgresql_schema_config.py                                          |     14 |       2 |       16 |
 | tests/unit/mcpgateway/test_ui_version.py                                                        |      0 |       1 |        1 |
-| tests/unit/mcpgateway/tools/builder/test_dagger_deploy.py                                       |      0 |      20 |       20 |
 | tests/unit/mcpgateway/validation/test_validators_advanced.py                                    |    102 |       3 |      105 |
 | tests/async/test_async_safety.py                                                                |      3 |       0 |        3 |
 | tests/e2e/test_admin_mcp_pool_metrics.py                                                        |     14 |       0 |       14 |
@@ -383,10 +382,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/test_version.py                                                           |     21 |       0 |       21 |
 | tests/unit/mcpgateway/test_validate_env.py                                                      |      2 |       0 |        2 |
 | tests/unit/mcpgateway/test_well_known.py                                                        |     35 |       0 |       35 |
-| tests/unit/mcpgateway/tools/builder/test_cli.py                                                 |     37 |       0 |       37 |
-| tests/unit/mcpgateway/tools/builder/test_common.py                                              |     38 |       0 |       38 |
-| tests/unit/mcpgateway/tools/builder/test_python_deploy.py                                       |     15 |       0 |       15 |
-| tests/unit/mcpgateway/tools/builder/test_schema.py                                              |     29 |       0 |       29 |
 | tests/unit/mcpgateway/transports/test_redis_event_store.py                                      |     10 |       0 |       10 |
 | tests/unit/mcpgateway/transports/test_sse_transport.py                                          |     23 |       0 |       23 |
 | tests/unit/mcpgateway/transports/test_stdio_transport.py                                        |     11 |       0 |       11 |
@@ -590,11 +585,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | mcpgateway/toolops/utils/db\_util.py                                           |       34 |        0 |        4 |        1 |     97% |  78->exit |
 | mcpgateway/toolops/utils/format\_conversion.py                                 |       23 |        0 |        6 |        0 |    100% |           |
 | mcpgateway/toolops/utils/llm\_util.py                                          |       85 |       10 |       14 |        2 |     88% |176-182, 203-207 |
-| mcpgateway/tools/builder/cli.py                                                |      114 |        1 |       14 |        2 |     98% |105, 151->exit |
-| mcpgateway/tools/builder/factory.py                                            |       31 |        1 |        8 |        2 |     92% |119->122, 134 |
-| mcpgateway/tools/builder/pipeline.py                                           |       39 |        2 |        6 |        2 |     91% |  184, 205 |
-| mcpgateway/tools/builder/schema.py                                             |       85 |        0 |        6 |        0 |    100% |           |
-| mcpgateway/tools/cli.py                                                        |        8 |        1 |        0 |        0 |     88% |        53 |
 | mcpgateway/translate.py                                                        |      806 |        4 |      292 |        0 |     99% | 1542-1545 |
 | mcpgateway/translate\_grpc.py                                                  |      224 |       13 |       68 |        4 |     94% |27-36, 133->132, 166->165, 175-177, 181->180, 430, 442 |
 | mcpgateway/translate\_header\_utils.py                                         |       76 |        6 |       26 |        4 |     90% |65, 159, 165, 341-343 |

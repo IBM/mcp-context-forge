@@ -14,6 +14,7 @@
 
 ### Breaking Changes
 
+- **`cforge` CLI and deployment builder removed** ([#5824](https://github.com/IBM/mcp-context-forge/issues/5824)) - The `cforge` console script and `mcpgateway.tools.*` import paths are removed. Replace `cforge gateway` and `mcp-stack.yaml` deployments with PyPI/uvx, the GHCR container image, docker compose, or Helm. Replace `cforge plugin` with `mcpplugins`; for example, `cforge plugin bootstrap` becomes `mcpplugins bootstrap`. Import the packaging hook from `mcpgateway.build_hooks`.
 - **REST tool URL template values are percent-encoded** - Values now fill `{param}` as one encoded path segment or one query value. Before, the gateway inserted the raw value into the URL.
     - `/` reaches the backend as `%2F`. Tools that relied on a raw `/` in one parameter must use two parameters.
     - In a query placeholder, `&` and `=` stay inside the value, and `+` arrives as a literal `+`, not a space.
