@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.services.cimd_service import CimdService
+from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_previous_public_key, load_cimd_public_key
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -276,31 +276,22 @@ def get_jwk_from_public_key(pem_content: str, kid: str, alg: str) -> dict:
 
 
 def get_jwks() -> dict:
-    """Build the JSON Web Key Set (JWKS) containing active and previous public keys."""
+    """Build the CIMD JSON Web Key Set from the dedicated CIMD keys, never the JWT signing keys."""
     keys = []
-    # Current public key
+    alg = settings.cimd_signing_alg.upper()
+
     try:
-        from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret
+        jwk = get_jwk_from_public_key(load_cimd_public_key(), kid=settings.cimd_key_id, alg=alg)
+        if jwk:
+            keys.append(jwk)
+    except CimdKeyError as e:
+        logger.warning(f"CIMD public key unavailable for JWKS: {e}")
 
-        current_pem = get_jwt_public_key_or_secret()
-        if current_pem and not settings.jwt_algorithm.upper().startswith("HS"):
-            jwk = get_jwk_from_public_key(current_pem, kid="current", alg=settings.jwt_algorithm.upper())
-            if jwk:
-                keys.append(jwk)
-    except Exception as e:
-        logger.warning(f"Failed to load current public key for JWKS: {e}")
-
-    # Previous public key
-    try:
-        from mcpgateway.utils.jwt_config_helper import get_jwt_previous_public_key_content
-
-        prev_pem = get_jwt_previous_public_key_content()
-        if prev_pem and not settings.jwt_algorithm.upper().startswith("HS"):
-            jwk = get_jwk_from_public_key(prev_pem, kid="previous", alg=settings.jwt_algorithm.upper())
-            if jwk:
-                keys.append(jwk)
-    except Exception as e:
-        logger.warning(f"Failed to load previous public key for JWKS: {e}")
+    prev_pem = load_cimd_previous_public_key()
+    if prev_pem:
+        jwk = get_jwk_from_public_key(prev_pem, kid=f"{settings.cimd_key_id}-previous", alg=alg)
+        if jwk:
+            keys.append(jwk)
 
     return {"keys": keys}
 

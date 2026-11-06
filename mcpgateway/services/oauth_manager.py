@@ -41,6 +41,7 @@ from mcpgateway.common.oauth import (
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
+from mcpgateway.services.cimd_service import CimdService, load_cimd_private_key, CimdKeyError
 from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
@@ -590,21 +591,22 @@ class OAuthManager:
             raise OAuthError("OAuth configuration missing token_url required as the aud claim of the client assertion")
 
         private_key = runtime_credentials.get("private_key")
-        is_cimd = runtime_credentials.get("registration_method") == "cimd"
+        # registration_method is editor-controlled stored config, so the CIMD key is used only
+        # when client_id is also the gateway's own CIMD document URL.
+        is_cimd = runtime_credentials.get("registration_method") == "cimd" and client_id == CimdService().client_id
 
-        if not isinstance(private_key, str) or not private_key.strip():
-            if is_cimd:
-                try:
-                    from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret
+        if is_cimd:
+            try:
+                private_key = load_cimd_private_key()
+            except CimdKeyError as exc:
+                raise OAuthError(f"Failed to load CIMD private key for client assertion: {exc}") from exc
+        elif not isinstance(private_key, str) or not private_key.strip():
+            raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
 
-                    private_key = get_jwt_private_key_or_secret()
-                except Exception as exc:
-                    raise OAuthError(f"Failed to load gateway private key for CIMD client assertion: {exc}")
-            if not isinstance(private_key, str) or not private_key.strip():
-                raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
-
-        default_alg = get_settings().jwt_algorithm.upper() if is_cimd else DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
-        alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or default_alg
+        if is_cimd:
+            alg = get_settings().cimd_signing_alg.upper()
+        else:
+            alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
         if not isinstance(alg, str):
             raise OAuthError("Unsupported token_endpoint_auth_signing_alg - must be a string")
         if alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
@@ -623,9 +625,7 @@ class OAuthManager:
         # Some identity providers (Entra ID, Keycloak) match the assertion
         # against the client's public JWKS by key ID; the kid is optional.
         headers: Dict[str, str] = {}
-        raw_kid = runtime_credentials.get("private_key_jwt_kid")
-        if is_cimd and (not raw_kid or not raw_kid.strip()):
-            raw_kid = "current"
+        raw_kid = get_settings().cimd_key_id if is_cimd else runtime_credentials.get("private_key_jwt_kid")
         if isinstance(raw_kid, str) and raw_kid.strip():
             headers["kid"] = raw_kid.strip()
 

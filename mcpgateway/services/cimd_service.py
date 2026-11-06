@@ -13,7 +13,11 @@ Dynamic Client Registration (RFC 7591, deprecated by MCP 2026-07-28).
 
 # Standard
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Third-Party
+from cryptography.hazmat.primitives import serialization
 
 # First-Party
 from mcpgateway.config import get_settings
@@ -22,6 +26,91 @@ from mcpgateway.services.dcr_service import DcrService
 logger = logging.getLogger(__name__)
 
 CIMD_METADATA_FLAG = "client_id_metadata_document_supported"
+
+
+class CimdKeyError(Exception):
+    """Raised when the dedicated CIMD signing key is missing or unsafe to use."""
+
+
+def _read_key_file(path_str: str) -> str:
+    """Read a PEM key file, resolving relative paths against the working directory.
+
+    Args:
+        path_str: Configured key file path.
+
+    Returns:
+        str: File contents.
+
+    Raises:
+        CimdKeyError: If the file cannot be read.
+    """
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CimdKeyError(f"cannot read key file {path}") from exc
+
+
+def load_cimd_private_key() -> str:
+    """Load the dedicated CIMD private key.
+
+    The key must be separate from the gateway JWT signing key. This function never
+    falls back to ``JWT_PRIVATE_KEY_PATH`` or ``JWT_SECRET_KEY``.
+
+    Returns:
+        str: PEM-encoded private key.
+
+    Raises:
+        CimdKeyError: If ``CIMD_PRIVATE_KEY_PATH`` is unset, unreadable, not a private key,
+            or identical to the JWT signing key.
+    """
+    settings = get_settings()
+    if not settings.cimd_private_key_path:
+        raise CimdKeyError("CIMD_PRIVATE_KEY_PATH is not configured")
+    pem = _read_key_file(settings.cimd_private_key_path)
+    try:
+        serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+    except Exception as exc:
+        raise CimdKeyError("CIMD_PRIVATE_KEY_PATH does not contain a valid unencrypted PEM private key") from exc
+
+    if settings.jwt_private_key_path:
+        try:
+            jwt_pem = _read_key_file(settings.jwt_private_key_path)
+        except CimdKeyError:
+            jwt_pem = ""
+        if jwt_pem.strip() == pem.strip():
+            raise CimdKeyError("CIMD_PRIVATE_KEY_PATH must not reference the gateway JWT signing key")
+    return pem
+
+
+def load_cimd_public_key() -> str:
+    """Derive the public key published in the CIMD JWKS from the dedicated private key.
+
+    Returns:
+        str: PEM-encoded public key.
+
+    Raises:
+        CimdKeyError: If the CIMD private key cannot be loaded.
+    """
+    private_key = serialization.load_pem_private_key(load_cimd_private_key().encode("utf-8"), password=None)
+    return private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode("utf-8")
+
+
+def load_cimd_previous_public_key() -> Optional[str]:
+    """Return the previous CIMD public key for rotation, or ``None`` when unset or unreadable.
+
+    Returns:
+        Optional[str]: PEM-encoded public key.
+    """
+    path = get_settings().cimd_previous_public_key_path
+    if not path:
+        return None
+    try:
+        return _read_key_file(path)
+    except CimdKeyError:
+        return None
 
 
 class CimdService:

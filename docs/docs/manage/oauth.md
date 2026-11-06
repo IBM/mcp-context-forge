@@ -146,8 +146,9 @@ Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the do
 
 To run as a confidential client using CIMD without any shared secrets:
 - Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
+- Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
 - The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
-- The gateway serves its public signing key (and any configured previous public key for smooth key rotation) at `/oauth/client-metadata/jwks.json` with stable `kid` values (`current` and `previous`).
+- The gateway serves the public key derived from the CIMD key (and `CIMD_PREVIOUS_PUBLIC_KEY_PATH`, if set, for key rotation) at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`) and `<CIMD_KEY_ID>-previous`.
 - All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
 
 ---

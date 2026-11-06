@@ -708,6 +708,10 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `CIMD_CLIENT_NAME`                         | `client_name` in the published Client ID Metadata Document     | `ContextForge`                 | string        |
 | `CIMD_CLIENT_METADATA_URL`                 | Optional explicit public URL of the metadata document (overrides auto-derived URL) | `None`                 | string        |
 | `CIMD_TOKEN_ENDPOINT_AUTH_METHOD`         | Preferred token endpoint authentication method for CIMD clients | `none`                 | `none`, `private_key_jwt` |
+| `CIMD_PRIVATE_KEY_PATH`                   | Dedicated PEM private key for CIMD `private_key_jwt` assertions; never the JWT signing key | `""`                 | path          |
+| `CIMD_KEY_ID`                             | `kid` of the CIMD signing key in assertions and the CIMD JWKS  | `cimd-1`                       | string        |
+| `CIMD_SIGNING_ALG`                        | Signing algorithm for CIMD client assertions                   | `RS256`                        | `RS256`, `RS384`, `RS512`, `PS256`, `ES256`, `ES384`, `ES512` |
+| `CIMD_PREVIOUS_PUBLIC_KEY_PATH`           | Previous CIMD public key PEM published in the JWKS during rotation | `""`                       | path          |
 | `CIMD_DOCUMENT_CACHE_SECONDS`             | Cache-Control max-age in seconds for the Client ID Metadata Document endpoint | `3600`                 | int           |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
