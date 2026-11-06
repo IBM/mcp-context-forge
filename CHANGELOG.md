@@ -80,6 +80,8 @@
 
 - **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
 
+- **Progress for modern requests in JSON mode** ([#6647](https://github.com/IBM/mcp-context-forge/issues/6647)) - With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` and accepts `text/event-stream` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. Legacy clients see no change. The gateway now relays upstream progress to modern clients on `resources/read` and `prompts/get` ([#6648](https://github.com/IBM/mcp-context-forge/issues/6648)), `completion/complete`, and direct-proxy `tools/call`. The gateway no longer forwards the client `progressToken` upstream on `resources/read`, `prompts/get`, and `completion/complete`, including legacy and `/rpc` completion. A retried upstream resource read sends no progress callback, so progress values never restart.
+
 ### Security
 
 - **Gateway connectivity test credential gate** - Gateway connectivity tests send stored MCP server credentials only for callers with `gateways.update` who pass the MCP server ownership check.
