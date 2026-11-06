@@ -963,6 +963,24 @@ catalog_servers:
     requires_api_key: false
     tags: ["search", "rag", "ai", "web"]
 
+  - id: nova-research
+    name: "Nova Research"
+    category: "RAG-as-a-Service"
+    url: "https://nova.civai.co/mcp/agents/research-agent"
+    logo_url: "/static/catalog-icons/nova-research.png"
+    auth_type: "OAuth2.1"
+    provider: "CIVAI Technologies"
+    description: "Deep research and sourced report generation over live web search"
+    requires_api_key: false
+    tags: ["research", "rag", "search", "reports"]
+    oauth:
+      issuer: "https://nova.civai.co"
+      authorization_url: "https://nova.civai.co/oauth/authorize"
+      token_url: "https://nova.civai.co/oauth/token"
+      scopes: ["openid", "email", "mcp:access"]
+      supports_dcr: true
+      resource: "https://nova.civai.co/mcp/agents/research-agent"
+
   # Documentation
   - id: cloudflare-docs
     name: "Cloudflare Docs"
