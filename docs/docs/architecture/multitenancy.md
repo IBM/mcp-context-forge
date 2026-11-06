@@ -97,6 +97,12 @@ flowchart TD
     style N fill:#f3e5f5
 ```
 
+### Trust Mode & Cross-Tenant Group Mapping
+
+When `JWT_TRUST_MODE=jwt-trust`, no local user record exists for trust-mode principals, so team membership cannot come from `email_team_members` rows. The `external_group_mappings` table closes this gap: each row maps one external group — keyed by `(issuer, tenant, external_group_id)` — to one ContextForge team (`cf_team_id`) and, optionally, one role (`cf_role`). At authentication time the resolver reads the token's group claims, matches them against the mappings for the token's issuer and tenant, and derives the principal's team list (and mapped roles) from the result. Because the mapping key carries the issuer and tenant, two identity providers — or two tenants of one provider — can map groups with the same name to different ContextForge teams without collision. Team membership therefore follows the identity provider's group assignments: a user moved between groups at the identity provider lands in the matching ContextForge teams on the next token, with no local write.
+
+`cf_role` resolution is scope-exact (`resolve_mapping_role()` in `mcpgateway/services/role_resolution.py`): `roles.name` is unique only per `(name, scope)` among active rows, so a name-only lookup could union more permissions than intended. The resolver returns exactly one active row — a team-scoped role wins over a global-scoped role of the same name, the global row is the fallback, and rows are never unioned. Inactive roles never resolve.
+
 ---
 
 ## Team Architecture & Management
@@ -219,7 +225,7 @@ Discoverable; membership by invite/request"]
 
 #### Team Membership Levels (Design)
 
-Team membership keys on the canonical `user_id`, returned by `get_user_id()` in `mcpgateway/auth_context.py`. The e-mail address is a mutable attribute of the user account, not the identity. Phase 1 populates the canonical `user_id` with the e-mail value, so the `user_email` foreign keys in the diagrams below hold the canonical identity. The token-type-to-identity mapping contract is in [Identifier Domains](identity-domains.md).
+Team membership keys on the canonical `user_id`, returned by `get_user_id()` in `mcpgateway/auth_context.py`. The e-mail address is a mutable attribute of the user account, not the identity. Writers follow an additive dual-write contract: the `user_email` columns on `email_team_members` and `user_roles` always hold the e-mail address (they are foreign keys to `email_users.email` and must stay FK-valid), while the canonical ID goes into a dedicated nullable, indexed `user_id` column written via `resolve_canonical_user_id()` in `mcpgateway/auth_context.py`. The membership reader is dual-keyed: team lookups match on either `user_email` or `user_id`, so rows written before the canonical column existed and rows for diverged identities (`user_id != email`) both resolve. Phase 1 populates the canonical `user_id` with the e-mail value, so the two keys agree for existing accounts. The token-type-to-identity mapping contract is in [Identifier Domains](identity-domains.md).
 
 **Note**: These are team membership levels, separate from RBAC roles. A user can have both a membership level and RBAC role assignments within the same team.
 
