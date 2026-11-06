@@ -382,20 +382,13 @@ export const toggleViewPublic = function (checkboxId, containerIds, teamId) {
       let url = container.getAttribute("hx-get");
       if (!url) return;
 
-      if (includePublic) {
-        // Keep team_id to maintain team scope, add include_public to also show public items
-        if (!url.includes("team_id=")) {
-          url += `&team_id=${encodeURIComponent(teamId)}`;
-        }
-        url = url.replace(/&include_public=[^&]*/, "");
-        url += "&include_public=true";
-      } else {
-        // Remove include_public param and ensure team_id is set
-        url = url.replace(/&include_public=[^&]*/, "");
-        if (!url.includes("team_id=")) {
-          url += `&team_id=${encodeURIComponent(teamId)}`;
-        }
+      // Team filtering includes globally-public items by default, so the
+      // unchecked state must say so explicitly rather than omit the param.
+      url = url.replace(/&include_public=[^&]*/, "");
+      if (!url.includes("team_id=")) {
+        url += `&team_id=${encodeURIComponent(teamId)}`;
       }
+      url += includePublic ? "&include_public=true" : "&include_public=false";
 
       // Preserve active gateway filter so toggling View Public
       // does not drop the user's gateway selection
