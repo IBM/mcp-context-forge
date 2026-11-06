@@ -309,18 +309,27 @@ a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
-# Wait for redis to be ready
-if settings.cache_type == "redis" and settings.redis_url is not None:
-    # First-Party
-    from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
-    wait_for_redis_ready(
-        redis_url=settings.redis_url,
-        max_retries=int(settings.redis_max_retries),
-        retry_interval_ms=int(settings.redis_retry_interval_ms),
-        ssl_kwargs=_build_ssl_kwargs(settings),
-        sync=True,
-    )
+def _wait_for_redis_at_startup() -> None:
+    """Block until Redis answers when the redis cache backend is configured.
+
+    Runs at module load; a no-op for non-redis backends.
+    """
+    if settings.cache_type == "redis" and settings.redis_url is not None:
+        # First-Party
+        from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+        wait_for_redis_ready(
+            redis_url=settings.redis_url,
+            max_retries=int(settings.redis_max_retries),
+            retry_interval_ms=int(settings.redis_retry_interval_ms),
+            ssl_kwargs=_build_ssl_kwargs(settings),
+            sync=True,
+        )
+
+
+# Wait for redis to be ready
+_wait_for_redis_at_startup()
 
 # Initialize session registry
 session_registry = SessionRegistry(
@@ -13512,76 +13521,93 @@ mcp_transport_app = _build_mcp_transport_app()
 # Streamable http Mount
 app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 
+
+def _register_ui_routes(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Register UI routes (static assets, root redirect, favicon) or the API-info root route.
+
+    When the Admin UI is enabled, static assets are mounted, "/" redirects to
+    "/admin/", and "/favicon.ico" redirects into the static mount. When the UI
+    is disabled, "/" serves basic API info instead. Extracted from module level
+    so the branch can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to register routes on.
+    """
+    # Conditional static files mounting and root redirect
+    if settings.mcpgateway_ui_enabled:
+        # Mount static files for UI
+        logger.info("Mounting static files - UI enabled")
+        try:
+            # Create a sub-application for static files that will respect root_path
+            static_app = StaticFiles(directory=str(settings.static_dir))
+            static_path = "/static"
+
+            app.mount(
+                static_path,
+                static_app,
+                name="static",
+            )
+            logger.info("Static assets served from %s at %s", settings.static_dir, static_path)
+        except RuntimeError as exc:
+            logger.warning(
+                "Static dir %s not found - Admin UI disabled (%s)",
+                settings.static_dir,
+                exc,
+            )
+
+        # Redirect root path to admin UI
+        @app.get("/")
+        async def root_redirect():  # pragma: no cover
+            """
+            Redirects the root path ("/") to "/admin/".
+
+            Logs a debug message before redirecting.
+
+            Returns:
+                RedirectResponse: Redirects to /admin/.
+
+            Raises:
+                HTTPException: If there is an error during redirection.
+            """
+            logger.debug("Redirecting root path to /admin/")
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/admin/", status_code=303)
+            # return RedirectResponse(request.url_for("admin_home"))
+
+        # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon_redirect() -> RedirectResponse:
+            """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
+
+            Returns:
+                RedirectResponse: 301 redirect to /static/favicon.ico.
+            """
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
+    else:
+        # If UI is disabled, provide API info at root
+        logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
+
+        @app.get("/")
+        async def root_info():
+            """
+            Returns basic API information at the root path.
+
+            Logs an info message indicating UI is disabled and provides details
+            about the app, including its name, version, and whether the UI and
+            admin API are enabled.
+
+            Returns:
+                dict: API info with app name, version, and UI/admin API status.
+            """
+            logger.info("UI disabled, serving API info at root path")
+            return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+
+
 # Conditional static files mounting and root redirect
-if UI_ENABLED:
-    # Mount static files for UI
-    logger.info("Mounting static files - UI enabled")
-    try:
-        # Create a sub-application for static files that will respect root_path
-        static_app = StaticFiles(directory=str(settings.static_dir))
-        STATIC_PATH = "/static"
-
-        app.mount(
-            STATIC_PATH,
-            static_app,
-            name="static",
-        )
-        logger.info("Static assets served from %s at %s", settings.static_dir, STATIC_PATH)
-    except RuntimeError as exc:
-        logger.warning(
-            "Static dir %s not found - Admin UI disabled (%s)",
-            settings.static_dir,
-            exc,
-        )
-
-    # Redirect root path to admin UI
-    @app.get("/")
-    async def root_redirect():  # pragma: no cover
-        """
-        Redirects the root path ("/") to "/admin/".
-
-        Logs a debug message before redirecting.
-
-        Returns:
-            RedirectResponse: Redirects to /admin/.
-
-        Raises:
-            HTTPException: If there is an error during redirection.
-        """
-        logger.debug("Redirecting root path to /admin/")
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
-        # return RedirectResponse(request.url_for("admin_home"))
-
-    # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
-    @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon_redirect() -> RedirectResponse:
-        """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
-
-        Returns:
-            RedirectResponse: 301 redirect to /static/favicon.ico.
-        """
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
-
-else:
-    # If UI is disabled, provide API info at root
-    logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
-
-    @app.get("/")
-    async def root_info():
-        """
-        Returns basic API information at the root path.
-
-        Logs an info message indicating UI is disabled and provides details
-        about the app, including its name, version, and whether the UI and
-        admin API are enabled.
-
-        Returns:
-            dict: API info with app name, version, and UI/admin API status.
-        """
-        logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+_register_ui_routes(app)
 
 
 # Expose some endpoints at the root level as well

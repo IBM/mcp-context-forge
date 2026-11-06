@@ -191,6 +191,45 @@ hey -n 10000 -c 200 \
 
 ---
 
+### Observability sessions and database connections
+
+The HTTP middleware reuses one observability `Session` for each traced request.
+Child spans, metrics, and SQL instrumentation can still create separate sessions.
+A session does not reserve a connection for its entire lifetime.
+
+The middleware commits the parent trace and HTTP span before calling the request handler.
+Independent child writers can then see both records.
+Span completion, exception events, and trace completion commit independently.
+A trace completion failure does not discard a completed HTTP span.
+Caught span failures trigger rollback before trace completion.
+The observability session stays separate from the application's transaction.
+
+Run the real-database comparison with:
+
+```bash
+pytest --with-integration -s tests/integration/test_observability_session_lifecycle.py
+```
+
+The comparison uses eight overlapping requests, SQLite with foreign keys enabled,
+and a pool of two connections with no overflow. The baseline uses a separate session for each lifecycle operation.
+Measurements from this workload are:
+
+| Lifecycle | Sessions created | Connection checkouts | Peak connections in use |
+|-----------|-----------------:|---------------------:|------------------------:|
+| Independent sessions, success | 32 | 32 | 2 |
+| Reused session, success | 8 | 32 | 2 |
+| Independent sessions, exception | 40 | 48 | 2 |
+| Reused session, exception | 8 | 40 | 2 |
+
+All requests complete without pool timeouts. All traces and spans persist with completed statuses.
+Session allocations fall by 75% for success and 80% for exceptions.
+Success checkouts stay unchanged; exception checkouts fall by approximately 17%.
+The pool caps peak connections at two in both cases.
+These counts measure lifecycle allocation and connection checkouts. They do not establish production throughput
+or a higher concurrent-request capacity. Size the pool from measured concurrent connection use in your deployment.
+
+---
+
 ## 6 - MCP Session Pool Tuning
 
 The MCP session pool maintains persistent connections to upstream MCP servers, providing **10-20x latency improvement** for repeated tool calls from the same user.

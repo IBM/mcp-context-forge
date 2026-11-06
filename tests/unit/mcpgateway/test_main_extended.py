@@ -12768,35 +12768,47 @@ class TestRemainingCoverageGaps:
             async with main_mod.lifespan(main_mod.app):
                 pass
 
-    async def test_module_level_structured_logging_and_static_mount_errors(self, monkeypatch):
-        # Standard
-        from types import ModuleType
+    @pytest.mark.parametrize("variant", ["ui_missing_dir", "ui_valid_dir", "ui_disabled"])
+    async def test_module_level_ui_routes_branches(self, monkeypatch, tmp_path, variant):
+        """Exercise the UI-route registration branches against a bare app.
 
+        Runs ``_register_ui_routes`` under three matrices: UI enabled with a
+        missing static directory, UI enabled with a valid directory, and UI
+        disabled. The matrix covers the static-mount success and failure
+        branches, the favicon redirect, and the API-info root route.
+        """
         # Third-Party
-        from fastapi import APIRouter
+        from fastapi import FastAPI
 
-        # Keep router imports light.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
+        # First-Party
+        import mcpgateway.main as main_module
 
         overrides = {
-            "structured_logging_enabled": True,
-            "mcpgateway_tool_cancellation_enabled": True,
             "mcpgateway_ui_enabled": True,
             "static_dir": "/tmp/definitely-missing-static-dir",
         }
-        force_error = {
-            "mcpgateway.routers.log_search",
-            "mcpgateway.routers.cancellation_router",
-        }
+        if variant == "ui_valid_dir":
+            overrides["static_dir"] = tmp_path
+        elif variant == "ui_disabled":
+            overrides["mcpgateway_ui_enabled"] = False
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
-        await asyncio.sleep(0)
+        bare_app = FastAPI()
+        main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
 
-        # Cover favicon redirect logic (only registered when UI is enabled).
-        resp = await mod.favicon_redirect()
-        assert resp.status_code == 301
+        mounted = any(getattr(route, "path", None) == "/static" for route in bare_app.routes)
+        if variant == "ui_disabled":
+            assert not mounted
+            root = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
+            info = await root.endpoint()
+            assert "name" in info
+            assert "version" not in info
+        else:
+            assert mounted == (variant == "ui_valid_dir")
+            favicon = next(route for route in bare_app.routes if getattr(route, "path", "") == "/favicon.ico")
+            resp = await favicon.endpoint()
+            assert resp.status_code == 301
 
     async def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
         # Standard
@@ -13480,19 +13492,23 @@ class TestRpcScopedPermissions:
 
 
 class TestRedisStartupPath:
-    """Cover main.py module-level redis readiness check (lines 255/257)."""
+    """Cover the redis readiness check in ``_wait_for_redis_at_startup``."""
 
     def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
-        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "cache_type": "redis",
-                "redis_url": "redis://localhost:6379/0",
-                "redis_ssl": False,
-            },
-        )
-        # If we reach here the module loaded — lines 255/257 were executed.
+        """_wait_for_redis_at_startup calls wait_for_redis_ready when cache_type is redis."""
+        # First-Party
+        import mcpgateway.main as main_module
+
+        calls = []
+        monkeypatch.setattr(main_module, "wait_for_redis_ready", lambda **kwargs: calls.append(kwargs))
+        monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0", raising=False)
+        monkeypatch.setattr(settings, "redis_ssl", False, raising=False)
+
+        main_module._wait_for_redis_at_startup()  # pylint: disable=protected-access
+
+        assert len(calls) == 1
+        assert calls[0]["redis_url"] == "redis://localhost:6379/0"
 
 
 @pytest.fixture
