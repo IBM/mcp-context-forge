@@ -10,10 +10,12 @@ Unit tests for OAuthManager service.
 from contextlib import asynccontextmanager
 import json
 import logging
+from types import SimpleNamespace
 from typing import Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
 import httpx
 import jwt
 import pytest
@@ -2440,6 +2442,140 @@ class TestBuildClientAssertion:
         assert decoded["exp"] - decoded["iat"] <= MAX_CLIENT_ASSERTION_TTL_SECONDS
         assert decoded["exp"] > decoded["iat"]
         assert decoded["jti"]
+
+    @staticmethod
+    def _cimd_env(tmp_path, *, cimd_key_path=None, jwt_key_pem=None, **overrides):
+        """Write a CIMD key and gateway JWT key to disk and return settings, CIMD client_id and public PEMs."""
+        cimd_pem, cimd_pub = _make_rsa_keypair()
+        jwt_pem, jwt_pub = _make_rsa_keypair()
+        cimd_file = tmp_path / "cimd.pem"
+        cimd_file.write_text(cimd_pem)
+        jwt_file = tmp_path / "jwt_private.pem"
+        jwt_file.write_text(jwt_key_pem or jwt_pem)
+        client_id = "https://gw.example.com/oauth/client-metadata.json"
+        values = {
+            "cimd_private_key_path": str(cimd_file) if cimd_key_path is None else cimd_key_path,
+            "cimd_previous_public_key_path": "",
+            "cimd_key_id": "cimd-1",
+            "cimd_signing_alg": "RS256",
+            "cimd_client_metadata_url": client_id,
+            "app_domain": "https://gw.example.com",
+            "app_root_path": "",
+            "jwt_private_key_path": str(jwt_file),
+            "jwt_algorithm": "RS256",
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values), client_id, cimd_pub, jwt_pub
+
+    @staticmethod
+    def _patch_cimd_settings(settings):
+        return (
+            patch("mcpgateway.services.oauth_manager.get_settings", return_value=settings),
+            patch("mcpgateway.services.cimd_service.get_settings", return_value=settings),
+        )
+
+    @pytest.mark.asyncio
+    async def test_cimd_signs_with_dedicated_key_and_kid(self, oauth_manager, tmp_path):
+        settings, client_id, cimd_pub, jwt_pub = self._cimd_env(tmp_path)
+        creds = {"client_id": client_id, "token_url": "https://issuer.example.com/token", "registration_method": "cimd"}
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2:
+            assertion = await oauth_manager._build_client_assertion(creds)
+
+        assert jwt.get_unverified_header(assertion)["kid"] == "cimd-1"
+        decoded = jwt.decode(assertion, cimd_pub, algorithms=["RS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == client_id
+        with pytest.raises(jwt.InvalidSignatureError):
+            jwt.decode(assertion, jwt_pub, algorithms=["RS256"], audience="https://issuer.example.com/token")
+
+    @pytest.mark.asyncio
+    async def test_cimd_ignores_stored_private_key_and_kid(self, oauth_manager, tmp_path):
+        settings, client_id, cimd_pub, _ = self._cimd_env(tmp_path)
+        other_pem, _ = _make_rsa_keypair()
+        creds = {
+            "client_id": client_id,
+            "token_url": "https://issuer.example.com/token",
+            "registration_method": "cimd",
+            "private_key": other_pem,
+            "private_key_jwt_kid": "attacker-kid",
+        }
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2:
+            assertion = await oauth_manager._build_client_assertion(creds)
+
+        assert jwt.get_unverified_header(assertion)["kid"] == "cimd-1"
+        jwt.decode(assertion, cimd_pub, algorithms=["RS256"], audience="https://issuer.example.com/token")
+
+    @pytest.mark.asyncio
+    async def test_cimd_without_dedicated_key_never_falls_back_to_jwt_key(self, oauth_manager, tmp_path):
+        settings, client_id, _, _ = self._cimd_env(tmp_path, cimd_key_path="")
+        creds = {"client_id": client_id, "token_url": "https://issuer.example.com/token", "registration_method": "cimd"}
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2, patch("mcpgateway.utils.jwt_config_helper.get_jwt_private_key_or_secret") as jwt_key:
+            with pytest.raises(OAuthError, match="CIMD_PRIVATE_KEY_PATH is not configured"):
+                await oauth_manager._build_client_assertion(creds)
+
+        jwt_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cimd_key_identical_to_jwt_key_rejected(self, oauth_manager, tmp_path):
+        shared_pem, _ = _make_rsa_keypair()
+        settings, client_id, _, _ = self._cimd_env(tmp_path, jwt_key_pem=shared_pem)
+        (tmp_path / "cimd.pem").write_text(shared_pem)
+        creds = {"client_id": client_id, "token_url": "https://issuer.example.com/token", "registration_method": "cimd"}
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2:
+            with pytest.raises(OAuthError, match="must not reference the gateway JWT signing key"):
+                await oauth_manager._build_client_assertion(creds)
+
+    @pytest.mark.asyncio
+    async def test_forged_registration_method_does_not_unlock_cimd_key(self, oauth_manager, tmp_path):
+        """An editor-set registration_method with a foreign client_id must not use the CIMD key."""
+        settings, _, _, _ = self._cimd_env(tmp_path)
+        creds = {"client_id": "https://evil.example.com/client", "token_url": "https://issuer.example.com/token", "registration_method": "cimd"}
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2:
+            with pytest.raises(OAuthError, match="no private_key is configured"):
+                await oauth_manager._build_client_assertion(creds)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verify_flags", [True, False])
+    async def test_cimd_assertion_fails_gateway_verify_jwt(self, oauth_manager, tmp_path, verify_flags):
+        """A CIMD client assertion never validates as a gateway token, with claim verification on or off."""
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc
+
+        settings, client_id, _, jwt_pub = self._cimd_env(tmp_path)
+        creds = {"client_id": client_id, "token_url": "https://gw.example.com", "registration_method": "cimd"}
+
+        p1, p2 = self._patch_cimd_settings(settings)
+        with p1, p2:
+            assertion = await oauth_manager._build_client_assertion(creds)
+
+        gateway_settings = {
+            "jwt_algorithm": "RS256",
+            "jwt_audience": client_id,
+            "jwt_issuer": client_id,
+            "jwt_audience_verification": verify_flags,
+            "jwt_issuer_verification": verify_flags,
+            "require_token_expiration": False,
+            "require_jti": False,
+        }
+        with (
+            patch.multiple(vc.settings, **gateway_settings),
+            patch.object(vc, "validate_jwt_algo_and_keys"),
+            patch("mcpgateway.utils.jwt_config_helper.get_jwt_public_key_or_secret", return_value=jwt_pub),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await vc.verify_jwt_token(assertion)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid token"
 
     @pytest.mark.asyncio
     async def test_custom_rsa_alg(self, oauth_manager, private_key_credentials):

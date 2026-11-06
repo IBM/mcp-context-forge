@@ -1460,6 +1460,24 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    @pytest.mark.parametrize(
+        "oauth_config,expected",
+        [
+            ({"registration_method": "cimd", "client_id": "c"}, "cimd"),
+            ({"registration_method": "dcr"}, "dcr"),
+            ({"client_id": "c"}, None),
+            (None, None),
+        ],
+    )
+    def test_gateway_read_exposes_registration_method(self, oauth_config, expected):
+        """GatewayRead mirrors oauth_config.registration_method, including through masking."""
+        # First-Party
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(id="gw-1", name="Test Gateway", slug="test-gateway", url="https://example.com", transport="STREAMABLEHTTP", oauth_config=oauth_config)
+        assert gateway.registration_method == expected
+        assert gateway.masked().registration_method == expected
+
     def test_gateway_read_tool_count_defaults_to_zero(self):
         """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
         # First-Party

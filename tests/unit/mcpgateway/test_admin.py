@@ -8007,6 +8007,22 @@ _TE_STORED_CONFIG = {
 }
 
 
+class TestRegistrationMethodAdminForm:
+    """The Admin UI registration method select is stored on oauth_config."""
+
+    @pytest.mark.parametrize("method", ["auto", "cimd", "dcr"])
+    async def test_assemble_keeps_valid_registration_method(self, method):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_registration_method": method}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["registration_method"] == method
+
+    @pytest.mark.parametrize("method", ["", "bogus"])
+    async def test_assemble_drops_missing_or_unknown_registration_method(self, method):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_registration_method": method}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "registration_method" not in config
+
+
 class TestTokenExchangeAdminForms:
     """Admin UI form handling for token-exchange gateways."""
 
