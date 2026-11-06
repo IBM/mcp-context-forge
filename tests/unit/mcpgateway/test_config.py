@@ -335,20 +335,13 @@ def _csrf_warnings(caplog):
     return [rec.getMessage() for rec in caplog.records if "CSRF CONFIGURATION WARNING" in rec.getMessage()]
 
 
-def test_csrf_name_override_warns_at_startup(caplog):
-    """Overriding CSRF_COOKIE_NAME/CSRF_TOKEN_NAME must warn loudly at startup.
-
-    Both settings govern CSRFMiddleware only; the Admin UI JS and the per-route
-    CSRF dependencies hardcode the defaults. An override desynchronizes them,
-    which shows up as intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser
-    writes rather than an obvious failure. Fail loudly at boot instead.
-    """
+def test_csrf_header_name_override_warns_at_startup(caplog):
+    """Overriding the CSRF header name warns because clients must follow it."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
 
     Settings(csrf_cookie_name="csrf_token", csrf_token_name="X-Probe-Csrf", environment="development", _env_file=None)
 
     warnings = _csrf_warnings(caplog)
-    assert any("CSRF_COOKIE_NAME" in msg and "csrf_token" in msg for msg in warnings), warnings
     assert any("CSRF_TOKEN_NAME" in msg and "X-Probe-Csrf" in msg for msg in warnings), warnings
 
 
@@ -375,20 +368,13 @@ def test_csrf_token_name_case_variant_does_not_warn(caplog):
     assert _csrf_warnings(caplog) == []
 
 
-def test_csrf_cookie_name_case_variant_warns(caplog):
-    """A cookie name differing only in case is a real desync, so must warn.
-
-    Cookie names are case-sensitive (RFC 6265): the browser would hold
-    MCPGateway_CSRF_Token and mcpgateway_csrf_token as two distinct cookies.
-    This pins the asymmetry against a well-meaning blanket casefold that would
-    silence a genuine mismatch.
-    """
+def test_csrf_cookie_name_override_does_not_warn(caplog):
+    """A custom CSRF cookie name is supported across the server and UI."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
 
     Settings(csrf_cookie_name="MCPGateway_CSRF_Token", environment="development", _env_file=None)
 
-    warnings = _csrf_warnings(caplog)
-    assert any("CSRF_COOKIE_NAME" in msg for msg in warnings), warnings
+    assert _csrf_warnings(caplog) == []
 
 
 def test_csrf_name_override_silent_when_csrf_disabled(caplog):

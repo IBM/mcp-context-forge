@@ -54,7 +54,7 @@ from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 logger = logging.getLogger(__name__)
 
-ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_COOKIE_NAME = settings.csrf_cookie_name
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
 
