@@ -534,6 +534,31 @@ class TestRegisterClient:
             assert request_json["scope"] == "mcp:read"
 
     @pytest.mark.asyncio
+    async def test_register_client_uses_recorded_registration_endpoint(self, test_db):
+        """A catalog endpoint avoids a redundant issuer discovery request."""
+        dcr_service = DcrService()
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "catalog-client", "redirect_uris": []})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", new_callable=AsyncMock) as mock_discover, patch_isolated_client(mock_client):
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-catalog",
+                gateway_name="Catalog Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+                registration_endpoint="https://as.example.com/register",
+            )
+
+        mock_discover.assert_not_awaited()
+        assert result.client_id == "catalog-client"
+        assert mock_client.post.call_args.args[0] == "https://93.184.216.34/register"
+
+    @pytest.mark.asyncio
     async def test_register_client_includes_refresh_token_when_supported(self, test_db):
         """Test that refresh_token is included when AS advertises support."""
         dcr_service = DcrService()

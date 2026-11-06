@@ -751,6 +751,7 @@ async def initiate_oauth_flow(
                         redirect_uri=oauth_config.get("redirect_uri"),
                         scopes=oauth_config.get("scopes", settings.dcr_default_scopes),
                         db=db,
+                        registration_endpoint=oauth_config.get("registration_endpoint"),
                     )
 
                     logger.info(f"✅ DCR successful for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: client_id={SecurityValidator.sanitize_log_message(registered_client.client_id)}")
