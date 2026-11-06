@@ -11760,6 +11760,61 @@ class TestStaleCatalogPruning:
         assert result.tools_removed == 1
         assert gateway.tools == [user_made]  # ui-created row survives the prune
 
+    @pytest.mark.asyncio
+    async def test_method_not_found_tool_listing_preserves_discovered_tools(self):
+        """A refresh where tools/list fails with -32601 must not prune stored tools."""
+        from mcp.shared.exceptions import MCPError
+        from mcp.types import METHOD_NOT_FOUND
+        from mcpgateway.services.gateway_service import get_list_paginated, MCPListMethod
+
+        discovered_tool = MagicMock(id="t-disc", original_name="existing_tool", created_via="federation")
+        gateway = MagicMock(
+            id="gw-1",
+            name="gw",
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tools=[discovered_tool],
+            resources=[],
+            prompts=[],
+        )
+
+        session = AsyncMock()
+        session.list_tools.side_effect = MCPError(METHOD_NOT_FOUND, "Method not found")
+
+        service = GatewayService()
+        service._validate_tool_name_collisions = MagicMock()
+        service._update_or_create_tools = MagicMock(return_value=[])
+        service._update_or_create_resources = MagicMock(return_value=[])
+        service._update_or_create_prompts = MagicMock(return_value=[])
+
+        raw_tools = await get_list_paginated(session, MCPListMethod.TOOLS)
+        tools, _ = service._validate_tools(raw_tools)
+
+        db = MagicMock()
+        catalog_sync = service._sync_gateway_catalog(
+            db,
+            gateway=gateway,
+            tools=tools,
+            resources=[],
+            prompts=[MagicMock(name="prompt-1")],
+            created_via="manual_refresh",
+            stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+        )
+        result = service._reconcile_gateway_catalog(
+            db,
+            gateway=gateway,
+            catalog_sync=catalog_sync,
+            log_context="unit test",
+            stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+        )
+
+        assert tools == []
+        assert catalog_sync.new_tool_names is None
+        assert service._validate_tool_name_collisions.call_args.kwargs["retained_tool_original_names"] == {"existing_tool"}
+        assert result.tools_removed == 0
+        assert gateway.tools == [discovered_tool]
+
 
 class TestGatewayImpactPreviewTeamResolution:
     """Regression tests for impact-preview team-membership resolution."""
