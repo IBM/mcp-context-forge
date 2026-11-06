@@ -14,7 +14,7 @@ from functools import lru_cache
 import hashlib
 import hmac
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 # First-Party
 from mcpgateway.config import settings
@@ -219,25 +219,6 @@ def get_jwt_public_key_or_secret() -> str:
     if not path.is_absolute():
         path = Path.cwd() / path
     return _read_key_file_cached(path)
-
-
-def get_jwt_previous_public_key_content() -> Optional[str]:
-    """Get previous public key content if configured, otherwise None.
-
-    Returns:
-        Optional[str]: The previous public key content as string or None
-    """
-    if not settings.jwt_previous_public_key_path:
-        return None
-    path = Path(settings.jwt_previous_public_key_path)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    if not path.is_file():
-        return None
-    try:
-        return _read_key_file_cached(path)
-    except Exception:
-        return None
 
 
 def clear_jwt_caches() -> None:

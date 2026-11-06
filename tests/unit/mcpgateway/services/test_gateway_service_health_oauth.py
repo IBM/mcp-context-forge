@@ -27,6 +27,7 @@ from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayService,
 )
+from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
 
 
 def _make_execute_result(*, scalar=None, scalars_list=None):
@@ -839,6 +840,7 @@ class TestTokenExchangeDiscoveryHealthCheck:
     @staticmethod
     def _service():
         service = GatewayService()
+        service._service_token_cache = GatewayServiceTokenCache(redis_url=None)
         service._handle_gateway_failure = AsyncMock()
         service._mark_gateway_reachable = AsyncMock()
         service._classification_service = None

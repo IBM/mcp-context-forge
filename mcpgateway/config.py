@@ -303,7 +303,6 @@ class Settings(BaseSettings):
     )
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
-    jwt_previous_public_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
     jwt_issuer: str = "mcpgateway"
     jwt_audience_verification: bool = True
@@ -1053,6 +1052,20 @@ class Settings(BaseSettings):
         default="none",
         description="Preferred token endpoint authentication method for CIMD clients (none or private_key_jwt)",
     )
+
+    cimd_private_key_path: str = Field(
+        default="",
+        description="Path to the dedicated PEM private key that signs CIMD private_key_jwt client assertions. Never the JWT signing key; required when cimd_token_endpoint_auth_method is private_key_jwt",
+    )
+
+    cimd_previous_public_key_path: str = Field(
+        default="",
+        description="Optional path to the previous CIMD public key PEM, published in the CIMD JWKS during key rotation",
+    )
+
+    cimd_key_id: str = Field(default="cimd-1", description="kid of the CIMD signing key, set in assertion headers and the CIMD JWKS")
+
+    cimd_signing_alg: str = Field(default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)")
 
     cimd_document_cache_seconds: int = Field(
         default=3600,

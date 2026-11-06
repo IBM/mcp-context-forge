@@ -6143,6 +6143,55 @@ class TestCimdRegistrationPreference:
         warning_msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert any(_DCR_ISSUER in msg for msg in warning_msgs)
 
+    @pytest.mark.asyncio
+    async def test_unknown_registration_method_falls_back_to_auto(self, mock_db, mock_request, mock_current_user):
+        """An unrecognized stored registration_method is treated as auto."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "bogus"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_cimd.is_applicable.assert_awaited_once()
+        assert gateway.oauth_config["registration_method"] == "cimd"
+
+    @pytest.mark.asyncio
+    async def test_cimd_skips_discovery_when_endpoints_configured(self, mock_db, mock_request, mock_current_user):
+        """Configured authorization and token URLs are kept and AS metadata is not fetched."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["authorization_url"] = f"{_DCR_ISSUER}/configured-auth"
+        gateway.oauth_config["token_url"] = f"{_DCR_ISSUER}/configured-token"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock()
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json")
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_dcr.discover_as_metadata.assert_not_awaited()
+        assert gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/configured-token"
+
 
 class TestCimdIntegration:
     """Authorize -> callback integration tests against a CIMD-capable mock Authorization Server."""
