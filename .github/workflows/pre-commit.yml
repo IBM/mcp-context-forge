@@ -67,7 +67,9 @@ jobs:
 
       - name: Run pre-commit on changed files
         if: github.event_name == 'pull_request' && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
-        run: make --no-print-directory pre-commit-fast PRE_COMMIT_BASE_REF=origin/${{ github.base_ref }}
+        env:
+          PRE_COMMIT_BASE_REF: origin/${{ github.base_ref }}
+        run: make --no-print-directory pre-commit-fast
 
       - name: Run pre-commit on all files
         if: github.event_name != 'pull_request' && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')

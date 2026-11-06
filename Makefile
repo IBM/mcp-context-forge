@@ -3819,25 +3819,27 @@ pycodestyle:                        ## 📝  Simple PEP-8 checker
 
 PREK_VERSION         ?= 0.5.10
 PRE_COMMIT_BASE_REF  ?= origin/main
+PREK_RUN             = $(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run --config .pre-commit-config.yaml --show-diff-on-failure
 
 .PHONY: pre-commit pre-commit-fast _prek
 pre-commit: uv                     ## 🪄  Run all pre-commit hooks on every file (prek)
 	@echo "🪄  Running pre-commit hooks on all files..."
-	@$(MAKE) --no-print-directory _prek PREK_ARGS="--all-files"
+	@$(MAKE) --no-print-directory _prek
 
 pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on files changed vs PRE_COMMIT_BASE_REF
 	@echo "🪄  Running pre-commit hooks on files changed vs $(PRE_COMMIT_BASE_REF)..."
-	@base="$$(git merge-base $(PRE_COMMIT_BASE_REF) HEAD 2>/dev/null)" || { \
+	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD 2>/dev/null)" || { \
 		echo "❌  Cannot resolve PRE_COMMIT_BASE_REF=$(PRE_COMMIT_BASE_REF); fetch it or set PRE_COMMIT_BASE_REF."; exit 1; }; \
-	files="$$( { git diff --name-only --diff-filter=d $$base; git ls-files -o --exclude-standard; } | sort -u)"; \
-	if [ -z "$$files" ]; then echo "No changed files."; exit 0; fi; \
-	$(MAKE) --no-print-directory _prek PREK_ARGS="--files $$(echo $$files)"
+	list="$$(mktemp)"; trap 'rm -f "$$list"' EXIT; \
+	{ git diff -z --name-only --diff-filter=d "$$base"; git ls-files -z -o --exclude-standard; } | sort -zu > "$$list"; \
+	if [ ! -s "$$list" ]; then echo "No changed files."; exit 0; fi; \
+	PREK_FILE_LIST="$$list" $(MAKE) --no-print-directory _prek
 
+# File names reach prek through a NUL-delimited list file in PREK_FILE_LIST, never through a shell string.
 _prek:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
-			'$(CURDIR)/.cache/prek-home' \
+		mkdir -p '$(CURDIR)/.cache/prek-home' \
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
@@ -3846,19 +3848,22 @@ _prek:
 			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
-		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
-		PREK_HOME='$(CURDIR)/.cache/prek-home' \
-		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
-		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
-		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
-		TMPDIR='$(CURDIR)/.cache/tmp' \
-		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
-		PIP_USE_PEP517='0' \
-		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run --config .pre-commit-config.yaml $(PREK_ARGS) --show-diff-on-failure"
+		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
+			XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+			XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+			VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+			TMPDIR='$(CURDIR)/.cache/tmp' \
+			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+			PIP_USE_PEP517='0' \
+			PIP_NO_BUILD_ISOLATION='1' \
+			GOPATH='$(CURDIR)/.cache/go-cache' \
+			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+			GOCACHE='$(CURDIR)/.cache/go-build'; \
+		if [ -n \"\$$PREK_FILE_LIST\" ]; then \
+			xargs -0 $(PREK_RUN) --files < \"\$$PREK_FILE_LIST\"; \
+		else \
+			$(PREK_RUN) --all-files; \
+		fi"
 
 RUFF_MODE   ?= check
 
