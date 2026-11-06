@@ -79,6 +79,8 @@ def _make_mock_tool(tool_id: str, name: str, created_via: str = "health_check") 
     mock.id = tool_id
     mock.original_name = name
     mock.created_via = created_via
+    mock.catalog_stale = False
+    mock.deprecated = False
     return mock
 
 
@@ -298,8 +300,10 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
-        # Old tool should be marked for removal
+        # Old tool should be marked stale without being deleted.
         assert result["tools_removed"] == 1
+        assert mock_gateway.tools[0].deprecated is True
+        assert mock_gateway.tools[0].catalog_stale is True
 
     @pytest.mark.asyncio
     async def test_refresh_preserves_user_created_items(self, gateway_service):
@@ -333,9 +337,12 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
-        # Only MCP-discovered tool (health_check) should be removed
+        # Only MCP-discovered tool (health_check) should be marked stale.
         # ui, api, and None (legacy) should be preserved
         assert result["tools_removed"] == 1
+        assert mock_gateway.tools[0].deprecated is True
+        assert mock_gateway.tools[0].catalog_stale is True
+        assert all(not tool.catalog_stale for tool in mock_gateway.tools[1:])
 
     @pytest.mark.asyncio
     async def test_refresh_passes_pre_auth_headers_to_initialize_gateway(self, gateway_service):
