@@ -766,7 +766,7 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
 
 
 def _check_token_revoked_sync(jti: str) -> bool:
-    """Synchronous helper to check if a token is revoked.
+    """Synchronous helper to check if a token is revoked or inactive.
 
     This runs in a thread pool to avoid blocking the event loop.
 
@@ -774,14 +774,21 @@ def _check_token_revoked_sync(jti: str) -> bool:
         jti: The JWT ID to check.
 
     Returns:
-        True if the token is revoked, False otherwise.
+        True if the token is revoked or an API token is inactive, False otherwise.
     """
     with fresh_db_session() as db:
         # First-Party
-        from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailApiToken, TokenRevocation  # pylint: disable=import-outside-toplevel
 
         result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
-        return result.scalar_one_or_none() is not None
+        if result.scalar_one_or_none() is not None:
+            return True
+
+        # JWT API tokens are validly signed even after their catalog row is
+        # deactivated. Treat that state like revocation so every JWT auth path
+        # applies the user-visible is_active control.
+        inactive_result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti, EmailApiToken.is_active.is_(False)))
+        return inactive_result.scalar_one_or_none() is not None
 
 
 def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1185,7 +1192,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
     """
     with fresh_db_session() as db:
         # First-Party
-        from mcpgateway.db import EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailApiToken, EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
 
         result = {
             "user": None,
@@ -1276,6 +1283,9 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         if jti:
             revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
             result["is_token_revoked"] = revoke_result.scalar_one_or_none() is not None
+            if not result["is_token_revoked"]:
+                inactive_result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti, EmailApiToken.is_active.is_(False)))
+                result["is_token_revoked"] = inactive_result.scalar_one_or_none() is not None
 
         return result
 

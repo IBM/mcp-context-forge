@@ -896,6 +896,7 @@ class TokenCatalogService:
         if tags is not None:
             token.tags = tags
 
+        active_state_changed = is_active is not None and is_active != token.is_active
         if is_active is not None:
             token.is_active = is_active
 
@@ -908,6 +909,15 @@ class TokenCatalogService:
 
         self.db.commit()
         self.db.refresh(token)
+
+        if active_state_changed:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                await auth_cache.invalidate_token_context(token.jti)
+            except Exception as cache_error:
+                logger.debug("Failed to invalidate auth cache after token active-state change: %s", cache_error)
 
         logger.info("Updated token '%s' for user %s", token.name, SecurityValidator.sanitize_log_message(user_email))
 

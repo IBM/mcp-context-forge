@@ -772,6 +772,25 @@ class TestAuthCacheInvalidationSubscriber:
         assert "user@test.com:jti-other" in mock_auth._context_cache
 
     @pytest.mark.asyncio
+    async def test_process_token_context_invalidation(self):
+        """Test active-state changes clear token context without revoking the JTI."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            revocation_cache={"jti-abc123": "cached", "jti-other": "cached"},
+            context_cache={"user@test.com:jti-abc123": "ctx-data", "user@test.com:jti-other": "ctx-data"},
+            revoked_jtis=set(),
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("token:jti-abc123", channel="mcpgw:auth:invalidate")
+
+        assert "jti-abc123" not in mock_auth._revoked_jtis
+        assert "jti-abc123" not in mock_auth._revocation_cache
+        assert "jti-other" in mock_auth._revocation_cache
+        assert "user@test.com:jti-abc123" not in mock_auth._context_cache
+        assert "user@test.com:jti-other" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
     async def test_process_team_invalidation(self):
         """Test processing of team:{email} auth invalidation message."""
         subscriber = CacheInvalidationSubscriber()
@@ -874,6 +893,7 @@ class TestAuthCacheInvalidationSubscriber:
             # All auth message types should not raise exceptions
             await subscriber._process_invalidation("user:test@example.com", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("revoke:jti-12345678", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("token:jti-12345678", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("team:test@example.com", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("role:test@example.com:team-123", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("team_roles:team-123", channel="mcpgw:auth:invalidate")
@@ -994,6 +1014,7 @@ class TestAuthCacheInvalidationSubscriber:
         with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
             await subscriber._process_invalidation("user:", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("revoke:", channel="mcpgw:auth:invalidate")
+            await subscriber._process_invalidation("token:", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("team:", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("role:", channel="mcpgw:auth:invalidate")
             await subscriber._process_invalidation("team_roles:", channel="mcpgw:auth:invalidate")

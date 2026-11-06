@@ -11,6 +11,7 @@ and error handling scenarios.
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 from types import SimpleNamespace
@@ -2200,6 +2201,82 @@ class TestBatchedSyncNoPTeam:
         assert result["user"] is not None
         assert result["personal_team_id"] is None
         assert result["team_ids"] == []
+
+
+class TestApiTokenActiveStateChecks:
+    """API token active state is enforced on every JWT database path."""
+
+    def test_inactive_api_token_is_rejected_by_revocation_helper(self, monkeypatch):
+        """An inactive API token JTI is treated as invalid by the shared check."""
+
+        class DummyResult:
+            def __init__(self, value):
+                self.value = value
+
+            def scalar_one_or_none(self):
+                return self.value
+
+        class DummySession:
+            def __init__(self):
+                self.results = iter([DummyResult(None), DummyResult("token-id")])
+
+            def execute(self, _query):
+                return next(self.results)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+
+        from mcpgateway.auth import _check_token_revoked_sync
+
+        assert _check_token_revoked_sync("inactive-jti") is True
+
+    def test_inactive_api_token_is_rejected_by_batched_context(self, monkeypatch):
+        """The batched auth query rejects inactive API token rows too."""
+        user = SimpleNamespace(
+            email="user@example.com",
+            password_hash="h",
+            password_hash_type="argon2id",
+            full_name="User",
+            is_admin=False,
+            is_active=True,
+            auth_provider="api_token",
+            password_change_required=False,
+            email_verified_at=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        class DummyResult:
+            def __init__(self, value):
+                self.value = value
+
+            def scalar_one_or_none(self):
+                return self.value
+
+            def all(self):
+                return self.value if isinstance(self.value, list) else []
+
+        class DummySession:
+            def __init__(self):
+                self.results = iter([DummyResult(user), DummyResult(None), DummyResult([]), DummyResult(None), DummyResult("token-id")])
+
+            def execute(self, _query):
+                return next(self.results)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+
+        from mcpgateway.auth import _get_auth_context_batched_sync
+
+        result = _get_auth_context_batched_sync("user@example.com", "inactive-jti")
+
+        assert result["is_token_revoked"] is True
 
 
 class TestSetAuthMethodFromPayload:

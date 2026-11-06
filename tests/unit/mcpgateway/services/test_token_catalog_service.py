@@ -1176,7 +1176,10 @@ class TestTokenCatalogService:
         """Test update_token to deactivate a token by setting is_active=False."""
         mock_api_token.is_active = True  # Start as active
 
-        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+        with (
+            patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get,
+            patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_token_context", new_callable=AsyncMock) as mock_invalidate,
+        ):
             mock_get.return_value = mock_api_token
 
             await token_service.update_token(
@@ -1188,13 +1191,17 @@ class TestTokenCatalogService:
             # Verify token was deactivated
             assert mock_api_token.is_active is False
             mock_db.commit.assert_called()
+            mock_invalidate.assert_awaited_once_with("jti-123")
 
     @pytest.mark.asyncio
     async def test_update_token_reactivate(self, token_service, mock_db, mock_api_token):
         """Test update_token to reactivate a token by setting is_active=True."""
         mock_api_token.is_active = False  # Start as inactive
 
-        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+        with (
+            patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get,
+            patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_token_context", new_callable=AsyncMock) as mock_invalidate,
+        ):
             mock_get.return_value = mock_api_token
 
             await token_service.update_token(
@@ -1206,6 +1213,7 @@ class TestTokenCatalogService:
             # Verify token was reactivated
             assert mock_api_token.is_active is True
             mock_db.commit.assert_called()
+            mock_invalidate.assert_awaited_once_with("jti-123")
 
     @pytest.mark.asyncio
     async def test_update_token_is_active_none_no_change(self, token_service, mock_db, mock_api_token):

@@ -567,6 +567,38 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_revocation failed: {e}")
 
+    async def invalidate_token_context(self, jti: str) -> None:
+        """Evict cached authentication context for a token without revoking it.
+
+        This is used when an API token's ``is_active`` flag changes. Unlike
+        ``invalidate_revocation()``, it must not add the JTI to the permanent
+        revoked set so that reactivating a token can take effect immediately.
+
+        Args:
+            jti: JWT ID whose cached authentication context should be evicted
+        """
+        if not self._enabled:
+            return
+
+        logger.debug(f"AuthCache: Invalidating token context for jti={jti[:8]}...")
+
+        with self._lock:
+            self._revocation_cache.pop(jti, None)
+            keys_to_remove = [key for key in self._context_cache if key.endswith(f":{jti}")]
+            for key in keys_to_remove:
+                self._context_cache.pop(key, None)
+
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                pattern = self._get_redis_key("ctx", f"*:{jti}")
+                async for key in redis.scan_iter(match=pattern):
+                    await redis.delete(key)
+
+                await redis.publish("mcpgw:auth:invalidate", f"token:{jti}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_token_context failed: {e}")
+
     async def invalidate_team(self, email: str) -> None:
         """Invalidate team cache for a user.
 
