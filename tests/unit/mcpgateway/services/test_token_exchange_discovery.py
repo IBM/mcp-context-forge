@@ -120,14 +120,14 @@ class TestBuildDiscoveryOauthConfig:
         assert build_discovery_oauth_config(_te_config(discovery="not-a-dict")) is None
 
     def test_inherits_parent_client_auth(self):
-        out = build_discovery_oauth_config(_te_config(private_key="pk", private_key_jwt_kid="kid", token_endpoint_auth_signing_alg="ES256", discovery={"grant_type": "client_credentials"}))
+        out = build_discovery_oauth_config(_te_config(private_key="pk", private_key_jwt_kid="kid", token_endpoint_auth_signing_alg="ES256", discovery={"grant_type": "client_credentials"}))  # pragma: allowlist secret
         assert out == {
             "grant_type": "client_credentials",
             "token_url": "https://as.example.com/token",
             "client_id": "cf",
             "client_secret": "parent-secret",  # pragma: allowlist secret
             "token_endpoint_auth_method": "client_secret_basic",
-            "private_key": "pk",
+            "private_key": "pk",  # pragma: allowlist secret
             "private_key_jwt_kid": "kid",
             "token_endpoint_auth_signing_alg": "ES256",
             "scopes": ["openid", "mcp.call"],

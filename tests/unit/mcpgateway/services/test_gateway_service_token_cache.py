@@ -44,7 +44,7 @@ class TestGatewayServiceTokenCache:
     async def test_fingerprint_changes_with_config(self):
         rotated = service_token_fingerprint({**_CONFIG, "client_secret": "v2:rotated"})  # pragma: allowlist secret
         assert rotated != _FP
-        for change in ({"client_id": "other"}, {"token_url": "https://as/other"}, {"scopes": ["other"]}, {"token_endpoint_auth_method": "client_secret_post"}, {"private_key": "v2:pk"}):
+        for change in ({"client_id": "other"}, {"token_url": "https://as/other"}, {"scopes": ["other"]}, {"token_endpoint_auth_method": "client_secret_post"}, {"private_key": "v2:pk"}):  # pragma: allowlist secret
             assert service_token_fingerprint({**_CONFIG, **change}) != _FP
         assert service_token_fingerprint({**_CONFIG, "scopes": ["mcp.discover"]}) == _FP
 
