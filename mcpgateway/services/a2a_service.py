@@ -2635,7 +2635,19 @@ class A2AAgentService(BaseService):
 
                 if status_code == 200:
                     response = response_json if response_json is not None else {"response": response_text}
-                    success = True
+                    # A2A carries JSON-RPC over HTTP: an agent that rejects the
+                    # call still answers 200 with a JSON-RPC error member.
+                    # Record that as a failed invocation so the metric (and the
+                    # published success_rate) reflects the agent verdict, not the
+                    # transport status. The caller still receives the envelope
+                    # unchanged below.
+                    jsonrpc_error = response.get("error") if isinstance(response, dict) else None
+                    if jsonrpc_error is not None:
+                        success = False
+                        detail = jsonrpc_error.get("message") if isinstance(jsonrpc_error, dict) else jsonrpc_error
+                        error_message = sanitize_exception_message(f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}", prepared.sensitive_query_param_names)
+                    else:
+                        success = True
                     if span and is_output_capture_enabled("a2a.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(response))
 
@@ -2694,7 +2706,7 @@ class A2AAgentService(BaseService):
                         user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
-                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": True},
+                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": success},
                     )
 
                 else:
