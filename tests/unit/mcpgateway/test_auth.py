@@ -2154,6 +2154,7 @@ class TestBatchedSyncNoPTeam:
 
         results = [
             SimpleNamespace(  # user
+                id="11111111-1111-1111-1111-111111111111",
                 email="user@example.com",
                 password_hash="h",
                 password_hash_type="argon2id",

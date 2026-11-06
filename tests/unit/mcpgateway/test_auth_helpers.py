@@ -300,6 +300,7 @@ def test_is_api_token_jti_sync(monkeypatch):
 
 def test_get_user_by_email_sync(monkeypatch):
     user = SimpleNamespace(
+        id="11111111-1111-1111-1111-111111111111",
         email="user@example.com",
         password_hash="hash",
         full_name="User",
@@ -319,10 +320,12 @@ def test_get_user_by_email_sync(monkeypatch):
     assert result.email == "user@example.com"
     assert result.password_hash == "hash"
     assert result.password_hash_type == "argon2id"
+    assert result.id == "11111111-1111-1111-1111-111111111111"
 
 
 def test_get_auth_context_batched_sync(monkeypatch):
     user = SimpleNamespace(
+        id="11111111-1111-1111-1111-111111111111",
         email="user@example.com",
         password_hash="hash",
         full_name="User",
@@ -343,6 +346,7 @@ def test_get_auth_context_batched_sync(monkeypatch):
     assert result["user"]["email"] == "user@example.com"
     assert result["user"]["password_hash"] == "hash"
     assert result["user"]["password_hash_type"] == "argon2id"
+    assert result["user"]["id"] == "11111111-1111-1111-1111-111111111111"
     assert result["personal_team_id"] == "team-1"
     assert result["team_ids"] == ["team-1"]
     assert result["is_token_revoked"] is True
@@ -351,3 +355,15 @@ def test_get_auth_context_batched_sync(monkeypatch):
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._get_auth_context_batched_sync("missing@example.com")
     assert result["user"] is None
+
+
+def test_user_from_cached_dict_preserves_id():
+    """Preserve the stored user UUID when reconstructing a cached user."""
+    user = auth._user_from_cached_dict({"id": "11111111-1111-1111-1111-111111111111", "email": "user@example.com"})
+    assert user.id == "11111111-1111-1111-1111-111111111111"
+
+
+def test_user_from_cached_dict_without_id():
+    """Accept cached user data that predates UUID preservation."""
+    user = auth._user_from_cached_dict({"email": "user@example.com"})
+    assert user.id is None
