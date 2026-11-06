@@ -18,11 +18,13 @@ Write-time validation:
   carries no foreign key: roles.name has only a partial unique index, so
   existence is validated here at the application level.
 - The injectable group_exists_validator seam checks that the external group
-  exists in the IdP. It ships disabled by default: the stub always returns
-  "valid". The real Microsoft Graph validator lands with the app-only Graph
-  client (#5977). The semantics are WARN-AND-ALLOW: when Graph is unreachable
-  the validator returns "unknown", the mapping row is still stored, the row
-  is audit-logged, and a warning is emitted. A missing group never grants
+  exists in the IdP. The default validator is Graph-backed (#5977): for
+  Microsoft Entra issuers it resolves the SSO provider record for the issuer
+  (same issuer -> provider resolution as the trust-mode overage path) and
+  GETs /v1.0/groups/<external_group_id> with an app-only token. The
+  semantics are WARN-AND-ALLOW: when Graph is unreachable the validator
+  returns "unknown", the mapping row is still stored, the row is
+  audit-logged, and a warning is emitted. A missing group never grants
   access through this seam; the resolver fails closed at read time.
 """
 
@@ -31,7 +33,8 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timezone
-from typing import Callable, List, Optional
+import inspect
+from typing import Awaitable, Callable, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -41,11 +44,12 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth_context import get_user_email
-from mcpgateway.db import EmailTeam, ExternalGroupMapping
+from mcpgateway.db import EmailTeam, ExternalGroupMapping, fresh_db_session, SSOProvider
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_resolution import resolve_mapping_role
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway.utils.entra_graph_client import EntraGraphClient, is_entra_issuer
 from mcpgateway.utils.verify_credentials import invalidate_external_identity_cache
 
 logging_service = LoggingService()
@@ -54,26 +58,65 @@ logger = logging_service.get_logger(__name__)
 admin_external_group_mappings_router = APIRouter()
 
 #: Injectable validator seam. Signature: (issuer, tenant, external_group_id)
-#: -> validation_status. Ships disabled: the stub always returns "valid".
-#: WO-B.7 (#5977) wires the real Microsoft Graph validator.
-GroupExistsValidator = Callable[[str, str, str], str]
+#: -> validation_status (or an awaitable of it). The default is the
+#: Graph-backed validator wired in #5977; tests override it with a plain
+#: callable.
+GroupExistsValidator = Callable[[str, str, str], Union[str, Awaitable[str]]]
 
 
-def _disabled_group_exists_validator(issuer: str, tenant: str, external_group_id: str) -> str:
-    """Default group-existence validator: disabled, always reports "valid".
+async def _graph_group_exists_validator(issuer: str, tenant: str, external_group_id: str) -> str:  # pylint: disable=unused-argument
+    """Default group-existence validator: Microsoft Graph group lookup (#5977).
+
+    Issuer-scoped: a Graph lookup is attempted only for Microsoft Entra
+    issuers (:func:`is_entra_issuer`, the single Microsoft-hosts rule shared
+    with the OAuth manager); any other issuer reports "valid" with one log
+    line and no IdP call. The SSO provider record matching the issuer
+    supplies the app-only credentials, resolved exactly like the trust-mode
+    overage path (``trusted_claims.resolve_overage_groups``: enabled
+    SSOProvider whose issuer matches). A missing provider record or missing
+    client secret keeps the disabled-stub posture ("valid") with a WARNING:
+    an unconfigured Graph never blocks mapping writes.
 
     Args:
         issuer: Token issuer the mapping is scoped to.
-        tenant: Tenant the mapping is scoped to ("" when the row is tenant-less).
+        tenant: Tenant the mapping is scoped to ("" when the row is
+            tenant-less). Unused: provider resolution is issuer-scoped.
         external_group_id: External IdP group ID to check.
 
     Returns:
-        str: Always "valid"; no IdP call is made until #5977 lands.
+        str: "valid" when Graph answers 200 (or validation is skipped per
+        the rules above); "graph_group_not_found" when Graph answers 404;
+        "unknown" on any other Graph failure, which the CRUD's
+        warn-and-allow contract stores with a warning and an audit entry.
     """
-    return "valid"
+    if not is_entra_issuer(issuer):
+        logger.info("Group-existence validation skipped for non-Entra issuer %r; treating mapping as valid.", issuer)
+        return "valid"
+
+    with fresh_db_session() as db:
+        provider = db.query(SSOProvider).filter(SSOProvider.issuer == issuer, SSOProvider.is_enabled.is_(True)).first()
+        if provider is None or not getattr(provider, "client_secret_encrypted", None):
+            logger.warning(
+                "No app-only Graph credentials configured for Entra issuer %r; group-existence validation skipped, storing mapping with validation_status=valid.",
+                issuer,
+            )
+            return "valid"
+
+        try:
+            exists = await EntraGraphClient().group_exists(provider, external_group_id)
+        except Exception as exc:  # noqa: BLE001 — any Graph failure degrades to warn-and-allow, never blocks the write
+            logger.warning(
+                "Graph group-existence check failed for issuer %r external_group_id=%s: %s; storing mapping with validation_status=unknown.",
+                issuer,
+                external_group_id,
+                exc,
+            )
+            return "unknown"
+
+    return "valid" if exists else "graph_group_not_found"
 
 
-group_exists_validator: GroupExistsValidator = _disabled_group_exists_validator
+group_exists_validator: GroupExistsValidator = _graph_group_exists_validator
 
 
 class ExternalGroupMappingCreate(BaseModel):
@@ -178,7 +221,7 @@ def _check_null_tenant_duplicate(db: Session, issuer: str, external_group_id: st
         raise HTTPException(status_code=409, detail="Mapping already exists for (issuer, tenant, external_group_id)")
 
 
-def _run_group_validation(mapping: ExternalGroupMapping, user, db: Session) -> None:
+async def _run_group_validation(mapping: ExternalGroupMapping, user, db: Session) -> None:
     """Run the group-existence validator and record the outcome on the row.
 
     WARN-AND-ALLOW: a validation_status of "unknown" (Graph unreachable) does
@@ -190,6 +233,8 @@ def _run_group_validation(mapping: ExternalGroupMapping, user, db: Session) -> N
         db: Database session for the audit entry.
     """
     status_value = group_exists_validator(mapping.issuer, mapping.tenant or "", mapping.external_group_id)
+    if inspect.isawaitable(status_value):
+        status_value = await status_value
     mapping.validation_status = status_value
     mapping.last_validated_at = datetime.now(timezone.utc)
     if status_value == "unknown":
@@ -254,7 +299,7 @@ async def create_external_group_mapping(
         cf_team_id=body.cf_team_id,
         cf_role=body.cf_role,
     )
-    _run_group_validation(mapping, user, db)
+    await _run_group_validation(mapping, user, db)
     db.add(mapping)
     try:
         db.commit()
@@ -328,7 +373,7 @@ async def update_external_group_mapping(
     for field, value in updates.items():
         setattr(mapping, field, value)
 
-    _run_group_validation(mapping, user, db)
+    await _run_group_validation(mapping, user, db)
     try:
         db.commit()
     except IntegrityError as exc:
