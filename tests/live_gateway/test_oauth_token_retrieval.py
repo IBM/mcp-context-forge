@@ -237,7 +237,14 @@ def test_gateway_only_api_token_is_denied(token_gateway: TokenGateway, permissio
 
 
 def test_tokens_create_api_token_can_retrieve(token_gateway: TokenGateway) -> None:
-    """A visible gateway and tokens.create allow retrieval of the caller's token."""
+    """An authorized developer can retrieve their token with a tokens.create API scope."""
     response = _get(token_gateway, token_gateway.headers("owner", ["tokens.create"]))
     assert response.status_code == 200, response.text
     assert response.json()["access_token"] == "access-for-owner"
+
+
+def test_viewer_cannot_elevate_permissions_with_api_token_scopes(token_gateway: TokenGateway) -> None:
+    """Explicit token scopes cannot grant gateway update permission to a viewer."""
+    response = _get(token_gateway, token_gateway.headers("viewer", ["gateways.update", "tokens.create"]))
+    assert response.status_code == 403, response.text
+    assert "access-for-" not in response.text

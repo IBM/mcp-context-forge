@@ -515,8 +515,9 @@ tool call but never actually invoke it.
 ### OAuth Token Retrieval Permissions
 
 `GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read`.
-`GET /oauth/token/{gateway_id}` requires `tokens.create` because it returns a live access token.
-Explicit API token scopes must grant the same permission. Gateway visibility checks still apply.
+`GET /oauth/token/{gateway_id}` requires both `tokens.create` and `gateways.update` because it returns a live access token.
+Viewers hold `tokens.create` for API-token self-service, so that permission alone does not authorize OAuth token retrieval.
+Explicit API token scopes must grant `tokens.create`. Gateway visibility checks still apply.
 The token lookup uses the authenticated caller's identity, so callers can retrieve only their own stored token.
 The endpoint is disabled unless `OAUTH_TOKEN_RETRIEVAL_ENABLED=true`.
 See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for configuration and response details.
