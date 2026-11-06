@@ -3,12 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Per-request scope resolution and Rust-runtime trust-layer helpers.
+Per-request scope resolution and Python affinity trust-layer helpers.
 
 Purpose (for future implementers)
 ---------------------------------
 ``mcpgateway`` keeps token primitives, request scope resolution, and the
-trusted Rust-runtime hop in three logical groups, even though only two
+trusted Python affinity hop in three logical groups, even though only two
 modules currently exist:
 
 - ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
@@ -23,7 +23,7 @@ modules currently exist:
   pattern unless it is part of the dependency chain.
 
 - ``mcpgateway.auth_context`` (this module) - the **per-request scope
-  resolution layer** plus the **Rust-runtime trust-header helpers**. The
+  resolution layer** plus the **Python affinity trust-header helpers**. The
   scope-resolution helpers take a FastAPI ``Request`` plus the ``user``
   produced by the auth dependency and compute what the caller is allowed
   to see on this specific request - this is Layer 1 in the two-layer model
@@ -32,7 +32,7 @@ modules currently exist:
   DO"). The trust-header helpers (``decode_internal_mcp_auth_context``,
   ``has_valid_internal_mcp_runtime_auth_header``, the
   ``_expected_internal_mcp_runtime_auth_header*`` family) implement the
-  HMAC contract between the Rust MCP runtime and the Python gateway. They
+  HMAC contract between Python affinity workers. They
   live here, not in ``auth.py``, because the trusted forwarded context
   produces a synthetic ``user`` that the per-request helpers consume; the
   two responsibilities are coupled at the request boundary. A future
@@ -62,7 +62,7 @@ The names below are the **module's public API**. Callers in ``main.py``,
         get_jwt_user_email_from_payload(payload) -> str | None
         resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
 
-    Trust-layer headers forwarded from the Rust MCP runtime
+    Trust-layer headers forwarded by Python affinity workers
         decode_internal_mcp_auth_context(header_value) -> dict
         get_internal_mcp_auth_context(request) -> dict | None
         has_valid_internal_mcp_runtime_auth_header(request) -> bool
@@ -493,12 +493,8 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
 # the response cannot be redirected) and the consumer verifies the envelope
 # before dispatch.
 #
-# These helpers are deliberately separate from the general header-encoding
-# contract (encode/decode_internal_mcp_auth_context), which must stay
-# byte-compatible for the Rust runtime. The forward signature is Redis-only
-# Python transit metadata: it is stripped by the owning worker before the
-# in-process dispatch and never reaches the Rust runtime, so it does not affect
-# the encoded auth-context wire format.
+# Envelope signatures bind Redis transit metadata before the owner worker
+# constructs the header-borne context for in-process affinity dispatch.
 FORWARD_SIG_FIELD = "forward_sig"
 _REDIS_FORWARD_ENVELOPE_SIG_DOMAIN = b"mcpgw.redis-fwd-envelope.v1"
 _REDIS_FORWARD_ENVELOPE_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in canonical JSON
@@ -567,92 +563,37 @@ def verify_redis_forward_envelope(envelope: Dict[str, Any]) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-# Internal-dispatch trust gate, defined once and shared by all callers.
+# Internal-dispatch trust gate shared by the route and authentication middleware.
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
-INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
 INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
 INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
-
-
-def _internal_path_requires_auth_context(path: str) -> bool:
-    """Whether an internal route requires an auth context.
-
-    Only ``*/authenticate`` is exempt, since it creates the context; every
-    other internal route must carry one.
-
-    Args:
-        path: The request path to classify.
-
-    Returns:
-        ``False`` for ``*/authenticate``, otherwise ``True``.
-    """
-    return not path.rstrip("/").endswith("/authenticate")
-
-
-def is_trusted_internal_runtime_request(
-    request: Request,
-    *,
-    allowed_prefixes: tuple[str, ...],
-    require_auth_context: bool,
-    path: Optional[str] = None,
-) -> bool:
-    """Return whether a request is a trusted in-process internal-runtime hop.
-
-    The trust boundary is the HMAC header and, when required, the encoded
-    ``x-contextforge-auth-context``. The loopback check is defense in depth,
-    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
-    external caller influence ``request.client.host`` (the replay is hardened
-    separately by stripping forwarded / client-IP headers).
-
-    Args:
-        request: Incoming request to inspect.
-        allowed_prefixes: Internal path prefixes this caller trusts.
-        require_auth_context: Require a non-empty ``x-contextforge-auth-context``.
-        path: Explicit path override for callers that strip a ``root_path``;
-            defaults to ``request.url.path``.
-
-    Returns:
-        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
-        and loopback all hold; otherwise ``False``.
-    """
-    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
-    if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
-        return False
-    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
-        return False
-    if not has_valid_internal_mcp_runtime_auth_header(request):
-        return False
-    if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
-        return False
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    return client_host in ("127.0.0.1", "::1")
 
 
 def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
-    """MCP + A2A internal trust gate with a path-aware auth-context requirement.
+    """Accept only authenticated Python affinity dispatch to the internal RPC route.
 
-    ``*/authenticate`` routes are exempt from the auth-context requirement;
-    every other internal route requires it. ``/_internal/a2a/*`` is trusted
-    only when the A2A feature is enabled.
+    The HMAC and forwarded auth context form the trust boundary. The loopback
+    check adds defense in depth. Forwarded client-IP headers cannot establish trust.
 
     Args:
         request: Incoming request to inspect.
-        path: Explicit path override (e.g. a ``root_path``-stripped path);
-            defaults to ``request.url.path``.
+        path: Optional request path after removing the deployment root path.
 
     Returns:
-        ``True`` when the request is a trusted internal MCP/A2A hop.
+        ``True`` only for the affinity marker, RPC path, valid HMAC, non-empty
+        auth context, and a loopback client address.
     """
-    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
-    if p.startswith(f"{INTERNAL_A2A_PATH_PREFIX}/") and not settings.mcpgateway_a2a_enabled:
+    request_path = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if request_path.rstrip("/") != f"{INTERNAL_MCP_PATH_PREFIX}/rpc":
         return False
-    return is_trusted_internal_runtime_request(
-        request,
-        allowed_prefixes=(INTERNAL_MCP_PATH_PREFIX, INTERNAL_A2A_PATH_PREFIX),
-        require_auth_context=_internal_path_requires_auth_context(p),
-        path=p,
-    )
+    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) != "affinity":
+        return False
+    if not has_valid_internal_mcp_runtime_auth_header(request):
+        return False
+    if not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
+        return False
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return client_host in ("127.0.0.1", "::1")
 
 
 def get_token_teams_from_request(request: Request) -> Optional[List[str]]:

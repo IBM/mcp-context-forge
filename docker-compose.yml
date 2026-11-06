@@ -145,26 +145,6 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
-      - A2A_RUST_LISTEN_HTTP=${A2A_RUST_LISTEN_HTTP:-}
-      - A2A_RUST_LISTEN_UDS=${A2A_RUST_LISTEN_UDS:-}
-      - A2A_RUST_LOG=${A2A_RUST_LOG:-}
-      - A2A_RUST_REQUEST_TIMEOUT_MS=${A2A_RUST_REQUEST_TIMEOUT_MS:-}
-      - A2A_RUST_AUTH_SECRET=${A2A_RUST_AUTH_SECRET:-${AUTH_ENCRYPTION_SECRET:-}}
-      - A2A_RUST_BACKEND_BASE_URL=${A2A_RUST_BACKEND_BASE_URL:-http://127.0.0.1:4444}
-      - A2A_RUST_MAX_CONCURRENT=${A2A_RUST_MAX_CONCURRENT:-64}
-      - A2A_RUST_MAX_QUEUED=${A2A_RUST_MAX_QUEUED:-}
-      - A2A_RUST_CIRCUIT_FAILURE_THRESHOLD=${A2A_RUST_CIRCUIT_FAILURE_THRESHOLD:-5}
-      - A2A_RUST_CIRCUIT_COOLDOWN_SECS=${A2A_RUST_CIRCUIT_COOLDOWN_SECS:-30}
-      - A2A_RUST_REDIS_URL=${A2A_RUST_REDIS_URL:-${REDIS_URL:-}}
-      - A2A_RUST_L2_CACHE_TTL_SECS=${A2A_RUST_L2_CACHE_TTL_SECS:-300}
-      - A2A_RUST_CACHE_INVALIDATION_CHANNEL=${A2A_RUST_CACHE_INVALIDATION_CHANNEL:-mcpgw:a2a:invalidate}
-      - A2A_RUST_SESSION_ENABLED=${A2A_RUST_SESSION_ENABLED:-true}
-      - A2A_RUST_SESSION_TTL_SECS=${A2A_RUST_SESSION_TTL_SECS:-300}
-      - A2A_RUST_SESSION_FINGERPRINT_HEADERS=${A2A_RUST_SESSION_FINGERPRINT_HEADERS:-authorization,cookie,x-forwarded-for}
-      - A2A_RUST_EVENT_STORE_MAX_EVENTS=${A2A_RUST_EVENT_STORE_MAX_EVENTS:-1000}
-      - A2A_RUST_EVENT_STORE_TTL_SECS=${A2A_RUST_EVENT_STORE_TTL_SECS:-3600}
-      - A2A_RUST_EVENT_FLUSH_INTERVAL_MS=${A2A_RUST_EVENT_FLUSH_INTERVAL_MS:-1000}
-      - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
       # MCP Apps UI support (disabled by default; opt-in only)
       - MCPGATEWAY_MCP_APPS_ENABLED=${MCPGATEWAY_MCP_APPS_ENABLED:-false}
       # Inbound MCP protocol mode (auto by default, accepts 2026-07-28 clients; set legacy to accept only handshake-era versions)
@@ -277,25 +257,25 @@ services:
       # - JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
-      # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH=false)
+      # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH=false)  # pragma: allowlist secret
       # Only set these if you explicitly enable Basic auth for backwards compatibility
       # - API_ALLOW_BASIC_AUTH=true
       # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}  # pragma: allowlist secret
       # Auth encryption secret + default user password
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
       - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
       - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-32}
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
       - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
@@ -311,7 +291,7 @@ services:
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}  # pragma: allowlist secret
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - "SMTP_FROM_NAME=${SMTP_FROM_NAME:-ContextForge}"
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
@@ -333,7 +313,7 @@ services:
       - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
       - SSO_KEYCLOAK_REALM=${SSO_KEYCLOAK_REALM:-mcp-gateway}
       - SSO_KEYCLOAK_CLIENT_ID=${SSO_KEYCLOAK_CLIENT_ID:-mcp-gateway}
-      - SSO_KEYCLOAK_CLIENT_SECRET=${SSO_KEYCLOAK_CLIENT_SECRET:-keycloak-dev-secret}
+      - SSO_KEYCLOAK_CLIENT_SECRET=${SSO_KEYCLOAK_CLIENT_SECRET:-keycloak-dev-secret}  # pragma: allowlist secret
       - SSO_KEYCLOAK_MAP_REALM_ROLES=${SSO_KEYCLOAK_MAP_REALM_ROLES:-true}
       - SSO_KEYCLOAK_MAP_CLIENT_ROLES=${SSO_KEYCLOAK_MAP_CLIENT_ROLES:-false}
       - SSO_KEYCLOAK_GROUPS_CLAIM=${SSO_KEYCLOAK_GROUPS_CLAIM:-groups}
@@ -343,7 +323,7 @@ services:
       # Accept bearer tokens from a trusted_for_api_auth SSO provider on API/MCP endpoints
       - SSO_API_TOKEN_AUTH_ENABLED=${SSO_API_TOKEN_AUTH_ENABLED:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
-      - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
+      - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}  # pragma: allowlist secret
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -390,7 +370,7 @@ services:
       # - IDENTITY_PROPAGATION_HEADERS_PREFIX=X-Forwarded-User
       # - IDENTITY_SENSITIVE_ATTRIBUTES=["password_hash","internal_id","ssn"]
       # - IDENTITY_SIGN_CLAIMS=false              # HMAC-sign propagated claims
-      # - IDENTITY_CLAIMS_SECRET=                 # uses JWT_SECRET_KEY if unset
+      # - IDENTITY_CLAIMS_SECRET=                 # uses JWT_SECRET_KEY if unset  # pragma: allowlist secret
 
       # Required for the GET /mcp server-to-client SSE stream (ADR-052).
       # Without this, GET /mcp returns 405 because the gateway has no event
@@ -1017,10 +997,10 @@ services:
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}  # pragma: allowlist secret
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -1284,7 +1264,7 @@ services:
       - prometheus_token:/tokens
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -1293,8 +1273,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -1548,7 +1528,7 @@ services:
         condition: service_started
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -1557,8 +1537,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - "GATEWAY_URL=${GATEWAY_URL:-http://gateway:4444}"
 
     # This is a one-shot container that exits after registration
@@ -1724,7 +1704,7 @@ services:
             print(f'Note: Could not check existing gateway: {e}')
 
         # Delete existing virtual server if present (using fixed ID)
-        VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
+        VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'  # pragma: allowlist secret
         try:
             api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}', retry_statuses=(401, 502, 503))
             print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
@@ -1823,7 +1803,7 @@ services:
             # Use fixed UUID for consistent server ID across restarts
             server_payload = {
                 'server': {
-                    'id': '9779b6698cbd4b4995ee04a4fab38737',
+                    'id': '9779b6698cbd4b4995ee04a4fab38737',  # pragma: allowlist secret
                     'name': 'Fast Time Server',
                     'description': 'Virtual server exposing Fast Time MCP tools, resources, and prompts',
                     'associated_tools': tool_ids,
@@ -1928,7 +1908,7 @@ services:
         condition: service_healthy
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -1937,8 +1917,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2059,7 +2039,7 @@ services:
         condition: service_healthy
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -2068,8 +2048,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2141,7 +2121,7 @@ services:
       - locust_token:/tokens
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -2150,8 +2130,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -2322,7 +2302,7 @@ services:
         condition: service_started
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
@@ -2331,8 +2311,8 @@ services:
       - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
-      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"  # pragma: allowlist secret
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
@@ -2445,7 +2425,7 @@ services:
     volumes:
       - ./certs:/certs
     environment:
-      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}  # pragma: allowlist secret
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -2595,8 +2575,7 @@ services:
 #  ZAP API UI:   http://localhost:8090/UI
 #
 #  Run OWASP A01 ZAP tests after the stack is up:
-#    ZAP_BASE_URL=http://localhost:8090 ZAP_API_KEY=changeme \
-#      pytest tests/playwright/security/owasp/test_a01_zap_dast.py -v -m owasp_a01_zap
+#    ZAP_BASE_URL=http://localhost:8090 ZAP_API_KEY=changeme pytest tests/playwright/security/owasp/test_a01_zap_dast.py -v -m owasp_a01_zap  # pragma: allowlist secret
 #
 #  Environment variables:
 #    ZAP_API_KEY   - ZAP API key (default: changeme)
@@ -2616,7 +2595,7 @@ services:
       - -host
       - "0.0.0.0"
       - -config
-      - "api.key=${ZAP_API_KEY:-changeme}"
+      - "api.key=${ZAP_API_KEY:-changeme}"  # pragma: allowlist secret
       - -config
       - "api.addrs.addr.name=.*"        # Docker port-mapping arrives via bridge IP, not 127.0.0.1;
       - -config
@@ -2624,12 +2603,12 @@ services:
       - -config
       - "connection.timeoutInSecs=20"
     environment:
-      - ZAP_API_KEY=${ZAP_API_KEY:-changeme}
+      - ZAP_API_KEY=${ZAP_API_KEY:-changeme}  # pragma: allowlist secret
     depends_on:
       nginx:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8090/JSON/core/view/version/?apikey=${ZAP_API_KEY:-changeme}"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8090/JSON/core/view/version/?apikey=${ZAP_API_KEY:-changeme}"]  # pragma: allowlist secret
       interval: 30s
       timeout: 10s
       retries: 5
