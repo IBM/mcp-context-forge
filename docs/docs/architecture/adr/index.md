@@ -43,9 +43,9 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Superseded | Performance | 2025-12-26 |
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
 | 0040  | Flexible Admin UI Section Visibility | Accepted | User Interface | 2026-02-16 |
-| 0041  | Top-Level Rust Workspace (Cargo.toml at Repository Root) | Accepted | Architecture | 2026-02-26 |
-| 0042  | Enforce Rust in the Build Process                    | Proposed | Build         | 2026-02-26 |
-| 0043  | Rust MCP Runtime Sidecar with Mode-Based Rollout     | Accepted | Architecture  | 2026-03-14 |
+| 0041  | Top-Level Rust Workspace (Cargo.toml at Repository Root) | Superseded by ADR-058 | Architecture | 2026-02-26 |
+| 0042  | Enforce Rust in the Build Process                    | Superseded by ADR-058 | Build         | 2026-02-26 |
+| 0043  | Rust MCP Runtime Sidecar with Mode-Based Rollout     | Superseded by ADR-058 | Architecture  | 2026-03-14 |
 | 0044  | Module Communication Protocol (gRPC over UDS)        | Proposed | Architecture  | 2026-03-15 |
 | 0045  | Authentication and Authorization Remain in Core      | Proposed | Security      | 2026-03-15 |
 | 0046  | Shared-Nothing Between Protocol Modules              | Proposed | Architecture  | 2026-03-15 |
@@ -60,5 +60,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
 | 0056  | CSP Hardening — No eval, No Inline Handlers, Nonce-Only Scripts (supersedes ADR-0014 CSP) | Accepted | Security | 2026-10-01  |
 | 0057  | Trust A2A Plugin Header Output | Accepted | Security | 2026-10-06 |
+| 0058  | Remove Rust Runtime Sidecars and Workspace | Accepted | Architecture | 2026-11-04 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

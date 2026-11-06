@@ -13,7 +13,7 @@ Welcome! This guide is for developers contributing to ContextForge. Whether you'
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
-| [Coding Standards](coding-standards.md)                                           | Clean Code rules for readable, self-documenting Python, Rust, and TypeScript   |
+| [Coding Standards](coding-standards.md)                                           | Clean Code rules for readable, self-documenting Python and TypeScript         |
 | [Agent Prose Standard](agent-prose.md)                                            | ASD-STE100 prose rules for code comments, commits, PRs, reviews, and issues    |
 | [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Development setup, project architecture, workflow, and debugging              |
 
@@ -57,7 +57,7 @@ Test coverage includes:
 
 * Unit tests under `tests/unit/`
 * Integration tests under `tests/integration/`
-* End-to-end tests under `tests/e2e/` (in-process FastAPI) and `tests/live_gateway/` (live infrastructure: MCP / SSO / Rust / protocol compliance)
+* End-to-end tests under `tests/e2e/` (in-process FastAPI) and `tests/live_gateway/` (live infrastructure: MCP / SSO)
 * UI automation under `tests/playwright/` (Playwright)
 * Load testing under `tests/loadtest/` (Locust)
 * Example payload performance testing under `tests/hey/`
@@ -68,7 +68,7 @@ Use:
 make test                        # run full suite (in-process; no live services required)
 rstest tests/unit/               # run only unit tests
 rstest tests/e2e/                # run in-process end-to-end scenarios
-make test-live-gateway           # run live-gateway tests (mcp + sso + rust + compliance)
+make test-live-gateway           # run live-gateway tests (mcp + sso)
 rstest tests/playwright/         # run UI automation tests
 locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```

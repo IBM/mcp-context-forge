@@ -1513,11 +1513,8 @@ the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
 MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/list` return bounded pages.
 Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
 Python handles pagination for global and virtual-server catalogs.
-This change covers Python MCP endpoints. Rust runtime pagination remains outside this change.
 `MCP_LIST_PAGE_SIZE` controls protocol catalog pages. `PAGINATION_DEFAULT_PAGE_SIZE` controls REST and Admin pages.
 The separate defaults prevent REST configuration changes from altering MCP traversal behavior.
-The Rust tools bridge sends no request body. Python returns the complete authorized tools catalog for that bridge.
-Rust cursor support remains a separate part of [#6990](https://github.com/IBM/mcp-context-forge/issues/6990).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
