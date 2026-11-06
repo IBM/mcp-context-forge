@@ -49,6 +49,8 @@
 
 ### Fixed
 
+- **Anthropic requests omit the provider default temperature** ([#7385](https://github.com/IBM/mcp-context-forge/issues/7385)) - A chat completion to an Anthropic provider that does not set `temperature` no longer receives the provider-wide `default_temperature`; current Claude models (Opus 4.7+, Sonnet 5, Haiku 5.5) reject a non-default value with HTTP 400. An explicit client `temperature` is still forwarded.
+
 - **OIDC JWKS fetches honor `SKIP_SSL_VERIFY`** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026)) - JWKS retrieval for SSO and external-IdP token verification now uses the shared TLS verification setting, like OIDC discovery, token exchange, and user info. Before, an identity provider with a self-signed certificate failed at JWKS retrieval even with `SKIP_SSL_VERIFY=true`. With the flag set, the gateway logs a warning on each JWKS fetch, because unverified JWKS keys let a network attacker forge tokens. Use the flag in development only. Per-provider CA bundles remain open under #4026.
 
 - **External-IdP tokens on `/mcp`** ([#7435](https://github.com/IBM/mcp-context-forge/issues/7435)) - Trusted external-IdP bearer tokens now authenticate on `/mcp`, matching `/rpc`. An `oauth_enabled` virtual server now also accepts trusted-provider tokens whose issuer is outside its `authorization_servers`. The gateway checks the audience against the provider `api_audience`, not the server `resource`. No per-server opt-out exists.
