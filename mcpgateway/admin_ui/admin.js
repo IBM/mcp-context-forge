@@ -457,6 +457,7 @@ import {
   serverSideTeamSearch,
   toggleUseDefaultMaxMembers,
   updateDefaultVisibility,
+  validatePassword,
   validatePasswordMatch,
   validatePasswordRequirements,
 } from "./teams.js";
@@ -474,6 +475,7 @@ Admin.rejectJoinRequest = rejectJoinRequest;
 Admin.requestToJoinTeam = requestToJoinTeam;
 Admin.serverSideTeamSearch = serverSideTeamSearch;
 Admin.updateDefaultVisibility = updateDefaultVisibility;
+Admin.validatePassword = validatePassword;
 Admin.validatePasswordMatch = validatePasswordMatch;
 Admin.validatePasswordRequirements = validatePasswordRequirements;
 

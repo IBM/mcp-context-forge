@@ -6326,7 +6326,9 @@ async def admin_view_team_members(
                                 id="member-search-{team.id}"
                                 placeholder="Search members..."
                                 class="w-48 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                                oninput="Admin.debouncedMemberSearch('{team.id}', this.value)"
+                                data-action-input="debouncedMemberSearch"
+                                data-arg0="{team.id}"
+                                data-arg1="this.value"
                             />
                         </div>
                         <div
@@ -6351,7 +6353,9 @@ async def admin_view_team_members(
                                 id="non-member-search-{team.id}"
                                 placeholder="Search users by name or email..."
                                 class="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                                oninput="Admin.debouncedNonMemberSearch('{team.id}', this.value)"
+                                data-action-input="debouncedNonMemberSearch"
+                                data-arg0="{team.id}"
+                                data-arg1="this.value"
                             />
                         </div>
                         <div
@@ -8439,13 +8443,13 @@ async def admin_get_user_edit(
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="Admin.validatePasswordRequirements(); Admin.validatePasswordMatch();">
+                           data-action-input="validatePassword">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
                     <input type="password" name="confirm_password" id="confirm-password-field"
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="Admin.validatePasswordMatch()">
+                           data-action-input="validatePasswordMatch">
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
                 {password_requirements_html}
