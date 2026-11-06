@@ -8074,7 +8074,8 @@ class TokenScopeRequest(BaseModel):
     def validate_permissions(cls, v: List[str]) -> List[str]:
         """Validate permission scope format.
 
-        Permissions must be in format 'resource.action' (or the legacy colon form 'resource:action') or wildcard '*'.
+        Permissions must use 'resource.action', 'resource:action', or the namespaced
+        'namespace.resource:action' form, or wildcard '*'.
 
         Args:
             v: List of permission strings to validate.
@@ -8083,7 +8084,7 @@ class TokenScopeRequest(BaseModel):
             List of validated permission strings with whitespace stripped.
 
         Raises:
-            ValueError: If any permission does not match 'resource.action' format or '*'.
+            ValueError: If any permission does not match a supported permission format or '*'.
 
         Examples:
             >>> TokenScopeRequest.validate_permissions(["tools.read", "resources.write"])
@@ -8092,14 +8093,18 @@ class TokenScopeRequest(BaseModel):
             ['*']
             >>> TokenScopeRequest.validate_permissions(["audit:read", "security:read"])
             ['audit:read', 'security:read']
+            >>> TokenScopeRequest.validate_permissions(["admin.oauth_clients:create"])
+            ['admin.oauth_clients:create']
         """
         if not v:
             return v
 
-        # Permission pattern: resource.action or resource:action (alphanumeric with underscores).
-        # Colon form covers the handful of Permissions constants (audit:read, security:read,
-        # logs:read, metrics:read) that predate the dot-form convention.
-        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*[.:][a-zA-Z][a-zA-Z0-9_]*$")
+        # Colon permissions may optionally include a namespace, as in
+        # admin.oauth_clients:create; this keeps permission scopes exact-matchable.
+        permission_patterns = (
+            re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*$"),
+            re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9_]*\.)?[a-zA-Z][a-zA-Z0-9_]*:[a-zA-Z][a-zA-Z0-9_]*$"),
+        )
 
         validated = []
         for perm in v:
@@ -8110,8 +8115,8 @@ class TokenScopeRequest(BaseModel):
             if perm == "*":
                 validated.append(perm)
                 continue
-            if not permission_pattern.match(perm):
-                raise ValueError(f"Invalid permission format '{perm}'. Use 'resource.action' format (e.g., 'tools.read') or '*' for full access")
+            if not any(pattern.fullmatch(perm) for pattern in permission_patterns):
+                raise ValueError(f"Invalid permission format '{perm}'. Use 'resource.action', 'resource:action', 'namespace.resource:action', or '*' for full access")
             validated.append(perm)
         return validated
 

@@ -12,6 +12,13 @@ from pydantic import ValidationError
 from mcpgateway.config import Settings
 
 
+def test_implicit_authorize_dcr_flag_defaults_enabled(monkeypatch):
+    """The compatibility default preserves existing implicit DCR behavior."""
+    monkeypatch.delenv("DCR_ALLOW_IMPLICIT_REGISTRATION_ON_AUTHORIZE", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.dcr_allow_implicit_registration_on_authorize is True
+
+
 @pytest.mark.parametrize("url", ["http://ok.com/", "https://secure.org/"])
 def test_app_domain_valid(url):
     settings = Settings(app_domain=url)

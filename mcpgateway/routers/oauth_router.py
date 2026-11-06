@@ -34,9 +34,10 @@ from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db, Permissions
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import check_permission_inline, get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
@@ -159,6 +160,36 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
         "teams": getattr(current_user, "teams", []),
         "is_admin": getattr(current_user, "is_admin", False),
     }
+
+
+def _build_oauth_permission_context(current_user: dict[str, Any] | EmailUserResponse, request: Request) -> dict[str, Any]:
+    """Build the RBAC context used for conditional OAuth DCR authorization."""
+    if isinstance(current_user, dict):
+        context = dict(current_user)
+    else:
+        context = {"email": get_user_email(current_user), "is_admin": _extract_is_admin(current_user)}
+
+    for key in ("token_teams", "token_scopes", "auth_method", "ip_address", "user_agent", "plugin_context_table", "plugin_global_context", "request_id"):
+        context.setdefault(key, getattr(request.state, key, None))
+    return context
+
+
+def _audit_oauth_dcr_outcome(gateway_id: str, gateway: Gateway, current_user: dict[str, Any] | EmailUserResponse, issuer: str, outcome: str) -> None:
+    """Record an OAuth DCR outcome without including registration credentials."""
+    actor = get_user_email(current_user)
+    try:
+        get_audit_trail_service().log_action(
+            action="oauth_dcr_registration",
+            resource_type="oauth_client",
+            resource_id=gateway_id,
+            user_id=actor,
+            user_email=actor,
+            team_id=getattr(gateway, "team_id", None),
+            success=outcome == "success",
+            details={"issuer": issuer, "outcome": outcome},
+        )
+    except Exception:
+        logger.error("Failed to record OAuth DCR audit outcome for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
 
 
 async def enforce_fetch_tools_csrf(request: Request) -> None:
@@ -736,7 +767,42 @@ async def initiate_oauth_flow(
         client_id = oauth_config.get("client_id")
 
         if issuer and not client_id:
-            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
+            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials and settings.dcr_allow_implicit_registration_on_authorize:
+                permission_context = _build_oauth_permission_context(current_user, request)
+                try:
+                    can_create_oauth_client = await check_permission_inline(
+                        permission_context,
+                        Permissions.ADMIN_OAUTH_CLIENTS_CREATE,
+                        team_id=None,
+                        db=db,
+                        request=request,
+                        allow_admin_bypass=False,
+                    )
+                    can_update_gateway = await check_permission_inline(
+                        permission_context,
+                        Permissions.GATEWAYS_UPDATE,
+                        team_id=getattr(gateway, "team_id", None),
+                        db=db,
+                        request=request,
+                        allow_admin_bypass=False,
+                    )
+                except Exception as permission_error:
+                    _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "failure")
+                    logger.error(
+                        "OAuth DCR permission check failed for gateway %s: %s",
+                        SecurityValidator.sanitize_log_message(gateway_id),
+                        SecurityValidator.sanitize_log_message(str(permission_error)),
+                    )
+                    raise HTTPException(status_code=500, detail="Unable to authorize OAuth client registration") from permission_error
+
+                if not (can_create_oauth_client and can_update_gateway):
+                    _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "denied")
+                    raise HTTPException(status_code=403, detail="Access denied")
+
+                logger.warning(
+                    "Implicit DCR during OAuth authorization is deprecated for gateway %s; configure client credentials or enable it explicitly",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                )
                 logger.info(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id. Attempting DCR...")
 
                 try:
@@ -799,23 +865,28 @@ async def initiate_oauth_flow(
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
+                    _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "success")
+
                     logger.info(f"Updated gateway {SecurityValidator.sanitize_log_message(gateway_id)} with DCR credentials and auth_type=oauth")
 
                 except DcrError as dcr_err:
+                    _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "failure")
                     logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
                         detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
+                    _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "failure")
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
                     raise HTTPException(status_code=500, detail="Failed to register OAuth client")
             else:
                 # DCR is disabled or auto-register is off
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
+                _audit_oauth_dcr_outcome(gateway_id, gateway, current_user, issuer, "denied")
                 raise HTTPException(
                     status_code=400,
-                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
+                    detail="Gateway OAuth configuration is incomplete. Configure client credentials or enable DCR and implicit registration on the OAuth authorize endpoint.",
                 )
 
         # Validate required fields for OAuth flow

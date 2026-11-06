@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeamMember, Gateway
+from mcpgateway.db import EmailTeamMember, Gateway, Permissions
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import (
     ADMIN_CSRF_COOKIE_NAME,
@@ -92,6 +92,20 @@ def mock_request():
     request.scope = {"root_path": ""}
     request.state = SimpleNamespace(token_teams=["team-1"])
     return request
+
+
+@pytest.fixture
+def allow_dcr_permissions():
+    """Allow DCR only in tests that explicitly exercise an authorized registration."""
+    with patch("mcpgateway.routers.oauth_router.check_permission_inline", new_callable=AsyncMock, return_value=True) as permission_check:
+        yield permission_check
+
+
+@pytest.fixture
+def mock_oauth_dcr_audit():
+    """Keep DCR router tests isolated from the configured audit database."""
+    with patch("mcpgateway.routers.oauth_router._audit_oauth_dcr_outcome") as audit:
+        yield audit
 
 
 @pytest.fixture
@@ -468,7 +482,7 @@ class TestOAuthRouter:
         assert "Gateway is not configured for Authorization Code flow" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_disabled_missing_client_id(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_disabled_missing_client_id(self, mock_db, mock_request, mock_current_user, mock_oauth_dcr_audit):
         """Disabling DCR blocks auto-registration even when its trigger remains enabled."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
@@ -486,6 +500,7 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr_service, patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.dcr_enabled = False
             mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_allow_implicit_registration_on_authorize = True
 
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -495,6 +510,72 @@ class TestOAuthRouter:
             assert exc_info.value.status_code == 400
             assert "incomplete" in str(exc_info.value.detail).lower()
             mock_dcr_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_implicit_dcr_can_be_disabled(self, mock_db, mock_request, mock_current_user, mock_oauth_dcr_audit):
+        """The authorize-specific flag disables implicit registration without changing DCR defaults."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = "team-1"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "issuer": "https://issuer.example.com"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with (
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+            patch("mcpgateway.routers.oauth_router.DcrService") as dcr_service,
+            patch("mcpgateway.routers.oauth_router.check_permission_inline", new_callable=AsyncMock) as permission_check,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_allow_implicit_registration_on_authorize = False
+
+            from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 400
+        dcr_service.assert_not_called()
+        permission_check.assert_not_awaited()
+        mock_db.commit.assert_not_called()
+        mock_oauth_dcr_audit.assert_called_once()
+        assert mock_oauth_dcr_audit.call_args.args[-1] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_configured_client_authorization_does_not_require_dcr_write_permissions(self, mock_db, mock_request, mock_current_user):
+        """A normal OAuth redirect with configured credentials remains read-scoped."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = "team-1"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "existing-client",
+            "authorization_url": "https://issuer.example.com/auth",
+            "token_url": "https://issuer.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        oauth_manager = Mock()
+        oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": "https://issuer.example.com/auth"})
+
+        with (
+            patch("mcpgateway.routers.oauth_router.check_permission_inline", new_callable=AsyncMock) as permission_check,
+            patch("mcpgateway.routers.oauth_router.DcrService") as dcr_service,
+            patch("mcpgateway.routers.oauth_router.OAuthManager", return_value=oauth_manager),
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+            result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        permission_check.assert_not_awaited()
+        dcr_service.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):
@@ -687,7 +768,7 @@ class TestOAuthRouter:
         assert "missing client_id" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_unexpected_error(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_unexpected_error(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         """Test DCR path handles unexpected exception."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
@@ -708,6 +789,7 @@ class TestOAuthRouter:
         ):
             mock_settings.dcr_enabled = True
             mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_allow_implicit_registration_on_authorize = True
             mock_settings.dcr_default_scopes = ["openid"]
             mock_settings.auth_encryption_secret = "secret"
 
@@ -2865,22 +2947,27 @@ async def _run_dcr_initiate(mock_db, mock_request, mock_current_user, oauth_conf
         async def discover_as_metadata(self, _issuer):
             return metadata
 
-    with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
-        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
-            mock_mgr = Mock()
-            mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
-            mock_oauth_mgr.return_value = mock_mgr
+    with (
+        patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()),
+        patch("mcpgateway.routers.oauth_router.check_permission_inline", new_callable=AsyncMock, return_value=True),
+        patch("mcpgateway.routers.oauth_router._audit_oauth_dcr_outcome"),
+        patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+        patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+    ):
+        mock_mgr = Mock()
+        mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth"})
+        mock_oauth_mgr.return_value = mock_mgr
 
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
-                # First-Party
-                from mcpgateway.routers.oauth_router import initiate_oauth_flow
+        # First-Party
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
-                with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-                    mock_settings.dcr_enabled = True
-                    mock_settings.dcr_auto_register_on_missing_credentials = True
-                    mock_settings.dcr_default_scopes = ["openid"]
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_allow_implicit_registration_on_authorize = True
+            mock_settings.dcr_default_scopes = ["openid"]
 
-                    result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+            result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
     return mock_gateway, result
 
 
@@ -2927,14 +3014,76 @@ class TestOAuthRouterAdditionalCoverage:
     """Additional coverage for OAuth router branches."""
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_success(self, mock_db, mock_request, mock_current_user):
+    @pytest.mark.parametrize("permission_results", [(False, True), (True, False)], ids=["missing-global-create", "missing-gateway-update"])
+    async def test_initiate_oauth_flow_dcr_denies_read_only_user_before_registration(self, mock_db, mock_request, permission_results, mock_oauth_dcr_audit):
+        """Both the global create and gateway-scoped update permissions gate DCR."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = "team-1"
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        original_oauth_config = mock_gateway.oauth_config.copy()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        registered_client = SimpleNamespace(client_id="client-123", client_secret_encrypted=None, token_endpoint_auth_method="client_secret_post")
+        dcr_service = SimpleNamespace(
+            get_or_register_client=AsyncMock(return_value=registered_client),
+            discover_as_metadata=AsyncMock(return_value={"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}),
+        )
+        oauth_manager = Mock()
+        oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": "https://issuer.example.com/auth"})
+
+        with (
+            patch("mcpgateway.routers.oauth_router.check_permission_inline", new_callable=AsyncMock, side_effect=permission_results) as permission_check,
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=dcr_service),
+        ):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager", return_value=oauth_manager):
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_allow_implicit_registration_on_authorize = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        with pytest.raises(HTTPException) as exc_info:
+                            await initiate_oauth_flow(
+                                "gateway123",
+                                mock_request,
+                                _AttrDict(email="reader@example.com", is_admin=False, token_use="session", token_teams=["team-1"], token_scopes=[]),
+                                mock_db,
+                            )
+
+        assert exc_info.value.status_code == 403
+        assert permission_check.await_count == 2
+        assert permission_check.await_args_list[0].args[1] == Permissions.ADMIN_OAUTH_CLIENTS_CREATE
+        assert permission_check.await_args_list[0].kwargs["team_id"] is None
+        assert permission_check.await_args_list[1].args[1] == Permissions.GATEWAYS_UPDATE
+        assert permission_check.await_args_list[1].kwargs["team_id"] == "team-1"
+        dcr_service.get_or_register_client.assert_not_awaited()
+        assert mock_gateway.oauth_config == original_oauth_config
+        assert mock_gateway.auth_type is None
+        mock_db.commit.assert_not_called()
+        mock_oauth_dcr_audit.assert_called_once()
+        assert mock_oauth_dcr_audit.call_args.args[-1] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_success(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         """Test DCR auto-registration path success."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
         mock_gateway.url = "https://mcp.example.com"
         mock_gateway.visibility = "public"
-        mock_gateway.team_id = None
+        mock_gateway.team_id = "team-1"
         mock_gateway.auth_type = None
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
@@ -2970,6 +3119,7 @@ class TestOAuthRouterAdditionalCoverage:
                     with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                         mock_settings.dcr_enabled = True
                         mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_allow_implicit_registration_on_authorize = True
                         mock_settings.dcr_default_scopes = ["openid"]
 
                         result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
@@ -2978,10 +3128,31 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_gateway.auth_type == "oauth"
         assert mock_gateway.oauth_config["client_id"] == "client-123"
         mock_db.commit.assert_called()
+        assert [call.kwargs["team_id"] for call in allow_dcr_permissions.await_args_list] == [None, "team-1"]
+        mock_oauth_dcr_audit.assert_called_once()
+        assert mock_oauth_dcr_audit.call_args.args[-1] == "success"
+
+    def test_oauth_dcr_audit_records_outcome_without_registration_credentials(self):
+        """DCR audit payload includes the actor, issuer, and outcome only."""
+        from mcpgateway.routers.oauth_router import _audit_oauth_dcr_outcome
+
+        gateway = SimpleNamespace(team_id="team-1")
+        audit_service = Mock()
+        with patch("mcpgateway.routers.oauth_router.get_audit_trail_service", return_value=audit_service):
+            _audit_oauth_dcr_outcome("gateway123", gateway, {"email": "user@example.com"}, "https://issuer.example.com", "denied")
+
+        audit_service.log_action.assert_called_once()
+        audit_args = audit_service.log_action.call_args.kwargs
+        assert audit_args["user_id"] == "user@example.com"
+        assert audit_args["user_email"] == "user@example.com"
+        assert audit_args["details"] == {"issuer": "https://issuer.example.com", "outcome": "denied"}
+        assert audit_args["success"] is False
+        assert "client_secret" not in repr(audit_args)
+        assert "registration_access_token" not in repr(audit_args)
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_does_not_persist_request_local_resource(self, mock_db, mock_request, mock_current_user):
-        """Regression for the 2nd-review MEDIUM: DCR must not persist the request-local
+    async def test_initiate_oauth_flow_dcr_does_not_persist_request_local_resource(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
+        """Regression: DCR must not persist the request-local
         auto-derived ``resource`` to shared ``gateway.oauth_config``.
 
         This route enforces gateway *access* but not ``gateways.update``, so persisting
@@ -3030,6 +3201,7 @@ class TestOAuthRouterAdditionalCoverage:
                     with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                         mock_settings.dcr_enabled = True
                         mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_allow_implicit_registration_on_authorize = True
                         mock_settings.dcr_default_scopes = ["openid"]
 
                         await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
@@ -3050,7 +3222,7 @@ class TestOAuthRouterAdditionalCoverage:
         )
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_preserves_admin_configured_resource(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_preserves_admin_configured_resource(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         """Admin-configured ``resource`` must survive the DCR persistence path unchanged."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
@@ -3093,6 +3265,7 @@ class TestOAuthRouterAdditionalCoverage:
                     with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                         mock_settings.dcr_enabled = True
                         mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_allow_implicit_registration_on_authorize = True
                         mock_settings.dcr_default_scopes = ["openid"]
 
                         await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
@@ -3101,7 +3274,7 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_gateway.oauth_config["resource"] == "api://admin-configured-audience"
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_preserves_blank_stored_resource(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_preserves_blank_stored_resource(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         """Documents the current DCR-persist semantics for ``stored_resource == ""``.
 
         The strip logic uses ``if stored_resource is None: pop`` else preserve.  An
@@ -3152,6 +3325,7 @@ class TestOAuthRouterAdditionalCoverage:
                     with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                         mock_settings.dcr_enabled = True
                         mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_allow_implicit_registration_on_authorize = True
                         mock_settings.dcr_default_scopes = ["openid"]
 
                         await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
@@ -3223,7 +3397,7 @@ class TestOAuthRouterAdditionalCoverage:
         assert oauth_config_passed["resource"] == ["not-a-url"]
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_decrypts_secret(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_decrypts_secret(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
@@ -3276,6 +3450,7 @@ class TestOAuthRouterAdditionalCoverage:
                         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                             mock_settings.dcr_enabled = True
                             mock_settings.dcr_auto_register_on_missing_credentials = True
+                            mock_settings.dcr_allow_implicit_registration_on_authorize = True
                             mock_settings.dcr_default_scopes = ["openid"]
                             mock_settings.auth_encryption_secret = "secret"
 
@@ -3353,7 +3528,7 @@ class TestOAuthRouterAdditionalCoverage:
         assert oauth_config_passed["resource"] == ["not-a-url"]
 
     @pytest.mark.asyncio
-    async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user):
+    async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user, allow_dcr_permissions, mock_oauth_dcr_audit):
         """Test DCR error handling path."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
@@ -3380,6 +3555,7 @@ class TestOAuthRouterAdditionalCoverage:
             with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
                 mock_settings.dcr_enabled = True
                 mock_settings.dcr_auto_register_on_missing_credentials = True
+                mock_settings.dcr_allow_implicit_registration_on_authorize = True
 
                 with pytest.raises(HTTPException) as exc_info:
                     await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)

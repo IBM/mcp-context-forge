@@ -1412,6 +1412,7 @@ class Permissions:
     ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
 
     # OAuth DCR registered-client management (global rows, no team scope)
+    ADMIN_OAUTH_CLIENTS_CREATE = "admin.oauth_clients:create"
     ADMIN_OAUTH_CLIENTS_READ = "admin.oauth_clients:read"
     ADMIN_OAUTH_CLIENTS_DELETE = "admin.oauth_clients:delete"
 

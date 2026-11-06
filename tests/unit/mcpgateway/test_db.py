@@ -1251,6 +1251,7 @@ def test_permissions_helpers():
     assert "llm.invoke" in permissions
     assert "admin.metrics" in permissions
     assert "admin.sso_providers:read" in permissions
+    assert "admin.oauth_clients:create" in permissions
     assert "admin.oauth_clients:read" in permissions
     assert "admin.oauth_clients:delete" in permissions
     assert "logs:read" in permissions
@@ -1264,6 +1265,7 @@ def test_permissions_helpers():
     assert "logs" in by_resource
     assert "logs:read" in by_resource["logs"]
     assert "admin" in by_resource
+    assert "admin.oauth_clients:create" in by_resource["admin"]
     assert "admin.oauth_clients:read" in by_resource["admin"]
     assert "admin.oauth_clients:delete" in by_resource["admin"]
 
