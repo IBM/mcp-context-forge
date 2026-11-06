@@ -55,7 +55,7 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -1048,7 +1048,7 @@ class Settings(BaseSettings):
         description="Optional explicit URL of the gateway's Client ID Metadata Document, overriding the auto-derived URL when served behind a reverse proxy",
     )
 
-    cimd_token_endpoint_auth_method: str = Field(
+    cimd_token_endpoint_auth_method: Literal["none", "private_key_jwt"] = Field(
         default="none",
         description="Preferred token endpoint authentication method for CIMD clients (none or private_key_jwt)",
     )
@@ -1065,12 +1065,50 @@ class Settings(BaseSettings):
 
     cimd_key_id: str = Field(default="cimd-1", description="kid of the CIMD signing key, set in assertion headers and the CIMD JWKS")
 
-    cimd_signing_alg: str = Field(default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)")
+    cimd_signing_alg: Literal["RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512"] = Field(
+        default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)"
+    )
 
     cimd_document_cache_seconds: int = Field(
         default=3600,
+        ge=0,
         description="Cache-Control max-age in seconds for the Client ID Metadata Document public endpoint",
     )
+
+    @field_validator("cimd_client_metadata_url")
+    @classmethod
+    def validate_cimd_client_metadata_url(cls, url: Optional[str]) -> Optional[str]:
+        """Require the override URL to end with the path the gateway serves the document at.
+
+        Args:
+            url: Configured ``CIMD_CLIENT_METADATA_URL`` value.
+
+        Returns:
+            The URL unchanged, or ``None`` when unset or blank.
+
+        Raises:
+            ValueError: If the URL has a query, a fragment, or a path other than ``/oauth/client-metadata.json``.
+        """
+        if not url:
+            return None
+        parsed = urlsplit(url)
+        if parsed.query or parsed.fragment or not parsed.path.endswith("/oauth/client-metadata.json"):
+            raise ValueError("CIMD_CLIENT_METADATA_URL must end with /oauth/client-metadata.json, the path the gateway serves, and carry no query or fragment")
+        return url
+
+    @model_validator(mode="after")
+    def validate_cimd_private_key_config(self) -> Self:
+        """Require a dedicated key when CIMD authenticates with ``private_key_jwt``.
+
+        Returns:
+            Self for chaining.
+
+        Raises:
+            ValueError: If ``private_key_jwt`` is selected without ``CIMD_PRIVATE_KEY_PATH``.
+        """
+        if self.cimd_enabled and self.cimd_token_endpoint_auth_method == "private_key_jwt" and not self.cimd_private_key_path:
+            raise ValueError("CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt requires CIMD_PRIVATE_KEY_PATH; the JWT signing key is never used")
+        return self
 
     # ===================================
     # OAuth Discovery (RFC 8414)

@@ -238,18 +238,20 @@ def _default_redirect_uri(request: Optional[Request] = None) -> str:
     return f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
 
 
-async def _fill_issuer_endpoints(oauth_config: Dict[str, Any], dcr_service: DcrService, issuer: str) -> None:
+async def _fill_issuer_endpoints(oauth_config: Dict[str, Any], dcr_service: DcrService, issuer: str, metadata: Optional[Dict[str, Any]] = None) -> None:
     """Fill missing ``authorization_url`` and ``token_url`` from issuer metadata, in place.
 
     Args:
         oauth_config: Request-local OAuth configuration to update.
         dcr_service: Service used for RFC 8414 metadata discovery.
         issuer: Authorization server issuer URL.
+        metadata: Authorization server metadata already fetched by the caller. Discovered when omitted.
     """
     if oauth_config.get("authorization_url") and oauth_config.get("token_url"):
         return
     # OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
-    metadata = await dcr_service.discover_as_metadata(issuer)
+    if metadata is None:
+        metadata = await dcr_service.discover_as_metadata(issuer)
     for config_key, metadata_key in (("authorization_url", "authorization_endpoint"), ("token_url", "token_endpoint")):
         if not oauth_config.get(config_key):
             oauth_config[config_key] = await validate_issuer_scoped_endpoint(metadata.get(metadata_key), issuer, metadata_key)
@@ -786,8 +788,9 @@ async def initiate_oauth_flow(
 
             use_cimd = False
             use_dcr = False
+            cimd_skip_reason = None
 
-            cimd_service = CimdService()
+            cimd_service = CimdService(root_path=resolve_root_path(request))
             if reg_method == "cimd":
                 failed_guard = cimd_service.failed_guard(issuer, oauth_config["redirect_uri"])
                 if failed_guard:
@@ -801,10 +804,11 @@ async def initiate_oauth_flow(
                     use_cimd = True
                 else:
                     use_dcr = True
+                    cimd_skip_reason = cimd_service.skip_reason
 
             if use_cimd:
                 try:
-                    await _fill_issuer_endpoints(oauth_config, DcrService(), issuer)
+                    await _fill_issuer_endpoints(oauth_config, DcrService(), issuer, cimd_service.as_metadata)
                     oauth_config["client_id"] = cimd_service.client_id
                     oauth_config["token_endpoint_auth_method"] = settings.cimd_token_endpoint_auth_method
                     oauth_config["registration_method"] = "cimd"
@@ -814,9 +818,15 @@ async def initiate_oauth_flow(
                     logger.error(f"CIMD registration failed for gateway {safe_gateway_id}: {type(cimd_ex).__name__}")
                     raise HTTPException(status_code=500, detail="Failed to register OAuth client via CIMD")
             elif use_dcr and settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
+                if reg_method == "dcr":
+                    fallback_reason = "registration_method is dcr"
+                elif cimd_skip_reason == "not_advertised":
+                    fallback_reason = "the issuer does not advertise Client ID Metadata Document (CIMD) support"
+                else:
+                    fallback_reason = f"CIMD was skipped ({cimd_skip_reason})"
                 logger.warning(
-                    f"Gateway {safe_gateway_id} is falling back to Dynamic Client Registration (RFC 7591) for issuer {issuer} because it does not support Client ID Metadata Documents (CIMD), "
-                    "which MCP 2026-07-28 deprecates."
+                    f"Gateway {safe_gateway_id} is using Dynamic Client Registration (RFC 7591) for issuer {SecurityValidator.sanitize_log_message(issuer)} because {fallback_reason}. "
+                    "MCP 2026-07-28 deprecates DCR."
                 )
 
                 try:
@@ -870,7 +880,11 @@ async def initiate_oauth_flow(
                 logger.warning(f"Gateway {safe_gateway_id} has issuer but no client_id, and registration is disabled")
                 raise HTTPException(
                     status_code=400,
-                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable registration.",
+                    detail=(
+                        "Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable registration: "
+                        "set CIMD_ENABLED=true for Client ID Metadata Documents, or DCR_ENABLED=true and "
+                        "DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true for Dynamic Client Registration."
+                    ),
                 )
 
         # Validate required fields for OAuth flow

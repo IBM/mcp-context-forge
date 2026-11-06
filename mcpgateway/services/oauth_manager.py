@@ -593,7 +593,7 @@ class OAuthManager:
         private_key = runtime_credentials.get("private_key")
         # registration_method is editor-controlled stored config, so the CIMD key is used only
         # when client_id is also the gateway's own CIMD document URL.
-        is_cimd = runtime_credentials.get("registration_method") == "cimd" and client_id == CimdService().client_id
+        is_cimd = runtime_credentials.get("registration_method") == "cimd" and CimdService().owns_client_id(client_id)
 
         if is_cimd:
             try:

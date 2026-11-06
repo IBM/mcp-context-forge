@@ -44,11 +44,15 @@ def _settings(**overrides):
     return SimpleNamespace(**values)
 
 
-def _service(settings, metadata=None, error=None):
+def _request(root_path=""):
+    return SimpleNamespace(scope={"root_path": root_path})
+
+
+def _service(settings, metadata=None, error=None, **kwargs):
     dcr = MagicMock()
     dcr.discover_as_metadata = AsyncMock(return_value=metadata, side_effect=error)
     with patch("mcpgateway.services.cimd_service.get_settings", return_value=settings):
-        return CimdService(dcr)
+        return CimdService(dcr, **kwargs)
 
 
 class TestBuildDocument:
@@ -137,6 +141,142 @@ class TestIsApplicable:
 
         assert await service.is_applicable(ISSUER, service.redirect_uri) is False
 
+    @pytest.mark.asyncio
+    async def test_discovery_failure_warns_and_records_reason(self, caplog):
+        service = _service(_settings(), error=RuntimeError("boom"))
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.cimd_service"):
+            assert await service.is_applicable(ISSUER, service.redirect_uri) is False
+
+        assert service.skip_reason == "discovery_failed"
+        assert "discovery raised RuntimeError" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_unadvertised_records_reason_and_metadata(self):
+        metadata = {"client_id_metadata_document_supported": False}
+        service = _service(_settings(), metadata)
+
+        assert await service.is_applicable(ISSUER, service.redirect_uri) is False
+        assert service.skip_reason == "not_advertised"
+        assert service.as_metadata is metadata
+
+    @pytest.mark.asyncio
+    async def test_supported_keeps_metadata_for_reuse(self):
+        metadata = {"client_id_metadata_document_supported": True}
+        service = _service(_settings(), metadata)
+
+        assert await service.is_applicable(ISSUER, service.redirect_uri) is True
+        assert service.skip_reason is None
+        assert service.as_metadata is metadata
+
+    @pytest.mark.asyncio
+    async def test_guard_skip_logs_warning(self, caplog):
+        service = _service(_settings(), {"client_id_metadata_document_supported": True})
+
+        with caplog.at_level("WARNING", logger="mcpgateway.services.cimd_service"):
+            assert await service.is_applicable(ISSUER, "https://evil.example.net/oauth/callback") is False
+
+        assert service.skip_reason == "redirect_uri_mismatch"
+        assert "APP_ROOT_PATH" in caplog.text
+
+
+class TestRequestRootPath:
+    """The request-resolved root path drives the published URLs."""
+
+    def test_request_root_path_overrides_setting(self):
+        service = _service(_settings(), root_path="/proxy")
+
+        assert service.client_id == "https://gw.example.com/proxy/oauth/client-metadata.json"
+        assert service.redirect_uri == "https://gw.example.com/proxy/oauth/callback"
+
+    def test_empty_request_root_path_wins_over_setting(self):
+        service = _service(_settings(app_root_path="/forge"), root_path="")
+
+        assert service.redirect_uri == "https://gw.example.com/oauth/callback"
+
+    @pytest.mark.asyncio
+    async def test_matches_router_default_redirect_uri_behind_proxy(self):
+        # First-Party
+        from mcpgateway.routers.oauth_router import _default_redirect_uri
+        from mcpgateway.utils.paths import resolve_root_path
+
+        request = _request("/proxy")
+        cfg = _settings()
+        with patch("mcpgateway.routers.oauth_router.settings", cfg), patch("mcpgateway.utils.paths.settings", cfg):
+            redirect = _default_redirect_uri(request)
+            service = _service(cfg, {"client_id_metadata_document_supported": True}, root_path=resolve_root_path(request))
+
+        assert redirect == service.redirect_uri
+        assert await service.is_applicable(ISSUER, redirect) is True
+
+    def test_owns_client_id_ignores_root_path_difference(self):
+        service = _service(_settings(), root_path="/proxy")
+
+        assert service.owns_client_id("https://gw.example.com/forge/oauth/client-metadata.json") is True
+        assert service.owns_client_id("https://evil.example.net/oauth/client-metadata.json") is False
+        assert service.owns_client_id("https://gw.example.com/other.json") is False
+        assert service.owns_client_id(None) is False
+
+
+class TestClientIdOverridePath:
+    """CIMD_CLIENT_METADATA_URL is limited to the served path."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://p.example.com/custom/doc.json",
+            "https://p.example.com/client-metadata.json",
+            "https://p.example.com/oauth/client-metadata.json?x=1",
+            "https://p.example.com/oauth/client-metadata.json#f",
+        ],
+    )
+    def test_rejects_unserved_paths(self, url):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        with pytest.raises(ValueError, match="oauth/client-metadata.json"):
+            Settings.validate_cimd_client_metadata_url(url)
+
+    def test_accepts_prefixed_served_path(self):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        url = "https://p.example.com/edge/oauth/client-metadata.json"
+        assert Settings.validate_cimd_client_metadata_url(url) == url
+        service = _service(_settings(cimd_client_metadata_url=url))
+        assert service.redirect_uri == "https://p.example.com/edge/oauth/callback"
+
+    def test_blank_is_unset(self):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        assert Settings.validate_cimd_client_metadata_url("") is None
+
+
+class TestPrivateKeyJwtConfig:
+    """private_key_jwt needs a dedicated key; the HS256 default never reaches CIMD."""
+
+    def test_requires_dedicated_key(self):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        with pytest.raises(ValueError, match="CIMD_PRIVATE_KEY_PATH"):
+            Settings(cimd_token_endpoint_auth_method="private_key_jwt", cimd_private_key_path="", jwt_algorithm="HS256")
+
+    def test_hs256_default_with_dedicated_key_is_valid(self):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        cfg = Settings(cimd_token_endpoint_auth_method="private_key_jwt", cimd_private_key_path="certs/cimd/private.pem", jwt_algorithm="HS256")
+        assert cfg.cimd_signing_alg == "RS256"
+
+    def test_rejects_symmetric_signing_alg(self):
+        # First-Party
+        from mcpgateway.config import Settings
+
+        with pytest.raises(ValueError):
+            Settings(cimd_signing_alg="HS256")
+
 
 class TestClientMetadataEndpoint:
     """GET /oauth/client-metadata.json is public and gated by configuration."""
@@ -148,11 +288,23 @@ class TestClientMetadataEndpoint:
 
         cfg = _settings()
         with patch.object(well_known, "settings", cfg), patch("mcpgateway.services.cimd_service.get_settings", return_value=cfg):
-            response = await well_known.get_oauth_client_metadata()
+            response = await well_known.get_oauth_client_metadata(_request())
 
         assert response.status_code == 200
         assert response.headers["cache-control"] == "public, max-age=3600"
         assert b"https://gw.example.com/oauth/client-metadata.json" in response.body
+
+    @pytest.mark.asyncio
+    async def test_serves_document_under_request_root_path(self):
+        # First-Party
+        from mcpgateway.routers import well_known
+
+        cfg = _settings()
+        with patch.object(well_known, "settings", cfg), patch("mcpgateway.services.cimd_service.get_settings", return_value=cfg), patch("mcpgateway.utils.paths.settings", cfg):
+            response = await well_known.get_oauth_client_metadata(_request("/proxy"))
+
+        assert b"https://gw.example.com/proxy/oauth/client-metadata.json" in response.body
+        assert b"https://gw.example.com/proxy/oauth/callback" in response.body
 
     @pytest.mark.asyncio
     async def test_disabled_returns_404(self):
@@ -161,7 +313,7 @@ class TestClientMetadataEndpoint:
 
         with patch.object(well_known, "settings", _settings(cimd_enabled=False)):
             with pytest.raises(HTTPException) as exc_info:
-                await well_known.get_oauth_client_metadata()
+                await well_known.get_oauth_client_metadata(_request())
 
         assert exc_info.value.status_code == 404
 
@@ -398,11 +550,11 @@ class TestJwks:
 
         cfg = _settings()
         with patch.object(well_known, "settings", cfg), patch("mcpgateway.services.cimd_service.get_settings", return_value=cfg):
-            response = await well_known.get_legacy_oauth_client_metadata()
+            response = await well_known.get_legacy_oauth_client_metadata(_request())
         assert response.status_code == 200
         assert b"https://gw.example.com/oauth/client-metadata.json" in response.body
 
         with patch.object(well_known, "settings", _settings(cimd_enabled=False)):
             with pytest.raises(HTTPException) as exc_info:
-                await well_known.get_legacy_oauth_client_metadata()
+                await well_known.get_legacy_oauth_client_metadata(_request())
         assert exc_info.value.status_code == 404

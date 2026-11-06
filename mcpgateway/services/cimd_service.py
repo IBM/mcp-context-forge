@@ -15,6 +15,7 @@ Dynamic Client Registration (RFC 7591, deprecated by MCP 2026-07-28).
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -26,6 +27,7 @@ from mcpgateway.services.dcr_service import DcrService
 logger = logging.getLogger(__name__)
 
 CIMD_METADATA_FLAG = "client_id_metadata_document_supported"
+CIMD_DOCUMENT_PATH = "/oauth/client-metadata.json"
 
 
 class CimdKeyError(Exception):
@@ -116,37 +118,39 @@ def load_cimd_previous_public_key() -> Optional[str]:
 class CimdService:
     """Builds the gateway's Client ID Metadata Document and detects authorization server support."""
 
-    def __init__(self, dcr_service: Optional[DcrService] = None) -> None:
+    def __init__(self, dcr_service: Optional[DcrService] = None, root_path: Optional[str] = None) -> None:
         """Initialize the service with the current settings.
 
         Args:
             dcr_service: Service used for authorization server metadata discovery. Created on first use when omitted.
+            root_path: Reverse-proxy root path resolved from the request scope. Falls back to ``APP_ROOT_PATH`` when omitted.
         """
         self.settings = get_settings()
         self._dcr_service = dcr_service
+        self._root_path = root_path
+        self.skip_reason: Optional[str] = None
+        self.as_metadata: Optional[Dict[str, Any]] = None
 
     @property
     def _base_url(self) -> str:
         """Return the public gateway base URL, derived only from server-side configuration.
 
         Returns:
-            str: ``APP_DOMAIN`` plus ``APP_ROOT_PATH`` without a trailing slash.
+            str: ``APP_DOMAIN`` plus the root path without a trailing slash.
         """
-        root_path = str(self.settings.app_root_path or "").rstrip("/")
+        root_path = str(self._root_path if self._root_path is not None else self.settings.app_root_path or "").rstrip("/")
         return f"{str(self.settings.app_domain).rstrip('/')}{root_path}"
 
     @property
     def _effective_base_url(self) -> str:
-        """Return the base URL used to construct redirect and JWKS URLs, honoring override."""
-        if self.settings.cimd_client_metadata_url:
-            from urllib.parse import urlparse, urlunparse
+        """Return the base URL used to construct redirect and JWKS URLs, honoring override.
 
+        The override must end with ``/oauth/client-metadata.json`` (enforced by ``Settings``),
+        so the base is everything before that path.
+        """
+        if self.settings.cimd_client_metadata_url:
             parsed = urlparse(self.settings.cimd_client_metadata_url)
-            path = parsed.path
-            for suffix in ("/oauth/client-metadata.json", "/client-metadata.json"):
-                if path.endswith(suffix):
-                    path = path[: -len(suffix)]
-                    break
+            path = parsed.path.removesuffix(CIMD_DOCUMENT_PATH)
             return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
         return self._base_url
 
@@ -163,7 +167,26 @@ class CimdService:
         """
         if self.settings.cimd_client_metadata_url:
             return self.settings.cimd_client_metadata_url
-        return f"{self._base_url}/oauth/client-metadata.json"
+        return f"{self._base_url}{CIMD_DOCUMENT_PATH}"
+
+    def owns_client_id(self, client_id: Any) -> bool:
+        """Return whether ``client_id`` is a metadata document URL served by this gateway.
+
+        A request-derived root path can differ from the configured one, so the match is on
+        origin and document path rather than on the full URL.
+
+        Args:
+            client_id: Stored OAuth ``client_id``.
+
+        Returns:
+            bool: ``True`` when ``client_id`` is this gateway's document URL.
+        """
+        if not isinstance(client_id, str):
+            return False
+        if client_id == self.client_id:
+            return True
+        ours, theirs = urlparse(self.client_id), urlparse(client_id)
+        return (ours.scheme, ours.netloc) == (theirs.scheme, theirs.netloc) and theirs.path.endswith(CIMD_DOCUMENT_PATH) and not (theirs.query or theirs.fragment)
 
     @property
     def redirect_uri(self) -> str:
@@ -243,11 +266,11 @@ class CimdService:
         if not self.settings.cimd_enabled:
             return "cimd_disabled"
         if not self.client_id.startswith("https://"):
-            logger.info("CIMD skipped for issuer %s: client_id %s is not HTTPS", issuer, self.client_id)
+            logger.warning("CIMD skipped for issuer %s: client_id %s is not HTTPS", issuer, self.client_id)
             return "client_id_not_https"
         if redirect_uri != self.redirect_uri:
-            logger.info(
-                "CIMD skipped for issuer %s: effective redirect_uri %s does not match published %s",
+            logger.warning(
+                "CIMD skipped for issuer %s: effective redirect_uri %s does not match published %s. Set APP_ROOT_PATH or CIMD_CLIENT_METADATA_URL to match the public path.",
                 issuer,
                 redirect_uri,
                 self.redirect_uri,
@@ -255,7 +278,7 @@ class CimdService:
             return "redirect_uri_mismatch"
         allowed = [i.rstrip("/") for i in self.settings.dcr_allowed_issuers]
         if allowed and issuer.rstrip("/") not in allowed:
-            logger.info("CIMD skipped for issuer %s: issuer not in dcr_allowed_issuers allowlist", issuer)
+            logger.warning("CIMD skipped for issuer %s: issuer not in dcr_allowed_issuers allowlist", issuer)
             return "issuer_not_allowed"
         return None
 
@@ -285,6 +308,8 @@ class CimdService:
         CIMD applies only when every guard in ``failed_guard`` passes and the
         authorization server advertises ``client_id_metadata_document_supported``.
         Any discovery failure returns ``False`` so the caller falls back to DCR.
+        The reason for a ``False`` result is left in ``skip_reason``. The fetched
+        authorization server metadata is left in ``as_metadata`` so callers need no second fetch.
 
         Args:
             issuer: Authorization server issuer URL.
@@ -312,7 +337,8 @@ class CimdService:
             >>> asyncio.run(service.is_applicable("https://as.example.com", "https://other.example.com/oauth/callback"))
             False
         """
-        if self.failed_guard(issuer, redirect_uri):
+        self.skip_reason = self.failed_guard(issuer, redirect_uri)
+        if self.skip_reason:
             return False
 
         if self._dcr_service is None:
@@ -320,6 +346,11 @@ class CimdService:
         try:
             metadata = await self._dcr_service.discover_as_metadata(issuer)
         except Exception as exc:  # pylint: disable=broad-except
-            logger.debug("CIMD support check failed for %s: %s", issuer, type(exc).__name__)
+            logger.warning("CIMD support check failed for %s: authorization server metadata discovery raised %s", issuer, type(exc).__name__)
+            self.skip_reason = "discovery_failed"
             return False
-        return self.supports_cimd(metadata)
+        self.as_metadata = metadata
+        if not self.supports_cimd(metadata):
+            self.skip_reason = "not_advertised"
+            return False
+        return True
