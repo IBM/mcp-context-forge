@@ -114,7 +114,7 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
-from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached, sanitize_header_value
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -1118,6 +1118,21 @@ class ToolInvocationError(ToolError):
         >>> isinstance(err, ToolError)
         True
     """
+
+
+class ToolUpstreamError(ToolInvocationError):
+    """Report an upstream HTTP authorization failure without exposing request details."""
+
+    def __init__(self, status_code: int, www_authenticate: Optional[str] = None) -> None:
+        """Store the upstream status and sanitized authentication challenge.
+
+        Args:
+            status_code: Upstream HTTP status code.
+            www_authenticate: Optional upstream authentication challenge.
+        """
+        super().__init__("Upstream tool authorization failed")
+        self.status_code = status_code
+        self.www_authenticate = (sanitize_header_value(www_authenticate, max_length=8192) or None) if www_authenticate else None
 
 
 class ToolTimeoutError(ToolInvocationError):
@@ -5351,6 +5366,7 @@ class ToolService(BaseService):
             ToolNotFoundError: If tool not found or access denied.
             ToolInvocationError: If invocation fails, A2A authentication decryption fails,
                 or arguments fail the tool's input schema (#5629; same validator preview uses).
+            ToolUpstreamError: If an upstream MCP server rejects authorization with HTTP 401 or 403.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
@@ -6356,10 +6372,10 @@ class ToolService(BaseService):
 
                         Returns:
                             CallToolResult: Result of tool call. Returns ``isError=True`` on
-                            timeouts, connection errors, and communication failures instead of
-                            raising, so the MCP protocol ``content`` contract is always satisfied.
+                            timeouts and communication failures other than HTTP authorization failures.
 
                         Raises:
+                            ToolUpstreamError: If the upstream returns HTTP 401 or 403.
                             asyncio.CancelledError: Propagated without wrapping.
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
@@ -6583,7 +6599,12 @@ class ToolService(BaseService):
                             # Include HTTP status code in structured_content so the retry plugin can
                             # honour retry_on_status (e.g. 429, 503) on this transport.
                             exc_structured: Optional[Dict[str, Any]] = None
-                            if isinstance(root_cause, httpx.HTTPStatusError):
+                            if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+                                if root_cause.response.status_code in (401, 403):
+                                    challenge = root_cause.response.headers.get("www-authenticate")
+                                    if challenge:
+                                        challenge = sanitize_exception_message(challenge, gateway_auth_query_params_decrypted)
+                                    raise ToolUpstreamError(root_cause.response.status_code, challenge) from root_cause
                                 exc_structured = {"status_code": root_cause.response.status_code}
                             # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
                             error_code = root_cause.code if isinstance(root_cause, MCPError) else None
@@ -6598,10 +6619,10 @@ class ToolService(BaseService):
 
                         Returns:
                             CallToolResult: Result of tool call. Returns ``isError=True`` on
-                            timeouts, connection errors, and communication failures instead of
-                            raising, so the MCP protocol ``content`` contract is always satisfied.
+                            timeouts and communication failures other than HTTP authorization failures.
 
                         Raises:
+                            ToolUpstreamError: If the upstream returns HTTP 401 or 403.
                             asyncio.CancelledError: Propagated without wrapping.
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
@@ -6820,7 +6841,12 @@ class ToolService(BaseService):
                             # Include HTTP status code in structured_content so the retry plugin can
                             # honour retry_on_status (e.g. 429, 503) on this transport.
                             exc_structured: Optional[Dict[str, Any]] = None
-                            if isinstance(root_cause, httpx.HTTPStatusError):
+                            if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+                                if root_cause.response.status_code in (401, 403):
+                                    challenge = root_cause.response.headers.get("www-authenticate")
+                                    if challenge:
+                                        challenge = sanitize_exception_message(challenge, gateway_auth_query_params_decrypted)
+                                    raise ToolUpstreamError(root_cause.response.status_code, challenge) from root_cause
                                 exc_structured = {"status_code": root_cause.response.status_code}
                             # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
                             error_code = root_cause.code if isinstance(root_cause, MCPError) else None
@@ -7255,8 +7281,9 @@ class ToolService(BaseService):
                 if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     try:
                         exc_structured: Optional[Dict[str, Any]] = None
-                        if isinstance(root_cause, httpx.HTTPStatusError):
-                            exc_structured = {"status_code": root_cause.response.status_code}
+                        if isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError, ToolUpstreamError)):
+                            status_code = root_cause.status_code if isinstance(root_cause, ToolUpstreamError) else root_cause.response.status_code
+                            exc_structured = {"status_code": status_code}
                         exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True, structured_content=exc_structured)
                         exc_post_result, _ = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_POST_INVOKE,
@@ -7302,6 +7329,8 @@ class ToolService(BaseService):
                         request_state=request_state,
                     )
 
+                if isinstance(root_cause, ToolUpstreamError):
+                    raise root_cause
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
                 # Calculate duration

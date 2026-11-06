@@ -61,6 +61,7 @@ from mcpgateway.services.tool_service import (
     ToolResult,
     ToolService,
     ToolTimeoutError,
+    ToolUpstreamError,
     ToolValidationError,
     TOOL_ERROR_CODE,
 )
@@ -3357,6 +3358,49 @@ class TestToolService:
             assert result.content[0].type == "text"
             result_json = json.loads(result.content[0].text)
             assert result_json == mock_grpc_response
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"])
+    @pytest.mark.parametrize("status_code", [401, 403])
+    @pytest.mark.parametrize("during_connect", [False, True])
+    @pytest.mark.parametrize("sdk_http", [False, True])
+    async def test_mcp_upstream_authorization_error(self, tool_service, mock_tool, mock_gateway, test_db, transport, status_code, during_connect, sdk_http):
+        """Preserve upstream authorization failures through nested task groups and both MCP transports."""
+        # Third-Party
+        import httpx
+        import httpx2
+
+        http_library = httpx2 if sdk_http else httpx
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = transport
+        mock_tool.auth_value = None
+        mock_tool.jsonpath_filter = ""
+        mock_tool.gateway_id = mock_gateway.id
+        mock_gateway.transport = transport
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_gateway)
+        challenge = 'Bearer error="invalid_token", resource_metadata="https://upstream.example/metadata", scope="openid email"'
+        request = http_library.Request("POST", "https://upstream.example/mcp?secret=hidden")
+        response = http_library.Response(status_code, request=request, headers={"www-authenticate": challenge})
+        failure = ExceptionGroup("outer", [ExceptionGroup("inner", [http_library.HTTPStatusError("private request details", request=request, response=response)])])
+        session = AsyncMock()
+        session.session.call_tool = session.call_tool
+        session.__aenter__.return_value = session
+        if during_connect:
+            session.__aenter__.side_effect = failure
+        else:
+            session.call_tool.side_effect = failure
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolUpstreamError) as caught:
+                await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        assert caught.value.status_code == status_code
+        assert caught.value.www_authenticate == challenge
+        assert "private request details" not in str(caught.value)
+        assert "hidden" not in str(caught.value)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
@@ -10915,7 +10959,9 @@ class TestInvokeToolDirectProxyViaHeader:
             mock_settings.mcp_session_pool_enabled = False
             mock_settings.default_passthrough_headers = []
 
-            result = await tool_service.invoke_tool(test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"])
+            result = await tool_service.invoke_tool(
+                test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"]
+            )
 
         assert result.is_error is True
         assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
@@ -11909,3 +11955,11 @@ class TestGrpcToolInvocation:
 #   converts cancellation into TimeoutError in some Python event-loop states. Since the
 #   pattern is structurally identical in all three branches, protecting it in one branch
 #   (gRPC) is sufficient to detect a regression that would affect all three.
+
+
+@pytest.mark.parametrize("challenge, expected", [(None, None), ("", None), ("Bearer\r\n\x00 error=invalid_token", "Bearer error=invalid_token"), ("x" * 9000, "x" * 8192)])
+def test_upstream_challenge_sanitization(challenge, expected):
+    """Bound challenge length and remove control characters without adding request details."""
+    error = ToolUpstreamError(401, challenge)
+    assert error.www_authenticate == expected
+    assert error.status_code == 401
