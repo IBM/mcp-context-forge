@@ -401,13 +401,15 @@ def test_gateway_provider_openai_compatible(monkeypatch):
 
 def test_gateway_provider_azure_openai(monkeypatch):
     _patch_gateway_llms(monkeypatch)
-    model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep"}, api_base="https://azure")
+    model, provider = _make_model_and_provider("azure_openai", config={"deployment_name": "dep"}, api_base="https://azure")
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
     assert llm is not None
+    assert llm.kwargs["azure_deployment"] == "dep"
+    assert llm.kwargs["azure_endpoint"] == "https://azure"
 
 
 def test_gateway_provider_anthropic(monkeypatch):
@@ -1599,15 +1601,50 @@ def test_gateway_provider_openai_no_api_key(monkeypatch):
 
 
 def test_gateway_provider_azure_completion_branch(monkeypatch):
-    """GatewayProvider azure_openai completion branch."""
+    """GatewayProvider azure_openai chat branch maps DB schema keys to langchain kwargs."""
     _patch_gateway_llms(monkeypatch)
-    model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep", "api_version": "2024-01"}, api_base="https://azure")
+    model, provider = _make_model_and_provider("azure_openai", config={"deployment_name": "dep", "api_version": "2024-01"}, api_base="https://azure")
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
     assert llm is not None
+    assert llm.kwargs["azure_deployment"] == "dep"
+    assert llm.kwargs["api_version"] == "2024-01"
+    assert llm.kwargs["azure_endpoint"] == "https://azure"
+
+
+def test_gateway_provider_azure_resource_name_and_provider_api_version(monkeypatch):
+    """GatewayProvider azure_openai derives endpoint from resource_name and reads provider.api_version."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "azure_openai",
+        config={"deployment_name": "my-gpt4-deployment", "resource_name": "my-resource"},
+        api_base=None,
+    )
+    provider.api_version = "2024-02-15-preview"
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["azure_endpoint"] == "https://my-resource.openai.azure.com"
+    assert llm.kwargs["azure_deployment"] == "my-gpt4-deployment"
+    assert llm.kwargs["api_version"] == "2024-02-15-preview"
+
+
+def test_gateway_provider_azure_deployment_fallback_to_model_id(monkeypatch):
+    """GatewayProvider azure_openai falls back to model.model_id when deployment_name is omitted."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("azure_openai", config={}, api_base="https://azure")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["azure_deployment"] == "gpt-4"
+    assert llm.kwargs["api_version"] == "2024-05-01-preview"
 
 
 # --------------------------------------------------------------------------- #
