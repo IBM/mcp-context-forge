@@ -309,7 +309,7 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 
 #### **Security & Auth**
 
-- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional. Signing keys are validated before persistence and again before signing: the effective key is resolved first, so a masked placeholder is checked against the key it preserves and stored ciphertext is decrypted rather than skipped, and RSA keys must be at least 2048 bits (RFC 7518 Sections 3.3 and 3.5). An absent, null, empty, or whitespace-only `token_endpoint_auth_method` keeps the historical `client_secret_post` default at every boundary.
+- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional. Signing keys are validated before persistence and again before signing: the effective key is resolved first, so a masked placeholder is checked against the key it preserves and stored ciphertext is decrypted rather than skipped, and RSA keys must be at least 2048 bits (RFC 7518 Sections 3.3 and 3.5). An absent, null, empty, or whitespace-only `token_endpoint_auth_method` keeps the historical `client_secret_post` default at every boundary. <!-- pragma: allowlist secret -->
 
 - **Passwordless SSO-only users** ([#6603](https://github.com/IBM/mcp-context-forge/pull/6603)) - Users provisioned through SSO exist without a local password instead of carrying an unusable placeholder credential.
 - **`SSO_ALLOW_PROVIDER_LINKING`** ([#6616](https://github.com/IBM/mcp-context-forge/pull/6616)) - Explicit, fail-closed setting (default `false`) that gates cross-provider sign-in for an already-linked email.
@@ -371,7 +371,7 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 
 #### **Security & Auth**
 
-- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941))
+- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941)) <!-- pragma: allowlist secret -->
 - **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
 - **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)). ([#6004](https://github.com/IBM/mcp-context-forge/pull/6004))
 - **Schema validation no longer resolves remote `$ref`s** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Tool input/output schemas are tool-controlled data, and `jsonschema`'s default registry resolves remote `$ref` URIs by fetching them over the network, which is reachable from tool preview and from every live invocation with an output schema. Non-local references are now refused outright, and validators are built against a registry that never retrieves, so an unresolvable reference fails validation closed instead of issuing a request.
@@ -468,7 +468,7 @@ Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliabili
 
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md). <!-- pragma: allowlist secret -->
 
 ### Fixed
 
@@ -539,7 +539,7 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
+- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md). <!-- pragma: allowlist secret -->
 
 ### Fixed
 
@@ -2711,7 +2711,7 @@ Release Candidate 2 focuses on **security hardening**, **Admin UI polish**, **pl
 * **L-10**: Security architecture docs now align with current token and secret encryption implementation details.
 * **L-15 / L-16**: Tool lookup cache payloads now exclude auth/OAuth secret material, and token usage limits (`requests_per_hour` / `requests_per_day`) are now enforced during request scoping.
 * **L-17**: Admin UI debug logging is now gated behind an explicit local debug toggle (`MCPGATEWAY_ADMIN_DEBUG=1`) for quieter production browser consoles.
-* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
+* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`. <!-- pragma: allowlist secret -->
 * **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
 
 ### Removed
@@ -2721,7 +2721,7 @@ Release Candidate 2 focuses on **security hardening**, **Admin UI polish**, **pl
 ### Chores
 
 * Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
-* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments).
+* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments). <!-- pragma: allowlist secret -->
 * Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
 * Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
@@ -2799,7 +2799,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 
 > **Migration**: If you use Basic auth for API access, either:
 > 1. **(Recommended)** Migrate to JWT tokens: `export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token ...)`
-> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior
+> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior <!-- pragma: allowlist secret -->
 
 > **Note**: Gateways without configured `auth_value` will send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
 
@@ -3146,10 +3146,10 @@ This release delivers **massive performance improvements**, **enterprise-scale r
 
 ```bash
 # OLD (psycopg2) - No longer supported
-DATABASE_URL=postgresql://postgres:password@localhost:5432/mcp
+DATABASE_URL=postgresql://postgres:password@localhost:5432/mcp # pragma: allowlist secret
 
 # NEW (psycopg3) - Required format
-DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
+DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp # pragma: allowlist secret
 ```
 
 **Why this change?**
@@ -4511,10 +4511,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 * **Complete MariaDB & MySQL Database Support** (#925) - Full production support for MariaDB and MySQL backends:
   ```bash
   # MariaDB (recommended MySQL-compatible option):
-  DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+  DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp # pragma: allowlist secret
 
   # Docker deployment with MariaDB:
-  DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
+  DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp # pragma: allowlist secret
   ```
   - **36+ database tables** fully compatible with MariaDB 10.6+ and MySQL 8.0+
   - All **VARCHAR length issues** resolved for MySQL compatibility
@@ -4605,7 +4605,7 @@ EMAIL_AUTH_ENABLED=true
 
 # Platform admin user (bootstrap from environment)
 PLATFORM_ADMIN_EMAIL=admin@example.com
-PLATFORM_ADMIN_PASSWORD=changeme
+PLATFORM_ADMIN_PASSWORD=changeme # pragma: allowlist secret
 PLATFORM_ADMIN_FULL_NAME=Platform Administrator
 
 # Argon2id Password Hashing Configuration
@@ -4648,17 +4648,17 @@ SSO_ENABLED=false
 # GitHub OAuth Configuration
 SSO_GITHUB_ENABLED=false
 # SSO_GITHUB_CLIENT_ID=your-github-client-id
-# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret
+# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret # pragma: allowlist secret
 
 # Google OAuth Configuration
 SSO_GOOGLE_ENABLED=false
 # SSO_GOOGLE_CLIENT_ID=your-google-client-id.googleusercontent.com
-# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret
+# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret # pragma: allowlist secret
 
 # IBM Security Verify OIDC Configuration
 SSO_IBM_VERIFY_ENABLED=false
 # SSO_IBM_VERIFY_CLIENT_ID=your-ibm-verify-client-id
-# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret
+# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret # pragma: allowlist secret
 # SSO_IBM_VERIFY_ISSUER=https://your-tenant.verify.ibm.com/oidc/endpoint/default
 ```
 
