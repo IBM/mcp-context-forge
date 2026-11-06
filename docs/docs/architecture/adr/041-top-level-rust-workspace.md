@@ -1,8 +1,13 @@
 # ADR-0041: Top-Level Rust Workspace (Cargo.toml at Repository Root)
 
-- *Status:* Accepted
+- *Status:* Superseded by [ADR-058](058-remove-rust-runtime-and-workspace.md)
 - *Date:* 2026-02-26
 - *Deciders:* Core Engineering Team
+
+!!! warning "Superseded: Rust runtime and workspace removed"
+    [EPIC #5817](https://github.com/IBM/mcp-context-forge/issues/5817) removes the
+    Rust runtime and workspace. [ADR-058](058-remove-rust-runtime-and-workspace.md)
+    records the removal decision. The body below is historical.
 
 ## Context
 

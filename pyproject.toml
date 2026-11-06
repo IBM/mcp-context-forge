@@ -36,6 +36,7 @@ filelock = "2026-10-27T23:59:59Z"
 setuptools = "2026-10-27T23:59:59Z"
 virtualenv = "2026-10-27T23:59:59Z"
 opentelemetry-api = "2026-10-27T23:59:59Z"
+oauthlib = "2026-11-01T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -115,7 +116,7 @@ dependencies = [
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "redis>=8.0.1",
-    "oauthlib>=4.0.0", # Transitive pin (requests-oauthlib);
+    "oauthlib>=4.0.1", # Transitive pin (requests-oauthlib); GHSA-3jp2-3mrg-2vxc
     "requests>=2.34.2", # Transitive pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.52",
