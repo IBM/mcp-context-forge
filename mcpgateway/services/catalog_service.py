@@ -640,13 +640,13 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                # Carry any OAuth credentials the caller supplied (issuer, scopes, and
-                # optionally client_id/client_secret/token_url/authorization_url) onto the
-                # gateway up front, so a second PUT /gateways/{id} is never required (#5967).
+                # Start with catalog OAuth defaults and apply caller overrides.
+                # Persist the result up front so registration needs no second PUT /gateways/{id}.
                 # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
                 # in later - automatically for providers that support discovery/DCR - by the
                 # existing GET /oauth/authorize/{gateway_id} flow.
-                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials if request else None)
+                oauth_credentials = {**(server_data.get("oauth") or {}), **((request.oauth_credentials if request else None) or {})}
+                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(oauth_credentials)
 
                 # Runs the same URL/SSRF and grant-type validation normal gateway registration
                 # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through
