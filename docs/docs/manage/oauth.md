@@ -153,7 +153,8 @@ To run as a confidential client using CIMD without any shared secrets:
 - Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
 - Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. Startup fails without it. `JWT_ALGORITHM` (default `HS256`) is not used, so the default needs no change; the JWKS publishes only the CIMD key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
 - The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
-- The gateway serves the public key derived from the CIMD key (and `CIMD_PREVIOUS_PUBLIC_KEY_PATH`, if set, for key rotation) at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`) and `<CIMD_KEY_ID>-previous`.
+- The gateway serves the public key derived from the CIMD key at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`).
+- To rotate the key, set `CIMD_KEY_ID` to a new value, point `CIMD_PRIVATE_KEY_PATH` at the new key, set `CIMD_PREVIOUS_PUBLIC_KEY_PATH` to the old public key, and set `CIMD_PREVIOUS_KEY_ID` to the old `CIMD_KEY_ID`. The JWKS then publishes both keys under their own `kid`, so authorization servers with a cached key set still verify old assertions. Reusing the same `CIMD_KEY_ID` for a new key can fail until the authorization server refreshes its cache.
 - All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
 
 ---

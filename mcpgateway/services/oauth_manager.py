@@ -41,7 +41,7 @@ from mcpgateway.common.oauth import (
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
-from mcpgateway.services.cimd_service import CimdService, load_cimd_private_key, CimdKeyError
+from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_private_key
 from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client

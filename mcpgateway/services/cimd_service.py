@@ -12,6 +12,7 @@ Dynamic Client Registration (RFC 7591, deprecated by MCP 2026-07-28).
 """
 
 # Standard
+from functools import lru_cache
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -55,11 +56,65 @@ def _read_key_file(path_str: str) -> str:
         raise CimdKeyError(f"cannot read key file {path}") from exc
 
 
+def _file_signature(path_str: str) -> Optional[tuple]:
+    """Return a change signature (path, mtime, size) for a key file, or ``None`` when unset or missing.
+
+    Args:
+        path_str: Configured key file path, possibly empty.
+
+    Returns:
+        Optional[tuple]: Signature that changes when the file is replaced or edited.
+    """
+    if not path_str:
+        return None
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=4)
+def _load_validated_private_key(cimd_path: str, jwt_path: str, signature: tuple) -> str:
+    """Read and validate the CIMD private key. Cached per file signature so rotation takes effect.
+
+    Args:
+        cimd_path: Configured ``CIMD_PRIVATE_KEY_PATH``.
+        jwt_path: Configured ``JWT_PRIVATE_KEY_PATH``, possibly empty.
+        signature: File signatures of both paths, used only as the cache key.
+
+    Returns:
+        str: PEM-encoded private key.
+
+    Raises:
+        CimdKeyError: If the key is unreadable, not a private key, or identical to the JWT signing key.
+    """
+    del signature  # cache key only
+    pem = _read_key_file(cimd_path)
+    try:
+        serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+    except Exception as exc:
+        raise CimdKeyError("CIMD_PRIVATE_KEY_PATH does not contain a valid unencrypted PEM private key") from exc
+
+    if jwt_path:
+        try:
+            jwt_pem = _read_key_file(jwt_path)
+        except CimdKeyError:
+            jwt_pem = ""
+        if jwt_pem.strip() == pem.strip():
+            raise CimdKeyError("CIMD_PRIVATE_KEY_PATH must not reference the gateway JWT signing key")
+    return pem
+
+
 def load_cimd_private_key() -> str:
     """Load the dedicated CIMD private key.
 
     The key must be separate from the gateway JWT signing key. This function never
-    falls back to ``JWT_PRIVATE_KEY_PATH`` or ``JWT_SECRET_KEY``.
+    falls back to ``JWT_PRIVATE_KEY_PATH`` or ``JWT_SECRET_KEY``. The result is cached
+    until either key file changes.
 
     Returns:
         str: PEM-encoded private key.
@@ -71,20 +126,8 @@ def load_cimd_private_key() -> str:
     settings = get_settings()
     if not settings.cimd_private_key_path:
         raise CimdKeyError("CIMD_PRIVATE_KEY_PATH is not configured")
-    pem = _read_key_file(settings.cimd_private_key_path)
-    try:
-        serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
-    except Exception as exc:
-        raise CimdKeyError("CIMD_PRIVATE_KEY_PATH does not contain a valid unencrypted PEM private key") from exc
-
-    if settings.jwt_private_key_path:
-        try:
-            jwt_pem = _read_key_file(settings.jwt_private_key_path)
-        except CimdKeyError:
-            jwt_pem = ""
-        if jwt_pem.strip() == pem.strip():
-            raise CimdKeyError("CIMD_PRIVATE_KEY_PATH must not reference the gateway JWT signing key")
-    return pem
+    signature = (_file_signature(settings.cimd_private_key_path), _file_signature(settings.jwt_private_key_path))
+    return _load_validated_private_key(settings.cimd_private_key_path, settings.jwt_private_key_path, signature)
 
 
 def load_cimd_public_key() -> str:
