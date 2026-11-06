@@ -1037,6 +1037,17 @@ catalog_servers:
     requires_api_key: true
     tags: ["automation", "integration", "workflow", "no-code"]
 
+  - id: curlshot
+    name: "CurlShot"
+    category: "Web Automation"
+    url: "https://curlshot.com/api/mcp"
+    logo_url: "/static/catalog-icons/curlshot.png"
+    auth_type: "API Key"
+    provider: "CurlShot"
+    description: "Website screenshots as PNG, JPEG, WebP, PDF or video"
+    requires_api_key: true
+    tags: ["screenshots", "browser", "pdf", "web-capture"]
+
   # E-Commerce
   - id: mercado-libre
     name: "Mercado Libre"
