@@ -23,6 +23,71 @@ from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError, VaultTokenBackend
 
 
+@pytest.fixture
+def details_backend():
+    """Create a Vault backend with real settings and an isolated storage boundary."""
+    from mcpgateway.config import get_settings
+
+    settings = get_settings().model_copy(update={"vault_token": SecretStr("test-vault"), "vault_token_cache_enabled": True})
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://mcp.example.test")
+    return backend
+
+
+@pytest.mark.asyncio
+async def test_token_details_return_metadata_without_second_vault_read(details_backend):
+    """Token retrieval uses one Vault read for token and metadata."""
+    expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+    data = {"token": {"access_token": "caller-access", "refresh_token": "caller-refresh", "scopes": ["read"]}, "expires_at": expiry.isoformat()}
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})) as read:
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result.access_token == "caller-access"
+    assert result.expires_at == expiry
+    assert result.scopes == ["read"]
+    assert not hasattr(result, "refresh_token")
+    assert read.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [VaultConnectionError("unavailable"), VaultAuthError("denied")])
+async def test_token_details_preserve_vault_failure(details_backend, error):
+    """Vault failures remain distinct from missing credentials."""
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(side_effect=error)):
+        with pytest.raises(type(error)):
+            await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [OAuthError("unavailable"), httpx.ConnectError("unavailable"), ValueError("decryption failed")])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_token_details_preserve_valid_token_on_transient_refresh_failure(details_backend, error, expired):
+    """Return a still-valid token when the provider cannot refresh it."""
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=-60 if expired else 60)
+    data = {"token": {"access_token": "caller-access", "refresh_token": "caller-refresh", "scopes": ["read"]}, "expires_at": expiry.isoformat()}
+    with (
+        patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})),
+        patch.object(details_backend, "_refresh_token_details", new=AsyncMock(side_effect=error)),
+    ):
+        if expired:
+            with pytest.raises(type(error)):
+                await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+            return
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result.access_token == "caller-access"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [{"headers": {"X-Api-Key": "example"}}, {"token": None}, {"token": []}, {"token": "invalid"}, {"token": {}}, {"token": {"refresh_token": "example"}}]) # pragma: allowlist secret
+async def test_token_details_return_none_without_access_token(details_backend, data):
+    """Header-only and incomplete records contain no retrievable OAuth token."""
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result is None
+
+
 class TestVaultTokenBackendInit:
     """Test suite for VaultTokenBackend initialization."""
 
@@ -1244,7 +1309,7 @@ class TestVaultTokenBackendRefreshToken:
             )
 
             assert result is None
-            mock_logger.error.assert_called_once()
+            mock_logger.error.assert_any_call("No OAuth configuration found for gateway %s", "gw-1")
 
     @pytest.mark.asyncio
     async def test_refresh_token_private_gateway_wrong_owner(self):
@@ -1335,7 +1400,8 @@ class TestVaultTokenBackendRefreshToken:
             }
             mock_oauth_class.return_value = mock_oauth
 
-            with patch.object(backend, "store_tokens", new_callable=AsyncMock) as mock_store:
+            stored = MagicMock(access_token="new_access_token", expires_at=None, scopes=["read"])
+            with patch.object(backend, "store_tokens", new_callable=AsyncMock, return_value=stored) as mock_store:
                 result = await backend._do_refresh_access_token(
                     gateway_id="gw-1",
                     team_id="team1",
@@ -1392,7 +1458,8 @@ class TestVaultTokenBackendRefreshToken:
             }
             mock_oauth_class.return_value = mock_oauth
 
-            with patch.object(backend, "store_tokens", new_callable=AsyncMock):
+            stored = MagicMock(access_token="new_token", expires_at=None, scopes=["read"])
+            with patch.object(backend, "store_tokens", new_callable=AsyncMock, return_value=stored):
                 result = await backend._do_refresh_access_token(
                     gateway_id="gw-1",
                     team_id="team1",
@@ -1745,7 +1812,7 @@ class TestVaultTokenBackendPR5244:
             "user_id": "oauth-user-123",
         }
 
-        backend.store_tokens = AsyncMock()
+        backend.store_tokens = AsyncMock(return_value=MagicMock(access_token="new_token", expires_at=None, scopes=["read"]))
 
         with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
             mock_oauth_mgr = MagicMock()

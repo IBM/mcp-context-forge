@@ -62,6 +62,20 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
+@pytest.mark.parametrize("threshold", [0, 600, 3600])
+def test_oauth_token_refresh_threshold_accepts_bounds(threshold):
+    """Operators can configure a bounded token retrieval refresh window."""
+    settings = Settings(oauth_token_refresh_threshold_seconds=threshold, environment="development", _env_file=None)
+    assert settings.oauth_token_refresh_threshold_seconds == threshold
+
+
+@pytest.mark.parametrize("threshold", [-1, 3601])
+def test_oauth_token_refresh_threshold_rejects_outside_bounds(threshold):
+    """Invalid refresh windows fail configuration validation."""
+    with pytest.raises(ValidationError):
+        Settings(oauth_token_refresh_threshold_seconds=threshold, environment="development", _env_file=None)
+
+
 def test_oauth_redirect_allowed_origin_accepts_exact_https_origin():
     """OAuth redirect allowlist accepts one exact HTTPS origin."""
     settings = Settings(oauth_redirect_allowed_origin="https://a.com:8443", environment="development", _env_file=None)
