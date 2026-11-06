@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Token exchange delegation** ([#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - A `token-exchange` gateway can send an RFC 8693 `actor_token` with each exchange. Set `oauth_config.actor_token_source` to `client_credentials` or `client_assertion`. The default `none` keeps impersonation, and the request body does not change. `actor_token_type` overrides the default token type. The optional `oauth_config.actor` object names a separate actor client through `client_id`, `client_secret`, `token_url`, and `token_endpoint_auth_method`. Delegation fails closed: when the actor token is unavailable, the call fails and no impersonation request is sent. Deploy the release to every worker before you enable delegation, because an older worker ignores `actor_token_source` and impersonates.
+
+### Changed
+
+- **Token exchange audit events carry `purpose` and `mode`** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236), [#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - Each `token-exchange` audit event has a `purpose` key (`invocation` or `discovery`) and a `mode` key (`impersonation` or `delegation`). The log message changes from `token-exchange succeeded user=...` to `token-exchange succeeded purpose=... mode=... user=...`, and the failure message changes the same way. Update log-text alert rules that match the old prefix. Structured consumers of `extra["token_exchange"]` are not affected.
+
 ### Security
 
 - **`X-Upstream-Authorization` no longer overrides gateway-managed credentials** - The header is dropped, with a warning, for gateways with `auth_type` `oauth`, `bearer`, `basic`, or `authheaders`, and for REST tools and A2A agents with the same auth types. Previously any authenticated caller could replace the stored per-user upstream credential.

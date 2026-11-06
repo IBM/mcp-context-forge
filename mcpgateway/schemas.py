@@ -53,7 +53,14 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
+from mcpgateway.common.oauth import (
+    ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS,
+    ACTOR_TOKEN_SOURCES,
+    normalize_token_endpoint_auth_method,
+    OAUTH_SENSITIVE_KEYS,
+    SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
+    SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+)
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -211,8 +218,91 @@ def _validate_oauth_discovery(discovery: Any) -> None:
     validate_core_url(raw_value, "OAuth config discovery.token_url")
 
 
-def _reject_discovery_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Reject a ``discovery`` object on any grant other than ``token-exchange``.
+TOKEN_EXCHANGE_ONLY_OAUTH_KEYS = ("discovery", "actor_token_source", "actor_token_type", "actor")
+_RFC8693_TOKEN_TYPE_PREFIX = "urn:ietf:params:oauth:token-type:"  # nosec B105 - RFC 8693 URI prefix
+
+
+def _validate_oauth_actor_token(v: Dict[str, Any]) -> None:
+    """Validate the RFC 8693 delegation keys structurally.
+
+    Defaults and the ``client_assertion`` key requirement are applied in
+    ``GatewayService._validate_token_exchange_config``, which can read the stored config.
+
+    Args:
+        v: OAuth configuration dict.
+
+    Raises:
+        ValueError: If ``actor_token_source`` is not a supported value, ``actor_token_type`` is not an RFC 8693 token type URI,
+            or the ``actor`` override is invalid.
+
+    Examples:
+        >>> _validate_oauth_actor_token({"actor_token_source": "client_credentials"})
+        >>> _validate_oauth_actor_token({"actor_token_source": "password"})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor_token_source must be one of: none, client_credentials, client_assertion
+    """
+    source = v.get("actor_token_source")
+    if source is not None and source not in ACTOR_TOKEN_SOURCES:
+        raise ValueError(f"oauth_config.actor_token_source must be one of: {', '.join(ACTOR_TOKEN_SOURCES)}")
+    token_type = v.get("actor_token_type")
+    if token_type not in (None, "") and (not isinstance(token_type, str) or not token_type.startswith(_RFC8693_TOKEN_TYPE_PREFIX)):
+        raise ValueError(f"oauth_config.actor_token_type must be an RFC 8693 token type URI starting with '{_RFC8693_TOKEN_TYPE_PREFIX}'")
+    _validate_oauth_actor_override(v.get("actor"), source)
+
+
+def _validate_oauth_actor_override(actor: Any, source: Any) -> None:
+    """Validate the optional ``actor`` client override structurally.
+
+    Args:
+        actor: The ``oauth_config["actor"]`` value, or ``None``.
+        source: The raw ``actor_token_source`` value.
+
+    Raises:
+        ValueError: If ``actor`` is not an object, has no ``client_id``, names an unsupported
+            auth method, carries an invalid ``token_url``, or is used with a source other than ``client_credentials``.
+
+    Examples:
+        >>> _validate_oauth_actor_override(None, "none")
+        >>> _validate_oauth_actor_override({"client_id": "cf", "client_secret": "s"}, "client_credentials")
+        >>> _validate_oauth_actor_override("cf", "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor must be an object
+        >>> _validate_oauth_actor_override({"client_secret": "s"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.client_id is required
+        >>> _validate_oauth_actor_override({"client_id": "cf", "token_endpoint_auth_method": "tls"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: client_secret_basic, client_secret_post, none, private_key_jwt
+        >>> _validate_oauth_actor_override({"client_id": "cf"}, "client_assertion")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor is only supported with actor_token_source client_credentials
+    """
+    if actor is None:
+        return
+    if not isinstance(actor, dict):
+        raise ValueError("oauth_config.actor must be an object")
+    client_id = actor.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("oauth_config.actor.client_id is required")
+    raw_method = actor.get("token_endpoint_auth_method")
+    if raw_method is not None and normalize_token_endpoint_auth_method(raw_method) not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+    token_url = actor.get("token_url")
+    if token_url not in (None, ""):
+        if not isinstance(token_url, str):
+            raise ValueError("oauth_config.actor.token_url must be a string URL")
+        validate_core_url(token_url, "OAuth config actor.token_url")
+    if source != ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
+        raise ValueError(f"oauth_config.actor is only supported with actor_token_source {ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS}")
+
+
+def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject token-exchange-only keys (``discovery`` and the delegation keys) on any other grant.
 
     Args:
         v: OAuth configuration dict or ``None``.
@@ -221,18 +311,25 @@ def _reject_discovery_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Opt
         The original value when valid.
 
     Raises:
-        ValueError: If ``discovery`` is present and ``grant_type`` is not ``token-exchange``.
+        ValueError: If a key in ``TOKEN_EXCHANGE_ONLY_OAUTH_KEYS`` is present and ``grant_type`` is not ``token-exchange``.
 
     Examples:
-        >>> _reject_discovery_outside_token_exchange({"grant_type": "token-exchange", "discovery": {}})
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "token-exchange", "discovery": {}})
         {'grant_type': 'token-exchange', 'discovery': {}}
-        >>> _reject_discovery_outside_token_exchange({"grant_type": "client_credentials", "discovery": {}})
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "client_credentials", "discovery": {}})
         Traceback (most recent call last):
         ...
         ValueError: oauth_config.discovery is only supported for the token-exchange grant type
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "client_credentials", "actor_token_source": "none"})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor_token_source is only supported for the token-exchange grant type
     """
-    if isinstance(v, dict) and v.get("discovery") is not None and v.get("grant_type") != "token-exchange":
-        raise ValueError("oauth_config.discovery is only supported for the token-exchange grant type")
+    if not isinstance(v, dict) or v.get("grant_type") == "token-exchange":
+        return v
+    for key in TOKEN_EXCHANGE_ONLY_OAUTH_KEYS:
+        if v.get(key) is not None:
+            raise ValueError(f"oauth_config.{key} is only supported for the token-exchange grant type")
     return v
 
 
@@ -265,6 +362,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
     _validate_oauth_discovery(v.get("discovery"))
+    _validate_oauth_actor_token(v)
     if "redirect_uri_after_oauth" in v:
         redirect_after_oauth = v["redirect_uri_after_oauth"]
         if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
@@ -3618,7 +3716,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         new MCP server registrations. Existing records keep working via
         ``GatewayUpdate`` (backwards compatibility).
         """
-        v = _reject_discovery_outside_token_exchange(_validate_oauth_config_urls(v))
+        v = _reject_token_exchange_keys_outside_token_exchange(_validate_oauth_config_urls(v))
         if isinstance(v, dict) and v.get("grant_type") == "password":
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
@@ -3991,8 +4089,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries and reject ``discovery`` outside token-exchange."""
-        return _reject_discovery_outside_token_exchange(_validate_oauth_config_urls(v))
+        """Validate URL-bearing OAuth configuration entries and reject token-exchange-only keys on other grants."""
+        return _reject_token_exchange_keys_outside_token_exchange(_validate_oauth_config_urls(v))
 
     @field_validator("description", mode="before")
     @classmethod

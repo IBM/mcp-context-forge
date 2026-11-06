@@ -1,4 +1,5 @@
 import {
+  bindActorClientToggle,
   bindDiscoveryToggle,
   handleAuthTypeChange,
   handleAuthTypeSelection,
@@ -483,6 +484,8 @@ export const setupFormHandlers = function () {
 
   bindDiscoveryToggle("gw");
   bindDiscoveryToggle("gw-edit");
+  bindActorClientToggle("gw");
+  bindActorClientToggle("gw-edit");
 
   // Register form listeners using helper function
   registerFormListeners("add-tool-form", handleToolFormSubmit, true);

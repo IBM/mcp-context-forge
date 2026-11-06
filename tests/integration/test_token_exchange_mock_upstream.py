@@ -356,3 +356,193 @@ async def test_discovery_gateway_tool_call_uses_exchanged_user_token():
     assert svc.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == _FAKE_JWT
     # The policy upstream refuses the service token for tools/call.
     assert upstream.handle("tools/call", {"Authorization": f"Bearer {_SERVICE_TOKEN}"}) == 401
+
+
+# ---------------------------------------------------------------------------
+# RFC 8693 delegation against a mock authorization server
+# ---------------------------------------------------------------------------
+
+_DELEGATION_CLIENT_ID = "cf-gateway"
+_UPSTREAM_SECRET = "mock-authorization-server-signing-secret"  # pragma: allowlist secret
+
+
+class _DelegationAuthServer:
+    """Mock authorization server: adds an ``act`` claim only when the exchange carries ``actor_token``.
+
+    It issues client-credentials actor tokens, verifies ``client_assertion`` actor
+    JWTs against the gateway's public key, and records every request body.
+    """
+
+    def __init__(self, *, public_pem=None, fail_client_credentials=False):
+        self.requests = []
+        self.public_pem = public_pem
+        self.fail_client_credentials = fail_client_credentials
+
+    def _actor_subject(self, form):
+        """Resolve the ``act.sub`` value from an actor token, or ``None`` without one.
+
+        Args:
+            form: Parsed request form.
+
+        Returns:
+            Optional[str]: The actor's client id.
+        """
+        # Third-Party
+        import jwt
+
+        actor_token = form.get("actor_token")
+        if not actor_token:
+            return None
+        if form["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token":
+            return jwt.decode(actor_token, _UPSTREAM_SECRET, algorithms=["HS256"])["client_id"]
+        claims = jwt.decode(actor_token, self.public_pem, algorithms=["RS256"], audience="https://as.example.com/token")
+        assert claims["iss"] == claims["sub"]
+        return claims["sub"]
+
+    def handler(self, request):
+        """Serve one token endpoint request.
+
+        Args:
+            request: Incoming ``httpx.Request``.
+
+        Returns:
+            httpx.Response: Token response.
+        """
+        # Standard
+        from urllib.parse import parse_qsl
+
+        # Third-Party
+        import httpx
+        import jwt
+
+        form = dict(parse_qsl(request.content.decode("utf-8")))
+        self.requests.append(form)
+        if form["grant_type"] == "client_credentials":
+            if self.fail_client_credentials:
+                return httpx.Response(503, json={"error": "temporarily_unavailable"})
+            actor = jwt.encode({"client_id": form["client_id"], "sub": form["client_id"]}, _UPSTREAM_SECRET, algorithm="HS256")
+            return httpx.Response(200, json={"access_token": actor, "token_type": "Bearer", "expires_in": 600})
+        claims = {"sub": "u@e", "aud": form["audience"]}
+        actor_subject = self._actor_subject(form)
+        if actor_subject:
+            claims["act"] = {"sub": actor_subject}
+        return httpx.Response(200, json={"access_token": jwt.encode(claims, _UPSTREAM_SECRET, algorithm="HS256"), "token_type": "Bearer", "expires_in": 600})
+
+
+def _delegation_tool_service(auth_server, monkeypatch):
+    """Build a ToolService whose real OAuthManager posts to the mock authorization server.
+
+    Args:
+        auth_server: The mock authorization server.
+        monkeypatch: pytest monkeypatch fixture.
+
+    Returns:
+        ToolService: Service under test.
+    """
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # Third-Party
+    import httpx
+
+    # First-Party
+    from mcpgateway.services import gateway_service_token_cache
+    from mcpgateway.services.oauth_manager import OAuthManager
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from mcpgateway.services.tool_service import ToolService
+
+    @asynccontextmanager
+    async def _client(*_args, **_kwargs):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(auth_server.handler)) as client:
+            yield client
+
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _client)
+    monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache(redis_url=None))
+    svc = ToolService()
+    svc._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    svc.oauth_manager = OAuthManager(max_retries=1)
+    return svc
+
+
+def _delegation_cfg(**overrides):
+    cfg = {
+        "grant_type": "token-exchange",
+        "token_url": "https://as.example.com/token",
+        "client_id": _DELEGATION_CLIENT_ID,
+        "client_secret": "cf-secret",  # pragma: allowlist secret
+        "target_audience": "https://svc",
+        "subject_token_source": "inbound_user_jwt",
+    }
+    cfg.update(overrides)
+    return cfg
+
+
+def _issued_claims(header):
+    # Third-Party
+    import jwt
+
+    return jwt.decode(header["Authorization"].removeprefix("Bearer "), _UPSTREAM_SECRET, algorithms=["HS256"], audience="https://svc")
+
+
+@pytest.mark.asyncio
+async def test_delegation_client_credentials_issues_act_claim(monkeypatch):
+    """The exchanged token names the gateway client in ``act.sub`` when the actor comes from client credentials."""
+    auth_server = _DelegationAuthServer()
+    svc = _delegation_tool_service(auth_server, monkeypatch)
+
+    header = await svc._resolve_token_exchange_header(_delegation_cfg(actor_token_source="client_credentials"), "gw-del", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})
+
+    assert _issued_claims(header)["act"] == {"sub": _DELEGATION_CLIENT_ID}
+    exchange = auth_server.requests[-1]
+    assert exchange["subject_token"] == _FAKE_JWT
+    assert exchange["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+    assert [r["grant_type"] for r in auth_server.requests] == ["client_credentials", "urn:ietf:params:oauth:grant-type:token-exchange"]
+
+
+@pytest.mark.asyncio
+async def test_delegation_client_assertion_issues_act_claim(monkeypatch):
+    """The exchanged token names the gateway client in ``act.sub`` when the actor is a signed assertion."""
+    # Third-Party
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    public_pem = key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    auth_server = _DelegationAuthServer(public_pem=public_pem)
+    svc = _delegation_tool_service(auth_server, monkeypatch)
+
+    header = await svc._resolve_token_exchange_header(
+        _delegation_cfg(actor_token_source="client_assertion", private_key=private_pem), "gw-del", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"}
+    )
+
+    assert _issued_claims(header)["act"] == {"sub": _DELEGATION_CLIENT_ID}
+    assert [r["grant_type"] for r in auth_server.requests] == ["urn:ietf:params:oauth:grant-type:token-exchange"]
+    assert auth_server.requests[0]["actor_token_type"] == "urn:ietf:params:oauth:token-type:jwt"
+
+
+@pytest.mark.asyncio
+async def test_impersonation_issues_no_act_claim(monkeypatch):
+    """Without ``actor_token_source`` the exchange carries no actor token and the issued token has no ``act``."""
+    auth_server = _DelegationAuthServer()
+    svc = _delegation_tool_service(auth_server, monkeypatch)
+
+    header = await svc._resolve_token_exchange_header(_delegation_cfg(), "gw-imp", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})
+
+    assert "act" not in _issued_claims(header)
+    assert "actor_token" not in auth_server.requests[0]
+
+
+@pytest.mark.asyncio
+async def test_delegation_actor_failure_sends_no_fallback_exchange(monkeypatch):
+    """When the actor token request fails, no impersonation exchange is sent and the call fails."""
+    # First-Party
+    from mcpgateway.services.tool_service import ToolInvocationError
+
+    auth_server = _DelegationAuthServer(fail_client_credentials=True)
+    svc = _delegation_tool_service(auth_server, monkeypatch)
+
+    with pytest.raises(ToolInvocationError):
+        await svc._resolve_token_exchange_header(_delegation_cfg(actor_token_source="client_credentials"), "gw-del", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})
+
+    assert [r["grant_type"] for r in auth_server.requests] == ["client_credentials"]

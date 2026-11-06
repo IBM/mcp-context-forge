@@ -17,12 +17,13 @@ import {
 } from "../../../mcpgateway/admin_ui/gateways.js";
 import { fetchWithTimeout, showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils";
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
-import { toggleDiscoveryFields, toggleTokenExchangeFields } from "../../../mcpgateway/admin_ui/auth.js";
+import { toggleActorClientFields, toggleDiscoveryFields, toggleTokenExchangeFields } from "../../../mcpgateway/admin_ui/auth.js";
 import { isAdminUser } from "../../../mcpgateway/admin_ui/utils";
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   getAuthHeaders: vi.fn().mockResolvedValue({ "X-CSRF-Token": "csrf-abc" }),
   loadAuthHeaders: vi.fn(),
+  toggleActorClientFields: vi.fn(),
   toggleDiscoveryFields: vi.fn(),
   toggleTokenExchangeFields: vi.fn(),
   updateAuthHeadersJSON: vi.fn(),
@@ -2230,11 +2231,25 @@ describe("editGateway - token-exchange", () => {
         <select id="oauth-subject-token-source-gw-edit">
           <option value="inbound_user_jwt">inbound_user_jwt</option>
         </select>
+        <select id="oauth-actor-token-source-gw-edit">
+          <option value="none">none</option>
+          <option value="client_credentials">client_credentials</option>
+          <option value="client_assertion" disabled>client_assertion</option>
+        </select>
+        <input id="oauth-actor-token-type-gw-edit" />
         <input type="checkbox" id="oauth-discovery-enabled-gw-edit" />
         <input id="oauth-discovery-scopes-gw-edit" />
         <input id="oauth-discovery-token-url-gw-edit" />
         <input id="oauth-discovery-client-id-gw-edit" />
         <input id="oauth-discovery-client-secret-gw-edit" />
+        <input id="oauth-actor-client-id-gw-edit" />
+        <input id="oauth-actor-client-secret-gw-edit" />
+        <input id="oauth-actor-token-url-gw-edit" />
+        <select id="oauth-actor-token-endpoint-auth-method-gw-edit">
+          <option value="">Inherit</option>
+          <option value="client_secret_basic">client_secret_basic</option>
+          <option value="client_secret_post">client_secret_post</option>
+        </select>
       </div>
       <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
       <input id="edit-gateway-passthrough-headers" />
@@ -2294,6 +2309,50 @@ describe("editGateway - token-exchange", () => {
     expect(noneOption.hidden).toBe(false);
   });
 
+  test("populates the stored delegation settings", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({
+      ...TE_CONFIG,
+      actor_token_source: "client_credentials",
+      actor_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    });
+
+    await editGateway("gw-te");
+
+    const value = (id) => document.getElementById(id).value;
+    expect(value("oauth-actor-token-source-gw-edit")).toBe("client_credentials");
+    expect(value("oauth-actor-token-type-gw-edit")).toBe("urn:ietf:params:oauth:token-type:access_token");
+  });
+
+  test("selects none and keeps client_assertion disabled without a stored private key", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    document.getElementById("oauth-actor-token-type-gw-edit").value = "stale";
+    mockGateway(TE_CONFIG);
+
+    await editGateway("gw-te");
+
+    const select = document.getElementById("oauth-actor-token-source-gw-edit");
+    const assertion = Array.from(select.options).find((o) => o.value === "client_assertion");
+    expect(select.value).toBe("none");
+    expect(assertion.disabled).toBe(true);
+    expect(document.getElementById("oauth-actor-token-type-gw-edit").value).toBe("");
+  });
+
+  test("enables client_assertion when the stored config has a private key", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({ ...TE_CONFIG, private_key: "*****" }); // pragma: allowlist secret
+
+    await editGateway("gw-te");
+
+    const select = document.getElementById("oauth-actor-token-source-gw-edit");
+    const assertion = Array.from(select.options).find((o) => o.value === "client_assertion");
+    expect(assertion.disabled).toBe(false);
+    expect(select.value).toBe("none");
+  });
+
   test("populates the stored discovery credential with the masked secret", async () => {
     window.ROOT_PATH = "";
     document.body.innerHTML = createTokenExchangeEditHTML();
@@ -2331,6 +2390,43 @@ describe("editGateway - token-exchange", () => {
     expect(document.getElementById("oauth-discovery-client-id-gw-edit").value).toBe("");
     expect(document.getElementById("oauth-discovery-client-secret-gw-edit").value).toBe("");
     expect(toggleDiscoveryFields).toHaveBeenLastCalledWith("gw-edit", false);
+  });
+
+  test("populates the stored actor client with the masked secret", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({
+      ...TE_CONFIG,
+      actor_token_source: "client_credentials",
+      actor: {
+        client_id: "contextforge",
+        client_secret: "*****", // pragma: allowlist secret
+        token_endpoint_auth_method: "client_secret_basic",
+      },
+    });
+
+    await editGateway("gw-te");
+
+    const value = (id) => document.getElementById(id).value;
+    expect(value("oauth-actor-client-id-gw-edit")).toBe("contextforge");
+    expect(value("oauth-actor-client-secret-gw-edit")).toBe("*****");
+    expect(value("oauth-actor-token-url-gw-edit")).toBe("");
+    expect(value("oauth-actor-token-endpoint-auth-method-gw-edit")).toBe("client_secret_basic");
+    expect(toggleActorClientFields).toHaveBeenLastCalledWith("gw-edit", "client_credentials");
+  });
+
+  test("clears actor inputs when the stored config has no actor object", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    document.getElementById("oauth-actor-client-id-gw-edit").value = "stale";
+    document.getElementById("oauth-actor-client-secret-gw-edit").value = "stale";
+    mockGateway(TE_CONFIG);
+
+    await editGateway("gw-te");
+
+    expect(document.getElementById("oauth-actor-client-id-gw-edit").value).toBe("");
+    expect(document.getElementById("oauth-actor-client-secret-gw-edit").value).toBe("");
+    expect(toggleActorClientFields).toHaveBeenLastCalledWith("gw-edit", "none");
   });
 
   test("leaves the secret blank for other grants and clears token-exchange inputs", async () => {

@@ -8381,6 +8381,196 @@ class TestTokenExchangeAdminForms:
         assert result.status_code == 400
         mock_update_gateway.assert_not_called()
 
+    async def test_assemble_reads_delegation_fields(self):
+        """The actor token source and type map to their oauth_config keys."""
+        fields = dict(_TE_FORM_FIELDS, oauth_actor_token_source="client_credentials", oauth_actor_token_type="urn:ietf:params:oauth:token-type:access_token")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["actor_token_source"] == "client_credentials"
+        assert config["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    async def test_assemble_delegation_ignored_for_other_grants(self, grant_type):
+        """A stray actor source never reaches another grant's oauth_config."""
+        fields = dict(_TE_FORM_FIELDS, oauth_grant_type=grant_type, oauth_actor_token_source="client_credentials")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "actor_token_source" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_delegation_enabled(self, mock_register_gateway, mock_request, mock_db):
+        """Selecting client_credentials on the add form stores that actor source."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, "oauth_actor_token_source": "client_credentials", "oauth_actor_token_type": ""}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        oauth_config = mock_register_gateway.call_args.args[1].oauth_config
+        assert oauth_config["actor_token_source"] == "client_credentials"
+        assert "actor_token_type" not in oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps actor_token_source and actor_token_type."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_assertion", actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_assertion", oauth_actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 200
+        assert mock_update_gateway.call_args.args[2].oauth_config == stored
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_delegation_fields_keeps_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the delegation fields (older client) keeps the stored keys."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor_token_type="urn:ietf:params:oauth:token-type:access_token")
+        await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_from_stored(stored), stored)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor_token_source"] == "client_credentials"
+        assert submitted["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_actor_token_type_clears_it(self, mock_update_gateway, mock_request, mock_db):
+        """A blank actor token type field removes the key so the service applies the source default."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_credentials", oauth_actor_token_type="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor_token_source"] == "client_credentials"
+        assert "actor_token_type" not in submitted
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_select_none_disables_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """Selecting none submits actor_token_source none."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="none", oauth_actor_token_type="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["actor_token_source"] == "none"
+
+
+    _ACTOR_FORM = {"oauth_actor_token_source": "client_credentials", "oauth_actor_present": "1", "oauth_actor_client_id": "contextforge", "oauth_actor_client_secret": "actor-secret"}  # pragma: allowlist secret
+    _TE_STORED_ACTOR = {"client_id": "contextforge", "client_secret": "stored-actor-ciphertext", "token_endpoint_auth_method": "client_secret_basic"}  # pragma: allowlist secret
+
+    def _edit_form_with_actor(self, stored_config):
+        """Build the form fields the edit UI submits for a stored config with an actor object."""
+        actor = stored_config["actor"]
+        return dict(
+            self._edit_form_from_stored(stored_config),
+            oauth_actor_token_source="client_credentials",
+            oauth_actor_present="1",
+            oauth_actor_client_id=actor["client_id"],
+            oauth_actor_client_secret=settings.masked_auth_value,
+            oauth_actor_token_url="",
+            oauth_actor_token_endpoint_auth_method=actor.get("token_endpoint_auth_method", ""),
+        )
+
+    async def test_assemble_actor_overrides_and_encrypted_secret(self):
+        """Actor fields build the actor object; a new secret is encrypted like the parent secret."""
+        fields = dict(_TE_FORM_FIELDS, **self._ACTOR_FORM, oauth_actor_token_url="https://as.example.com/actor-token", oauth_actor_token_endpoint_auth_method="client_secret_basic")
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(side_effect=lambda v: f"enc({v})")
+            config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=True)
+        assert config["actor"] == {
+            "client_id": "contextforge",
+            "token_url": "https://as.example.com/actor-token",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "client_secret": "enc(actor-secret)",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.parametrize("override", [{"oauth_actor_client_id": ""}, {"oauth_actor_token_source": "none"}, {"oauth_grant_type": "client_credentials"}])
+    async def test_assemble_without_actor_client_or_source_has_no_actor(self, override):
+        """An empty client ID, another source, or another grant adds no actor."""
+        fields = {**_TE_FORM_FIELDS, **self._ACTOR_FORM, **override}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "actor" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_actor(self, mock_register_gateway, mock_request, mock_db):
+        """Entering an actor client on the add form stores oauth_config.actor."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, **self._ACTOR_FORM}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        actor = mock_register_gateway.call_args.args[1].oauth_config["actor"]
+        assert actor["client_id"] == "contextforge"
+        assert actor["client_secret"] == "actor-secret"  # pragma: allowlist secret
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_actor(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps the actor, and the masked secret resolves to the stored ciphertext."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_with_actor(stored), stored)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor"]["client_id"] == "contextforge"
+        assert submitted["actor"]["token_endpoint_auth_method"] == "client_secret_basic"
+        assert submitted["actor"]["client_secret"] == settings.masked_auth_value
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        protected = await protect_oauth_config_for_storage(submitted, existing_oauth_config=stored)
+        assert protected["actor"] == self._TE_STORED_ACTOR
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_actor_fields_keeps_actor(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the actor group (older client) keeps the stored object."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_credentials")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["actor"] == self._TE_STORED_ACTOR
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_cleared_actor_client_id_removes_actor(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing the actor client ID removes the actor object."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_with_actor(stored), oauth_actor_client_id="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "actor" not in mock_update_gateway.call_args.args[2].oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_actor_override_clears_key(self, mock_update_gateway, mock_request, mock_db):
+        """A rendered actor override submitted blank removes its key so the parent value is inherited."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_with_actor(stored), oauth_actor_token_endpoint_auth_method="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        actor = mock_update_gateway.call_args.args[2].oauth_config["actor"]
+        assert "token_endpoint_auth_method" not in actor
+        assert actor["client_id"] == "contextforge"
+
+
+class TestTokenExchangeDelegationTemplate:
+    """The delegation fields render in both token-exchange groups, with client_assertion disabled by default."""
+
+    @staticmethod
+    def _template_source():
+        # Standard
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[3] / "mcpgateway" / "templates" / "admin.html").read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("suffix", ["gw", "gw-edit"])
+    def test_delegation_fields_render_in_token_exchange_group(self, suffix):
+        source = self._template_source()
+        group = source.index(f'id="oauth-token-exchange-fields-{suffix}"')
+        select = source.index(f'id="oauth-actor-token-source-{suffix}"')
+        discovery = source.index(f'id="oauth-discovery-section-{suffix}"')
+        assert group < select < discovery
+        assert f'id="oauth-actor-token-type-{suffix}"' in source
+        option = source[select : source.index("</select>", select)]
+        assert '<option value="none" selected>' in option
+        assert '<option value="client_assertion" disabled>' in option
+
 
 class TestTokenExchangeAdminFormDenyPaths:
     """Deny paths for token-exchange Admin UI submissions, exercising the real service gates."""
