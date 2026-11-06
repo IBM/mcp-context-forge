@@ -8,17 +8,17 @@ Cross-mode token dispatch deny-test matrix (issue #5896).
 Executable form of the six mode-x-token combinations pinned in
 docs/docs/architecture/auth-token-dispatch.md:
 
-- Rows whose expectation holds today land green now. Trust mode does not
-  exist yet (config lands in #5898, the trust branch in #5900), so the
-  trust-mode rows for non-eligible tokens exercise the current code path:
-  the default funnel. That IS the documented behavior for these rows, and
-  it stays correct after trust mode lands.
-- Rows that need un-landed behavior carry pytest.mark.xfail(strict=True)
-  with a pointer to the story that flips them. strict=True turns any
-  premature XPASS into a suite failure.
+- The trust-mode rows for non-eligible tokens exercise the default funnel.
+  That IS the documented behavior for these rows.
+- The gateway-signed branch-(a) rows are green since #5900 landed the
+  trust branch in get_current_user.
+- The external-IdP branch-(b) row carries pytest.mark.xfail(strict=True)
+  with a pointer to #5903, which lands the external IdP trust root.
+  strict=True turns any premature XPASS into a suite failure.
 """
 
 # Standard
+import contextlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,11 +27,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser
+from mcpgateway.db import Base, EmailUser
 
 
 def _exp(hours: int = 1) -> float:
@@ -61,6 +64,30 @@ def _fake_provider(issuer: str) -> MagicMock:
     provider.trusted_for_api_auth = True
     provider.api_audience = "api://my-app"
     return provider
+
+
+def _repoint_funnel_sessions(monkeypatch) -> None:
+    """Re-point the funnel's internal sessions at a schema-complete test DB.
+
+    The trust branch validates role claims against the server-side roles
+    table through ``fresh_db_session``. The default in-memory engine gives
+    each connection a fresh empty database, so the trust-path tests re-point
+    the funnel sessions the same way the B.4/B.5 trust tests do.
+    """
+    engine = sa.create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    session_test = sessionmaker(bind=engine)
+    monkeypatch.setattr("mcpgateway.auth.SessionLocal", session_test)
+
+    @contextlib.contextmanager
+    def _fresh_db_session():
+        session = session_test()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _fresh_db_session)
 
 
 class TestTokenDispatchMatrix:
@@ -173,16 +200,13 @@ class TestTokenDispatchMatrix:
                         assert request.state.token_use == "api"
                         assert request.state.token_teams == ["api-team-1"]
 
-    # Flipped by #5900 (trust branch in get_current_user)
-    @pytest.mark.xfail(strict=True, reason="Flipped by #5900")
     @pytest.mark.asyncio
     async def test_gateway_trust_token_trust_mode_trust_semantics(self, monkeypatch):
         """Trust mode + gateway-signed trust token -> trust-semantics.
 
         A token_use="trusted" token with the mapped claim set (sub, teams,
         roles) and a jti authenticates from claims alone: no local user
-        record is read on the request path. Today no trust branch exists,
-        so the default funnel rejects the unknown user with 401.
+        record is read on the request path.
         """
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
 
@@ -196,8 +220,10 @@ class TestTokenDispatchMatrix:
         }
 
         request = SimpleNamespace(state=SimpleNamespace())
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        _repoint_funnel_sessions(monkeypatch)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
@@ -211,8 +237,6 @@ class TestTokenDispatchMatrix:
                         assert request.state.token_use == "trusted"
                         assert request.state.token_teams == ["trust-team-1"]
 
-    # Flipped by #5900 (trust branch in get_current_user)
-    @pytest.mark.xfail(strict=True, reason="Flipped by #5900")
     @pytest.mark.asyncio
     async def test_gateway_trust_token_default_mode_401(self, monkeypatch):
         """Default mode + gateway-signed trust token -> HTTP 401.
@@ -220,8 +244,6 @@ class TestTokenDispatchMatrix:
         Trust mode is OFF, so a token_use="trusted" token must be rejected
         with 401. It must never enter the default funnel, whose UUID
         heuristic and embedded-teams handling would re-attribute identity.
-        Today no such guard exists, so the default funnel authenticates
-        the token for the local user.
         """
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
 
