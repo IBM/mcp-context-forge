@@ -34,6 +34,7 @@ from pydantic import (
     AliasChoices,
     AnyHttpUrl,
     BaseModel,
+    computed_field,
     ConfigDict,
     EmailStr,
     Field,
@@ -737,6 +738,26 @@ _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
 
 _GATEWAY_ID_ALIAS = AliasChoices("gateway_id", "mcp_server_id")
 _GATEWAY_ID_CAMEL_ALIAS = AliasChoices("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id")
+
+
+class McpServerIdResponseMixin(BaseModelWithConfigDict):
+    """Response mixin that emits ``mcp_server_id`` next to ``gateway_id``.
+
+    ``mcp_server_id`` is the product-terminology alias of ``gateway_id``. Both keys
+    carry the same value until the legacy name is removed.
+    """
+
+    gateway_id: Optional[str] = None
+
+    @computed_field(description="Product-terminology alias of gateway_id")  # type: ignore[prop-decorator]
+    @property
+    def mcp_server_id(self) -> Optional[str]:
+        """Return the value of ``gateway_id`` under its product-terminology name.
+
+        Returns:
+            Optional[str]: The gateway ID, or None when the record has no gateway.
+        """
+        return self.gateway_id
 
 
 def _reject_conflicting_aliases(data: Any, *spellings: str) -> Any:
@@ -2114,7 +2135,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         return _validate_header_mapping_targets(v)
 
 
-class ToolRead(BaseModelWithConfigDict):
+class ToolRead(McpServerIdResponseMixin):
     """Schema for reading tool information.
 
     Includes all tool fields plus:
@@ -2787,7 +2808,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
         return v
 
 
-class ResourceRead(BaseModelWithConfigDict):
+class ResourceRead(McpServerIdResponseMixin):
     """Schema for reading resource information.
 
     Includes all resource fields plus:
@@ -3395,7 +3416,7 @@ class PromptUpdate(BaseModelWithConfigDict):
         return v
 
 
-class PromptRead(BaseModelWithConfigDict):
+class PromptRead(McpServerIdResponseMixin):
     """Schema for reading prompt information.
 
     Includes all prompt fields plus:
@@ -4671,7 +4692,7 @@ class GatewayRead(BaseModelWithConfigDict):
         return GatewayRead.model_validate(masked_data)
 
 
-class GatewayRefreshResponse(BaseModelWithConfigDict):
+class GatewayRefreshResponse(McpServerIdResponseMixin):
     """Response schema for manual gateway refresh API.
 
     Contains counts of added, updated, and removed items for tools, resources, and prompts,
@@ -4702,7 +4723,7 @@ class GatewayImpactServer(BaseModelWithConfigDict):
     name: str = Field(..., description="Name of the affected virtual server")
 
 
-class GatewayImpactPreview(BaseModelWithConfigDict):
+class GatewayImpactPreview(McpServerIdResponseMixin):
     """Layer-1-scoped preview of virtual servers affected by gateway deletion."""
 
     gateway_id: str = Field(..., description="ID of the gateway being evaluated")

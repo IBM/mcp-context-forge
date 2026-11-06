@@ -39,7 +39,8 @@ The product calls a registered upstream an "MCP server" and a virtual server a "
 
 Rules:
 
-- Both spellings work. Responses keep the original key names.
+- Both spellings work in requests.
+- Responses that carry `gatewayId` also carry `mcpServerId` with the same value: tool, resource, and prompt records, the MCP-server refresh result, and the impact preview. Responses keep the original keys.
 - Camel-case bodies accept `mcpServerId` where they accept `gatewayId`.
 - A request that sends both spellings with different values returns `422`.
 - A request that sends both spellings with the same value is accepted.

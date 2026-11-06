@@ -81,6 +81,7 @@
 
 ### Added
 
+- **`mcpServerId` in responses** (#6544) - Tool, resource, and prompt records, the MCP-server refresh result, and the impact preview now carry `mcpServerId` next to `gatewayId`. Both keys hold the same value. `gatewayId` stays.
 - **Webhook HMAC replay protection** (internal issue 1149, PSIRT ADV0369535) - The `webhook_notification` plugin accepts `hmac_include_timestamp: true`. The signature then covers `{timestamp}.{delivery_id}.{body}`, and the plugin sends `X-Timestamp` and `X-Delivery-Id` headers. Each retry is signed again with a fresh timestamp. The default stays `false`, so existing receivers keep verifying `HMAC(body)`. The default flips to `true` in a later minor release.
 
 #### **API & Platform**

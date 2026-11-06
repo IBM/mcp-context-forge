@@ -2742,7 +2742,7 @@ class TestGatewayEndpoints:
         response = test_client.get("/v1/gateways/gateway-1/impact-preview", headers=auth_headers)
 
         assert response.status_code == 200
-        assert response.json() == {"gatewayId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
+        assert response.json() == {"gatewayId": "gateway-1", "mcpServerId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
         mock_preview.assert_awaited_once()
 
     @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")

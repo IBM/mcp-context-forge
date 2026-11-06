@@ -62,7 +62,10 @@ from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
     EventMessage,
+    GatewayImpactPreview,
+    GatewayRefreshResponse,
     ListFilters,
+    McpServerIdResponseMixin,
     PromptCreate,
     PromptMetrics,
     PromptRead,
@@ -2391,3 +2394,26 @@ class TestToolOutputSchemaShapes:
     def test_tool_result_carries_any_json_value(self, value):
         result = ToolResult(content=[], structured_content=value)
         assert result.structured_content == value
+
+
+class TestMcpServerIdResponseAlias:
+    """Responses carrying ``gateway_id`` also emit ``mcp_server_id`` (issue #6544)."""
+
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_serialization_schema_lists_alias(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert "mcpServerId" in properties
+        assert "gatewayId" in properties
+
+    def test_refresh_response_emits_both_keys(self):
+        response = GatewayRefreshResponse(gateway_id="gw-1", duration_ms=1, refreshed_at=datetime.now(timezone.utc))
+        dumped = response.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    def test_alias_is_none_without_gateway(self):
+        response = McpServerIdResponseMixin()
+        assert response.model_dump()["mcp_server_id"] is None
+
+    def test_alias_in_response_body_is_ignored_on_input(self):
+        response = McpServerIdResponseMixin.model_validate({"gateway_id": "gw-1", "mcp_server_id": "other"})
+        assert response.mcp_server_id == "gw-1"
