@@ -709,6 +709,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `CIMD_KEY_ID`                             | `kid` of the CIMD signing key in assertions and the CIMD JWKS  | `cimd-1`                       | string        |
 | `CIMD_SIGNING_ALG`                        | Signing algorithm for CIMD client assertions                   | `RS256`                        | `RS256`, `RS384`, `RS512`, `PS256`, `ES256`, `ES384`, `ES512` |
 | `CIMD_PREVIOUS_PUBLIC_KEY_PATH`           | Previous CIMD public key PEM published in the JWKS during rotation | `""`                       | path          |
+| `CIMD_PREVIOUS_KEY_ID`                    | `kid` published for the previous CIMD public key; set to the former `CIMD_KEY_ID` | `""` (`<CIMD_KEY_ID>-previous`) | string |
 | `CIMD_DOCUMENT_CACHE_SECONDS`             | Cache-Control max-age in seconds for the Client ID Metadata Document endpoint | `3600`                 | int           |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |

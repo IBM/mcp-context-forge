@@ -1065,6 +1065,11 @@ class Settings(BaseSettings):
 
     cimd_key_id: str = Field(default="cimd-1", description="kid of the CIMD signing key, set in assertion headers and the CIMD JWKS")
 
+    cimd_previous_key_id: str = Field(
+        default="",
+        description="kid published for the previous CIMD public key during rotation. Set it to the former CIMD_KEY_ID so assertions signed before rotation still verify. Defaults to <CIMD_KEY_ID>-previous",
+    )
+
     cimd_signing_alg: Literal["RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512"] = Field(
         default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)"
     )

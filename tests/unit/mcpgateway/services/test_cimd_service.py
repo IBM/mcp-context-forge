@@ -38,6 +38,7 @@ def _settings(**overrides):
         "cimd_private_key_path": "",
         "cimd_previous_public_key_path": "",
         "cimd_key_id": "cimd-1",
+        "cimd_previous_key_id": "",
         "cimd_signing_alg": "RS256",
     }
     values.update(overrides)
@@ -407,6 +408,23 @@ class TestCimdKeyLoading:
         with patch.object(cimd_service, "get_settings", return_value=_settings(cimd_private_key_path="cimd.pem")):
             assert cimd_service.load_cimd_private_key() == pem
 
+    def test_private_key_reloads_after_file_replaced(self, tmp_path):
+        # Standard
+        import os
+
+        # First-Party
+        from mcpgateway.services import cimd_service
+
+        key_file = tmp_path / "cimd.pem"
+        first, second = _pem_private(self._rsa()), _pem_private(self._rsa())
+        key_file.write_text(first)
+        cfg = _settings(cimd_private_key_path=str(key_file))
+        with patch.object(cimd_service, "get_settings", return_value=cfg):
+            assert cimd_service.load_cimd_private_key() == first
+            key_file.write_text(second)
+            os.utime(key_file, ns=(1, 1))
+            assert cimd_service.load_cimd_private_key() == second
+
     def test_unreadable_key_file_rejected(self, tmp_path):
         # First-Party
         from mcpgateway.services import cimd_service
@@ -520,6 +538,27 @@ class TestJwks:
 
         assert [k["kid"] for k in keys] == ["cimd-1", "cimd-1-previous"]
 
+    def test_jwks_previous_key_uses_configured_kid(self, tmp_path):
+        # Third-Party
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        # First-Party
+        from mcpgateway.routers import well_known
+
+        (tmp_path / "cimd.pem").write_text(_pem_private(rsa.generate_private_key(public_exponent=65537, key_size=2048)))
+        (tmp_path / "prev.pem").write_text(_pem_public(rsa.generate_private_key(public_exponent=65537, key_size=2048)))
+        cfg = _settings(
+            cimd_private_key_path=str(tmp_path / "cimd.pem"),
+            cimd_previous_public_key_path=str(tmp_path / "prev.pem"),
+            cimd_key_id="cimd-2",
+            cimd_previous_key_id="cimd-1",
+        )
+
+        with patch.object(well_known, "settings", cfg), patch("mcpgateway.services.cimd_service.get_settings", return_value=cfg):
+            keys = well_known.get_jwks()["keys"]
+
+        assert [k["kid"] for k in keys] == ["cimd-2", "cimd-1"]
+
     @pytest.mark.asyncio
     async def test_jwks_endpoint_disabled_returns_404(self):
         # First-Party
@@ -542,19 +581,3 @@ class TestJwks:
 
         assert response.status_code == 200
         assert response.headers["cache-control"] == "public, max-age=3600"
-
-    @pytest.mark.asyncio
-    async def test_legacy_endpoint(self):
-        # First-Party
-        from mcpgateway.routers import well_known
-
-        cfg = _settings()
-        with patch.object(well_known, "settings", cfg), patch("mcpgateway.services.cimd_service.get_settings", return_value=cfg):
-            response = await well_known.get_legacy_oauth_client_metadata(_request())
-        assert response.status_code == 200
-        assert b"https://gw.example.com/oauth/client-metadata.json" in response.body
-
-        with patch.object(well_known, "settings", _settings(cimd_enabled=False)):
-            with pytest.raises(HTTPException) as exc_info:
-                await well_known.get_legacy_oauth_client_metadata(_request())
-        assert exc_info.value.status_code == 404

@@ -10,12 +10,17 @@ Defaults assume private API deployment with crawling disabled.
 """
 
 # Standard
+import base64
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
@@ -233,16 +238,24 @@ async def get_oauth_protected_resource(
     )
 
 
+_EC_CURVE_NAMES = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
+
+
+def _b64url(data: bytes) -> str:
+    """Return unpadded base64url text for ``data``."""
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _int_bytes(value: int, size: Optional[int] = None) -> bytes:
+    """Return ``value`` as big-endian bytes, padded to ``size`` when given."""
+    return value.to_bytes(size or (value.bit_length() + 7) // 8, byteorder="big")
+
+
 def get_jwk_from_public_key(pem_content: str, kid: str, alg: str) -> dict:
     """Generate a standard JWK dictionary from a public key PEM string."""
     try:
-        from cryptography.hazmat.primitives.serialization import load_pem_public_key
-        from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-        from cryptography.hazmat.primitives import serialization
-        import base64
-
         pub_key = load_pem_public_key(pem_content.encode("utf-8"))
-    except Exception as e:
+    except (ValueError, TypeError, UnsupportedAlgorithm) as e:
         logger.warning(f"Failed to parse public key for JWK: {e}")
         return {}
 
@@ -250,25 +263,15 @@ def get_jwk_from_public_key(pem_content: str, kid: str, alg: str) -> dict:
 
     if isinstance(pub_key, rsa.RSAPublicKey):
         numbers = pub_key.public_numbers()
-        e_bytes = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, byteorder="big")
-        n_bytes = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, byteorder="big")
-        jwk.update({"kty": "RSA", "n": base64.urlsafe_b64encode(n_bytes).decode("utf-8").rstrip("="), "e": base64.urlsafe_b64encode(e_bytes).decode("utf-8").rstrip("=")})
+        jwk.update({"kty": "RSA", "n": _b64url(_int_bytes(numbers.n)), "e": _b64url(_int_bytes(numbers.e))})
     elif isinstance(pub_key, ec.EllipticCurvePublicKey):
         numbers = pub_key.public_numbers()
         coord_size = (pub_key.curve.key_size + 7) // 8
-        x_bytes = numbers.x.to_bytes(coord_size, byteorder="big")
-        y_bytes = numbers.y.to_bytes(coord_size, byteorder="big")
-        crv_name = pub_key.curve.name
-        if crv_name == "secp256r1":
-            crv_name = "P-256"
-        elif crv_name == "secp384r1":
-            crv_name = "P-384"
-        elif crv_name == "secp521r1":
-            crv_name = "P-521"
-        jwk.update({"kty": "EC", "crv": crv_name, "x": base64.urlsafe_b64encode(x_bytes).decode("utf-8").rstrip("="), "y": base64.urlsafe_b64encode(y_bytes).decode("utf-8").rstrip("=")})
+        crv_name = _EC_CURVE_NAMES.get(pub_key.curve.name, pub_key.curve.name)
+        jwk.update({"kty": "EC", "crv": crv_name, "x": _b64url(_int_bytes(numbers.x, coord_size)), "y": _b64url(_int_bytes(numbers.y, coord_size))})
     elif isinstance(pub_key, ed25519.Ed25519PublicKey):
         pub_bytes = pub_key.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
-        jwk.update({"kty": "OKP", "crv": "Ed25519", "x": base64.urlsafe_b64encode(pub_bytes).decode("utf-8").rstrip("=")})
+        jwk.update({"kty": "OKP", "crv": "Ed25519", "x": _b64url(pub_bytes)})
     else:
         logger.warning("Unsupported public key type for JWK")
         return {}
@@ -290,11 +293,25 @@ def get_jwks() -> dict:
 
     prev_pem = load_cimd_previous_public_key()
     if prev_pem:
-        jwk = get_jwk_from_public_key(prev_pem, kid=f"{settings.cimd_key_id}-previous", alg=alg)
+        jwk = get_jwk_from_public_key(prev_pem, kid=settings.cimd_previous_key_id or f"{settings.cimd_key_id}-previous", alg=alg)
         if jwk:
             keys.append(jwk)
 
     return {"keys": keys}
+
+
+def _cimd_cache_headers() -> dict:
+    """Return the public cache headers for CIMD responses.
+
+    Returns:
+        dict: ``Cache-Control`` header.
+
+    Raises:
+        HTTPException: 404 if CIMD is disabled.
+    """
+    if not settings.cimd_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
 
 
 @router.get("/oauth/client-metadata.json")
@@ -309,45 +326,16 @@ async def get_oauth_client_metadata(request: Request) -> JSONResponse:
 
     Returns:
         JSONResponse: The Client ID Metadata Document.
-
-    Raises:
-        HTTPException: 404 if CIMD is disabled.
     """
-    if not settings.cimd_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    headers = {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
+    headers = _cimd_cache_headers()
     return JSONResponse(content=CimdService(root_path=resolve_root_path(request)).build_document(), headers=headers)
 
 
 @router.get("/oauth/client-metadata/jwks.json")
 async def get_oauth_client_metadata_jwks() -> JSONResponse:
     """Serve the gateway's public JWKS for CIMD private_key_jwt client assertions."""
-    if not settings.cimd_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    headers = {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
+    headers = _cimd_cache_headers()
     return JSONResponse(content=get_jwks(), headers=headers)
-
-
-@router.get("/.well-known/oauth-client")
-async def get_legacy_oauth_client_metadata(request: Request) -> JSONResponse:
-    """Legacy endpoint for backward compatibility.
-
-    Args:
-        request: Incoming request, used to resolve the reverse-proxy root path.
-
-    Returns:
-        JSONResponse: The Client ID Metadata Document.
-
-    Raises:
-        HTTPException: 404 if CIMD is disabled.
-    """
-    if not settings.cimd_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    headers = {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
-    return JSONResponse(content=CimdService(root_path=resolve_root_path(request)).build_document(), headers=headers)
 
 
 def get_well_known_file_content(filename: str) -> PlainTextResponse:
