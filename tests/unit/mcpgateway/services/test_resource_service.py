@@ -8940,7 +8940,7 @@ class TestReadResourceDirectProxy:
         assert content.text == "hello from remote"
         assert content.uri == "http://example.com/dp-resource"
         invoke_resource.assert_not_awaited()
-        session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
+        session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource", allow_input_required=True)
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_records_the_upstream_cache_directive(self, resource_service, mock_direct_proxy_resource):
@@ -8989,7 +8989,7 @@ class TestReadResourceDirectProxy:
         assert content.text == "hello from remote"
         assert content.uri == "http://example.com/dp-resource"
         invoke_resource.assert_not_awaited()
-        session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
+        session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource", allow_input_required=True)
         assert upstream_read_cache_var.get() == {"ttl_ms": 60_000, "cache_scope": "private"}
 
     @pytest.mark.asyncio
@@ -10068,5 +10068,5 @@ class TestReadResourceWithMetaProgress:
 
         session = self._session()
         assert await _read_resource_with_meta(session, "file:///a", None, None) == "plain"
-        session.read_resource.assert_awaited_once_with(uri="file:///a")
+        session.read_resource.assert_awaited_once_with(uri="file:///a", allow_input_required=True)
         session.send_request.assert_not_called()
