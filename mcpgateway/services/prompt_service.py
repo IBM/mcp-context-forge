@@ -33,7 +33,7 @@ from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import GetPromptRequest, GetPromptRequestParams
 import orjson
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -148,8 +148,14 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> "types.ClientRequest":
-    """Build a GetPrompt ClientRequest that carries _meta when metadata is given (CWE-20, CWE-284).
+#: Upstream ``prompts/get`` answers: the rendered prompt, or a 2026 MRTR request for input.
+_GET_PROMPT_RESULT_ADAPTER: TypeAdapter = TypeAdapter(types.GetPromptResult | types.InputRequiredResult)
+
+
+def _build_get_prompt_request(
+    name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]], input_responses: Optional[Any] = None, request_state: Optional[str] = None
+) -> "types.ClientRequest":
+    """Build a GetPrompt ClientRequest that carries _meta and any MRTR retry fields (CWE-20, CWE-284).
 
     Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
     key written into the dict so the subsequent ``model_validate`` call
@@ -162,12 +168,14 @@ def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], me
     Args:
         name: The prompt name.
         arguments: Optional prompt arguments.
-        meta_data: Optional validated metadata dict to inject as ``_meta``.
+        meta_data: Validated metadata dict to inject as ``_meta``, or ``None``.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
         A :class:`GetPromptRequest` ready to be passed to ``session.send_request``.
     """
-    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
+    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments, input_responses=input_responses, request_state=request_state).model_dump(by_alias=True)
     if meta_data:
         _gp_dict["_meta"] = meta_data
     return GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))
@@ -179,8 +187,10 @@ async def _get_prompt_with_meta(
     arguments: Optional[Dict[str, str]],
     meta_data: Optional[Dict[str, Any]],
     progress_callback: ProgressFnT | None = None,
+    input_responses: Optional[Any] = None,
+    request_state: Optional[str] = None,
 ) -> Any:
-    """Dispatch a get_prompt call, injecting ``_meta`` and relaying upstream progress when requested.
+    """Dispatch a get_prompt call, injecting ``_meta``, relaying upstream progress, and carrying any MRTR retry fields.
 
     Eliminates the repeated ``if meta_data: send_request … else: get_prompt``
     pattern across every transport/pool branch in this module.
@@ -190,22 +200,37 @@ async def _get_prompt_with_meta(
         session: An active MCP :class:`ClientSession`.
         name: The prompt name.
         arguments: Optional prompt-rendering arguments.
-        meta_data: Optional validated metadata dict. When ``None`` the standard
-            SDK helper is used; when non-empty the low-level ``send_request``
-            path is taken to carry ``_meta``.
+        meta_data: Optional validated metadata dict. Without it, a progress callback or retry
+            fields the standard SDK helper is used; otherwise the low-level ``send_request``
+            path is taken to carry them. The client's progress token never goes upstream.
         progress_callback: Optional callback that receives upstream progress notifications.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
-        The raw MCP result object (caller extracts ``.messages``).
+        The raw MCP result object: a ``GetPromptResult`` or an ``InputRequiredResult``.
     """
     meta_data = without_progress_token(meta_data)
-    if meta_data or progress_callback:
+    if meta_data or progress_callback or input_responses or request_state:
         return await session.send_request(
-            _build_get_prompt_request(name, arguments, meta_data),
-            types.GetPromptResult,
+            _build_get_prompt_request(name, arguments, meta_data, input_responses, request_state),
+            _GET_PROMPT_RESULT_ADAPTER,
             progress_callback=progress_callback,
         )
-    return await session.get_prompt(name, arguments=arguments)
+    return await session.get_prompt(name, arguments=arguments, allow_input_required=True)
+
+
+def _raise_if_input_required(remote_result: Any) -> None:
+    """Turn an upstream input-required answer into the ``PromptInputRequired`` signal.
+
+    Args:
+        remote_result: The raw upstream result.
+
+    Raises:
+        PromptInputRequired: If the upstream asks for input before rendering the prompt.
+    """
+    if isinstance(remote_result, types.InputRequiredResult):
+        raise PromptInputRequired(remote_result)
 
 
 def _prompt_result_to_plugin_payload(result: PromptResult) -> dict[str, Any]:
@@ -266,6 +291,22 @@ class PromptNameConflictError(PromptError):
         super().__init__(message)
 
 
+class PromptInputRequired(PromptError):
+    """Control-flow signal: the upstream answered ``prompts/get`` with an input-required result (2026 MRTR).
+
+    The caller decides whether to relay the result to a modern client or refuse it for a legacy one.
+    """
+
+    def __init__(self, result: "types.InputRequiredResult") -> None:
+        """Keep the upstream result for the caller.
+
+        Args:
+            result: The ``InputRequiredResult`` the upstream returned.
+        """
+        super().__init__("Input required by the upstream prompt")
+        self.result = result
+
+
 class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
 
@@ -305,11 +346,15 @@ def _sanitize_error_data(value: Any, auth_query_params: Optional[Dict[str, str]]
     return value
 
 
-def _upstream_root_cause(exc: BaseException) -> BaseException:
-    """Return the first MCPError inside a task-group wrapped failure, or its first leaf when there is none.
+def _upstream_root_cause(exc: BaseException, signal: type[BaseException] | None = None) -> BaseException:
+    """Return the exception that explains a task-group wrapped failure.
+
+    A ``signal`` instance wins first (a control-flow result such as input-required raised
+    inside the SDK client block), then the first MCPError, then the first leaf.
 
     Args:
         exc: The exception caught around an upstream call.
+        signal: Optional control-flow exception type to surface ahead of errors.
 
     Returns:
         BaseException: The exception that explains the failure.
@@ -322,6 +367,10 @@ def _upstream_root_cause(exc: BaseException) -> BaseException:
             pending.extend(current.exceptions)
         else:
             leaves.append(current)
+    if signal is not None:
+        found = next((leaf for leaf in leaves if isinstance(leaf, signal)), None)
+        if found is not None:
+            return found
     return next((leaf for leaf in leaves if isinstance(leaf, MCPError)), leaves[0] if leaves else exc)
 
 
@@ -456,6 +505,8 @@ class PromptService(BaseService):
         arguments: Optional[Dict[str, str]],
         meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
@@ -464,11 +515,14 @@ class PromptService(BaseService):
             arguments: Optional prompt-rendering arguments.
             meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
             progress_callback: Optional callback that receives upstream progress notifications.
+            input_responses: Answers to a prior input-required result, echoed on the retry.
+            request_state: Opaque state from a prior input-required result, echoed on the retry.
 
         Returns:
             Prompt result normalized into ContextForge models.
 
         Raises:
+            PromptInputRequired: If the upstream asks for input before it can render the prompt.
             PromptError: If the gateway prompt cannot be fetched.
         """
         gateway = getattr(prompt, "gateway", None)
@@ -516,7 +570,8 @@ class PromptService(BaseService):
                         headers=headers,
                         transport_type=registry_transport_type,
                     ) as upstream:
-                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
+                        _raise_if_input_required(remote_result)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -532,15 +587,16 @@ class PromptService(BaseService):
                     timeout=settings.health_check_timeout,
                     transport="sse",
                 ) as client:
-                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
             else:
                 async with mcp_proxy_client(
                     url=gateway_url,
                     headers=headers,
                     timeout=settings.health_check_timeout,
                 ) as client:
-                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
 
+            _raise_if_input_required(remote_result)
             return PromptResult(
                 messages=[
                     Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -548,9 +604,13 @@ class PromptService(BaseService):
                 ],
                 description=getattr(remote_result, "description", None) or prompt.description,
             )
+        except PromptInputRequired:
+            raise
         except Exception as exc:
-            # The SDK's task group wraps the failure; an upstream JSON-RPC error inside it wins over any other leaf.
-            root_cause = _upstream_root_cause(exc)
+            # The SDK's task group wraps the failure; the input-required signal, then an upstream JSON-RPC error, wins over any other leaf.
+            root_cause = _upstream_root_cause(exc, PromptInputRequired)
+            if isinstance(root_cause, PromptInputRequired):
+                raise root_cause from exc
             # Either message may echo the gateway URL, so auth parameters are stripped from it.
             sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params_decrypted)
             if isinstance(root_cause, MCPError):
@@ -2014,6 +2074,8 @@ class PromptService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         _meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> PromptResult:
         """Retrieve and render a prompt by name or ID.
 
@@ -2038,6 +2100,8 @@ class PromptService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
             progress_callback: Optional callback that receives upstream progress notifications, forwarded to the gateway fetch.
+            input_responses: Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state: Opaque state from a prior input-required result, echoed to the upstream on the retry.
 
         Returns:
             Prompt result with rendered messages
@@ -2200,7 +2264,9 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback)
+                    result = await self._fetch_gateway_prompt_result(
+                        prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback, input_responses=input_responses, request_state=request_state
+                    )
                 elif arguments is None:
                     # No arguments at all means "show the template", as the REST view does.
                     result = PromptResult(
