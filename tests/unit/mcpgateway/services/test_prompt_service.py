@@ -606,6 +606,8 @@ class TestPromptService:
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
             meta_data=None,
             progress_callback=None,
+            input_responses=None,
+            request_state=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"
@@ -4478,7 +4480,7 @@ class TestGetPromptWithMetaProgress:
 
         session = self._session()
         assert await _get_prompt_with_meta(session, "p", {"a": "b"}, None, None) == "plain"
-        session.get_prompt.assert_awaited_once_with("p", arguments={"a": "b"})
+        session.get_prompt.assert_awaited_once_with("p", arguments={"a": "b"}, allow_input_required=True)
         session.send_request.assert_not_called()
 
     @pytest.mark.asyncio
@@ -4513,4 +4515,4 @@ class TestGetPromptWithMetaProgress:
             await PromptService()._fetch_gateway_prompt_result(prompt, None, meta_data=None, progress_callback=callback)
 
         assert get_mock.await_args.args[0] is sentinel_session
-        assert get_mock.await_args.args[-1] is callback
+        assert get_mock.await_args.args[4] is callback  # progress_callback sits before the MRTR retry fields
