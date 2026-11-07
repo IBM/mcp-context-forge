@@ -1098,15 +1098,28 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 | Status | Condition |
 |--------|-----------|
-| `409 Conflict` | A resource with this URI already exists in the target scope. |
+| `409 Conflict` | The URI conflicts with an existing resource, or a database integrity constraint was violated. |
 | `422 Unprocessable Entity` | Payload failed schema or resource validation. |
-| `400 Bad Request` | Other resource errors (for example, `visibility=team` without a `team_id`). |
+| `413 Payload Too Large` | Resource content exceeded the configured size limit. |
+| `415 Unsupported Media Type` | The effective resource MIME type is outside the allowlist when strict MIME validation is enabled. |
+| `400 Bad Request` | Other resource errors. |
 
-`409` bodies use the standard FastAPI shape:
+When the service detects the conflict before writing, the `409` response has a string in `detail`:
 
 ```json
 {
-  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+  "detail": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Public, URI: file:///etc/config.json)"
+}
+```
+
+When the database reports a resource URI uniqueness violation, `detail` contains an object:
+
+```json
+{
+  "detail": {
+    "message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+    "success": false
+  }
 }
 ```
 
@@ -2266,7 +2279,7 @@ echo "=== E2E Test Complete ==="
 
 ```json
 {
-  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+  "detail": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Public, URI: file:///etc/config.json)"
 }
 ```
 

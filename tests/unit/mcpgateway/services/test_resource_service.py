@@ -353,7 +353,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "Public resource already exists with URI" in str(exc_info.value)
+        assert "visibility: Public" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
@@ -365,7 +365,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "resource already exists with URI" in str(exc_info.value)
+        assert "A resource with this URI already exists in this scope" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_team_without_team_id_raises_validation_error(self, resource_service, mock_db, sample_resource_create):
@@ -5676,7 +5676,7 @@ class TestResourceServiceCoverageEdges:
 
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
-        assert "Team resource already exists with URI" in str(exc_info.value)
+        assert "visibility: Team" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_unknown_conflict_strategy_does_nothing(self, resource_service, mock_db):
@@ -9787,9 +9787,10 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://dup.txt", "Second"), **kwargs)
 
         message = str(exc_info.value)
-        assert "resource already exists with URI" in message
-        assert "file://dup.txt" in message
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert message == (
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
+            " (visibility: Private, URI: file://dup.txt)"
+        )
 
     @pytest.mark.asyncio
     async def test_register_private_same_uri_different_owner_succeeds(self, service, db):
@@ -9812,7 +9813,7 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://off.txt", "Off Again"), **kwargs)
 
         message = str(exc_info.value)
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert "Resource URIs must be unique; names may repeat." in message
         assert f"(currently inactive, ID: {created.id})" in message
 
     @pytest.mark.asyncio
@@ -9827,7 +9828,7 @@ class TestResourceUriUniquenessScope:
 
         message = str(exc_info.value)
         assert "file://taken.txt" in message
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert "Resource URIs must be unique; names may repeat." in message
         assert existing.id != target.id
 
     @pytest.mark.asyncio
@@ -9887,7 +9888,7 @@ class TestResourceUriUniquenessScope:
             assert error.uri == existing.uri
             assert error.resource_id == existing.id
             assert error.enabled is True
-            assert str(error) == (f"{visibility.capitalize()} resource already exists with URI: {existing.uri} — resource URIs must be unique within this scope (names may repeat).")
+            assert str(error) == (f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri})")
             if operation == "update":
                 db.expire_all()
                 assert db.get(DbResource, target.id).uri == "file://available.txt"
@@ -9918,7 +9919,7 @@ class TestResourceUriUniquenessScope:
         assert caught.value.enabled is False
         assert caught.value.resource_id == existing.id
         assert str(caught.value) == (
-            f"{visibility.capitalize()} resource already exists with URI: {existing.uri} — resource URIs must be unique within this scope (names may repeat). (currently inactive, ID: {existing.id})"
+            f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri}) (currently inactive, ID: {existing.id})"
         )
         assert db.query(DbResource).count() == count
         assert db.get(DbResource, target.id).uri == "file://target.txt"

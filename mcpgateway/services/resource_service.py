@@ -97,7 +97,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
+from mcpgateway.utils.error_formatter import format_resource_uri_conflict_message, PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -288,10 +288,7 @@ class ResourceURIConflictError(ResourceError):
         self.uri = uri
         self.enabled = enabled
         self.resource_id = resource_id
-        message = f"{visibility.capitalize()} resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
-        if not enabled:
-            message += f" (currently inactive, ID: {resource_id})"
-        super().__init__(message)
+        super().__init__(format_resource_uri_conflict_message(uri=uri, visibility=visibility, enabled=enabled, resource_id=resource_id))
 
 
 class ResourceValidationError(ResourceError):

@@ -22,6 +22,7 @@ from playwright.sync_api import APIRequestContext, expect, Response
 import pytest
 
 # Local
+from ..pages.admin_utils import wait_for_js_condition
 from ..pages.resources_page import ResourcesPage
 
 logger = logging.getLogger(__name__)
@@ -1010,37 +1011,46 @@ def _resource_uri_conflict_case(admin_api: APIRequestContext) -> Iterator[tuple[
 class TestResourceDuplicateUriFormValidation:
     """Preserve URI conflict attribution through the shipped resource form."""
 
-    def test_duplicate_resource_uri_shows_inline_error_and_focus(self, resources_page: ResourcesPage, admin_api: APIRequestContext, resource_uri_conflict_case: tuple[str, str, str]) -> None:
+    @pytest.mark.parametrize("original_visibility", ["public", "private"], ids=["precheck", "database-fallback"])
+    def test_duplicate_resource_uri_shows_inline_error_and_focus(
+        self, resources_page: ResourcesPage, admin_api: APIRequestContext, resource_uri_conflict_case: tuple[str, str, str], original_visibility: str
+    ) -> None:
         """Duplicate submission preserves the original row and focuses the URI field.
 
         Args:
             resources_page: Authenticated resource management page.
             admin_api: Authenticated API context for persistence checks.
             resource_uri_conflict_case: Unique URI and names with automatic cleanup.
+            original_visibility: Visibility of the resource that occupies the URI.
         """
         uri, original_name, duplicate_name = resource_uri_conflict_case
+        wait_for_js_condition(resources_page.page, "typeof window.Admin?.showTab === 'function' && !!document.querySelector('.sidebar-link.active')")
         resources_page.navigate_to_resources_tab()
-        resources_page.wait_for_resources_table_loaded()
-        resources_page.add_resource_form.locator('input[name="visibility"][value="public"]').check()
+        expect(resources_page.add_resource_form).to_be_visible()
+        resources_page.add_resource_form.locator(f'input[name="visibility"][value="{original_visibility}"]').check()
 
         with resources_page.page.expect_event("domcontentloaded"):
             with resources_page.page.expect_response(_is_resource_create_response) as created:
                 resources_page.create_resource(uri=uri, name=original_name, mime_type="text/plain", description="Conflict regression")
             assert created.value.status == 200, created.value.text()
 
-        resources_page.wait_for_resources_table_loaded()
         expect(resources_page.add_resource_form).to_be_visible()
         expect(resources_page.resource_uri_input).to_have_value("")
         original = _resources_for_uri(admin_api, uri)
         assert len(original) == 1
         assert original[0]["name"] == original_name
+        assert original[0]["visibility"] == original_visibility
+        if original_visibility == "private":
+            assert original[0]["teamId"] and original[0]["ownerEmail"]
         resource_id = original[0]["id"]
         resources_page.add_resource_form.locator('input[name="visibility"][value="public"]').check()
 
         with resources_page.page.expect_response(_is_resource_create_response) as duplicate:
             resources_page.create_resource(uri=uri, name=duplicate_name, mime_type="text/plain", description="Conflict regression")
         response = duplicate.value
-        message = f"Public resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
+        message = "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
+        if original_visibility == "public":
+            message += f" (visibility: Public, URI: {uri})"
         assert response.status == 409, response.text()
         assert response.json() == {"message": message, "success": False}
         error = resources_page.add_resource_form.locator('p[data-error-message-for="uri"]')

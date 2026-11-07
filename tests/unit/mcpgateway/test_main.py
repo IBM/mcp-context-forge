@@ -273,13 +273,13 @@ RESOURCE_ERROR_CASES = [
     pytest.param(
         ResourceURIConflictError("file://handler-order.txt"),
         409,
-        "Public resource already exists with URI: file://handler-order.txt — resource URIs must be unique within this scope (names may repeat).",
+        "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Public, URI: file://handler-order.txt)",
         id="active-uri-conflict",
     ),
     pytest.param(
         ResourceURIConflictError("file://handler-order.txt", enabled=False, resource_id="existing-resource"),
         409,
-        "Public resource already exists with URI: file://handler-order.txt — resource URIs must be unique within this scope (names may repeat). (currently inactive, ID: existing-resource)",
+        "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Public, URI: file://handler-order.txt) (currently inactive, ID: existing-resource)",
         id="inactive-uri-conflict",
     ),
     pytest.param(ResourceValidationError("Invalid resource scope"), 422, "Invalid resource scope", id="resource-validation"),
