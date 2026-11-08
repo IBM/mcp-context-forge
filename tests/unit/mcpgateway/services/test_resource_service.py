@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Base, EmailUser
+from mcpgateway.db import Base, EmailUser, get_for_update
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -9931,7 +9931,6 @@ class TestResourceUriUniquenessScope:
     async def test_unchanged_uri_does_not_run_conflict_lookup(self, service, db, update):
         """Updates without a changed URI retain the single target-lock lookup."""
         resource = await service.register_resource(db, self._create("file://self.txt", "Self"))
-        from mcpgateway.services.resource_service import get_for_update
 
         with patch("mcpgateway.services.resource_service.get_for_update", wraps=get_for_update) as lookup:
             result = await service.update_resource(db, resource.id, update)
@@ -9954,7 +9953,6 @@ class TestResourceUriUniquenessScope:
     async def test_unauthorized_owner_precedes_conflict_lookup(self, service, db):
         """Ownership denial prevents a second lookup and leaves the resource unchanged."""
         resource = await service.register_resource(db, self._create("file://owned.txt", "Owned"), owner_email="owner@example.com")
-        from mcpgateway.services.resource_service import get_for_update
 
         with (
             patch("mcpgateway.services.resource_service.get_for_update", wraps=get_for_update) as lookup,
