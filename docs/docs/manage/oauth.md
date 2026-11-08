@@ -205,6 +205,40 @@ The `audience` parameter:
 - Can coexist with `resource` parameter for providers that accept both
 - When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
 
+### Extra Authorization Parameters
+
+Some providers need authorization request parameters that the gateway does not set. Add them with `extra_auth_params`, an object of string names to string values. The gateway adds them to the authorization URL only; it does not send them to the token endpoint.
+
+Google issues a refresh token only when the authorization request includes `access_type=offline`. Without it, each user must authorize again when the access token expires, after about one hour:
+
+```json
+{
+  "name": "Gmail",
+  "url": "https://gmailmcp.googleapis.com/mcp/v1",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "client_id": "your_google_client_id",
+    "client_secret": "your_google_client_secret",
+    "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+    "omit_resource": true,
+    "extra_auth_params": {"access_type": "offline", "prompt": "consent"}
+  }
+}
+```
+
+`prompt=consent` makes Google issue a new refresh token to a user who authorized before. Atlassian also requires `prompt=consent`.
+
+Rules:
+
+- Names use letters, digits, `.`, `_`, `~` and `-` only, up to 64 characters. Values are strings of up to 512 characters with no control characters. Up to 16 entries.
+- The gateway rejects names that it sets itself or that change the authorization flow: `response_type`, `response_mode`, `client_id`, `client_secret`, `client_assertion`, `client_assertion_type`, `redirect_uri`, `state`, `scope`, `code_challenge`, `code_challenge_method`, `resource`, `audience`, `request` and `request_uri`. Names compare case-insensitively. Use the `scopes`, `resource` and `audience` fields for those values.
+- The API returns `422` for an invalid value. The gateway checks the stored value again when it builds the authorization URL.
+- Set `extra_auth_params` through the API. The Admin UI does not show it.
+
 ### Resource Parameter (RFC 8707) — per-user audience learning, origin fallback, advisory validation
 
 !!! info "See also"

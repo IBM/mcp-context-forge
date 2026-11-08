@@ -60,6 +60,7 @@ from mcpgateway.common.oauth import (
     OAUTH_SENSITIVE_KEYS,
     SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
     SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+    validate_extra_auth_params,
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
@@ -354,6 +355,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
     _validate_oauth_token_endpoint_auth(v)
+    validate_extra_auth_params(v.get("extra_auth_params"))
     for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
