@@ -9787,10 +9787,7 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://dup.txt", "Second"), **kwargs)
 
         message = str(exc_info.value)
-        assert message == (
-            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
-            " (visibility: Private, URI: file://dup.txt)"
-        )
+        assert message == "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Private, URI: file://dup.txt)"
 
     @pytest.mark.asyncio
     async def test_register_private_same_uri_different_owner_succeeds(self, service, db):
@@ -9888,7 +9885,9 @@ class TestResourceUriUniquenessScope:
             assert error.uri == existing.uri
             assert error.resource_id == existing.id
             assert error.enabled is True
-            assert str(error) == (f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri})")
+            assert str(error) == (
+                f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri})"
+            )
             if operation == "update":
                 db.expire_all()
                 assert db.get(DbResource, target.id).uri == "file://available.txt"

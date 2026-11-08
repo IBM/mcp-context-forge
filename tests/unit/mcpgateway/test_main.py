@@ -1606,9 +1606,7 @@ class TestToolEndpoints:
 class TestResourceEndpoints:
     @pytest.mark.parametrize("error,status_code,detail", RESOURCE_ERROR_CASES)
     @patch("mcpgateway.main.resource_service.register_resource", new_callable=AsyncMock)
-    def test_create_resource_exception_order_contract(
-        self, mock_register: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]
-    ) -> None:
+    def test_create_resource_exception_order_contract(self, mock_register: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]) -> None:
         """Resource creation preserves specialized statuses and exact error bodies."""
         mock_register.side_effect = error
         payload = {"resource": {"uri": "file://handler-order.txt", "name": "Handler order", "content": "test"}, "team_id": None, "visibility": "private"}
@@ -1628,9 +1626,7 @@ class TestResourceEndpoints:
         ],
     )
     @patch("mcpgateway.main.resource_service.update_resource", new_callable=AsyncMock)
-    def test_update_resource_exception_order_contract(
-        self, mock_update: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]
-    ) -> None:
+    def test_update_resource_exception_order_contract(self, mock_update: AsyncMock, error: Exception, status_code: int, detail: str, test_client: TestClient, auth_headers: dict[str, str]) -> None:
         """Resource updates preserve specialized statuses and exact error bodies."""
         mock_update.side_effect = error
 
