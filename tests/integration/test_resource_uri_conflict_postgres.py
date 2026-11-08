@@ -8,6 +8,8 @@ Enable external test databases and supply a disposable TEST_DATABASE_URL.
 """
 
 # Standard
+import asyncio
+from concurrent.futures import Future
 import os
 from unittest.mock import AsyncMock, MagicMock
 import uuid
@@ -19,7 +21,9 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.db import Base, EmailTeam, EmailUser, Gateway as DbGateway, Resource as DbResource
+from mcpgateway.db import Base, EmailTeam, EmailUser
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceUpdate
 from mcpgateway.services.resource_service import ResourceError, ResourceService, ResourceURIConflictError
 
@@ -110,12 +114,42 @@ async def test_resource_uri_checks_preserve_postgres_locking(postgres_engine, re
                     created_by=owner,
                 )
             assert caught.value.resource_id == conflict_id
-        holder.rollback()
+        holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))
+        updater_pid: Future[int] = Future()
 
-    with session_factory() as updater:
-        with pytest.raises(ResourceURIConflictError) as caught:
-            await resource_service.update_resource(updater, target_id, ResourceUpdate(uri=uri))
-        assert caught.value.resource_id == conflict_id
-        target = updater.get(DbResource, target_id)
+        def update_in_worker() -> None:
+            with session_factory() as updater:
+                updater.execute(text("SET LOCAL statement_timeout = '15s'"))
+                updater_pid.set_result(updater.scalar(text("SELECT pg_backend_pid()")))
+                asyncio.run(resource_service.update_resource(updater, target_id, ResourceUpdate(uri=uri)))
+
+        update = asyncio.create_task(asyncio.to_thread(update_in_worker))
+        try:
+            async with asyncio.timeout(5):
+                pid = await asyncio.shield(asyncio.wrap_future(updater_pid))
+                with postgres_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as observer:
+                    while True:
+                        assert not update.done(), "Update finished before PostgreSQL reported a lock wait"
+                        waiting = observer.scalar(
+                            text("SELECT wait_event_type = 'Lock' AND :holder_pid = ANY(pg_blocking_pids(pid)) FROM pg_stat_activity WHERE pid = :updater_pid"),
+                            {"holder_pid": holder_pid, "updater_pid": pid},
+                        )
+                        if waiting:
+                            break
+                        await asyncio.sleep(0.025)
+        except TimeoutError:
+            pytest.fail("PostgreSQL did not report the expected lock wait within five seconds")
+        finally:
+            holder.rollback()
+            await asyncio.gather(update, return_exceptions=True)
+
+    with pytest.raises(ResourceURIConflictError) as caught:
+        await update
+    assert caught.value.resource_id == conflict_id
+    assert caught.value.uri == uri
+    assert caught.value.enabled is True
+
+    with session_factory() as verifier:
+        target = verifier.get(DbResource, target_id)
         assert target is not None
         assert target.uri == f"file://available-{suffix}.txt"
