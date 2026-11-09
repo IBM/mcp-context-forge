@@ -107,6 +107,11 @@ class _ScopedBus:
         allowed = self._allowed
 
         def scoped(event: ServerEvent) -> None:
+            """Forward ``event`` unless it is a resource update for an unwatched target.
+
+            Args:
+                event: Event from the wrapped bus.
+            """
             if isinstance(event, ResourceUpdated) and (getattr(event, "gateway_id", None), event.uri) not in allowed:
                 return
             listener(event)
