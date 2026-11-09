@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-09 - Token Exchange Delegation, Tool Validation Policies, Progress Relay, and Security Hardening
+
+### Overview
+
+Release 1.1.1 delivers **RFC 8693 token exchange delegation**, **CEL-based tool validation policies**, **progress relay for modern MCP clients**, **A2A v1.0 agent card formatting and task management endpoints**, **per-gateway identity propagation controls**, and **security hardening for upstream authorization headers and stored credentials**. It also removes the in-tree Rust MCP and A2A runtime workspace.
+
 ### Added
 
 - **Token exchange delegation** ([#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - A `token-exchange` gateway can send an RFC 8693 `actor_token` with each exchange. Set `oauth_config.actor_token_source` to `client_credentials` or `client_assertion`. The default `none` keeps impersonation, and the request body does not change. `actor_token_type` overrides the default token type. The optional `oauth_config.actor` object names a separate actor client through `client_id`, `client_secret`, `token_url`, and `token_endpoint_auth_method`. Delegation fails closed: when the actor token is unavailable, the call fails and no impersonation request is sent. Deploy the release to every worker before you enable delegation, because an older worker ignores `actor_token_source` and impersonates.
