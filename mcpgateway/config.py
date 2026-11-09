@@ -2743,6 +2743,25 @@ class Settings(BaseSettings):
         description="Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
+    # CEL expression sandbox: operator-supplied policy expressions on gateway and tool records.
+    cel_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for CEL policy expressions. 'subprocess' runs each evaluation in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections; it exists only for platforms where fork is unavailable.",
+    )
+    cel_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=1.0,
+        description="Wall-clock limit for evaluating one CEL expression, at most 1.0. Exceeding it kills the worker and fails the evaluation. Default: 1.0 seconds.",
+    )
+    cel_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked CEL worker processes per gateway worker. Default: 2.",
+    )
+
     # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.
     regex_timeout_seconds: float = Field(
         default=1.0,

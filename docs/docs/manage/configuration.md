@@ -1204,6 +1204,12 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
 | `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | Enable forbidden pattern checks on tool descriptions | `true` | bool |
 | `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | Substrings blocked in tool descriptions | `["&&", "||", "$(", "> ", "< "]` | JSON array |
+| `CEL_EXECUTION` | Where tool validation policies (CEL) are evaluated | `subprocess` | `subprocess`, `inprocess` |
+| `CEL_TIMEOUT_SECONDS` | Wall-clock limit for one policy evaluation | `1.0` | 0 < float ≤ 1.0 |
+| `CEL_WORKERS` | Policy sandbox worker processes per gateway process | `2` | int > 0 |
+
+The forbidden-pattern settings are the global default of the **tool validation policy**. A gateway or a tool can
+override them with its own CEL expression; see [Tool Description Content Validation](../best-practices/input-validation.md#tool-description-content-validation).
 
 **Strict Mode Scenarios:**
 

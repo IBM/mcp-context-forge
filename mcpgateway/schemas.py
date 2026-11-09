@@ -64,12 +64,15 @@ from mcpgateway.common.oauth import (
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
+from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRESSION_LENGTH
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
+
+_POLICY_SAMPLE_VARIABLES = {"description": "", "tool_name": ""}
 
 
 # =====================================================================# Shared validation helpers
@@ -1005,6 +1008,31 @@ def _validate_jsonpath_filter_value(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def check_tool_validation_policy(value: Optional[str]) -> Optional[str]:
+    """Normalise a CEL tool-validation policy and prove it can run.
+
+    Args:
+        value: The policy text, or None.
+
+    Returns:
+        The stripped policy, or None when the value is empty.
+
+    Raises:
+        ValueError: If the expression cannot be evaluated to a boolean.
+    """
+    if value is None:
+        return None
+    policy = value.strip()
+    if not policy:
+        return None
+    try:
+        evaluate_expression(policy, _POLICY_SAMPLE_VARIABLES)
+    except CelError as exc:
+        logger.info("Rejected tool_validation_policy %r: %s", policy, exc)
+        raise ValueError(f"tool_validation_policy is not a valid policy expression: {exc}") from exc
+    return policy
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -1033,6 +1061,12 @@ class ToolCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether this tool may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the gateway policy, then the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
@@ -1137,6 +1171,19 @@ class ToolCreate(BaseModel):
             return v
         return validate_core_url(v, "Tool URL")
 
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -1171,21 +1218,6 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-
-        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions.
-        # When VALIDATION_STRICT=false these patterns produce a warning only so
-        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
-        # "< input", "cmd | grep") can register without error.
-        if settings.tool_description_forbidden_patterns_enabled:
-            for pat in settings.tool_description_forbidden_patterns:
-                if not pat or not pat.strip():
-                    continue
-                if pat in v:
-                    if settings.validation_strict:
-                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1649,6 +1681,12 @@ class ToolUpdate(BaseModelWithConfigDict):
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether this tool may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the gateway policy, then the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
@@ -1744,6 +1782,19 @@ class ToolUpdate(BaseModelWithConfigDict):
             return v
         return validate_core_url(v, "Tool URL")
 
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -1778,21 +1829,6 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-
-        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions.
-        # When VALIDATION_STRICT=false these patterns produce a warning only so
-        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
-        # "< input", "cmd | grep") can be updated without error.
-        if settings.tool_description_forbidden_patterns_enabled:
-            for pat in settings.tool_description_forbidden_patterns:
-                if not pat or not pat.strip():
-                    continue
-                if pat in v:
-                    if settings.validation_strict:
-                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -2132,6 +2168,8 @@ class ToolRead(BaseModelWithConfigDict):
     original_name: str
     url: Optional[str]
     description: Optional[str]
+    tool_validation_policy: Optional[str] = Field(None, description="CEL tool-validation policy; null inherits")
+    validation_refusal: Optional[str] = Field(None, description="Why the validation policy disabled this tool; null when it was not refused")
     original_description: Optional[str] = None
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
@@ -3556,6 +3594,12 @@ class GatewayCreate(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether a tool from this gateway may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
@@ -3586,6 +3630,19 @@ class GatewayCreate(BaseModelWithConfigDict):
         None,
         description="Query parameter value (API key). Stored encrypted.",
     )
+
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
 
     @field_validator("auth_query_param_key")
     @classmethod
@@ -3925,6 +3982,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether a tool from this gateway may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -3940,6 +4003,19 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -4337,6 +4413,7 @@ class GatewayRead(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(None, description="CEL tool-validation policy; null inherits")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")

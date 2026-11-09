@@ -257,6 +257,7 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -1516,13 +1517,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.expose_error_details:
         logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
 
-    # Start the sandboxed jq worker pool before any service that might invoke
-    # tool response filters is initialised. A failure here (BrokenProcessPool,
-    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
-    # mode) is a hard startup failure and must propagate rather than letting
-    # the gateway boot with a broken or absent sandbox.
+    # Fork the sandbox pools while the process holds no sockets or threads.
+    # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
     start_jq_pool()
     start_validation_pool()
+    start_cel_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -2095,6 +2094,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Shut down the sandboxed schema-validation worker pool
         shutdown_validation_pool()
+
+        # Shut down the sandboxed CEL worker pool
+        shutdown_cel_pool()
 
         logger.info("Shutdown complete")
 
@@ -6278,6 +6280,8 @@ async def create_tool(
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ex))
         if isinstance(ex, ToolNameConflictError):
             if not ex.enabled and ex.tool_id:
                 raise HTTPException(
