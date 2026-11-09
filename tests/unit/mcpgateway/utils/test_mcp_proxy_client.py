@@ -422,6 +422,7 @@ async def test_error_response_hook_translates_final_redirect_but_never_cancellat
 @pytest.mark.parametrize("assigned_id", [None, "assigned-upstream"])
 async def test_session_capture_and_real_initialization_span(monkeypatch, transport, assigned_id):
     """Capture upstream IDs during the handshake and finish initialization before tool execution."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
     # Standard
     from contextlib import asynccontextmanager
 
@@ -490,6 +491,7 @@ async def test_session_info_response_hook_retains_only_assigned_id():
 @pytest.mark.parametrize("enabled,external", [(False, False), (True, False), (True, True)])
 def test_upstream_request_context_limits_sdk_baggage(monkeypatch, enabled, external):
     """Constrain SDK injection to external baggage policy and restore the caller context."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
     # Third-Party
     from opentelemetry import baggage, context
     from opentelemetry.sdk.trace import TracerProvider

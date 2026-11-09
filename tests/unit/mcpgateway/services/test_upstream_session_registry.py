@@ -2420,6 +2420,7 @@ async def test_default_session_factory_timeout_structured_logging_failure(monkey
 @pytest.mark.parametrize("transport", list(TransportType))
 async def test_factory_captures_upstream_id_and_detaches_request_baggage(monkeypatch, transport):
     """Capture actual upstream IDs while lifecycle tasks exclude request baggage and identity."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
     # Standard
     from contextlib import asynccontextmanager
 
