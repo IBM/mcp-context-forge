@@ -21429,8 +21429,8 @@ async def test_listen_all_list_kinds_denied_raises_like_tools_list(monkeypatch, 
     delegate.assert_not_awaited()
 
 
-async def test_listen_empty_scope_defers_to_rbac_keeps_all_kinds(monkeypatch, listen_requires_auth):
-    """An empty token scope defers to RBAC, so every requested list kind is kept."""
+async def test_listen_empty_scope_keeps_all_kinds(monkeypatch, listen_requires_auth):
+    """An empty token scope sets no ceiling, so every requested list kind is kept."""
     delegate = _patch_listen_delegate(monkeypatch)
     _patch_request_context(monkeypatch, _scoped_user_context([]))
 

@@ -3898,7 +3898,12 @@ async def _resolve_catalog_scope() -> tuple[Optional[str], dict[str, Any], dict[
 
 
 def _token_allows_catalog_read(user_context: dict[str, Any], permission: str) -> bool:
-    """Apply the token-scope ceiling that gates a catalog list; an empty scope defers to RBAC.
+    """Apply the token-scope ceiling shared by the catalog ``*/list`` handlers and ``subscriptions/listen``.
+
+    This is a Layer-1 check only. An empty token scope sets no ceiling.
+    Neither path runs a per-method Layer-2 RBAC check for ``tools.read``,
+    ``prompts.read`` or ``resources.read``. The server-scoped route checks
+    only ``servers.use`` at entry. So the listen gate equals the ``*/list`` gate.
 
     Args:
         user_context: Request user context.
