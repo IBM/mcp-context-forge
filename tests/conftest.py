@@ -650,14 +650,18 @@ def _test_ssrf_defaults():
 
 @pytest.fixture(autouse=True)
 def reset_service_token_cache():
-    """Give each test a fresh process-wide gateway service-token cache.
+    """Give each test a fresh, in-memory, process-wide gateway service-token cache.
 
     ``GatewayService`` and the token-exchange actor resolver share one cache per
     process, so cached discovery and actor tokens would otherwise leak between tests.
+    The fresh cache is pinned to memory: the lazily created one would connect to
+    ``REDIS_URL``, and a Redis running on a developer machine would keep tokens
+    across tests and across runs.
     """
     from mcpgateway.services import gateway_service_token_cache
+    from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
 
-    gateway_service_token_cache._shared_cache = None
+    gateway_service_token_cache._shared_cache = GatewayServiceTokenCache(redis_url=None)
     yield
     gateway_service_token_cache._shared_cache = None
 
