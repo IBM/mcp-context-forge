@@ -4,9 +4,26 @@
 
 ### Deprecation Notice
 
-- Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
+- The Rust MCP and A2A runtime sidecars are removed. Use the Python MCP transport and Python A2A invocation path.
+- ValidationMiddleware remains deprecated since 2026-06-11, past its 2026-07-07 sunset. Use endpoint-level Pydantic or protocol-specific validation. See [Deprecations](docs/docs/deprecations.md).
 
 ## [Unreleased]
+
+### Added
+
+- **Token exchange delegation** ([#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - A `token-exchange` gateway can send an RFC 8693 `actor_token` with each exchange. Set `oauth_config.actor_token_source` to `client_credentials` or `client_assertion`. The default `none` keeps impersonation, and the request body does not change. `actor_token_type` overrides the default token type. The optional `oauth_config.actor` object names a separate actor client through `client_id`, `client_secret`, `token_url`, and `token_endpoint_auth_method`. Delegation fails closed: when the actor token is unavailable, the call fails and no impersonation request is sent. Deploy the release to every worker before you enable delegation, because an older worker ignores `actor_token_source` and impersonates.
+
+### Changed
+
+- **Token exchange audit events carry `purpose` and `mode`** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236), [#7238](https://github.com/IBM/mcp-context-forge/issues/7238)) - Each `token-exchange` audit event has a `purpose` key (`invocation` or `discovery`) and a `mode` key (`impersonation` or `delegation`). The log message changes from `token-exchange succeeded user=...` to `token-exchange succeeded purpose=... mode=... user=...`, and the failure message changes the same way. Update log-text alert rules that match the old prefix. Structured consumers of `extra["token_exchange"]` are not affected.
+
+### Removed
+
+- **Repository-owned Rust runtime and workspace** ([#5817](https://github.com/IBM/mcp-context-forge/issues/5817)) - Remove `crates/mcp_runtime`, the root Cargo workspace, and Rust build infrastructure. The separate external Rust dataplane remains outside this removal.
+
+### Documentation
+
+- **Rust runtime removal** ([#5823](https://github.com/IBM/mcp-context-forge/issues/5823)) - Update deployment and contributor guidance, architecture diagrams, and the deprecation registry. ADR-058 records verified removals and remaining internal dispatch cleanup.
 
 ### Security
 
@@ -24,6 +41,8 @@
 - **Credential updates require `auth_type`** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` return 422 when a request sets `auth_token`, `auth_password`, or `auth_header_value` without `auth_type`. Before, the A2A route returned 200 and ignored the credential, and the gateway route returned 200 and wiped the stored credential. Empty strings count as unset. The Admin UI always sends `auth_type`. Partial-body REST clients must add `auth_type`.
 - **Gateway test endpoints require `gateways.update` and ownership for stored credentials** - `POST /v1/mcp-servers/test` and `POST /admin/gateways/test` return 403 when the target MCP server has a stored basic, bearer, custom-header, or OAuth credential. An OAuth authorization-code token is the caller's own and is not affected. To pass, the caller needs `gateways.update` in the MCP server's team and must pass the ownership check of `PUT /gateways/{gateway_id}`. The owner, a team owner of a team MCP server, and a platform admin pass that check. For an MCP server without a team, `gateways.update` must come from a global role. `POST /v1/mcp-servers/test-handshake` applies the same rule when the request adds a path or headers. A bare handshake still needs only `gateways.read`. Tests against MCP servers without stored credentials also need only `gateways.read`. To test new headers with only `gateways.read`, use `credential_mode: candidate_only`.
 
+- **Resource reads on token-exchange gateways fail closed** ([#7236](https://github.com/IBM/mcp-context-forge/issues/7236)) - `resources/read` on a `token-exchange` gateway now raises `ResourceError` when the request has no user JWT or the RFC 8693 exchange fails. Before, the read went upstream without an `Authorization` header. MCP clients and `GET /resources/{id}` callers now receive an error instead of an unauthenticated upstream response. Unauthenticated callers on deployments that set `MCP_REQUIRE_AUTH` to `false` and callers whose authorization server rejects the exchange are affected. Send an authenticated user JWT and verify the gateway's token-exchange configuration before upgrading.
+
 ### Security
 
 - **Per-gateway identity propagation on tool and resource calls** (internal issue 1149, PSIRT ADV0369535, CWE-200) - MCP and REST tool calls and resource reads ignored the gateway `identity_propagation` override and sent user identity headers when the global setting was on. A gateway set to `enabled: false` now receives no identity headers or `_meta`. Deployments with global propagation on and a gateway override of off no longer disclose user identity to that gateway.
@@ -32,9 +51,14 @@
 
 - **OIDC JWKS fetches honor `SKIP_SSL_VERIFY`** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026)) - JWKS retrieval for SSO and external-IdP token verification now uses the shared TLS verification setting, like OIDC discovery, token exchange, and user info. Before, an identity provider with a self-signed certificate failed at JWKS retrieval even with `SKIP_SSL_VERIFY=true`. With the flag set, the gateway logs a warning on each JWKS fetch, because unverified JWKS keys let a network attacker forge tokens. Use the flag in development only. Per-provider CA bundles remain open under #4026.
 
+- **External-IdP tokens on `/mcp`** ([#7435](https://github.com/IBM/mcp-context-forge/issues/7435)) - Trusted external-IdP bearer tokens now authenticate on `/mcp`, matching `/rpc`. An `oauth_enabled` virtual server now also accepts trusted-provider tokens whose issuer is outside its `authorization_servers`. The gateway checks the audience against the provider `api_audience`, not the server `resource`. No per-server opt-out exists.
+
 - **REST URL template reuses a placeholder** - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
 
 - **Actionable error when an upstream MCP server redirects** ([#7163](https://github.com/IBM/mcp-context-forge/issues/7163)) - Health checks, gateway registration, Test Connection, and the handshake test now report `Upstream redirected to <scheme://host/path>; update the gateway URL to the redirect target.` for an upstream 301, 302, 303, 307, or 308 response. The message drops the query string, fragment, and userinfo of the `Location` header. Before, the gateway showed a generic error. The gateway still does not follow the redirect, to keep SSRF and credential-forwarding protection. Register the redirect target URL directly, for example `https://host/mcp/` instead of `https://host/mcp`.
+
+- Reuse one observability session per HTTP trace lifecycle while preserving independent span and trace completion ([#5073](https://github.com/IBM/mcp-context-forge/pull/5073)).
+- Recover trace completion after span persistence failures and redact credentials from HTTP trace URLs and exception stack traces.
 
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
@@ -66,6 +90,8 @@
 - **A2A task and push notification config routes** ([#6702](https://github.com/IBM/mcp-context-forge/issues/6702)) - Clients can now read and manage A2A task data through `/v1/a2a/{agent_id}/tasks`. `GET` lists tasks with `pageSize`, `pageToken`, and `nextPageToken` pagination, `GET .../{task_id}` returns one task, and `POST .../{task_id}/cancel` cancels it. `POST`, `GET`, and `DELETE` on `.../{task_id}/pushNotificationConfigs` manage push notification configs. Reads require `a2a.read`, cancel requires `a2a.invoke`, and config writes require `a2a.update`. Routes apply the same team and visibility scoping as the internal handlers, and return 404 for tasks the caller cannot see. Responses never include `auth_token`. The `/_internal/a2a/*` routes are unchanged.
 
 - **Public A2A agent card lookup** ([#6700](https://github.com/IBM/mcp-context-forge/issues/6700)) - Added `GET /v1/a2a/{agent_id}/card`, gated on `a2a.read`. The route resolves a standalone A2A agent's card first, then falls back to a virtual server exposing an A2A interface. Previously the card was reachable only from the internal Rust-sidecar route.
+
+- **Progress for modern requests in JSON mode** ([#6647](https://github.com/IBM/mcp-context-forge/issues/6647)) - With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` and accepts `text/event-stream` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. Legacy clients see no change. The gateway now relays upstream progress to modern clients on `resources/read` and `prompts/get` ([#6648](https://github.com/IBM/mcp-context-forge/issues/6648)), `completion/complete`, and direct-proxy `tools/call`. The gateway no longer forwards the client `progressToken` upstream on `resources/read`, `prompts/get`, and `completion/complete`, including legacy and `/rpc` completion. A retried upstream resource read sends no progress callback, so progress values never restart.
 
 ### Security
 
@@ -283,7 +309,7 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 
 #### **Security & Auth**
 
-- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional. Signing keys are validated before persistence and again before signing: the effective key is resolved first, so a masked placeholder is checked against the key it preserves and stored ciphertext is decrypted rather than skipped, and RSA keys must be at least 2048 bits (RFC 7518 Sections 3.3 and 3.5). An absent, null, empty, or whitespace-only `token_endpoint_auth_method` keeps the historical `client_secret_post` default at every boundary.
+- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional. Signing keys are validated before persistence and again before signing: the effective key is resolved first, so a masked placeholder is checked against the key it preserves and stored ciphertext is decrypted rather than skipped, and RSA keys must be at least 2048 bits (RFC 7518 Sections 3.3 and 3.5). An absent, null, empty, or whitespace-only `token_endpoint_auth_method` keeps the historical `client_secret_post` default at every boundary. <!-- pragma: allowlist secret -->
 
 - **Passwordless SSO-only users** ([#6603](https://github.com/IBM/mcp-context-forge/pull/6603)) - Users provisioned through SSO exist without a local password instead of carrying an unusable placeholder credential.
 - **`SSO_ALLOW_PROVIDER_LINKING`** ([#6616](https://github.com/IBM/mcp-context-forge/pull/6616)) - Explicit, fail-closed setting (default `false`) that gates cross-provider sign-in for an already-linked email.
@@ -345,7 +371,7 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 
 #### **Security & Auth**
 
-- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941))
+- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941)) <!-- pragma: allowlist secret -->
 - **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
 - **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)). ([#6004](https://github.com/IBM/mcp-context-forge/pull/6004))
 - **Schema validation no longer resolves remote `$ref`s** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Tool input/output schemas are tool-controlled data, and `jsonschema`'s default registry resolves remote `$ref` URIs by fetching them over the network, which is reachable from tool preview and from every live invocation with an output schema. Non-local references are now refused outright, and validators are built against a registry that never retrieves, so an unresolvable reference fails validation closed instead of issuing a request.
@@ -442,7 +468,7 @@ Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliabili
 
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md). <!-- pragma: allowlist secret -->
 
 ### Fixed
 
@@ -513,7 +539,7 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
+- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md). <!-- pragma: allowlist secret -->
 
 ### Fixed
 
@@ -2685,7 +2711,7 @@ Release Candidate 2 focuses on **security hardening**, **Admin UI polish**, **pl
 * **L-10**: Security architecture docs now align with current token and secret encryption implementation details.
 * **L-15 / L-16**: Tool lookup cache payloads now exclude auth/OAuth secret material, and token usage limits (`requests_per_hour` / `requests_per_day`) are now enforced during request scoping.
 * **L-17**: Admin UI debug logging is now gated behind an explicit local debug toggle (`MCPGATEWAY_ADMIN_DEBUG=1`) for quieter production browser consoles.
-* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
+* **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`. <!-- pragma: allowlist secret -->
 * **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
 
 ### Removed
@@ -2695,7 +2721,7 @@ Release Candidate 2 focuses on **security hardening**, **Admin UI polish**, **pl
 ### Chores
 
 * Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
-* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments).
+* Updated `.env.example` and `docker-compose.yml` to make MCP auth posture explicit (`MCP_REQUIRE_AUTH=true` in compose; inheritance behavior documented in env example comments). <!-- pragma: allowlist secret -->
 * Updated `docker-compose.yml` with transport feature flags and local SSRF overrides
 * Updated Helm chart `values.yaml`, `values.schema.json`, and `README.md` with new SSRF and transport settings
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
@@ -2773,7 +2799,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 
 > **Migration**: If you use Basic auth for API access, either:
 > 1. **(Recommended)** Migrate to JWT tokens: `export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token ...)`
-> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior
+> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior <!-- pragma: allowlist secret -->
 
 > **Note**: Gateways without configured `auth_value` will send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
 
@@ -3120,10 +3146,10 @@ This release delivers **massive performance improvements**, **enterprise-scale r
 
 ```bash
 # OLD (psycopg2) - No longer supported
-DATABASE_URL=postgresql://postgres:password@localhost:5432/mcp
+DATABASE_URL=postgresql://postgres:password@localhost:5432/mcp # pragma: allowlist secret
 
 # NEW (psycopg3) - Required format
-DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
+DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp # pragma: allowlist secret
 ```
 
 **Why this change?**
@@ -4485,10 +4511,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 * **Complete MariaDB & MySQL Database Support** (#925) - Full production support for MariaDB and MySQL backends:
   ```bash
   # MariaDB (recommended MySQL-compatible option):
-  DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+  DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp # pragma: allowlist secret
 
   # Docker deployment with MariaDB:
-  DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
+  DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp # pragma: allowlist secret
   ```
   - **36+ database tables** fully compatible with MariaDB 10.6+ and MySQL 8.0+
   - All **VARCHAR length issues** resolved for MySQL compatibility
@@ -4579,7 +4605,7 @@ EMAIL_AUTH_ENABLED=true
 
 # Platform admin user (bootstrap from environment)
 PLATFORM_ADMIN_EMAIL=admin@example.com
-PLATFORM_ADMIN_PASSWORD=changeme
+PLATFORM_ADMIN_PASSWORD=changeme # pragma: allowlist secret
 PLATFORM_ADMIN_FULL_NAME=Platform Administrator
 
 # Argon2id Password Hashing Configuration
@@ -4622,17 +4648,17 @@ SSO_ENABLED=false
 # GitHub OAuth Configuration
 SSO_GITHUB_ENABLED=false
 # SSO_GITHUB_CLIENT_ID=your-github-client-id
-# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret
+# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret # pragma: allowlist secret
 
 # Google OAuth Configuration
 SSO_GOOGLE_ENABLED=false
 # SSO_GOOGLE_CLIENT_ID=your-google-client-id.googleusercontent.com
-# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret
+# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret # pragma: allowlist secret
 
 # IBM Security Verify OIDC Configuration
 SSO_IBM_VERIFY_ENABLED=false
 # SSO_IBM_VERIFY_CLIENT_ID=your-ibm-verify-client-id
-# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret
+# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret # pragma: allowlist secret
 # SSO_IBM_VERIFY_ISSUER=https://your-tenant.verify.ibm.com/oidc/endpoint/default
 ```
 

@@ -620,9 +620,15 @@ and [protected resource metadata](../architecture/rfc9728-compliance.md#implemen
 
 This MCP OAuth path verifies the server's issuer allowlist and audience, then resolves an existing
 active DB user and its DB-backed access. The REST provider-trust flags alone do not configure this
-virtual-server path. Plain `/mcp` has no per-server OAuth configuration and rejects IdP-issued
-tokens under the default internal-issuer verification setting. Provisioning API availability
+virtual-server path. The path needs an email-shaped identity claim, so clientless service-account
+tokens work only through the trusted-provider path below. Provisioning API availability
 does not control authentication of an already-created user on a configured virtual server.
+
+Plain `/mcp` and non-OAuth virtual servers accept tokens from providers with
+`trusted_for_api_auth=true` when `SSO_API_TOKEN_AUTH_ENABLED=true`. The rules match REST and
+`/rpc`: issuer, JWKS signature, and `api_audience`. On an `oauth_enabled` server, an issuer in
+`authorization_servers` uses the per-server OAuth path and fails closed, with no fallback. An issuer
+outside that list falls back to the trusted-provider path.
 
 !!! warning "MCP issuer trust and account provider binding"
     This MCP OAuth path matches the verified token's email to an active local account without

@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 # Third-Party
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
+import anyio
 from fastapi import HTTPException
 import httpx
 import httpx2
@@ -2350,7 +2351,7 @@ async def test_auth_all_ok(monkeypatch):
         assert token == "good-token"
         return {"ok": True}
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     messages = []
 
@@ -2373,7 +2374,7 @@ async def test_auth_failure(monkeypatch):
     async def fake_verify(_):  # noqa: D401 - stub that always fails
         raise HTTPException(status_code=401, detail="bad token")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
@@ -2514,7 +2515,7 @@ async def test_streamable_http_auth_allows_mcp_sse_with_valid_token(monkeypatch)
     async def fake_verify(token):
         return {"sub": "admin@example.com", "teams": None, "is_admin": True}
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/mcp/sse", headers=[(b"authorization", b"Bearer valid-token")])
     called = []
@@ -2542,7 +2543,7 @@ async def test_streamable_http_auth_allows_mcp_message_with_valid_token(monkeypa
     async def fake_verify(token):
         return {"sub": "admin@example.com", "teams": None, "is_admin": True}
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/mcp/message", headers=[(b"authorization", b"Bearer valid-token")])
     called = []
@@ -2787,7 +2788,7 @@ async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     async def fake_verify(token):
         raise AssertionError("Should not be called")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
     # Stub per-server OAuth check — this test validates scheme rejection, not OAuth
@@ -2811,7 +2812,7 @@ async def test_streamable_http_auth_bearer_no_token(monkeypatch):
     async def fake_verify(token):
         raise AssertionError("Should not be called")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
@@ -2833,7 +2834,7 @@ async def test_streamable_http_auth_bearer_no_token_permissive_mode(monkeypatch)
     async def fake_verify(token):
         raise AssertionError("Should not be called")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
     called = []
@@ -3195,7 +3196,7 @@ async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
             "user": {"is_admin": True},
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return valid membership (skip DB lookup)
     mock_auth_cache = MagicMock()
@@ -3234,7 +3235,7 @@ async def test_streamable_http_auth_normalizes_dict_teams(monkeypatch):
             "user": {"is_admin": False},
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return valid membership (skip DB lookup)
     mock_auth_cache = MagicMock()
@@ -3266,7 +3267,7 @@ async def test_streamable_http_auth_handles_empty_teams(monkeypatch):
             "user": {},
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
@@ -3295,7 +3296,7 @@ async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
             "teams": ["team_x"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return valid membership (skip DB lookup)
     mock_auth_cache = MagicMock()
@@ -3325,7 +3326,7 @@ async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
             # No teams key - legacy token without team scoping
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
@@ -3352,7 +3353,7 @@ async def test_streamable_http_auth_rejects_removed_team_member(monkeypatch):
             "teams": ["team_a"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return False (user was removed from team)
     mock_auth_cache = MagicMock()
@@ -3385,7 +3386,7 @@ async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monk
             "teams": ["team_a", "team_b"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return None (cache miss)
     mock_auth_cache = MagicMock()
@@ -3435,7 +3436,7 @@ async def test_streamable_http_auth_handles_null_teams(monkeypatch):
             "teams": None,  # Explicit null - treated same as missing
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
@@ -3461,7 +3462,7 @@ async def test_streamable_http_auth_top_level_is_admin(monkeypatch):
             "is_admin": True,  # Top-level is_admin (legacy format)
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
@@ -3488,7 +3489,7 @@ async def test_streamable_http_auth_nested_is_admin_takes_precedence(monkeypatch
             "user": {"is_admin": True},  # Nested says admin
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
@@ -4534,6 +4535,39 @@ async def test_get_prompt_forwards_plugin_contexts_from_scope(monkeypatch):
     kwargs = prompt_service.get_prompt.await_args.kwargs
     assert kwargs["plugin_global_context"] is global_context
     assert kwargs["plugin_context_table"] is context_table
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_passes_modern_progress_relay(monkeypatch):
+    """The get_prompt handler hands the modern-only progress relay to the service."""
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as tr
+
+    mock_result = MagicMock()
+    mock_result.messages = []
+    mock_result.description = "desc"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    relay = MagicMock(drain=AsyncMock())
+    relay_calls = []
+
+    def fake_relay(**kwargs):
+        relay_calls.append(kwargs)
+        return relay
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=("server-1", {}, {})))
+    monkeypatch.setattr(tr.prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+    monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+
+    await tr.get_prompt("my_prompt", {"a": "b"})
+
+    assert tr.prompt_service.get_prompt.await_args.kwargs["progress_callback"] is relay
+    assert relay_calls == [{}]
+    relay.drain.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -6348,7 +6382,7 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
         # Return something that is truthy but not a dict
         return "string_payload"
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_client_auth_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth_dangerously", True)
@@ -6405,7 +6439,7 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
             "teams": ["team_a"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock auth_cache to return None (cache miss) so we go to DB
     mock_auth_cache = MagicMock()
@@ -6460,7 +6494,7 @@ async def test_streamable_http_auth_db_context_manager(monkeypatch):
             "teams": ["team_a"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     mock_auth_cache = MagicMock()
     mock_auth_cache.get_team_membership_valid_sync.return_value = None
@@ -6855,6 +6889,51 @@ async def test_read_resource_with_meta_from_request_context(monkeypatch):
     finally:
         user_context_var.reset(user_token)
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+
+@pytest.mark.asyncio
+async def test_read_resource_passes_modern_progress_relay(monkeypatch):
+    """The read_resource handler hands the modern-only progress relay to the service."""
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as tr
+
+    mock_result = MagicMock()
+    mock_result.text = "resource content"
+    mock_result.blob = None
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    captured_kwargs = {}
+
+    async def mock_read_resource(db, resource_uri, **kwargs):
+        captured_kwargs.update(kwargs)
+        return mock_result
+
+    relay = MagicMock(drain=AsyncMock())
+    relay_calls = []
+
+    def fake_relay(**kwargs):
+        relay_calls.append(kwargs)
+        return relay
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    monkeypatch.setattr(tr.resource_service, "read_resource", mock_read_resource)
+    monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+
+    user_token = tr.user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    try:
+        await tr.read_resource(AnyUrl("file:///test.txt"))
+    finally:
+        tr.user_context_var.reset(user_token)
+
+    assert captured_kwargs["progress_callback"] is relay
+    assert relay_calls == [{}]
+    relay.drain.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -9391,7 +9470,7 @@ async def test_streamable_http_auth_allows_authenticated_oauth_server_on_get(mon
             "user": {"is_admin": False},
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
     mock_auth_cache = MagicMock()
@@ -11354,7 +11433,7 @@ async def test_auth_session_token_admin_bypass(monkeypatch):
             "is_admin": True,
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer session-tok")])
     sent = []
@@ -11381,7 +11460,7 @@ async def test_auth_session_token_resolves_teams_from_db(monkeypatch):
             "is_admin": False,
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     mock_resolve = AsyncMock(return_value=["team-a", "team-b"])
 
@@ -11418,7 +11497,7 @@ async def test_auth_session_token_no_email_public_only(monkeypatch):
             # No sub, no email
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer session-tok")])
     sent = []
@@ -11443,7 +11522,7 @@ async def test_streamable_http_auth_verify_credentials_non_dict_payload(monkeypa
     async def fake_verify(token):
         return "ok"  # non-dict payload
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
     sent = []
@@ -11466,7 +11545,7 @@ async def test_streamable_http_auth_rejects_revoked_jwt(monkeypatch):
             "teams": ["team-a"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11496,7 +11575,7 @@ async def test_streamable_http_auth_uses_cached_auth_context(monkeypatch):
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11545,7 +11624,7 @@ async def test_streamable_http_auth_rejects_revoked_cached_auth_context(monkeypa
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11593,7 +11672,7 @@ async def test_streamable_http_auth_rejects_inactive_cached_auth_context(monkeyp
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11641,7 +11720,7 @@ async def test_streamable_http_auth_uses_batched_auth_context(monkeypatch):
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11691,7 +11770,7 @@ async def test_streamable_http_auth_rejects_revoked_batched_auth_context(monkeyp
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11738,7 +11817,7 @@ async def test_streamable_http_auth_rejects_inactive_batched_auth_context(monkey
             "teams": [],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11784,7 +11863,7 @@ async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
     disabled_user = MagicMock()
     disabled_user.is_active = False
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11818,7 +11897,7 @@ async def test_streamable_http_auth_revocation_check_exception_fails_open(monkey
     active_user = MagicMock()
     active_user.is_active = True
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
     sent = []
@@ -11847,7 +11926,7 @@ async def test_streamable_http_auth_rejects_missing_user_when_required(monkeypat
             "teams": ["team-a"],
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.platform_admin_email", "admin@example.com")
 
@@ -13890,7 +13969,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
     from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
 
     # Force verify_credentials to raise HTTPException (its actual failure mode)
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=HTTPException(status_code=401, detail="Auth Service Down")))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(side_effect=HTTPException(status_code=401, detail="Auth Service Down")))
 
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
@@ -14588,7 +14667,7 @@ async def test_auth_jwt_session_token_keys_cache_and_lookups_by_email(monkeypatc
     """
     handler = _auth_handler()
 
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-1"}))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-1"}))
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
     monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: "dev@example.com")
 
@@ -14627,7 +14706,7 @@ async def test_auth_jwt_session_token_unknown_user_still_denied(monkeypatch):
     sent = []
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_send_error", AsyncMock(side_effect=lambda **kw: (sent.append(kw), False)[1]))
 
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-2"}))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-2"}))
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
     monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: None)
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
@@ -14650,7 +14729,7 @@ async def test_auth_jwt_session_token_platform_admin_escape_hatch(monkeypatch):
     """
     handler = _auth_handler()
 
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "is_admin": True, "jti": "jti-3"}))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "is_admin": True, "jti": "jti-3"}))
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
     monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: "admin@example.com")
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
@@ -14667,12 +14746,47 @@ async def test_auth_jwt_session_token_platform_admin_escape_hatch(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("db_is_admin, expected_admin", [(False, False), (True, True)])
+async def test_auth_jwt_external_idp_admin_comes_from_db_not_cached_payload(monkeypatch, db_is_admin, expected_admin):
+    """A cached external-IdP payload with a stale is_admin=True must not outlive a DB demotion."""
+    handler = _auth_handler()
+    payload = {"sub": "ext@example.com", "email": "ext@example.com", "token_use": "session", "source": "external_idp", "is_admin": True, "jti": "jti-ext"}
+
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value=payload))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_user_by_email_sync",
+        lambda email: SimpleNamespace(
+            email=email,
+            is_admin=db_is_admin,
+            is_active=True,
+            password_hash="",
+            full_name="",
+            auth_provider="oidc",
+            password_hash_type="",
+            password_change_required=False,
+            email_verified_at=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=None if expected_admin else []))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    assert await handler._auth_jwt(token="tok") is True
+    assert tr.user_context_var.get()["is_admin"] is expected_admin
+
+
+@pytest.mark.asyncio
 async def test_auth_jwt_legacy_token_performs_no_subject_lookup(monkeypatch):
     """Legacy/API tokens must not incur an extra DB read on the auth hot path."""
     handler = _auth_handler()
     lookup = Mock(return_value="should-not-be-used@example.com")
 
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": "legacy@example.com", "token_use": "api", "jti": "jti-4"}))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value={"sub": "legacy@example.com", "token_use": "api", "jti": "jti-4"}))
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
     monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lookup)
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
@@ -15271,7 +15385,7 @@ async def test_streamable_http_auth_allows_authenticated_oauth_server(monkeypatc
             "user": {"is_admin": False},
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
 
     # Mock auth_cache to return valid membership (skip DB lookup)
@@ -16174,7 +16288,7 @@ async def test_streamable_http_auth_sqlalchemy_error_returns_503(monkeypatch):
             "is_admin": False,
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
     # normalize_token_teams is imported locally from mcpgateway.auth
@@ -16206,7 +16320,7 @@ async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch
     async def fake_verify(token):
         raise RuntimeError("Something completely unexpected")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
     scope = _make_scope(
@@ -16831,7 +16945,7 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
         "scopes": {"permissions": ["tools.read", "tools.execute", "servers.use"]},
     }
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     # Admin with normalize_token_teams returning None bypasses team membership check
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: None)
 
@@ -16868,7 +16982,7 @@ async def test_auth_jwt_uuid_sub_uses_signed_user_email_without_uuid_lookup(monk
     user_record.is_active = True
     user_record.is_admin = False
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
@@ -16900,7 +17014,7 @@ async def test_auth_jwt_uuid_sub_resolves_to_email_when_metadata_missing(monkeyp
 
     get_email_by_id = MagicMock(return_value="resolved@example.com")
     get_user_by_email = MagicMock(return_value=user_record)
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
@@ -16928,7 +17042,7 @@ async def test_auth_jwt_unknown_uuid_sub_rejected_when_user_required(monkeypatch
     send_error = AsyncMock(return_value=False)
     get_user_by_email = MagicMock()
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
     monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value=None))
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
@@ -16962,7 +17076,7 @@ async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
     auth_cache.get_user_teams = AsyncMock(return_value=["team-a"])
     auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17008,7 +17122,7 @@ async def test_auth_jwt_falls_back_after_cache_errors_and_tolerates_cache_set_fa
     auth_cache.set_user_teams = AsyncMock(return_value=None)
     auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17049,7 +17163,7 @@ async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypat
     auth_cache.set_user_teams = AsyncMock(side_effect=RuntimeError("team cache down"))
     auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17082,7 +17196,7 @@ async def test_auth_jwt_cached_context_requires_user_when_db_user_missing(monkey
     monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
     handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
@@ -17105,7 +17219,7 @@ async def test_auth_jwt_returns_invalid_credentials_when_cache_lookup_raises_htt
     monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
     handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17128,7 +17242,7 @@ async def test_auth_jwt_batched_context_requires_user_when_db_user_missing(monke
     monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
     handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
@@ -17151,7 +17265,7 @@ async def test_auth_jwt_records_batch_team_cache_hit_on_success(monkeypatch):
     auth_cache.set_user_teams = AsyncMock(return_value=None)
     auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17172,7 +17286,7 @@ async def test_auth_jwt_uses_batched_team_ids_when_auth_cache_is_disabled(monkey
     auth_cache = MagicMock()
     auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17201,7 +17315,7 @@ async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_h
     monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
     handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
 
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=jwt_payload))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
@@ -17686,7 +17800,7 @@ async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
     handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
 
     with (
-        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", AsyncMock(return_value=payload)),
         patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
         patch("mcpgateway.auth._get_team_name_by_id_sync", return_value="Stream Team"),
@@ -18981,7 +19095,7 @@ async def test_streamable_http_auth_sso_platform_admin_gets_admin_bypass(monkeyp
             "user": {"is_admin": False},  # No JWT admin flag
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock _get_user_by_email_sync to return a user with is_admin=True
     mock_user = MagicMock()
@@ -19030,7 +19144,7 @@ async def test_streamable_http_auth_basic_auth_admin_gets_admin_bypass(monkeypat
             "user": {"is_admin": True},  # JWT admin flag set
         }
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     # Mock _get_user_by_email_sync to return None (user NOT in database)
     def mock_get_user(email):
@@ -19402,6 +19516,318 @@ class TestDualEra:
         assert tr._is_known_mcp_request_method("server/discover")
 
 
+_PROGRESS_TOOL = "slow"
+_PROGRESS_BODY = orjson.dumps(
+    {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": _PROGRESS_TOOL,
+            "arguments": {},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "progressToken": "tok-1",
+            },
+        },
+    }
+)
+_PROGRESS_HEADERS = [
+    (b"mcp-protocol-version", b"2026-07-28"),
+    (b"mcp-method", b"tools/call"),
+    (b"mcp-name", _PROGRESS_TOOL.encode()),
+    (b"accept", b"application/json, text/event-stream"),
+    (b"content-type", b"application/json"),
+]
+
+
+class _RecordingSessionManager:
+    """Session manager double that records each body the SDK would read."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.bodies: list[bytes] = []
+
+    @asynccontextmanager
+    async def run(self):
+        yield self
+
+    async def handle_request(self, scope, receive, send_func):
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+        self.bodies.append(body)
+        await send_func({"type": "http.response.start", "status": 200, "headers": []})
+        await send_func({"type": "http.response.body", "body": b"ok"})
+
+
+def _body_then_disconnect_on(body: bytes, hang_up):
+    """Yield ``body`` once, then report ``http.disconnect`` only after ``hang_up`` is set, like a live ASGI server."""
+    body_sent = False
+
+    async def receive():
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await hang_up.wait()
+        return {"type": "http.disconnect"}
+
+    return receive
+
+
+def _sse_frames(messages) -> list[dict]:
+    """Decode the JSON payload of every SSE ``data:`` line the gateway sent."""
+    stream = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body").decode()
+    return [json.loads(line[len("data:") :]) for line in stream.splitlines() if line.startswith("data:") and line[len("data:") :].strip()]
+
+
+class TestProgressStreamRouting:
+    """JSON mode answers modern requests that carry a progress token on the SSE manager (#6647)."""
+
+    @staticmethod
+    async def _route(monkeypatch, body, headers, *, json_mode=True, receive=None):
+        """Send one POST /mcp through a wrapper whose managers are recording doubles."""
+        monkeypatch.setattr(tr.settings, "json_response_enabled", json_mode)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", _RecordingSessionManager)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, _messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=headers), receive or _make_receive(body), send)
+        finally:
+            await wrapper.shutdown()
+        return wrapper
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":"a"}}}', True, id="string_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":5}}}', True, id="int_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":true}}}', False, id="bool_token"),
+            pytest.param(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"progressToken":"a"}}', False, id="no_meta"),
+            pytest.param(b'[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"progressToken":"a"}}}]', False, id="array"),
+            pytest.param(b'{"progressToken": ', False, id="invalid_json"),
+            pytest.param(None, False, id="none"),
+        ],
+    )
+    def test_requests_progress_stream(self, body, expected):
+        assert tr._requests_progress_stream(body) is expected
+
+    @pytest.mark.asyncio
+    async def test_modern_progress_request_uses_sse_manager(self, monkeypatch):
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, _PROGRESS_HEADERS)
+
+        assert wrapper.progress_session_manager.kwargs == {"app": tr.mcp_app, "event_store": None, "json_response": False, "stateless": True}
+        assert wrapper.progress_session_manager.bodies == [_PROGRESS_BODY]
+        assert wrapper.session_manager.bodies == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("headers", "body", "json_mode", "peek_cap"),
+        [
+            pytest.param([(b"mcp-protocol-version", b"2025-11-25"), (b"accept", b"application/json, text/event-stream")], _PROGRESS_BODY, True, None, id="legacy_header"),
+            pytest.param([(b"mcp-protocol-version", b"2026-07-28"), (b"accept", b"application/json")], _PROGRESS_BODY, True, None, id="json_only_accept"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY.replace(b'"progressToken":"tok-1"', b'"other":"x"'), True, None, id="no_token"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY, True, 16, id="body_over_peek_cap"),
+            pytest.param(_PROGRESS_HEADERS, _PROGRESS_BODY, False, None, id="json_mode_off"),
+        ],
+    )
+    async def test_progress_routing_falls_back(self, monkeypatch, headers, body, json_mode, peek_cap):
+        if peek_cap is not None:
+            monkeypatch.setattr(tr.settings, "mcp_body_peek_max_bytes", peek_cap)
+        wrapper = await self._route(monkeypatch, body, headers, json_mode=json_mode)
+
+        assert wrapper.session_manager.bodies == [body]
+        if json_mode:
+            assert wrapper.progress_session_manager.bodies == []
+        else:
+            assert wrapper.progress_session_manager is None
+
+    @pytest.mark.asyncio
+    async def test_progress_routing_stops_when_client_disconnects_during_drain(self, monkeypatch):
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, _PROGRESS_HEADERS, receive=_make_receive_disconnect())
+
+        assert wrapper.session_manager.bodies == []
+        assert wrapper.progress_session_manager.bodies == []
+
+    @pytest.mark.asyncio
+    async def test_progress_routing_skips_repeated_version_header(self, monkeypatch):
+        headers = [(b"mcp-protocol-version", b"2025-11-25"), (b"mcp-protocol-version", b"2026-07-28"), (b"accept", b"application/json, text/event-stream")]
+        wrapper = await self._route(monkeypatch, _PROGRESS_BODY, headers)
+
+        assert wrapper.session_manager.bodies == [_PROGRESS_BODY]
+        assert wrapper.progress_session_manager.bodies == []
+
+    @staticmethod
+    def _serve_progress_tool(monkeypatch, invoke):
+        """Run the real gateway wrapper in JSON mode with ``invoke`` behind tools/call."""
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield MagicMock()
+
+        monkeypatch.setattr(tr.settings, "json_response_enabled", True)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        # Earlier tests in this module leave a LookupError-raising request_context; restore the v2 shim.
+        monkeypatch.setattr(type(tr.mcp_app), "request_context", property(lambda _self: tr._get_v2_ctx()))
+        monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
+        monkeypatch.setattr(tr, "_list_catalog_page", AsyncMock(return_value={"tools": [{"name": _PROGRESS_TOOL, "inputSchema": {"type": "object"}}]}))
+        monkeypatch.setattr(tool_service, "invoke_tool", invoke)
+
+    @pytest.mark.asyncio
+    async def test_progress_frames_through_gateway(self, monkeypatch):
+        async def invoke(**kwargs):
+            await kwargs["progress_callback"](1, 2, "a")
+            await kwargs["progress_callback"](2, 2, "b")
+            return types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        assert dict(start["headers"])[b"content-type"].startswith(b"text/event-stream")
+        frames = _sse_frames(messages)
+        progress = [f for f in frames if f.get("method") == "notifications/progress"]
+        assert [(p["params"]["progressToken"], p["params"]["progress"], p["params"]["message"]) for p in progress] == [("tok-1", 1, "a"), ("tok-1", 2, "b")]
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_spawned_progress_frames_all_arrive_before_result(self, monkeypatch):
+        """Progress callbacks spawned as tasks, as the SDK client does, all reach the client before the result."""
+        count = 50
+
+        async def invoke(**kwargs):
+            loop = asyncio.get_running_loop()
+            for i in range(1, count + 1):
+                loop.create_task(kwargs["progress_callback"](i, count, f"step {i}"))
+            return types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        frames = _sse_frames(messages)
+        progress = [f["params"]["progress"] for f in frames if f.get("method") == "notifications/progress"]
+        assert progress == list(range(1, count + 1))
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_progress_frames_survive_upstream_client_teardown(self, monkeypatch):
+        """Progress sends blocked when the upstream client cancels its task group still reach the client before the result."""
+        count = 50
+
+        async def invoke(**kwargs):
+            async with anyio.create_task_group() as upstream:
+                for i in range(1, count + 1):
+                    upstream.start_soon(kwargs["progress_callback"], i, count, f"step {i}")
+                await anyio.sleep(0)
+                result = types.CallToolResult(content=[types.TextContent(type="text", text="done")], is_error=False)
+                upstream.cancel_scope.cancel()
+            return result
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        try:
+            await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, asyncio.Event()), send)
+        finally:
+            await wrapper.shutdown()
+
+        frames = _sse_frames(messages)
+        progress = [f["params"]["progress"] for f in frames if f.get("method") == "notifications/progress"]
+        assert progress == list(range(1, count + 1))
+        assert frames[-1]["id"] == 1
+        assert frames[-1]["result"]["content"][0]["text"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_progress_sse_hangup_cancels_handler(self, monkeypatch):
+        cancelled = asyncio.Event()
+        progress_sent = asyncio.Event()
+
+        async def invoke(**kwargs):
+            await kwargs["progress_callback"](1, 2, "a")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        self._serve_progress_tool(monkeypatch, invoke)
+        messages: list[dict] = []
+
+        async def send(message):
+            messages.append(message)
+            if b"notifications/progress" in message.get("body", b""):
+                progress_sent.set()
+
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        try:
+            async with asyncio.timeout(5):
+                await wrapper.handle_streamable_http(_make_scope("/mcp", headers=_PROGRESS_HEADERS), _body_then_disconnect_on(_PROGRESS_BODY, progress_sent), send)
+        finally:
+            await wrapper.shutdown()
+
+        assert cancelled.is_set()
+        assert [f.get("method") for f in _sse_frames(messages)] == ["notifications/progress"]
+
+    @pytest.mark.asyncio
+    async def test_progress_switch_requires_auth(self, monkeypatch):
+        """Unauthenticated (401) and server-denied (403) progress requests never reach the SSE manager."""
+        # First-Party
+        from mcpgateway.main import MCPPathRewriteMiddleware
+
+        monkeypatch.setattr(tr.settings, "json_response_enabled", True)
+        monkeypatch.setattr(tr.settings, "use_stateful_sessions", False)
+        monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", _RecordingSessionManager)
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        try:
+            monkeypatch.setattr(tr.settings, "mcp_require_auth", True)
+            send, messages = _make_send_collector()
+            scope = _make_scope("/mcp", headers=_PROGRESS_HEADERS)
+            scope["path"] = "/mcp"
+            await MCPPathRewriteMiddleware(wrapper.handle_streamable_http)(scope, _make_receive(_PROGRESS_BODY), send)
+            assert messages[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+            token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+            try:
+                monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=False))
+                send, messages = _make_send_collector()
+                await wrapper.handle_streamable_http(_make_scope("/servers/abc-123-def/mcp", headers=_PROGRESS_HEADERS), _make_receive(_PROGRESS_BODY), send)
+                assert messages[0]["status"] == tr.HTTP_403_FORBIDDEN
+            finally:
+                user_context_var.reset(token)
+        finally:
+            await wrapper.shutdown()
+
+        assert wrapper.progress_session_manager.bodies == []
+        assert wrapper.session_manager.bodies == []
+
+
 _X_MCP_HEADER_SCHEMA = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
 
 
@@ -19634,34 +20060,318 @@ class TestProgressRelay:
         monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=capture_invoke_kwargs))
         return captured
 
+    @staticmethod
+    def _ctx(protocol_version="2026-07-28"):
+        """Build a fake request context with an awaitable downstream session."""
+        ctx = MagicMock()
+        ctx.meta = None
+        ctx.protocol_version = protocol_version
+        ctx.session.report_progress = AsyncMock()
+        return ctx
+
     @pytest.mark.asyncio
     async def test_tool_invoke_receives_progress_callback(self, monkeypatch):
-        """invoke_tool gets a callable relay; outside a live request context it is a safe no-op."""
+        """Outside a live request context, invoke_tool gets no relay."""
         self._patch_db(monkeypatch)
         captured = self._patch_invoke_tool(monkeypatch)
 
         result = await call_tool("any_tool", {})
         assert result == []
 
-        relay = captured.get("progress_callback")
-        assert relay is not None
-        await relay(1.0, 2.0, "halfway")  # must not raise without a request context
+        assert captured["progress_callback"] is None
 
     @pytest.mark.asyncio
     async def test_relay_forwards_to_downstream_session(self, monkeypatch):
-        """With a live request context, the relay hands updates to session.report_progress."""
+        """A legacy tools/call keeps relaying to session.report_progress."""
         self._patch_db(monkeypatch)
         captured = self._patch_invoke_tool(monkeypatch)
 
-        downstream_ctx = MagicMock()
-        downstream_ctx.meta = None
-        downstream_ctx.session.report_progress = AsyncMock()
+        downstream_ctx = self._ctx("2025-11-25")
 
         with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=downstream_ctx):
             await call_tool("any_tool", {})
             await captured["progress_callback"](2.0, 8.0, "step 2 of 8")
 
         downstream_ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
+
+    def test_relay_none_without_request_context(self):
+        """No request context yields no relay."""
+        assert tr._downstream_progress_relay() is None
+
+    def test_relay_none_for_legacy_by_default(self):
+        """Legacy peers get a relay only when include_legacy is set."""
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx("2025-11-25")):
+            assert tr._downstream_progress_relay() is None
+            assert callable(tr._downstream_progress_relay(include_legacy=True))
+
+    @pytest.mark.asyncio
+    async def test_relay_forwards_for_modern(self):
+        """A modern peer's relay forwards progress, total and message verbatim."""
+        ctx = self._ctx()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            relay = tr._downstream_progress_relay()
+        await relay(2.0, 8.0, "step 2 of 8")
+        ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
+
+    @pytest.mark.asyncio
+    async def test_relay_uses_captured_session(self):
+        """The relay keeps the session it was built with, not the current request context."""
+        first, second = self._ctx(), self._ctx()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=first):
+            relay = tr._downstream_progress_relay()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=second):
+            await relay(1.0, None, None)
+        first.session.report_progress.assert_awaited_once_with(1.0, None, None)
+        second.session.report_progress.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_relay_swallows_report_errors(self):
+        """A closed downstream stream never fails the request."""
+        ctx = self._ctx()
+        ctx.session.report_progress = AsyncMock(side_effect=RuntimeError("closed"))
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            relay = tr._downstream_progress_relay()
+        await relay(1.0, None, None)
+        ctx.session.report_progress.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("era", "expect_relay"), [("2026-07-28", True), ("2025-11-25", False)])
+    async def test_direct_proxy_gets_modern_only_relay(self, monkeypatch, era, expect_relay):
+        """The direct-proxy branch relays progress for modern peers only."""
+        gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=gateway)))
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield db
+
+        direct = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "extract_gateway_id_from_headers", lambda _headers: "gw-direct")
+        monkeypatch.setattr(tr, "check_gateway_access", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr, "_check_scoped_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr.settings, "mcpgateway_direct_proxy_enabled", True)
+        monkeypatch.setattr(tr.tool_service, "invoke_tool_direct", direct)
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False, "is_authenticated": True})
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx(era)):
+            await call_tool("any_tool", {})
+
+        relay = direct.await_args.kwargs["progress_callback"]
+        assert callable(relay) if expect_relay else relay is None
+
+    @pytest.mark.asyncio
+    async def test_complete_passes_modern_progress_relay(self, monkeypatch):
+        """The completion handler hands the modern-only relay to the service."""
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield MagicMock()
+
+        relay = MagicMock(drain=AsyncMock())
+        relay_calls = []
+
+        def fake_relay(**kwargs):
+            relay_calls.append(kwargs)
+            return relay
+
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+        with patch.object(tr, "completion_service") as mock_cs:
+            mock_cs.handle_completion = AsyncMock(return_value={"completion": {"values": [], "total": 0, "hasMore": False}})
+            await tr.complete(types.PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": "v"})
+
+        assert mock_cs.handle_completion.await_args.kwargs["progress_callback"] is relay
+        assert relay_calls == [{}]
+        relay.drain.assert_awaited_once_with()
+
+    @staticmethod
+    def _blocking_relay():
+        """Build a relay whose downstream send blocks until the returned event is set."""
+        release = asyncio.Event()
+        session = MagicMock()
+
+        async def blocked_send(*_args):
+            await release.wait()
+
+        session.report_progress = AsyncMock(side_effect=blocked_send)
+        return tr._ProgressRelay(session), session, release
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_waits_for_inflight_sends(self):
+        """drain returns only after every in-flight send has finished."""
+        relay, session, release = self._blocking_relay()
+        send = asyncio.create_task(relay(1.0, 2.0, "a"))
+        await asyncio.sleep(0)
+        drain = asyncio.create_task(relay.drain())
+        await asyncio.sleep(0.05)
+        assert not drain.done()
+
+        release.set()
+        async with asyncio.timeout(1):
+            await drain
+        await send
+        session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_caps_wait(self):
+        """A stalled downstream reader never hangs the call past the drain cap."""
+        relay, _session, _release = self._blocking_relay()
+        send = asyncio.create_task(relay(1.0, None, None))
+        async with asyncio.timeout(1):
+            await relay.drain(timeout=0.05)
+        assert not send.done()
+        send.cancel()
+        await asyncio.gather(send, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_relay_send_survives_upstream_cancel(self):
+        """Cancelling the upstream task group never aborts a progress send already in flight."""
+        release = asyncio.Event()
+        completed = []
+        session = MagicMock()
+
+        async def blocked_send(*args):
+            await release.wait()
+            completed.append(args)
+
+        session.report_progress = blocked_send
+        relay = tr._ProgressRelay(session)
+        async with asyncio.timeout(1):
+            async with anyio.create_task_group() as upstream:
+                upstream.start_soon(relay, 1.0, 2.0, "a")
+                await anyio.sleep(0)
+                upstream.cancel_scope.cancel()
+                asyncio.get_running_loop().call_later(0.05, release.set)
+        assert completed == [(1.0, 2.0, "a")]
+        assert relay._inflight == 0
+
+    @pytest.mark.asyncio
+    async def test_relay_send_cap_marks_stalled(self, monkeypatch):
+        """A send that hits the cap marks the relay stalled, and later updates return at once without sending."""
+        monkeypatch.setattr(tr, "_PROGRESS_SEND_TIMEOUT_SECONDS", 0.05)
+        relay, session, _release = self._blocking_relay()
+        async with asyncio.timeout(1):
+            await relay(1.0, 2.0, "a")
+        async with asyncio.timeout(0.01):
+            await relay(2.0, 2.0, "b")
+        session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+        assert relay._inflight == 0
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_idle_returns_immediately(self):
+        """drain with no sends in flight returns at once."""
+        relay = tr._ProgressRelay(MagicMock())
+        async with asyncio.timeout(0.5):
+            await relay.drain()
+
+    @pytest.mark.asyncio
+    async def test_relay_drain_counts_failed_sends(self):
+        """A failed send still leaves the relay idle."""
+        session = MagicMock()
+        session.report_progress = AsyncMock(side_effect=RuntimeError("closed"))
+        relay = tr._ProgressRelay(session)
+        await relay(1.0, None, None)
+        async with asyncio.timeout(0.5):
+            await relay.drain()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_waits_for_spawned_progress(self, monkeypatch):
+        """call_tool returns only after a progress send spawned by the upstream client finishes."""
+        self._patch_db(monkeypatch)
+        release = asyncio.Event()
+        ctx = self._ctx()
+
+        async def blocked_send(*_args):
+            await release.wait()
+
+        ctx.session.report_progress = AsyncMock(side_effect=blocked_send)
+
+        async def invoke(**kwargs):
+            asyncio.get_running_loop().create_task(kwargs["progress_callback"](1.0, 2.0, "a"))
+            return MagicMock(content=[])
+
+        monkeypatch.setattr(tool_service, "invoke_tool", invoke)
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            call = asyncio.create_task(call_tool("any_tool", {}))
+            await asyncio.sleep(0.05)
+            assert not call.done()
+            release.set()
+            async with asyncio.timeout(1):
+                assert await call == []
+        ctx.session.report_progress.assert_awaited_once_with(1.0, 2.0, "a")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fails", [False, True], ids=["success", "error"])
+    async def test_direct_proxy_drains_relay(self, monkeypatch, fails):
+        """The direct-proxy branch drains its relay on success and on error."""
+        gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=gateway)))
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield db
+
+        drain = AsyncMock()
+        monkeypatch.setattr(tr._ProgressRelay, "drain", drain)
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "extract_gateway_id_from_headers", lambda _headers: "gw-direct")
+        monkeypatch.setattr(tr, "check_gateway_access", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr, "_check_scoped_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr.settings, "mcpgateway_direct_proxy_enabled", True)
+        monkeypatch.setattr(tr.tool_service, "invoke_tool_direct", AsyncMock(side_effect=RuntimeError("boom") if fails else None))
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False, "is_authenticated": True})
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx()):
+            await call_tool("any_tool", {})
+
+        drain.assert_awaited_once_with()
+
+    @staticmethod
+    def _spy_relay(monkeypatch):
+        """Replace the relay factory with one that returns a drain spy."""
+        relay = MagicMock(drain=AsyncMock())
+        monkeypatch.setattr(tr, "_downstream_progress_relay", lambda **_kwargs: relay)
+        return relay
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_drains_relay_on_error(self, monkeypatch):
+        """get_prompt drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=("server-1", {}, {})))
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptNotFoundError("missing")))
+
+        with pytest.raises(MCPError):
+            await get_prompt("missing", {})
+        relay.drain.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_drains_relay_on_error(self, monkeypatch):
+        """read_resource drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ResourceNotFoundError("missing")))
+
+        with pytest.raises(MCPError):
+            await read_resource("missing://resource")
+        relay.drain.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_complete_drains_relay_on_error(self, monkeypatch):
+        """complete drains its relay when the service raises."""
+        self._patch_db(monkeypatch)
+        relay = self._spy_relay(monkeypatch)
+        with patch.object(tr, "completion_service") as mock_cs:
+            mock_cs.handle_completion = AsyncMock(side_effect=RuntimeError("boom"))
+            await tr.complete(types.PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": "v"})
+        relay.drain.assert_awaited_once_with()
 
 
 class TestMrtrElicitation:

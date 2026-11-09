@@ -8,7 +8,6 @@ Unit tests for OAuth Manager and Token Storage Service.
 
 # Standard
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -17,9 +16,7 @@ from pydantic import SecretStr
 import pytest
 
 # First-Party
-from mcpgateway.db import OAuthToken
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
-from mcpgateway.services.token_storage_service import TokenStorageService
 
 
 def _isolated_client(mock_client):
@@ -765,8 +762,10 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
-            with pytest.raises(OAuthError, match="Failed to exchange code for token after"):
+            with pytest.raises(OAuthError, match="OAuth token exchange fails") as exc_info:
                 await manager._exchange_code_for_tokens(credentials, code)
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_decryption_returns_none(self):
@@ -935,8 +934,10 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should raise an error because access_token won't be found in raw response
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match=r"^No access_token in token response\.$") as exc_info:
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_missing_access_token(self):
@@ -958,8 +959,10 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match=r"^No access_token in token response\.$") as exc_info:
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_retry_logic(self):
@@ -1005,8 +1008,10 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with patch("asyncio.sleep"):
-                with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
+                with pytest.raises(OAuthError, match="OAuth token exchange fails") as exc_info:
                     await manager.exchange_code_for_token(credentials, "auth_code", "state")
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_final_fallback_error(self):
@@ -1211,8 +1216,10 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should raise an error because access_token won't be found in raw response
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match=r"^No access_token in token response\.$") as exc_info:
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_missing_access_token(self):
@@ -1234,8 +1241,10 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match=r"^No access_token in token response\.$") as exc_info:
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
+
+        assert exc_info.value.error_code == "token_exchange_failed"
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_final_fallback_error(self):
