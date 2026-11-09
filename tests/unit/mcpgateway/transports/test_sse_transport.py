@@ -356,7 +356,7 @@ async def test_event_source_response_call_runs_tasks():
     response.data_sender_callable = _noop
     response.background = AsyncMock()
 
-    scope = {"type": "http"}
+    scope = {"type": "http", "method": "GET"}
 
     async def _receive():
         return {"type": "http.disconnect"}
@@ -399,7 +399,7 @@ async def test_event_source_response_call_skips_optional_sender_and_background()
     response.data_sender_callable = None
     response.background = None
 
-    scope = {"type": "http"}
+    scope = {"type": "http", "method": "GET"}
 
     async def _receive():
         return {"type": "http.disconnect"}
