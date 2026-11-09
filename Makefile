@@ -7497,11 +7497,7 @@ detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for r
 .PHONY: detect-secrets-hook
 detect-secrets-hook: uv                      ## 🔎  detect-secrets pre-commit hook equivalent
 	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook \
-		--baseline .secrets.baseline \
-		--use-all-plugins \
-		--fail-on-unaudited \
-		--
+	@git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' scripts/git/detect-secrets-hook-readonly.sh --
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)

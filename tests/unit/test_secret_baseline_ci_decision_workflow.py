@@ -325,5 +325,4 @@ def test_pr_workflows_gate_heavy_jobs_on_ci_decision() -> None:
 def test_detect_secrets_hook_target_scans_tracked_files() -> None:
     text = MAKEFILE.read_text(encoding="utf-8")
 
-    assert "git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook" in text
-    assert "--fail-on-unaudited \\\n\t\t--" in text
+    assert "git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' scripts/git/detect-secrets-hook-readonly.sh --" in text
