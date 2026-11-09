@@ -17,13 +17,13 @@ import binascii
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -39,7 +39,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -53,7 +53,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
@@ -405,6 +405,106 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
     )
     if not membership:
         raise PublicValidationError("User membership in team not sufficient for this update.")
+
+
+_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "authorization_url", "token_url", "scopes", "scope")
+
+
+_SECURITY_SCHEME_NAMES = {"basic": "basicAuth", "bearer": "bearerAuth", "query_param": "apiKeyAuth", "oauth": "oauth2Auth"}  # pragma: allowlist secret
+
+
+def _oauth_scope_names(safe: Dict[str, Any]) -> List[str]:
+    """Return scope names from stored ``scopes`` (list or string) or legacy ``scope`` (string).
+
+    Args:
+        safe: Allowlisted OAuth configuration fields.
+
+    Returns:
+        The scope names, empty when none are configured.
+    """
+    raw = safe.get("scopes") or safe.get("scope") or []
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    elif not isinstance(raw, (list, tuple)):
+        return []
+    return [str(scope).strip() for scope in raw if str(scope).strip()]
+
+
+def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build an ``oauth2SecurityScheme`` dict from non-secret OAuth config fields.
+
+    Reads only the allowlisted keys a client needs to start a flow (the same
+    allowlist ``gateway_service.py`` uses for OAuth config comparison).
+    Never reads ``client_secret``, ``private_key``, or any other credential value.
+
+    Args:
+        oauth_config: The agent's stored OAuth configuration dict.
+
+    Returns:
+        A dict shaped as A2A 1.0's ``SecurityScheme.oauth2SecurityScheme``, or
+        ``None`` when the grant type is unsupported or a URL the flow requires is missing.
+    """
+    safe = {key: oauth_config[key] for key in _SAFE_OAUTH_CONFIG_KEYS if oauth_config.get(key)}
+    scopes = {scope: scope for scope in _oauth_scope_names(safe)}
+    token_url = safe.get("token_url")
+    if not token_url:
+        return None
+
+    grant_type = safe.get("grant_type")
+    if grant_type == "client_credentials":
+        flows: Dict[str, Any] = {"clientCredentials": {"tokenUrl": token_url, "scopes": scopes}}
+    elif grant_type == "authorization_code" and safe.get("authorization_url"):
+        flows = {"authorizationCode": {"authorizationUrl": safe["authorization_url"], "tokenUrl": token_url, "scopes": scopes}}
+    else:
+        return None
+
+    return {"oauth2SecurityScheme": {"flows": flows}}
+
+
+def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """Derive ``securitySchemes``/``securityRequirements`` from an agent's auth config.
+
+    Only ever reads the auth *configuration* (type, query param names,
+    non-secret OAuth fields) — never ``auth_value`` or any decrypted credential,
+    matching the acceptance criterion that this must not disclose credential values.
+    Returns no scheme when a schema-required field cannot be surfaced.
+
+    Args:
+        agent: The agent to derive a security scheme for.
+
+    Returns:
+        A ``(securitySchemes, securityRequirements)`` pair, or ``(None, None)``
+        when the agent has no auth configured, its auth type is unrecognized,
+        or the scheme cannot be expressed schema-validly.
+    """
+    auth_type = (agent.auth_type or "").lower()
+    scheme: Optional[Dict[str, Any]]
+    if auth_type == "basic":
+        scheme = {"httpAuthSecurityScheme": {"scheme": "basic"}}
+    elif auth_type == "bearer":
+        scheme = {"httpAuthSecurityScheme": {"scheme": "bearer"}}
+    elif auth_type == "query_param":
+        # auth_query_params stores {"param_name": "<encrypted value>"}: the dict
+        # key is the plaintext param name. Only the first name is surfaced.
+        param_names = list((agent.auth_query_params or {}).keys())
+        scheme = {"apiKeySecurityScheme": {"location": "query", "name": param_names[0]}} if param_names else None
+    elif auth_type == "oauth":
+        scheme = _oauth2_security_scheme(agent.oauth_config or {})
+    else:
+        # authheaders keeps its header name inside the encrypted auth_value blob,
+        # so the required API-key ``name`` cannot be surfaced without decryption.
+        scheme = None
+
+    if scheme is None:
+        if auth_type:
+            logger.debug("Omitting A2A card security scheme for agent %s: auth type %r cannot be expressed schema-validly from stored configuration", agent.id, auth_type)
+        return None, None
+
+    scheme_name = _SECURITY_SCHEME_NAMES[auth_type]
+    # An unscoped StringList serializes to {} (protobuf JSON omits the empty
+    # repeated "list" field), verified against the installed a2a SDK's own
+    # MessageToDict output — not {"list": []}.
+    return {scheme_name: scheme}, [{"schemes": {scheme_name: {}}}]
 
 
 class A2AAgentService(BaseService):
@@ -1325,27 +1425,34 @@ class A2AAgentService(BaseService):
     async def get_agent_card(
         self,
         db: Session,
-        agent_name: str,
+        agent_name: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        caller_version: Optional[str] = None,
+        *,
+        agent_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Build an A2A v1 AgentCard dict for the named agent.
+        """Build an A2A v1 AgentCard dict for the named or identified agent.
 
-        Queries the database for an enabled agent with the given name and
-        returns a dict that conforms to the A2A AgentCard schema. Returns
+        Queries the database for an enabled agent with the given name, or the
+        given ID when ``agent_id`` is set, and returns a dict that conforms to the A2A AgentCard schema. Returns
         None when no matching enabled agent is found OR when the caller's
         scope cannot see the agent (PR #4341 invariant: admin bypass cannot
         read another user's private agent card).
 
         Args:
             db: Database session.
-            agent_name: Name of the agent to look up.
+            agent_name: Name of the agent to look up. Ignored when ``agent_id`` is set.
             user_email: Caller's email for visibility scoping. Defaults to None,
                 which combines with ``token_teams=None`` for anonymous admin
                 bypass and denies private agents.
             token_teams: Caller's team scope for visibility filtering. ``None``
                 means unrestricted (admin), ``[]`` means public-only, and
                 ``[team_id, ...]`` means team-scoped. Defaults to None.
+            caller_version: A2A version the caller speaks (its ``A2A-Version``
+                header). A pre-1.0 value keeps the legacy card shape even for an
+                agent stored as 1.x. Defaults to None, which follows the stored version.
+            agent_id: ID of the agent to look up instead of ``agent_name``.
 
         Returns:
             AgentCard dict, or None if the agent is not found / disabled / denied.
@@ -1359,32 +1466,125 @@ class A2AAgentService(BaseService):
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> asyncio.run(service.get_agent_card(db, "missing")) is None
             True
+            >>> asyncio.run(service.get_agent_card(db, agent_id="missing")) is None
+            True
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True))
+        match = DbA2AAgent.id == agent_id if agent_id is not None else DbA2AAgent.name == agent_name
+        query = select(DbA2AAgent).where(match, DbA2AAgent.enabled.is_(True))
         agent = db.execute(query).scalar_one_or_none()
         if not agent:
             return None
         if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
-        capabilities = agent.capabilities or {}
+        return self._build_agent_card(agent, caller_version)
 
-        card: Dict[str, Any] = {
+    def _build_agent_card(self, agent: DbA2AAgent, caller_version: Optional[str] = None) -> Dict[str, Any]:
+        """Dispatch card construction by the agent's declared protocol version.
+
+        v0.3 agents keep the historical card shape so existing v0.3 callers see
+        no behaviour change. v1.0+ agents get the corrected A2A 1.0 shape. Uses
+        the same :func:`is_v1_a2a_protocol` gate as message/task normalization
+        in ``a2a_protocol.py``, so the card and the wire format agree on which
+        agents are v1.
+
+        A caller that declares a pre-1.0 version always gets the legacy shape.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+            caller_version: A2A version the caller speaks, when it declared one.
+
+        Returns:
+            AgentCard dict, shaped per the agent's declared protocol version.
+        """
+        if is_v1_a2a_protocol(agent.protocol_version) and (not caller_version or is_v1_a2a_protocol(caller_version)):
+            return self._build_v1_agent_card(agent)
+        return self._build_legacy_agent_card(agent)
+
+    def _build_legacy_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Build the pre-1.0 AgentCard shape for a v0.3 agent.
+
+        Preserved unchanged (aside from reading input/output modes from
+        stored data) so existing v0.3 callers see no behaviour change.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict in the A2A v0.3 shape.
+        """
+        capabilities = agent.capabilities or {}
+        return {
             "name": agent.name,
             "description": agent.description or "",
             "url": agent.endpoint_url,
             "version": str(agent.version),
             "protocolVersion": agent.protocol_version,
-            "defaultInputModes": ["text"],
-            "defaultOutputModes": ["text"],
+            "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
+            "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
             "capabilities": {
                 "streaming": bool(capabilities.get("streaming", False)),
                 "pushNotifications": bool(capabilities.get("pushNotifications", False)),
                 "stateTransitionHistory": bool(capabilities.get("stateTransitionHistory", False)),
             },
-            "skills": capabilities.get("skills", []),
+            "skills": capabilities.get("skills") or [],
             "supportsAuthenticatedExtendedCard": True,
         }
+
+    def _build_v1_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Build the A2A 1.0 AgentCard shape for a v1+ agent.
+
+        Transport is reported through ``supportedInterfaces`` rather than a
+        bare ``url``, ``capabilities.extendedAgentCard`` replaces the legacy
+        ``supportsAuthenticatedExtendedCard``, and the non-1.0
+        ``stateTransitionHistory`` capability is dropped. Fields with no
+        stored source (``provider``, ``documentationUrl``, ``signatures``)
+        are omitted rather than filled with placeholders.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict in the A2A 1.0 shape.
+        """
+        capabilities = agent.capabilities or {}
+
+        # JSONRPC is the only binding ContextForge's A2A invocation path supports,
+        # and extendedAgentCard reflects sidecar GetExtendedAgentCard support.
+        interface: Dict[str, Any] = {
+            "url": agent.endpoint_url,
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": agent.protocol_version,
+        }
+        if agent.tenant:
+            interface["tenant"] = agent.tenant
+
+        card_capabilities: Dict[str, Any] = {
+            "streaming": bool(capabilities.get("streaming", False)),
+            "pushNotifications": bool(capabilities.get("pushNotifications", False)),
+            "extendedAgentCard": True,
+        }
+        extensions = capabilities.get("extensions")
+        if extensions:
+            card_capabilities["extensions"] = extensions
+
+        card: Dict[str, Any] = {
+            "name": agent.name,
+            "description": agent.description or "",
+            "version": str(agent.version),
+            "supportedInterfaces": [interface],
+            "capabilities": card_capabilities,
+            "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
+            "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
+            "skills": capabilities.get("skills") or [],
+        }
+        if agent.icon_url:
+            card["iconUrl"] = agent.icon_url
+
+        security_schemes, security_requirements = _build_security_scheme(agent)
+        if security_schemes:
+            card["securitySchemes"] = security_schemes
+            card["securityRequirements"] = security_requirements
         return card
 
     async def update_agent(
@@ -1531,12 +1731,39 @@ class A2AAgentService(BaseService):
                 if field == "owner_email":
                     continue  # ownership is set at creation; never overwritten by an update
 
+                # auth_value is persisted by the credential block below, which preserves masked placeholders
+                if field == "auth_value":
+                    continue
+
                 if hasattr(agent, field):
                     setattr(agent, field, value)
 
             # Clear auth_value when auth_type is explicitly set to empty string
             if agent_data.auth_type is not None and agent_data.auth_type == "":
                 agent.auth_value = ""
+
+            # Persist basic/bearer/legacy-single-header credential updates.
+            # `auth_value` is built by A2AAgentUpdate.create_auth_value from the component
+            # fields. The Admin UI form also submits it (as "") so it can be in
+            # `model_fields_set`; the generic loop skips it and this block owns the write.
+            # A masked placeholder in a component field means the caller did not retype the
+            # secret, so the stored credential is preserved (mirrors GatewayService.update_gateway).
+            auth_headers_list_submitted = bool(agent_data.auth_headers) and isinstance(agent_data.auth_headers, list)
+            if agent_data.auth_type in ("basic", "bearer", "authheaders") and not auth_headers_list_submitted:
+                token = agent_data.auth_token
+                password = agent_data.auth_password
+                header_value = agent_data.auth_header_value
+                if agent_data.auth_value and settings.masked_auth_value not in (token, password, header_value):
+                    agent.auth_value = agent_data.auth_value
+                elif agent_data.auth_type == "basic" and password == settings.masked_auth_value and agent_data.auth_username:
+                    stored = decode_auth(agent.auth_value) if isinstance(agent.auth_value, str) and agent.auth_value else {}
+                    rebuilt = rebuild_basic_auth_with_stored_password(stored, agent_data.auth_username)
+                    if rebuilt is None:
+                        raise PublicValidationError("auth_password is required when changing auth_username on an agent without stored basic credentials.")
+                    if rebuilt != stored:
+                        agent.auth_value = encode_auth(rebuilt)
+                else:
+                    logger.debug("Masked credential placeholder submitted for agent %s; preserving stored auth_value", agent.id)
 
             # Handle query_param auth updates
             # Clear auth_query_params when switching away from query_param auth
@@ -1795,7 +2022,13 @@ class A2AAgentService(BaseService):
                 # failures propagate so the caller knows the operation was incomplete.
                 if agent.tool_id:
                     now = datetime.now(timezone.utc)
-                    tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
+                    # A tool the validation policy refused stays disabled.
+                    tool_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.id == agent.tool_id)
+                        .where(DbTool.enabled != activate)
+                        .values(enabled=case((DbTool.validation_refusal.is_(None), activate), else_=False), updated_at=now)
+                    )
                     if tool_result.rowcount > 0:
                         db.commit()
                         await cache.invalidate_tools()
@@ -3210,11 +3443,12 @@ class A2AAgentService(BaseService):
         return validated_agent.masked()
 
     @staticmethod
-    def _task_to_wire(task: "A2ATask") -> Dict[str, Any]:
+    def _task_to_wire(task: "A2ATask", include_details: bool = True) -> Dict[str, Any]:
         """Convert an A2ATask ORM row to the A2A v1 task wire format.
 
         The wire format uses ``id`` (not ``task_id``), ``status.state``
         (not a top-level ``state``), and optional ``history``/``artifacts``.
+        ``include_details=False`` omits ``history`` and ``artifacts``.
         """
         wire: Dict[str, Any] = {
             "id": task.task_id,
@@ -3225,7 +3459,7 @@ class A2AAgentService(BaseService):
             wire["status"]["message"] = task.latest_message
         if task.last_error and task.state == "failed":
             wire["status"]["message"] = {"role": "agent", "parts": [{"text": task.last_error}]}
-        if task.payload and isinstance(task.payload, dict):
+        if include_details and task.payload and isinstance(task.payload, dict):
             if "history" in task.payload:
                 wire["history"] = task.payload["history"]
             if "artifacts" in task.payload:
@@ -3393,9 +3627,73 @@ class A2AAgentService(BaseService):
         if not visible_agent_ids:
             return []
         query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
-        query = query.order_by(desc(A2ATask.updated_at))
+        query = query.order_by(desc(A2ATask.updated_at), desc(A2ATask.id))
         query = query.limit(limit).offset(offset)
         return [self._task_to_wire(t) for t in query.all()]
+
+    def list_tasks_page(
+        self,
+        db: Session,
+        agent_id: str,
+        state: Optional[str] = None,
+        limit: int = 50,
+        after: Optional[Tuple[datetime, str]] = None,
+    ) -> List[Tuple[Dict[str, Any], datetime, str]]:
+        """List one agent's tasks with keyset pagination, newest first.
+
+        Rows order by ``(updated_at DESC, id DESC)``. The caller must have
+        authorized access to ``agent_id`` before calling.
+
+        Args:
+            db: Database session.
+            agent_id: Agent whose tasks are listed.
+            state: Optional task state filter.
+            limit: Maximum number of rows to return.
+            after: ``(updated_at, id)`` of the last row of the previous page.
+
+        Returns:
+            Tuples of ``(summary wire dict, updated_at, row id)``. The wire dict omits ``history`` and ``artifacts``.
+        """
+        query = db.query(A2ATask).filter(A2ATask.a2a_agent_id == agent_id)
+        if state is not None:
+            query = query.filter(A2ATask.state == state)
+        if after is not None:
+            after_updated_at, after_id = after
+            query = query.filter(or_(A2ATask.updated_at < after_updated_at, and_(A2ATask.updated_at == after_updated_at, A2ATask.id < after_id)))
+        rows = query.order_by(desc(A2ATask.updated_at), desc(A2ATask.id)).limit(limit).all()
+        return [(self._task_to_wire(t, include_details=False), t.updated_at, t.id) for t in rows]
+
+    async def check_agent_manage_access(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check that the caller can see the agent and may manage its tasks and webhooks.
+
+        Tasks carry no owner of their own, so task and push config access
+        follows agent ownership: the agent owner, a team owner for team
+        agents, or a platform admin.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Caller's email.
+            token_teams: Caller's token teams (Layer 1 visibility scope).
+
+        Returns:
+            True when the agent exists, is visible, and the caller may manage it.
+        """
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_id).first()
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
+            return False
+        if not user_email:
+            return token_teams is None
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        return await PermissionService(db).check_resource_ownership(user_email, agent)
 
     # ---------------------------------------------------------------------------
     # Push notification config CRUD
@@ -3672,12 +3970,43 @@ class A2AAgentService(BaseService):
             )
         return results
 
-    def delete_push_config(self, db: Session, config_id: str) -> bool:
+    def has_push_config(self, db: Session, agent_id: str, task_id: str, webhook_url: str) -> bool:
+        """Return True when a config exists for the ``(agent, task, webhook_url)`` unique key."""
+        return self._find_push_config_by_unique_key(db, {"a2a_agent_id": agent_id, "task_id": task_id, "webhook_url": webhook_url}) is not None
+
+    def find_push_config(self, db: Session, agent_id: str, task_id: str, config_id: str) -> Optional[Dict[str, Any]]:
+        """Look up one push config scoped by agent, task, and config ID.
+
+        Args:
+            db: Database session.
+            agent_id: Owning agent ID.
+            task_id: Agent-side task ID.
+            config_id: Config record ID.
+
+        Returns:
+            The config dict (without ``auth_token``), or None if no config matches all three IDs.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        cfg = (
+            db.query(A2APushNotificationConfig)
+            .filter(A2APushNotificationConfig.id == config_id, A2APushNotificationConfig.a2a_agent_id == agent_id, A2APushNotificationConfig.task_id == task_id)
+            .first()
+        )
+        if cfg is None:
+            return None
+        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+
+    def delete_push_config(self, db: Session, config_id: str, agent_id: Optional[str] = None, task_id: Optional[str] = None) -> bool:
         """Delete a push notification config by ID.
 
         Args:
             db: Database session.
             config_id: The config record ID to delete.
+            agent_id: When set, the config must belong to this agent.
+            task_id: When set, the config must belong to this task.
 
         Returns:
             True if deleted, False if not found.
@@ -3685,7 +4014,12 @@ class A2AAgentService(BaseService):
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
 
-        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        query = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id)
+        if agent_id is not None:
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
+        if task_id is not None:
+            query = query.filter(A2APushNotificationConfig.task_id == task_id)
+        cfg = query.first()
         if cfg is None:
             return False
         db.delete(cfg)

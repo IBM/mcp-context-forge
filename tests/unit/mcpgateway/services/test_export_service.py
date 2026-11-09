@@ -745,6 +745,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     mock_server.id = "server1"
     mock_server.name = "test_server"
     mock_server.description = "Test server"
+    mock_server.instructions = ""
     mock_server.associated_tools = ["tool1", "tool2"]
     mock_server.enabled = True
     mock_server.tags = ["test", "api"]
@@ -759,6 +760,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     server_data = servers[0]
     assert server_data["name"] == "test_server"
     assert server_data["description"] == "Test server"
+    assert server_data["instructions"] == ""
     assert server_data["tool_ids"] == ["tool1", "tool2"]
     assert server_data["sse_endpoint"] == "/servers/server1/sse"
     assert server_data["websocket_endpoint"] == "/servers/server1/ws"

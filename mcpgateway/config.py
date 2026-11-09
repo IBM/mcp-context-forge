@@ -1017,6 +1017,9 @@ class Settings(BaseSettings):
     # Token endpoint auth method
     dcr_token_endpoint_auth_method: str = Field(default="client_secret_basic", description="Token endpoint auth method for DCR (client_secret_basic or client_secret_post)")
 
+    # Application type (OpenID Connect Dynamic Client Registration); MCP 2026-07-28 requires one
+    dcr_application_type: Literal["auto", "web", "native"] = Field(default="auto", description="application_type sent in DCR requests; auto picks native for a loopback redirect URI and web otherwise")
+
     # Metadata cache TTL
     dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
 
@@ -1132,6 +1135,7 @@ class Settings(BaseSettings):
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
+    mcpgateway_ui_deprecation_notice_enabled: bool = Field(default=True, description="Show the built-in Admin UI deprecation notice")
     mcpgateway_admin_api_enabled: bool = False
 
     # Migration runner ownership.
@@ -1244,7 +1248,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = Field(
         default=False,
         description="Skip SSL certificate verification for ALL outbound HTTPS requests "
-        "(federation, MCP servers, LLM providers, A2A agents). "
+        "(federation, MCP servers, LLM providers, A2A agents, SSO and OIDC discovery, JWKS key fetches). "
         "WARNING: Only enable in dev environments with self-signed certificates.",
     )
     cors_enabled: bool = True
@@ -2737,6 +2741,25 @@ class Settings(BaseSettings):
         ge=1,
         le=16,
         description="Number of forked jq worker processes per gateway worker. Default: 2.",
+    )
+
+    # CEL expression sandbox: operator-supplied policy expressions on gateway and tool records.
+    cel_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for CEL policy expressions. 'subprocess' runs each evaluation in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections; it exists only for platforms where fork is unavailable.",
+    )
+    cel_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=1.0,
+        description="Wall-clock limit for evaluating one CEL expression, at most 1.0. Exceeding it kills the worker and fails the evaluation. Default: 1.0 seconds.",
+    )
+    cel_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked CEL worker processes per gateway worker. Default: 2.",
     )
 
     # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.

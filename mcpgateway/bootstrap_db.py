@@ -419,6 +419,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "tokens.update",
                         "tokens.revoke",
                         "tools.manage_plugins",
+                        "validation_policy.manage",
                     ],
                     "is_system_role": True,
                 },

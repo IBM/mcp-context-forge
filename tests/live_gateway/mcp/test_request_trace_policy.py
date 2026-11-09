@@ -177,6 +177,7 @@ def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[A
             "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
             "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{collector.server_port}",
             "OTEL_BSP_SCHEDULE_DELAY": "100",
+            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "1",
             "OTEL_SYSTEM_TRACES_ENABLED": str(request.param).lower(),
             "OTEL_HTTPX_INSTRUMENTATION_ENABLED": "true",
             "OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED": "false",

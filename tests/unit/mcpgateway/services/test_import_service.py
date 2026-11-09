@@ -1853,7 +1853,7 @@ async def test_process_tool_dry_run_adds_warning(import_service, mock_db):
         "integration_type": "REST",
         "request_type": "GET",
     }
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, True, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, True, status, "importer@example.com")
     assert any("Would import tool" in msg for msg in status.warnings)
 
 
@@ -1868,7 +1868,7 @@ async def test_process_tool_conflict_skip(import_service, mock_db):
     }
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.SKIP, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.SKIP, False, status, "importer@example.com")
     assert status.skipped_entities == 1
     assert any("Skipped existing tool" in msg for msg in status.warnings)
 
@@ -1885,8 +1885,8 @@ async def test_process_tool_conflict_update_found(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
-    import_service.tool_service.update_tool.assert_called_with(mock_db, "t1", ANY)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
+    import_service.tool_service.update_tool.assert_called_with(mock_db, "t1", ANY, user_email="importer@example.com")
     assert status.updated_entities == 1
 
 
@@ -1902,7 +1902,7 @@ async def test_process_tool_conflict_update_not_found(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
     import_service.tool_service.list_tools.return_value = ([], None)
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.skipped_entities == 1
     assert any("Could not find existing tool to update" in msg for msg in status.warnings)
@@ -1921,7 +1921,7 @@ async def test_process_tool_conflict_update_error(import_service, mock_db):
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
     import_service.tool_service.update_tool.side_effect = Exception("update failed")
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.skipped_entities == 1
     assert any("Could not update tool" in msg for msg in status.warnings)
@@ -1938,7 +1938,7 @@ async def test_process_tool_conflict_rename(import_service, mock_db):
     }
     import_service.tool_service.register_tool.side_effect = [ToolNameConflictError("tool1"), None]
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.RENAME, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.RENAME, False, status, "importer@example.com")
     assert import_service.tool_service.register_tool.call_count == 2
     assert status.created_entities == 1
     assert any("Renamed tool" in msg for msg in status.warnings)
@@ -1956,7 +1956,7 @@ async def test_process_tool_conflict_fail(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
 
     with pytest.raises(ImportError) as exc:
-        await import_service._process_tool(mock_db, tool_data, ConflictStrategy.FAIL, False, status)
+        await import_service._process_tool(mock_db, tool_data, ConflictStrategy.FAIL, False, status, "importer@example.com")
     assert "Tool name conflict" in str(exc.value)
 
 
@@ -2572,7 +2572,7 @@ async def test_process_tool_success_increments_created(import_service, mock_db):
     status = ImportStatus("tool-ok-1")
     tool_data = {"name": "tool_ok", "url": "http://example.com", "integration_type": "REST", "request_type": "GET"}
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.created_entities == 1
     import_service.tool_service.register_tool.assert_awaited_once()
@@ -2694,6 +2694,39 @@ async def test_convert_to_server_update_resolves_tool_references(import_service,
     update = await import_service._convert_to_server_update(mock_db, server_data)
 
     assert update.associated_tools == [tool_id1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_create_carries_instructions(import_service, mock_db, instructions):
+    """Instructions survive import; an empty string stays an empty override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    create = await import_service._convert_to_server_create(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert create.instructions == instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_update_carries_instructions(import_service, mock_db, instructions):
+    """An exported instructions value, including null and the empty string, reaches the update."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert update.instructions == instructions
+    assert "instructions" in update.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_convert_to_server_update_without_instructions_leaves_override_unchanged(import_service, mock_db):
+    """An export that has no instructions key must not clear a stored override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv"})
+
+    assert "instructions" not in update.model_fields_set
 
 
 @pytest.mark.asyncio

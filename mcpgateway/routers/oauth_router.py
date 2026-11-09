@@ -37,17 +37,17 @@ from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
-from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
-from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_resource import derive_resource_origin
+from mcpgateway.utils.oauth_errors import oauth_failure
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -103,6 +103,7 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
     Returns:
         User context dict with email, teams, is_admin
     """
+    del db
     if not current_user:
         return {}
 
@@ -602,7 +603,7 @@ async def _enforce_gateway_access(
             token_teams = []
 
         if (
-            token_scoping_middleware._check_resource_team_ownership(
+            token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
                 f"/gateways/{gateway_id}",
                 token_teams,
                 db=db,
@@ -774,8 +775,9 @@ async def initiate_oauth_flow(
                     # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
                     if not oauth_config.get("authorization_url") or not oauth_config.get("token_url"):
                         metadata = await dcr_service.discover_as_metadata(issuer)
-                        oauth_config["authorization_url"] = metadata.get("authorization_endpoint")
-                        oauth_config["token_url"] = metadata.get("token_endpoint")
+                        for config_key, metadata_key in (("authorization_url", "authorization_endpoint"), ("token_url", "token_endpoint")):
+                            if not oauth_config.get(config_key):
+                                oauth_config[config_key] = await validate_issuer_scoped_endpoint(metadata.get(metadata_key), issuer, metadata_key)
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
                     # Persist only DCR-derived fields (client credentials + AS metadata) —
@@ -842,7 +844,20 @@ async def initiate_oauth_flow(
         raise HTTPException(status_code=500, detail="Failed to initiate OAuth flow")
 
 
-@oauth_router.get("/callback")
+@oauth_router.get(
+    "/callback",
+    responses={
+        400: {
+            "description": (
+                "Safe OAuth failure HTML. Popup postMessage retains the type, status, error, and errorDescription fields, and adds "
+                "errorCode, failedStage, and reauthorizationRequired. Recognized provider codes are preserved; descriptions use fixed safe guidance. "
+                "Unknown provider codes become oauth_error. Codes include redirect_uri_mismatch, invalid_scope, insufficient_scope, "
+                "invalid_client, invalid_request, unauthorized_client, unsupported_response_type, server_error, temporarily_unavailable, "
+                "token_url_unreachable, and token_exchange_failed."
+            )
+        }
+    },
+)
 async def oauth_callback(
     request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
@@ -857,6 +872,7 @@ async def oauth_callback(
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
+    iss: Annotated[str | None, Query(max_length=2048, description="Authorization server issuer identifier (RFC 9207)")] = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
@@ -870,6 +886,8 @@ async def oauth_callback(
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
         error (str): OAuth provider error code from error callback (RFC 6749 Section 4.1.2.1).
         error_description (str): OAuth provider error description.
+        iss (str): Issuer identifier sent by the authorization server (RFC 9207); checked
+            against the gateway's issuer before the code is redeemed or an error is shown.
         request (Request): The incoming HTTP request object.
         db (Session): The database session dependency.
 
@@ -888,6 +906,7 @@ async def oauth_callback(
     # Determine early whether this callback was initiated from the React UI popup.
     # The authorize endpoint prefixes the state token with "popup." when popup=True,
     # so we can detect it here without any additional storage lookups.
+    del error_description
     is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
     csp_nonce = get_csp_nonce_from_request(request)
 
@@ -897,15 +916,34 @@ async def oauth_callback(
         safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        # Resolve the gateway behind the state without consuming it. The error branch needs it
+        # for the issuer check and the code exchange below reuses it.
+        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False) if state else None
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+
         if error:
-            error_text = escape(error)
-            description_text = escape(error_description or "OAuth provider returned an authorization error.")
-            # Sanitize untrusted query parameters before logging to prevent log injection
-            logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
+            if gateway and gateway.oauth_config:
+                try:
+                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
+                except OAuthError:
+                    # RFC 9207: discard provider errors when the response issuer does not match.
+                    error = "issuer_mismatch"
+            failure = oauth_failure(error)
+            error_text = escape(failure.code)
+            description_text = escape(failure.message)
+            logger.warning("OAuth provider callback failed: %s", failure.code)
             if is_popup:
                 return _popup_callback_response(
                     csp_nonce,
-                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
+                    {
+                        "type": "oauth_callback",
+                        "status": "error",
+                        "error": failure.code,
+                        "errorDescription": failure.message,
+                        "errorCode": failure.code,
+                        "failedStage": "authorization",
+                        "reauthorizationRequired": failure.reauthorization_required,
+                    },
                     status_code=400,
                 )
             return HTMLResponse(
@@ -974,19 +1012,11 @@ async def oauth_callback(
             logger.warning("OAuth callback missing state parameter")
             return _invalid_state_response()
 
-        # SECURITY: Extract gateway_id without consuming state (no TOCTOU risk - just for lookup)
-        # complete_authorization_code_flow will atomically validate/consume state and return state_data
-        temp_user_context = _build_user_context(getattr(request.state, "user", None)) if request and hasattr(request, "state") else {}
-        temp_oauth_manager = OAuthManager(token_storage=TokenStorageService(db, temp_user_context))
-
-        # Extract gateway_id without consuming state
-        gateway_id = await temp_oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        # The state was only resolved above, not consumed: complete_authorization_code_flow
+        # validates and consumes it atomically and returns state_data.
         if not gateway_id:
             logger.warning("OAuth callback received invalid or unknown state token")
             return _invalid_state_response()
-
-        # Get gateway configuration (before consuming state, to validate OAuth config exists)
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
             logger.warning("OAuth callback state resolved to unknown gateway id")
@@ -1026,6 +1056,7 @@ async def oauth_callback(
             client_cert=gateway.client_cert,
             client_key=gateway.client_key,
             default_redirect_uri=_default_redirect_uri(request),
+            iss=iss,
         )
 
         # Extract state_data from result (was atomically consumed and returned)
@@ -1229,6 +1260,15 @@ async def oauth_callback(
                                 `;
                                 button.textContent = '✅ Tools Fetched';
                                 button.style.backgroundColor = '#059669';
+                                if (window.opener && !window.opener.closed) {{
+                                    window.opener.postMessage({{
+                                    type: 'oauth_callback',
+                                    status: 'success',
+                                    gatewayId: {json.dumps(str(gateway_id))},
+                                    gatewayName: {json.dumps(str(gateway.name))}
+                                    }}, '*');
+                                    window.close();
+                                }}
                             }} else {{
                                 throw new Error(result.detail || 'Failed to fetch tools');
                             }}
@@ -1286,15 +1326,22 @@ async def oauth_callback(
         return response
 
     except OAuthError as e:
-        # CWE-209: log full detail server-side only; never render internal error
-        # strings (which may contain upstream hostnames, token-endpoint URLs, or
-        # raw HTTP response bodies) into the browser-facing HTML page.
-        logger.error("OAuth callback failed: %s", sanitize_for_log(str(e)))
-        _oauth_user_msg = "OAuth authorization failed. Please check your configuration and try again."
+        # Provider exception text can contain tokens or unsafe response bodies.
+        failure = oauth_failure(e.error_code)
+        logger.error("OAuth callback failed: %s", failure.code)
+        _oauth_user_msg = failure.message
         if is_popup:
             return _popup_callback_response(
                 csp_nonce,
-                {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": _oauth_user_msg},
+                {
+                    "type": "oauth_callback",
+                    "status": "error",
+                    "error": "oauth_error",
+                    "errorDescription": _oauth_user_msg,
+                    "errorCode": failure.code,
+                    "failedStage": "token_exchange",
+                    "reauthorizationRequired": failure.reauthorization_required,
+                },
                 status_code=400,
             )
         return HTMLResponse(
@@ -1330,8 +1377,8 @@ async def oauth_callback(
         )
 
     except Exception as e:
-        # CWE-209: log full detail server-side only.
-        logger.error("Unexpected error in OAuth callback: %s", sanitize_for_log(str(e)))
+        # Provider exception text can contain tokens or unsafe response bodies.
+        logger.error("Unexpected error in OAuth callback: %s", type(e).__name__)
         _unexpected_user_msg = "An unexpected error occurred during authorization. Please contact your administrator."
         if is_popup:
             return _popup_callback_response(
@@ -1693,9 +1740,11 @@ async def _fetch_tools_via_token_exchange(
 ) -> Dict[str, Any]:
     """Fetch tools for a token-exchange gateway via the manual-refresh pipeline.
 
-    Token-exchange has no consent step: delegate to the manual-refresh pipeline,
-    which exchanges the caller's inbound JWT (bearer header or jwt_token cookie)
-    via ``_resolve_token_exchange_header`` (issue #5382). Exception order matters:
+    Token-exchange has no consent step: delegate to the manual-refresh pipeline.
+    With a discovery credential, the pipeline uses that client-credentials token and
+    never sends the caller's JWT. Without one, it exchanges the caller's inbound JWT
+    (bearer header or jwt_token cookie) via ``_resolve_token_exchange_header``
+    (issue #5382). Exception order matters:
     ``GatewayNotFoundError`` and ``GatewayConnectionError`` both subclass
     ``GatewayError`` — a bare ``GatewayError`` clause first would misclassify
     not-found and connection failures as 409 instead of 404/400.

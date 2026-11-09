@@ -22,12 +22,6 @@ SHELL := /bin/bash
 # Plugin integration test targets (self-contained: boots gateway + fast-time-server)
 -include tests/live_gateway/plugins/Makefile.plugin-integration
 
-# Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
-# Default is disabled to avoid requiring Rust toolchain for standard builds
-ENABLE_RUST_BUILD ?= 0
-ENABLE_RUST_MCP_RMCP_BUILD ?=
-RUST_MCP_BUILD ?= 0
-
 # Project variables
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
@@ -323,12 +317,6 @@ ensure-secrets:
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
-	else \
-		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
-	fi
 	@$(MAKE) build-ui
 	@echo ""
 	@echo "🔑  Next step — choose one:"
@@ -625,7 +613,7 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 	@echo ""
 	@echo "💡  To use this certificate:"
 	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
-	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"  # pragma: allowlist secret
 
 .PHONY: certs-remove-passphrase
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
@@ -857,11 +845,8 @@ clean:
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
 # help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
-# help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
-# help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
-# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-mcp-plugin-parity - MCP plugin parity E2E for the current stack
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -870,11 +855,11 @@ clean:
 # help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
 # help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
 # help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer
-# help: test                 - Run unit tests with pytest
+# help: test                 - Run unit tests with rstest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
-# help: coverage             - Run tests with coverage, emit HTML/XML + badge
-# help: coverage-pytest      - Run pytest unit tests with coverage collection
+# help: coverage             - Run tests with coverage, emit XML
+# help: coverage-pytest      - Run rstest unit tests with coverage collection
 # help: coverage-annotated   - Run coverage and generate annotated source files (.py,cover)
 # help: test-docs            - Run coverage and generate docs/docs/test/unittest.md report
 # help: htmlcov              - (re)build just the HTML coverage report into docs
@@ -896,8 +881,8 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
-	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
+.PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity \
+	test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
 	test-private-key-jwt-live \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
@@ -910,11 +895,9 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
-# transport (e2e_rust/).
+# a running gateway (`make testing-up`) or Keycloak/Entra (sso/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
-# (test-e2e, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
+# (test-e2e, test-mcp-plugin-parity, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -946,7 +929,7 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
@@ -961,17 +944,10 @@ test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
 test-mcp-rbac: test-e2e
 
-test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
-	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
-		|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }
-	@echo "✅ MCP role/access matrix tests passed!"
-
-test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust stack using a test-specific plugin config
+test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for the current stack using a test-specific plugin config
 	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
 
@@ -986,17 +962,10 @@ test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales
 	@bash tests/live_gateway/run_primary_worker_multiinstance.sh \
 		|| { echo "❌ Multi-instance primary-worker e2e failed!"; exit 1; }
 
-test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
-	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
-		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
-	@echo "✅ MCP session/auth isolation tests passed!"
-
 test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] against a running gateway + its Postgres
 	@echo "🧪 Running OAuth status endpoint live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack (postgres exposed on localhost:5433, the default)"
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
 		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
 	@echo "✅ OAuth status live tests passed!"
 
@@ -1004,7 +973,7 @@ test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt to
 	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
 	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."
-	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
 		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
 	@echo "✅ private_key_jwt live tests passed!"
 
@@ -1013,7 +982,7 @@ test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
 	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
 	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
@@ -1022,7 +991,7 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
 	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
-	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
+	@$(UV_BIN) run --extra plugins rstest -n 0 -p playwright tests/live_gateway/ -v --tb=short \
 		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
 
@@ -1034,7 +1003,7 @@ MCP_ISOLATION_LOAD_RUN_TIME ?= 60s
 
 test-mcp-session-isolation-load: ## Multi-user MCP session/auth isolation correctness load test
 	@echo "🧪 Running MCP session/auth isolation load test against $(MCP_ISOLATION_LOAD_HOST)..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust full mode"
+	@echo "   Requires: docker-compose stack running"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		locust -f $(MCP_ISOLATION_LOCUSTFILE) \
@@ -1053,7 +1022,7 @@ test: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest -n auto --maxfail=0 -v --durations=5 \
+	 $(UV_BIN) run --extra plugins rstest -n auto --maxfail=0 -v --durations=5 \
 		$(PYTEST_IGNORE_FLAGS)
 
 test-verbose: uv
@@ -1062,7 +1031,7 @@ test-verbose: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)
+	 $(UV_BIN) run --extra plugins rstest -n 0 --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)
 
 test-profile: uv
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -1070,39 +1039,40 @@ test-profile: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)
+	 $(UV_BIN) run --extra plugins rstest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)
 
 .PHONY: coverage-pytest
 coverage-pytest: uv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 BASIC_AUTH_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
 	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-		--durations=120 --cov-report=term --cov=mcpgateway \
-		$(PYTEST_IGNORE_FLAGS) tests/ || true
+	 AUTH_ENCRYPTION_SECRET=$(COVERAGE_AUTH_ENCRYPTION_SECRET) \
+	 COVERAGE_FILE=.coverage.unit \
+	 $(UV_BIN) run --extra plugins rstest -n auto \
+		--cov=mcpgateway --cov-config=.github/pytest-branch-coverage.coveragerc \
+		--cov-branch --cov-report=xml --cov-fail-under=90 \
+		$(PYTEST_IGNORE_FLAGS) tests/
+
+# Test-only fixture values; inline pragma per AGENTS.md secret-detection policy.
+COVERAGE_TEST_PASSWORD := TestCoveragePassw0rd!42# pragma: allowlist secret
+COVERAGE_AUTH_ENCRYPTION_SECRET := coverage-test-auth-encryption-1234567890# pragma: allowlist secret
 
 coverage: coverage-pytest
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
-	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-		--cov=mcpgateway mcpgateway/ || true
-	@$(UV_BIN) run coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*
-	@$(UV_BIN) run coverage xml
-	@$(UV_BIN) run coverage report -m --no-skip-covered
-	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR) & XML ✔"
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 COVERAGE_FILE=.coverage.doctest \
+	 $(UV_BIN) run --extra plugins rstest -n auto --doctest-modules mcpgateway/ \
+		--cov=mcpgateway --cov-config=.github/pytest-branch-coverage.coveragerc \
+		--cov-branch --cov-report= --cov-fail-under=0 --tb=short
+	@$(UV_BIN) run coverage combine --rcfile=.github/pytest-branch-coverage.coveragerc .coverage.unit .coverage.doctest
+	@$(UV_BIN) run coverage xml --rcfile=.github/pytest-branch-coverage.coveragerc --fail-under=90
+	@echo "✅  Coverage report: coverage.xml"
 
 .PHONY: coverage-annotated
 coverage-annotated: coverage
@@ -1110,24 +1080,10 @@ coverage-annotated: coverage
 	@$(UV_BIN) run coverage annotate -d .
 	@echo "✅  Annotated files (.py,cover) generated ✔"
 
-test-docs: uv
+test-docs: coverage
 	@echo "📝  Generating test documentation (docs/docs/test/unittest.md)..."
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-		--cov=mcpgateway mcpgateway/ || true
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-		--durations=120 --cov-report=term --cov=mcpgateway \
-		$(PYTEST_IGNORE_FLAGS) tests/ || true
-	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@$(UV_BIN) run coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md
 	@echo "✅  Test docs generated → $(DOCS_DIR)/docs/test/unittest.md"
@@ -1153,35 +1109,37 @@ diff-cover: uv
 pytest-examples: uv
 	@echo "🧪 Testing README examples..."
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
-	@$(UV_BIN) run pytest -v test_readme.py
+	@$(UV_BIN) run rstest -v test_readme.py
 
 test-curl:
 	./test_endpoints.sh
 
 ## --- Doctest targets ---------------------------------------------------------
+# Test-only fixture value; inline pragma per AGENTS.md secret-detection policy.
+DOCTEST_AUTH_ENCRYPTION_SECRET := doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus# pragma: allowlist secret
+
 doctest: uv
 	@echo "🧪 Running doctest on all modules..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 $(UV_BIN) run rstest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
 doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 $(UV_BIN) run rstest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
 doctest-coverage: uv
 	@echo "📊 Generating doctest coverage report..."
 	@mkdir -p $(TEST_DOCS_DIR)
-	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ \
-		--cov=mcpgateway --cov-report=term --cov-report=html:htmlcov-doctest \
-		--cov-report=xml:coverage-doctest.xml
-	@echo "✅ Doctest coverage report generated in htmlcov-doctest/"
+	@$(UV_BIN) run rstest --doctest-modules mcpgateway/ \
+		--cov=mcpgateway --cov-report=xml:coverage-doctest.xml
+	@echo "✅ Doctest coverage report generated in coverage-doctest.xml"
 
 doctest-check: uv
 	@echo "🔍 Checking doctest coverage..."
-	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ --tb=no -q && \
+	@$(UV_BIN) run rstest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)
 
 ## --- Database Performance Testing --------------------------------------------
@@ -1191,7 +1149,7 @@ test-db-perf: uv  ## Run database performance and N+1 detection tests
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v --tb=short
+	 $(UV_BIN) run rstest tests/performance/test_db_query_patterns.py -v --tb=short
 
 test-db-perf-verbose: uv  ## Run database performance tests with full SQL query output
 	@echo "🔍 Running database performance tests with query logging..."
@@ -1199,7 +1157,7 @@ test-db-perf-verbose: uv  ## Run database performance tests with full SQL query 
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 SQLALCHEMY_ECHO=true \
-	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v -s --tb=short
+	 $(UV_BIN) run rstest tests/performance/test_db_query_patterns.py -v -s --tb=short
 
 # Shared env-var prefix for the 2025-11-25 compliance series.
 # Defined as a make variable so each target stays compact while keeping
@@ -1217,32 +1175,32 @@ MCP_2025_TEST_ENV := \
 	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-core: uv  ## Run MCP core compliance subset
 	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-tasks: uv  ## Run MCP tasks compliance subset
 	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-auth: uv  ## Run MCP authorization compliance subset
 	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-report: uv  ## Run MCP suite and emit JUnit XML + Markdown reports
 	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
 		--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
 		--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
 		$(MCP_2025_PYTEST_ARGS)
@@ -1747,7 +1705,7 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo ""
 	@echo "✅ Langfuse + monitoring stack started!"
 	@echo ""
-	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"  # pragma: allowlist secret
 	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
 	@echo "   🔥 Prometheus:     http://localhost:$${PROMETHEUS_PORT:-9090}"
 	@echo "   🧵 Tempo:          http://localhost:$${TEMPO_PORT:-3200}"
@@ -1938,7 +1896,7 @@ demo-a2a-up:                               ## Start all 3 A2A demo agents with a
 	@echo "   🎫 Bearer Token:  http://localhost:$(DEMO_A2A_BEARER_PORT)  (log: /tmp/demo-a2a-bearer.log)"
 	@echo "   🔑 X-API-Key:     http://localhost:$(DEMO_A2A_APIKEY_PORT)  (log: /tmp/demo-a2a-apikey.log)"
 	@echo ""
-	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"
+	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"  # pragma: allowlist secret
 	@echo "   Stop agents:      make demo-a2a-down"
 	@echo ""
 
@@ -1988,7 +1946,7 @@ demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
-demo-a2a-apikey:                           ## Start only X-API-Key demo agent
+demo-a2a-apikey:                           ## Start only X-API-Key demo agent  # pragma: allowlist secret
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
@@ -2066,13 +2024,12 @@ resilience-locust-ui:                      ## Start Locust web UI for slow-time-
 			--web-host=0.0.0.0 --web-port=8090"
 
 # =============================================================================
-# help: 🎯 BENCHMARK STACK (Rust benchmark-server)
+# help: 🎯 BENCHMARK STACK (benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
-# help: bench-compare          - Run performance comparisons for Rust plugins
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -2219,19 +2176,6 @@ LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
 
-# Secrets Detection Benchmark Configuration
-# These values are tuned for focused plugin performance comparison
-SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
-SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
-SECRET_DETECTION_LOADTEST_USERS ?= 100          # Moderate load to isolate plugin overhead
-SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10      # Gradual ramp-up for stable measurements
-SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s       # 1 minute per phase (Rust + Python)
-SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1    # Single replica for consistent comparison
-SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2    # Minimal workers to highlight plugin impact
-SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1           # 1 core limit to amplify performance differences
-SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5   # Reserve half core for baseline
-SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G          # Generous memory to avoid OOM
-SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G    # Reserve 1GB baseline
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
@@ -2521,29 +2465,6 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 	@echo "✅ Report: reports/loadtest_fasttime.html"
 
 
-.PHONY: load-test-secret-detection-compare
-load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
-	@echo "🔐 Running focused secrets-detection benchmark..."
-	@echo "   Host: $(SECRET_DETECTION_LOADTEST_HOST)"
-	@echo "   Users: $(SECRET_DETECTION_LOADTEST_USERS)"
-	@echo "   Spawn rate: $(SECRET_DETECTION_LOADTEST_SPAWN_RATE)/s"
-	@echo "   Duration: $(SECRET_DETECTION_LOADTEST_RUN_TIME)"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@VENV_DIR="$(VENV_DIR)" \
-	COMPOSE_CMD="$(COMPOSE_CMD)" \
-	IMAGE_LOCAL_NAME="$(call get_image_name)" \
-	SECRET_DETECTION_LOADTEST_HOST="$(SECRET_DETECTION_LOADTEST_HOST)" \
-	SECRET_DETECTION_LOADTEST_USERS="$(SECRET_DETECTION_LOADTEST_USERS)" \
-	SECRET_DETECTION_LOADTEST_SPAWN_RATE="$(SECRET_DETECTION_LOADTEST_SPAWN_RATE)" \
-	SECRET_DETECTION_LOADTEST_RUN_TIME="$(SECRET_DETECTION_LOADTEST_RUN_TIME)" \
-	SECRET_DETECTION_BENCH_GATEWAY_REPLICAS="$(SECRET_DETECTION_BENCH_GATEWAY_REPLICAS)" \
-	SECRET_DETECTION_BENCH_GUNICORN_WORKERS="$(SECRET_DETECTION_BENCH_GUNICORN_WORKERS)" \
-	SECRET_DETECTION_BENCH_CPU_LIMIT="$(SECRET_DETECTION_BENCH_CPU_LIMIT)" \
-	SECRET_DETECTION_BENCH_CPU_RESERVATION="$(SECRET_DETECTION_BENCH_CPU_RESERVATION)" \
-	SECRET_DETECTION_BENCH_MEM_LIMIT="$(SECRET_DETECTION_BENCH_MEM_LIMIT)" \
-	SECRET_DETECTION_BENCH_MEM_RESERVATION="$(SECRET_DETECTION_BENCH_MEM_RESERVATION)" \
-	bash tests/loadtest/run_secret_detection_compare.sh
-
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
 	@echo "   Host: http://localhost:4444"
@@ -2719,7 +2640,6 @@ RL_USERS ?= 100
 RL_SPAWN_RATE ?= 10
 RL_REQS_PER_SECOND ?= 0.25
 RL_PROMPT_ID ?=
-RATE_LIMITER_FORCE_PYTHON ?=
 MCP_PROTOCOL_HOST ?= http://localhost:4444
 MCP_BENCHMARK_HOST ?= http://localhost:8080
 MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
@@ -2860,7 +2780,7 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 	@echo "   Host: $(HOST)"
 	@echo "   Server: $(SERVER_ID)"
 	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
-	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
+	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true) # pragma: allowlist secret
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
@@ -2985,7 +2905,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=ERROR \
-		RATE_LIMITER_FORCE_PYTHON=$(RATE_LIMITER_FORCE_PYTHON) \
 		RL_USERS=$(RL_USERS) \
 		RL_SPAWN_RATE=$(RL_SPAWN_RATE) \
 		RL_RUN_TIME=$(RL_RUN_TIME) \
@@ -3000,16 +2919,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 			--headless \
 			--only-summary \
 			CapacityPromptUser || true'
-
-# help: benchmark-rate-limiter-capacity-rust  - Capacity test with Rust engine enabled (default)
-.PHONY: benchmark-rate-limiter-capacity-rust
-benchmark-rate-limiter-capacity-rust:       ## Capacity test with Rust engine
-	RATE_LIMITER_FORCE_PYTHON=0 $(MAKE) benchmark-rate-limiter-redis-capacity
-
-# help: benchmark-rate-limiter-capacity-python  - Capacity test with Python fallback (forced)
-.PHONY: benchmark-rate-limiter-capacity-python
-benchmark-rate-limiter-capacity-python:     ## Capacity test with Python fallback
-	RATE_LIMITER_FORCE_PYTHON=1 $(MAKE) benchmark-rate-limiter-redis-capacity
 
 .PHONY: benchmark-mcp-mixed-300
 benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
@@ -3272,7 +3181,7 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go, Rust).
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go).
 # help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
 # help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
@@ -3437,7 +3346,6 @@ images:
 # help: spellcheck-sort      - Sort local spellcheck dictionary
 # help: tox                  - Run tox across multi-Python versions
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
-# help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
@@ -3475,7 +3383,7 @@ endif
 # List of individual lint targets
 LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck \
-		pytype check-manifest markdownlint vulture
+		check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
@@ -3861,9 +3769,10 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
+	@# Match CI while Pylint 3.3.9 misidentifies Python 3.14 standard-library exports.
 	@rcfile=".pylintrc"; \
 	 if [ -f ".pylintrc.$(TARGET)" ]; then rcfile=".pylintrc.$(TARGET)"; fi; \
-	 $(UV_BIN) tool run --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
+	 $(UV_BIN) tool run --python 3.12 --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -3908,16 +3817,25 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-.PHONY: pre-commit
-pre-commit: uv                     ## 🪄  Run pre-commit tool
-	@echo "🪄  Running pre-commit hooks..."
+PREK_VERSION         ?= 0.5.10
+PRE_COMMIT_BASE_REF  ?= origin/main
+PREK_RUN             = $(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run --config .pre-commit-config.yaml --show-diff-on-failure
+
+.PHONY: pre-commit pre-commit-fast _prek
+pre-commit: uv                     ## 🪄  Run all pre-commit hooks on every file (prek)
+	@echo "🪄  Running pre-commit hooks on all files..."
+	@$(MAKE) --no-print-directory _prek PREK_SCOPE=--all-files
+
+pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on commits since PRE_COMMIT_BASE_REF (committed changes only)
+	@echo "🪄  Running pre-commit hooks on commits since $(PRE_COMMIT_BASE_REF)..."
+	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD)" || { \
+		echo "❌  Cannot resolve PRE_COMMIT_BASE_REF=$(PRE_COMMIT_BASE_REF); fetch it or set PRE_COMMIT_BASE_REF."; exit 1; }; \
+	$(MAKE) --no-print-directory _prek PREK_SCOPE="--from-ref $$base --to-ref HEAD"
+
+_prek:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
-		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
-		$(UV_BIN) pip install --python "$(VENV_DIR)/bin/python" --quiet pre-commit; \
-	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
+		mkdir -p '$(CURDIR)/.cache/prek-home' \
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
@@ -3926,19 +3844,18 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
-		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
-		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
-		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
-		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
-		PATH='/usr/bin:$$PATH' \
-		TMPDIR='$(CURDIR)/.cache/tmp' \
-		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
-		PIP_USE_PEP517='0' \
-		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
+		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
+			XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+			XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+			VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+			TMPDIR='$(CURDIR)/.cache/tmp' \
+			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+			PIP_USE_PEP517='0' \
+			PIP_NO_BUILD_ISOLATION='1' \
+			GOPATH='$(CURDIR)/.cache/go-cache' \
+			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+			GOCACHE='$(CURDIR)/.cache/go-build'; \
+		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
@@ -4153,7 +4070,7 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 
 .PHONY: tox
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
-	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
+	@echo "🧪  Running tox with uv across Python 3.12, 3.13, 3.14..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		$(UV_BIN) pip install -q tox tox-uv && \
@@ -4191,10 +4108,6 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "📄  Files generated:"
 	@echo "    - $(PROJECT_NAME).sbom.xml (CycloneDX XML format)"
 	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
-
-pytype:								## 🧠  Pytype static type analysis
-	@echo "🧠  Pytype analysis..."
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto $(TARGET)
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
@@ -4902,32 +4815,18 @@ deps-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: uv                     ## Build wheel + sdist into ./dist (optionally includes Rust)
+dist: uv                     ## Build wheel + sdist into ./dist
 	@echo "📦 Building Python package..."
 	@rm -rf dist build *.egg-info
 	@BUILD_UI_ASSETS=true $(UV_BIN) build
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel & sdist written to ./dist'
 	@echo ''
 	@echo '💡 To publish the Python package:'
 	@echo '   make publish         # Publish Python package'
 
-wheel: uv                    ## Build wheel only (Python + optionally Rust)
+wheel: uv                    ## Build wheel only
 	@echo "📦 Building Python wheel..."
 	@BUILD_UI_ASSETS=true $(UV_BIN) build --wheel
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel written to ./dist'
 
 sdist: uv                    ## Build source distribution only
@@ -5003,9 +4902,6 @@ endef
 # help: container-build      - Build image using detected runtime
 # help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
-# help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
-# help: container-build-rust-lite - Build lite image WITH Rust plugins
-# help: container-rust       - Build with Rust and run container (all-in-one)
 # help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
@@ -5021,7 +4917,7 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-build-rust container-build-rust-lite container-rust \
+.PHONY: container-build \
         container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
@@ -5055,27 +4951,7 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; RUST_ARG=""; RMCP_ARG=""; PROFILING_ARG=""; \
-	if [ "$(RUST_MCP_BUILD)" = "1" ] || [ "$(RUST_MCP_BUILD)" = "true" ]; then \
-		RUST_BUILD_VALUE="1"; \
-		if [ -z "$$RMCP_BUILD_VALUE" ] || [ "$$RMCP_BUILD_VALUE" = "0" ] || [ "$$RMCP_BUILD_VALUE" = "false" ]; then \
-			RMCP_BUILD_VALUE="1"; \
-		fi; \
-	fi; \
-	if [ "$$RUST_BUILD_VALUE" = "1" ] || [ "$$RUST_BUILD_VALUE" = "true" ]; then \
-		echo "🦀 Building container WITH Rust plugins..."; \
-		RUST_ARG="--build-arg ENABLE_RUST=true"; \
-		if [ "$$RMCP_BUILD_VALUE" = "1" ] || [ "$$RMCP_BUILD_VALUE" = "true" ]; then \
-			echo "🦀 Enabling rmcp support in the Rust MCP runtime..."; \
-			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=true"; \
-		else \
-			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
-		fi; \
-	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set RUST_MCP_BUILD=1 or ENABLE_RUST_BUILD=1 to enable)"; \
-		RUST_ARG="--build-arg ENABLE_RUST=false"; \
-		RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
-	fi; \
+	@PROFILING_ARG=""; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
 		echo "📊 Building container WITH profiling tools (memray)..."; \
 		PROFILING_ARG="--build-arg ENABLE_PROFILING=true"; \
@@ -5095,8 +4971,6 @@ container-build:
 	$(CONTAINER_RUNTIME) build \
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
-		$$RUST_ARG \
-		$$RMCP_ARG \
 		$$PROFILING_ARG \
 		$$FIPS_ARG \
 		$(DOCKER_BUILD_ARGS) \
@@ -5104,18 +4978,6 @@ container-build:
 		.
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
-
-container-build-rust:
-	@echo "🦀 Building container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1
-
-container-build-rust-lite:
-	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1
-
-container-rust: container-build-rust
-	@echo "🦀 Building and running container with Rust plugins..."
-	$(MAKE) container-run
 
 .PHONY: container-bump-image-versions
 container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
@@ -5593,12 +5455,6 @@ docker:
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
-docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
-
-docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
-
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
 # Then run with SYS_PTRACE capability:
@@ -5670,6 +5526,7 @@ docker-shell:
 # help: compose-sso-down      - Stop & remove SSO-profile containers (keep named volumes)
 # help: compose-sso-clean     - ✨ Down SSO stack and delete named volumes (data-loss ⚠)
 # help: sso-test-login        - Run SSO smoke checks against compose stack
+# help: compose-sso-seed-audience - Trust Keycloak access tokens for API auth (api_audience=mcp-gateway-api)
 # help: compose-lite-up       - Start lite stack (reduced resources for local dev)
 # help: compose-lite-down     - Stop lite stack
 # help: compose-restart      - Recreate changed containers, pulling / building as needed
@@ -5742,7 +5599,7 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login \
+.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login compose-sso-seed-audience \
 	compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
@@ -5824,8 +5681,7 @@ gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway
 # help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
 .PHONY: create-token
 create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
-	@SECRET="$(gateway_jwt_secret)"; \
-	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
+	@SECRET="$(gateway_jwt_secret)"; env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null # pragma: allowlist secret
 
 perf-down: compose-validate                ## Stop the pinned benchmark stack
 	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
@@ -5848,6 +5704,12 @@ compose-sso: compose-validate
 	@echo "✅ SSO stack started."
 	@echo "   Gateway:  http://localhost:8080"
 	@echo "   Keycloak: http://localhost:8180 (admin/changeme)"
+	@echo "   Next: once the gateway is healthy, run 'make compose-sso-seed-audience'"
+	@echo "         to trust Keycloak access tokens (web UI SSO) on the gateway API."
+	@echo "   Note: an existing keycloak_data volume keeps its old realm; run 'make compose-sso-clean'"
+	@echo "         and restart to import the contextforge-web-ui client."
+	@echo "   Note: the gateway only fetches JWKS over https, so plain-http compose-sso"
+	@echo "         does not accept Keycloak tokens end to end. See docs/docs/manage/sso-keycloak-tutorial.md."
 
 compose-sso-monitoring: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5900,6 +5762,42 @@ compose-sso-clean: compose-validate
 sso-test-login:
 	@echo "🧪 Running SSO smoke checks..."
 	@COMPOSE_CMD="$(COMPOSE_CMD)" ./scripts/test-sso-flow.sh
+
+# The SSO provider's trusted_for_api_auth/api_audience fields have no env-var
+# bootstrap, so this sets them through the admin API on a running compose-sso stack.
+SSO_SEED_GATEWAY_URL ?= http://localhost:8080
+SSO_SEED_PROVIDER_ID ?= keycloak
+SSO_SEED_API_AUDIENCE ?= mcp-gateway-api
+SSO_SEED_COMPOSE_FILES ?= -f docker-compose.yml -f docker-compose.sso.yml
+
+compose-sso-seed-audience:
+	@command -v jq >/dev/null 2>&1 || { echo "❌ jq is required"; exit 1; }
+	@set -eu; \
+	TOKEN=$$($(COMPOSE_CMD) $(SSO_SEED_COMPOSE_FILES) --profile sso exec -T gateway sh -c \
+		'for v in $$(env | sed -n "s/^\(EXPERIMENTAL_RUST_MCP_[A-Z_]*\)=$$/\1/p"); do unset $$v; done; \
+		python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
+	case "$$TOKEN" in *.*.*) ;; *) echo "❌ Could not mint an admin JWT in the gateway container (is 'make compose-sso' up?)"; exit 1;; esac; \
+	URL="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers/$(SSO_SEED_PROVIDER_ID)"; \
+	OUT=$$(mktemp); trap 'rm -f "$$OUT"' EXIT; \
+	call() { printf 'Authorization: Bearer %s\n' "$$TOKEN" | curl -sS -o "$$OUT" -w '%{http_code}' -H @- "$$@"; }; \
+	CODE=$$(call "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if [ "$$CODE" != "200" ]; then echo "❌ GET $$URL returned $$CODE: $$(cat "$$OUT")"; exit 1; fi; \
+	if jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" '.trusted_for_api_auth == true and .api_audience == $$aud' "$$OUT" >/dev/null; then \
+		echo "✅ Provider '$(SSO_SEED_PROVIDER_ID)' already trusted (api_audience=$(SSO_SEED_API_AUDIENCE))"; exit 0; \
+	fi; \
+	PREVIOUS=$$(jq -r '.api_audience // ""' "$$OUT"); \
+	if [ -n "$$PREVIOUS" ] && [ "$$PREVIOUS" != "$(SSO_SEED_API_AUDIENCE)" ]; then \
+		echo "⚠️  Replacing existing api_audience '$$PREVIOUS'"; \
+	fi; \
+	echo "🔐 Trusting provider '$(SSO_SEED_PROVIDER_ID)' for API auth (api_audience=$(SSO_SEED_API_AUDIENCE))..."; \
+	BODY=$$(jq -n --arg aud "$(SSO_SEED_API_AUDIENCE)" '{trusted_for_api_auth: true, api_audience: $$aud}'); \
+	CODE=$$(call -X PUT -H "Content-Type: application/json" -d "$$BODY" "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if [ "$$CODE" != "200" ]; then echo "❌ PUT $$URL returned $$CODE: $$(cat "$$OUT")"; exit 1; fi; \
+	CODE=$$(call "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if ! jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" '.trusted_for_api_auth == true and .api_audience == $$aud' "$$OUT" >/dev/null; then \
+		echo "❌ Provider '$(SSO_SEED_PROVIDER_ID)' did not keep trusted_for_api_auth=true / api_audience=$(SSO_SEED_API_AUDIENCE)"; exit 1; \
+	fi; \
+	echo "✅ Provider '$(SSO_SEED_PROVIDER_ID)': trusted_for_api_auth=true, api_audience=$(SSO_SEED_API_AUDIENCE)"
 
 .PHONY: compose-lite-up
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
@@ -6264,7 +6162,7 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 # IBMCLOUD_CODE_ENGINE_APP     = Code Engine app name
 # IBMCLOUD_IMAGE_NAME          = Full image path (e.g. us.icr.io/namespace/app:tag)
 # IBMCLOUD_IMG_PROD            = Local container image name
-# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)
+# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)  # pragma: allowlist secret
 
 ibmcloud-check-env:
 	@test -f .env.ce || { \
@@ -6798,7 +6696,7 @@ local-pypi-start: local-pypi-install local-pypi-stop
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
-local-pypi-start-auth: local-pypi-install local-pypi-stop
+local-pypi-start-auth: local-pypi-install local-pypi-stop  # pragma: allowlist secret
 	@echo "🚀  Starting local PyPI server with authentication on $(LOCAL_PYPI_URL)..."
 	@echo "🔐  Creating htpasswd file (admin/admin)..."
 	@mkdir -p $(LOCAL_PYPI_DIR)
@@ -6810,7 +6708,7 @@ local-pypi-start-auth: local-pypi-install local-pypi-stop
 	@sleep 2
 	@echo "✅  Local PyPI server started at $(LOCAL_PYPI_URL)"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
-	@echo "🔐  Username: admin, Password: admin"
+	@echo "🔐  Username: admin, Password: admin"  # pragma: allowlist secret
 
 local-pypi-stop:
 	@echo "🛑  Stopping local PyPI server..."
@@ -6882,7 +6780,7 @@ local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
 
-local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth
+local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth  # pragma: allowlist secret
 
 # Show server status
 local-pypi-status:
@@ -6904,262 +6802,6 @@ local-pypi-debug:
 	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
 	export BOTTLE_CHILD=true && \
 	pypi-server run -p 8085 --disable-fallback -a . -P . --server=auto $(LOCAL_PYPI_DIR) -v"
-
-
-# =============================================================================
-# 🏠 LOCAL DEVPI SERVER
-# TODO: log in background, better cleanup/delete logic
-# =============================================================================
-# help: 🏠 LOCAL DEVPI SERVER
-# help: devpi-install        - Install devpi server and client
-# help: devpi-init           - Initialize devpi server (first time only)
-# help: devpi-start          - Start devpi server
-# help: devpi-stop           - Stop devpi server
-# help: devpi-setup-user     - Create user and dev index
-# help: devpi-upload         - Upload existing package to devpi
-# help: devpi-test           - Install package from devpi
-# help: devpi-clean          - Full cycle: build → upload → install locally
-# help: devpi-status         - Show devpi server status
-# help: devpi-web            - Open devpi web interface
-# help: devpi-delete         - Delete mcp-contextforge-gateway==<ver> from devpi index
-
-
-.PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
-	devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
-
-DEVPI_HOST := localhost
-DEVPI_PORT := 3141
-DEVPI_URL := http://$(DEVPI_HOST):$(DEVPI_PORT)
-DEVPI_USER := $(USER)
-DEVPI_PASS := dev123
-DEVPI_INDEX := $(DEVPI_USER)/dev
-DEVPI_DATA_DIR := $(HOME)/.devpi
-DEVPI_PID := /tmp/devpi-server.pid
-
-devpi-install:
-	@echo "📦  Installing devpi server and client..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	$(UV_BIN) pip install devpi-server devpi-client devpi-web"
-	@echo "✅  DevPi installed"
-
-devpi-init: devpi-install
-	@echo "🔧  Initializing devpi server (first time setup)..."
-	@if [ -d "$(DEVPI_DATA_DIR)/server" ] && [ -f "$(DEVPI_DATA_DIR)/server/.serverversion" ]; then \
-		echo "⚠️   DevPi already initialized at $(DEVPI_DATA_DIR)"; \
-	else \
-		mkdir -p $(DEVPI_DATA_DIR)/server; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		devpi-init --serverdir=$(DEVPI_DATA_DIR)/server"; \
-		echo "✅  DevPi server initialized at $(DEVPI_DATA_DIR)/server"; \
-	fi
-
-devpi-start: devpi-init devpi-stop
-	@echo "🚀  Starting devpi server on $(DEVPI_URL)..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	devpi-server --serverdir=$(DEVPI_DATA_DIR)/server \
-	             --host=$(DEVPI_HOST) \
-	             --port=$(DEVPI_PORT) &"
-	@# Wait for server to start and get the PID
-	@sleep 3
-	@ps aux | grep "[d]evpi-server" | grep "$(DEVPI_PORT)" | awk '{print $2}' > $(DEVPI_PID) || true
-	@# Wait a bit more and test if server is responding
-	@sleep 2
-	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
-		if [ -s $(DEVPI_PID) ]; then \
-			echo "✅  DevPi server started at $(DEVPI_URL)"; \
-			echo "📊  PID: $(cat $(DEVPI_PID))"; \
-		else \
-			echo "✅  DevPi server started at $(DEVPI_URL)"; \
-		fi; \
-		echo "🌐  Web interface: $(DEVPI_URL)"; \
-		echo "📂  Data directory: $(DEVPI_DATA_DIR)"; \
-	else \
-		echo "❌  Failed to start devpi server or server not responding"; \
-		echo "🔍  Check logs with: make devpi-logs"; \
-		exit 1; \
-	fi
-
-devpi-stop:
-	@echo "🛑  Stopping devpi server..."
-	@# Kill process by PID if exists
-	@if [ -f $(DEVPI_PID) ] && [ -s $(DEVPI_PID) ]; then \
-		pid=$(cat $(DEVPI_PID)); \
-		if kill -0 $pid 2>/dev/null; then \
-			echo "🔄  Stopping devpi server (PID: $pid)"; \
-			kill $pid 2>/dev/null || true; \
-			sleep 2; \
-			kill -9 $pid 2>/dev/null || true; \
-		fi; \
-		rm -f $(DEVPI_PID); \
-	fi
-	@# Kill any remaining devpi-server processes
-	@pids=$(pgrep -f "devpi-server.*$(DEVPI_PORT)" 2>/dev/null || true); \
-	if [ -n "$pids" ]; then \
-		echo "🔄  Killing remaining devpi processes: $pids"; \
-		echo "$pids" | xargs $(XARGS_FLAGS) kill 2>/dev/null || true; \
-		sleep 1; \
-		echo "$pids" | xargs $(XARGS_FLAGS) kill -9 2>/dev/null || true; \
-	fi
-	@# Force kill anything using the port
-	@if lsof -ti :$(DEVPI_PORT) >/dev/null 2>&1; then \
-		echo "⚠️   Port $(DEVPI_PORT) still in use, force killing..."; \
-		lsof -ti :$(DEVPI_PORT) | xargs $(XARGS_FLAGS) kill -9 2>/dev/null || true; \
-		sleep 1; \
-	fi
-	@echo "✅  DevPi server stopped"
-
-devpi-setup-user: devpi-start
-	@echo "👤  Setting up devpi user and index..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	devpi use $(DEVPI_URL) && \
-	(devpi user -c $(DEVPI_USER) password=$(DEVPI_PASS) email=$(DEVPI_USER)@localhost.local 2>/dev/null || \
-	 echo 'User $(DEVPI_USER) already exists') && \
-	devpi login $(DEVPI_USER) --password=$(DEVPI_PASS) && \
-	(devpi index -c dev bases=root/pypi volatile=True 2>/dev/null || \
-	 echo 'Index dev already exists') && \
-	devpi use $(DEVPI_INDEX)"
-	@echo "✅  User '$(DEVPI_USER)' and index 'dev' configured"
-	@echo "📝  Login: $(DEVPI_USER) / $(DEVPI_PASS)"
-	@echo "📍  Using index: $(DEVPI_INDEX)"
-
-devpi-upload: dist devpi-setup-user		## Build wheel/sdist, then upload
-	@echo "📤  Uploading existing package to devpi..."
-	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist/ 2>/dev/null)" ]; then \
-		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
-		exit 1; \
-	fi
-	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
-		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
-		exit 1; \
-	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	devpi use $(DEVPI_INDEX) && \
-	devpi upload dist/*"
-	@echo "✅  Package uploaded to devpi"
-	@echo "🌐  Browse packages: $(DEVPI_URL)/$(DEVPI_INDEX)"
-
-.PHONY: devpi-test
-devpi-test:
-	@echo "📥  Installing package mcp-contextforge-gateway from devpi..."
-	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
-		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
-		exit 1; \
-	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	$(UV_BIN) pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
-	            --extra-index-url https://pypi.org/simple/ \
-	            --reinstall mcp-contextforge-gateway"
-	@echo "✅  Installed mcp-contextforge-gateway from devpi"
-
-.PHONY: devpi-clean
-devpi-clean: clean dist devpi-upload devpi-test
-	@echo "🎉  Full devpi cycle complete!"
-	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip show mcp-contextforge-gateway"
-
-.PHONY: devpi-status
-devpi-status:
-	@echo "🔍  DevPi server status:"
-	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
-		echo "✅  Server running at $(DEVPI_URL)"; \
-		if [ -f $(DEVPI_PID) ] && [ -s $(DEVPI_PID) ]; then \
-			echo "📊  PID: $$(cat $(DEVPI_PID))"; \
-		fi; \
-		echo "📂  Data directory: $(DEVPI_DATA_DIR)"; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		devpi use $(DEVPI_URL) >/dev/null 2>&1 && \
-		devpi user --list 2>/dev/null || echo '📝  Not logged in'"; \
-	else \
-		echo "❌  Server not running"; \
-	fi
-
-.PHONY: devpi-web
-devpi-web:
-	@echo "🌐  Opening devpi web interface..."
-	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
-		echo "📱  Web interface: $(DEVPI_URL)"; \
-		which open >/dev/null 2>&1 && open $(DEVPI_URL) || \
-		which xdg-open >/dev/null 2>&1 && xdg-open $(DEVPI_URL) || \
-		echo "🔗  Open $(DEVPI_URL) in your browser"; \
-	else \
-		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
-	fi
-
-devpi-restart: devpi-stop devpi-start
-	@echo "🔄  DevPi server restarted"
-
-# Advanced targets for devpi management
-devpi-reset: devpi-stop
-	@echo "⚠️   Resetting devpi server (this will delete all data)..."
-	@read -p "Are you sure? This will delete all packages and users [y/N]: " confirm; \
-	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		rm -rf $(DEVPI_DATA_DIR); \
-		echo "✅  DevPi data reset. Run 'make devpi-init' to reinitialize."; \
-	else \
-		echo "❌  Reset cancelled."; \
-	fi
-
-devpi-backup:
-	@echo "💾  Backing up devpi data..."
-	@timestamp=$$(date +%Y%m%d-%H%M%S); \
-	backup_file="$(HOME)/devpi-backup-$$timestamp.tar.gz"; \
-	tar -czf "$$backup_file" -C $(HOME) .devpi 2>/dev/null && \
-	echo "✅  Backup created: $$backup_file" || \
-	echo "❌  Backup failed"
-
-devpi-logs:
-	@echo "📋  DevPi server logs:"
-	@if [ -f "$(DEVPI_DATA_DIR)/server/devpi.log" ]; then \
-		tail -f "$(DEVPI_DATA_DIR)/server/devpi.log"; \
-	elif [ -f "$(DEVPI_DATA_DIR)/server/.xproc/devpi-server/xprocess.log" ]; then \
-		tail -f "$(DEVPI_DATA_DIR)/server/.xproc/devpi-server/xprocess.log"; \
-	elif [ -f "$(DEVPI_DATA_DIR)/server/devpi-server.log" ]; then \
-		tail -f "$(DEVPI_DATA_DIR)/server/devpi-server.log"; \
-	else \
-		echo "❌  No log file found. Checking if server is running..."; \
-		ps aux | grep "[d]evpi-server" || echo "Server not running"; \
-		echo "📂  Expected log location: $(DEVPI_DATA_DIR)/server/devpi.log"; \
-	fi
-
-# Configuration helper - creates pip.conf for easy devpi usage
-devpi-configure-pip:
-	@echo "⚙️   Configuring pip to use devpi by default..."
-	@mkdir -p $(HOME)/.pip
-	@echo "[global]" > $(HOME)/.pip/pip.conf
-	@echo "index-url = $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/" >> $(HOME)/.pip/pip.conf
-	@echo "extra-index-url = https://pypi.org/simple/" >> $(HOME)/.pip/pip.conf
-	@echo "trusted-host = $(DEVPI_HOST)" >> $(HOME)/.pip/pip.conf
-	@echo "" >> $(HOME)/.pip/pip.conf
-	@echo "[search]" >> $(HOME)/.pip/pip.conf
-	@echo "index = $(DEVPI_URL)/$(DEVPI_INDEX)/" >> $(HOME)/.pip/pip.conf
-	@echo "✅  Pip configured to use devpi at $(DEVPI_URL)/$(DEVPI_INDEX)"
-	@echo "📝  Config file: $(HOME)/.pip/pip.conf"
-
-# Remove pip devpi configuration
-devpi-unconfigure-pip:
-	@echo "🔧  Removing devpi from pip configuration..."
-	@if [ -f "$(HOME)/.pip/pip.conf" ]; then \
-		rm "$(HOME)/.pip/pip.conf"; \
-		echo "✅  Pip configuration reset to defaults"; \
-	else \
-		echo "ℹ️   No pip configuration found"; \
-	fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.9.0 devpi-delete
-# ─────────────────────────────────────────────────────────────────────────────
-VER ?= $(shell python3 -c "import tomllib, pathlib; \
-print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
-2>/dev/null || echo 0.0.0)
-
-.PHONY: devpi-delete
-devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gateway==$(VER) from index
-	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		devpi use $(DEVPI_INDEX) && \
-		devpi remove -y mcp-contextforge-gateway==$(VER) || true"
-	@echo "✅  Delete complete (if it existed)"
 
 
 # =============================================================================
@@ -7298,7 +6940,7 @@ alembic-install:
 # test-only values so 'make db-*' works on a fresh checkout without secrets.
 define db_env
 	$(eval _JWT  := $(shell grep -s '^JWT_SECRET_KEY=' .env | cut -d= -f2-))
-	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))
+	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))  # pragma: allowlist secret
 	$(eval _JWT  := $(if $(_JWT),$(_JWT),alembic-jwt-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 	$(eval _ENC  := $(if $(_ENC),$(_ENC),alembic-enc-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 endef
@@ -7469,7 +7111,7 @@ playwright-preflight:
 	fi
 
 ## --- Playwright test macro ---------------------------------------------------
-# Run a Playwright test variant via `uv run pytest`.
+# Run a Playwright test variant via `uv run rstest`.
 # $(1) = label (e.g., "headed", "headless parallel")
 # $(2) = directories to mkdir -p (space-separated, or empty for none)
 # $(3) = env var exports before pytest (e.g., "PWDEBUG=1", or empty)
@@ -7493,7 +7135,7 @@ define run_playwright_test
 	@$(MAKE) --no-print-directory playwright-preflight
 	$(if $(strip $(2)),@mkdir -p $(2),)
 	@$(if $(strip $(3)),$(3),) TEST_BASE_URL='$(TEST_BASE_URL)' \
-	 $(UV_BIN) run pytest -p playwright $(4) \
+	 $(UV_BIN) run rstest $(if $(filter -n,$(4)),,-n 0) -p playwright $(4) \
 		--browser chromium \
 		$(if $(filter fail,$(5)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)
 endef
@@ -7542,8 +7184,8 @@ test-ui-report: uv playwright-install
 
 test-ui-coverage: uv playwright-install
 	$(call run_playwright_test,coverage,$(PLAYWRIGHT_REPORTS),,\
-		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage --cov-report=term,continue)
-	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
+		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=xml:$(PLAYWRIGHT_REPORTS)/coverage.xml,continue)
+	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage.xml"
 
 test-ui-screenshots: uv playwright-install
 	$(call run_playwright_test,screenshots,$(PLAYWRIGHT_REPORTS),,\
@@ -7578,7 +7220,7 @@ test-owasp: uv playwright-install  ## 🔒 Run OWASP access-control security tes
 	@$(MAKE) --no-print-directory playwright-preflight
 	@mkdir -p $(ZAP_REPORTS)
 	@TEST_BASE_URL='$(TEST_BASE_URL)' \
-	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+	 $(UV_BIN) run rstest -n 0 -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01 --tb=short \
 		|| { echo '❌ OWASP security tests failed!'; exit 1; }
 	@echo "✅ OWASP security tests completed!"
@@ -7595,7 +7237,7 @@ test-zap: uv playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZA
 	 ZAP_BASE_URL='$(ZAP_BASE_URL)' \
 	 ZAP_API_KEY='$(ZAP_API_KEY)' \
 	 ZAP_TARGET_URL='$(ZAP_TARGET_URL)' \
-	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+	 $(UV_BIN) run rstest -n 0 -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01_zap --tb=short \
 		|| { echo '❌ ZAP DAST scan failed!'; exit 1; }
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
@@ -7721,7 +7363,7 @@ async-test: uv async-lint async-debug
 	@echo "🔄 Running comprehensive async safety tests..."
 	@mkdir -p $(REPORTS_DIR)
 	@PYTHONASYNCIODEBUG=1 \
-	 $(UV_BIN) run --extra plugins pytest \
+	 $(UV_BIN) run --extra plugins rstest \
 		tests/ \
 		--asyncio-mode=auto \
 		--tb=short \
@@ -7763,8 +7405,7 @@ async-monitor:
 
 async-debug: uv
 	@echo "🐛 Running async tests with debug mode..."
-	@PYTHONASYNCIODEBUG=1 $(UV_BIN) run --extra plugins python -X dev \
-		-m pytest tests/ \
+	@PYTHONASYNCIODEBUG=1 PYTHONDEVMODE=1 $(UV_BIN) run --extra plugins rstest -n 0 tests/ \
 		--asyncio-mode=auto \
 		--capture=no \
 		-v
@@ -7804,7 +7445,6 @@ async-clean:
 # spaces — harmless under (?x).
 DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   package-lock\.json$$         \
-  |Cargo\.lock$$               \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
@@ -7988,7 +7628,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 ## --------------------------------------------------------------------------- ##
 ##  Snyk Authentication
 ## --------------------------------------------------------------------------- ##
-snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)
+snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)  # pragma: allowlist secret
 	@echo "🔑 Authenticating with Snyk..."
 	@command -v snyk >/dev/null 2>&1 || { \
 		echo "❌ Snyk CLI not installed."; \
@@ -8346,7 +7986,7 @@ fuzz-install: uv  ## 🔧 Sync project env (fuzz tooling now lives in the dev de
 .PHONY: fuzz-hypothesis
 fuzz-hypothesis: uv  ## 🧪 Run Hypothesis property-based tests
 	@echo "🧪 Running Hypothesis property-based tests..."
-	@$(UV_BIN) run pytest tests/fuzz/ -v \
+	@$(UV_BIN) run rstest tests/fuzz/ -v \
 		--hypothesis-show-statistics \
 		--hypothesis-profile=dev \
 		-k 'not (test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
@@ -8413,14 +8053,14 @@ fuzz-security: uv  ## 🔐 Run security-focused fuzzing tests
 	@echo "🔐 Running security-focused fuzzing tests..."
 	@echo "⚠️  Security tests require running application with auth - they may fail in isolation"
 	@HYPOTHESIS_PROFILE=dev \
-	 $(UV_BIN) run pytest tests/fuzz/test_security_fuzz.py -v \
+	 $(UV_BIN) run rstest tests/fuzz/test_security_fuzz.py -v \
 		|| true
 
 .PHONY: fuzz-quick
 fuzz-quick: uv  ## ⚡ Run quick fuzzing for CI
 	@echo "⚡ Running quick fuzzing for CI..."
 	@HYPOTHESIS_PROFILE=ci \
-	 $(UV_BIN) run pytest tests/fuzz/ -v \
+	 $(UV_BIN) run rstest tests/fuzz/ -v \
 		-k 'not (test_very_large or test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
 		|| true
 
@@ -8428,7 +8068,7 @@ fuzz-quick: uv  ## ⚡ Run quick fuzzing for CI
 fuzz-extended: uv  ## 🕐 Run extended fuzzing for nightly runs
 	@echo "🕐 Running extended fuzzing suite..."
 	@HYPOTHESIS_PROFILE=thorough \
-	 $(UV_BIN) run pytest tests/fuzz/ -v \
+	 $(UV_BIN) run rstest tests/fuzz/ -v \
 		--durations=20 || true
 
 .PHONY: fuzz-report
@@ -8478,12 +8118,12 @@ MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from versi
 migration-test-all: uv migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
 	@echo "📋 Testing SQLite migrations..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
 	@echo "📋 Testing PostgreSQL migrations..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
@@ -8494,13 +8134,13 @@ migration-test-all: uv migration-setup        ## Run comprehensive migration tes
 
 migration-test-sqlite: uv                     ## Run SQLite container migration tests only
 	@echo "🐍 Running SQLite migration tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ SQLite migration tests complete!"
 
 migration-test-postgres: uv                   ## Run PostgreSQL compose migration tests only
 	@echo "🐘 Running PostgreSQL migration tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ PostgreSQL migration tests complete!"
 
@@ -8510,13 +8150,13 @@ migration-test-performance: uv               ## Run migration performance benchm
 	@# because its measurement model conflicts with pytest-xdist's worker pool. This
 	@# target is the canonical opt-in: `-p benchmark` re-enables the plugin and the
 	@# absence of `-n` keeps execution single-process so timings stay meaningful.
-	@$(UV_BIN) run pytest -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
+	@$(UV_BIN) run rstest -n 0 -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Performance tests complete!"
 
 migration-test-rollback: uv               ## Run only downgrade/reverse migration tests (pytest + roundtrip)
 	@echo "⏪ Running reverse migration (downgrade) tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 	                     $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-k 'reverse or rollback' \
 		-v --tb=short --log-cli-level=INFO
@@ -8527,7 +8167,7 @@ migration-test-rollback: uv               ## Run only downgrade/reverse migratio
 migration-test-cross-db: uv               ## Run cross-database schema consistency test
 	@echo "🔀 Running cross-database schema consistency test..."
 	@UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
-	 $(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+	 $(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Cross-database schema consistency check complete!"
 
@@ -8602,274 +8242,6 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🦀 RUST
-# =============================================================================
-# 🦀 RUST (workspace: crates/*)
-# =============================================================================
-# help: 🦀 RUST
-# help: -----------------------------------------------------------------------------
-# help: Workspace-wide (all crates):
-# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
-# help: rust-build                            - Build Rust workspace (release)
-# help: rust-build-check                      - Build workspace (debug) + verify maturin crates build
-# help: rust-test                             - Run Rust workspace tests
-# help: rust-format                           - Format Rust code (cargo fmt)
-# help: rust-fmt-check                        - Check formatting (cargo fmt --check)
-# help: rust-lint                             - Lint Rust code (cargo clippy)
-# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
-# help: rust-doc                              - Build Rust documentation
-# help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
-# help: rust-licenses                         - Run cargo-deny license check
-# help: rust-coverage                         - Run coverage (terminal, HTML, Cobertura XML)
-# help: rust-diff-cover                       - Run changed-line coverage for Rust
-# help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
-# help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
-# help:
-# help: Maturin (Python bindings, crates/* with pyproject.toml):
-# help: rust-install                          - Install maturin crates into venv (release build)
-# help: rust-dev                              - Install maturin crates in debug mode
-# help: rust-stub-gen                         - Generate Python type stubs for maturin crates
-# help: rust-verify-stubs                     - Verify stub files and pyproject.toml
-# help: rust-verify                           - Verify maturin crate installation
-# help: rust-clean-stubs                      - Remove generated stub files from maturin crates
-# help: rust-uninstall-plugins                - Uninstall maturin crates from Python environment
-# help: rust-build-wheels                     - Build Python wheels for maturin crates
-# help:
-# help: Runtime:
-# help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
-# help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
-# help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
-# help: -----------------------------------------------------------------------------
-
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
-.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
-.PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
-
-# Intentional broad scan under crates/: workspace-owned crates live here and CI
-# should pick up new maturin crates automatically rather than curating a short list.
-RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-
-rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
-	@if ! command -v rustup > /dev/null 2>&1; then \
-		echo "🦀 Rust not found."; \
-		echo "❌ Refusing to install Rust via remote shell bootstrapper."; \
-		echo "💡 Install rustup from a trusted package manager or pinned release:"; \
-		echo "   https://rustup.rs/"; \
-		exit 1; \
-	fi
-	@if ! command -v cargo > /dev/null 2>&1; then \
-		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
-		exit 1; \
-	fi
-	@rustup component add rustfmt clippy 2>/dev/null || true
-	@if ! command -v maturin > /dev/null 2>&1; then \
-		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
-			echo "📦 Installing maturin into venv..."; \
-			/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install maturin"; \
-		elif command -v pip > /dev/null 2>&1; then \
-			echo "📦 Installing maturin globally (venv not found)..."; \
-			pip install maturin; \
-		else \
-			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
-			echo "   For building wheels, install maturin: pip install maturin"; \
-		fi; \
-	fi
-
-rust-verify-python-crates:             ## Fail if a PyO3 crate is missing pyproject.toml packaging metadata
-	@python3 -c 'import pathlib, sys; cargos=sorted(pathlib.Path("crates").rglob("Cargo.toml")); missing=[cargo.parent.as_posix() for cargo in cargos if "pyo3" in cargo.read_text(encoding="utf-8", errors="ignore").lower() and not cargo.with_name("pyproject.toml").exists()]; print("✅ PyO3 crate packaging metadata verified" if not missing else "❌ PyO3 crates missing pyproject.toml:"); [print(f"  - {crate}") for crate in missing]; sys.exit(1 if missing else 0)'
-
-rust-install: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Install maturin crates into venv
-	@echo "🦀 Installing maturin crates into venv (from workspace root)..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		echo "  Installing $$crate..."; \
-		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
-	done
-	@echo "✅ All maturin crates installed"
-
-rust-build: rust-ensure-deps            ## Build Rust workspace (release)
-	@echo "🦀 Building Rust workspace (release)..."
-	@cargo build --workspace --release
-	@echo "✅ Rust workspace built"
-
-rust-build-check: rust-ensure-deps rust-verify-python-crates  ## Build Rust workspace + verify all maturin crates build (debug, for CI)
-	@echo "🦀 Building Rust workspace..."
-	@cargo build --workspace
-	@echo "🦀 Verifying all maturin crates build..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		echo "  Building maturin crate: $$crate"; \
-		uv run maturin build --manifest-path $$crate/Cargo.toml || exit 1; \
-	done
-	@echo "✅ Rust workspace and all maturin crates build OK"
-
-rust-dev: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build and install maturin crates (debug mode)
-	@echo "🦀 Installing maturin crates (development/debug mode)..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		echo "  Installing $$crate (debug)..."; \
-		uv run maturin develop --manifest-path $$crate/Cargo.toml || exit 1; \
-	done
-	@echo "✅ All maturin crates installed (dev mode)"
-
-rust-test: rust-ensure-deps             ## Run Rust workspace tests
-	@echo "🦀 Running Rust workspace tests..."
-	@cargo test --workspace
-	@echo "✅ Rust tests passed"
-
-rust-format: rust-ensure-deps           ## Format Rust code (cargo fmt)
-	@echo "🦀 Formatting Rust code..."
-	@cargo fmt --all
-	@echo "✅ Rust code formatted"
-
-rust-fmt-check: rust-ensure-deps        ## Check formatting (cargo fmt --check)
-	@echo "🦀 Checking Rust code format..."
-	@cargo fmt --all -- --check
-	@echo "✅ Rust format check passed"
-
-rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
-	@echo "🦀 Linting Rust workspace..."
-	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
-	@echo "✅ Rust lint passed"
-
-rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
-	@echo "✅ Rust check passed"
-
-rust-doc: rust-ensure-deps              ## Build Rust documentation
-	@echo "🦀 Building Rust documentation..."
-	@cargo doc --workspace --no-deps --document-private-items
-	@echo "✅ Rust doc built"
-
-rust-build-wheels: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build Python wheels for maturin crates
-	@echo "🦀 Building wheels for maturin crates (from workspace root)..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		echo "  Building wheel: $$crate"; \
-		uv run maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
-	done
-	@echo "✅ All wheels built"
-
-rust-vet: rust-ensure-deps              ## Run cargo-vet with strict supply-chain policy
-	@echo "🦀 Running cargo-vet..."
-	@command -v cargo-vet >/dev/null 2>&1 || { echo "Installing cargo-vet..."; cargo install --locked cargo-vet --version 0.10.2; }
-	@cargo vet check
-	@echo "✅ Rust supply-chain vetting passed"
-
-rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on the Rust workspace
-	@echo "🦀 Running cargo-deny policy checks (workspace)..."
-	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
-	@cargo deny check advisories bans sources
-	@echo "✅ Rust dependency policy check done"
-
-rust-licenses: rust-ensure-deps         ## Run cargo-deny license check (workspace)
-	@echo "🦀 Running cargo-deny license check (workspace)..."
-	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
-	@cargo deny check licenses
-	@echo "✅ Rust license check done"
-
-rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
-	@echo "🦀 Running coverage (workspace)..."
-	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
-	@mkdir -p coverage
-	@cargo llvm-cov --workspace --html --output-dir coverage/rust
-	@cargo llvm-cov report --cobertura --output-path coverage/cobertura.xml
-	@cargo llvm-cov report
-	@echo "✅ Coverage artefacts: HTML in coverage/rust/html/index.html & XML in coverage/cobertura.xml ✔"
-
-rust-diff-cover:                       ## Run changed-line coverage for Rust
-	@echo "📊  Running Rust diff-cover against main branch..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@if [ ! -f coverage/cobertura.xml ]; then \
-		echo "ℹ️  No coverage/cobertura.xml found - running rust-coverage first..."; \
-		$(MAKE) --no-print-directory rust-coverage; \
-	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		diff-cover coverage/cobertura.xml --compare-branch=main --fail-under=90"
-
-rust-bench-check: rust-ensure-deps      ## Verify benchmarks build (no run; for CI)
-	@echo "🦀 Verifying Rust benchmarks build (no run)..."
-	@cargo bench --workspace --no-run
-	@echo "✅ Rust benchmarks build OK"
-
-rust-uninstall-plugins: rust-ensure-deps ## Uninstall maturin crates from Python environment
-	@echo "🦀 Uninstalling maturin crates from venv..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		pkg=$$(grep '^name = ' $$crate/pyproject.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
-		[ -n "$$pkg" ] && uv pip uninstall -y "$$pkg" 2>/dev/null || true; \
-	done
-	@echo "✅ Maturin crates uninstalled"
-
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall maturin crates
-	@$(MAKE) --no-print-directory rust-uninstall-plugins
-	@echo "🦀 Cleaning Rust build artifacts..."
-	@cargo clean
-	@rm -rf target
-	@echo "✅ Rust clean done"
-
-rust-verify: rust-ensure-deps rust-verify-python-crates  ## Verify maturin crate installation
-	@echo "🦀 Verifying maturin crate installations..."
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		pkg=$$(sed -n '/^\[lib\]/,/^\[/p' $$crate/Cargo.toml 2>/dev/null | grep '^name = ' | head -1 | sed 's/.*\"\([^\"]*\)\".*/\1/'); \
-		[ -z "$$pkg" ] && { echo "  ❌ $$crate: no [lib] name in Cargo.toml"; exit 1; }; \
-		uv run python -c "import $$pkg; print('  ✅ $$pkg')" || { echo "  ❌ $$pkg not installed"; exit 1; }; \
-	done
-	@echo "✅ All maturin crates verified"
-
-rust-verify-stubs: rust-ensure-deps rust-verify-python-crates  ## Verify stub generation and pyproject.toml for maturin crates
-	@echo "🦀 Verifying stub files and pyproject.toml..."
-	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
-		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
-		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
-		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
-		echo "  ✅ $$crate"; \
-	done
-	@echo "✅ All stubs verified"
-
-rust-clean-stubs: rust-ensure-deps rust-verify-python-crates  ## Remove generated stub files from maturin crates
-	@echo "🦀 Removing generated stub files..."
-	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		find $$crate/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
-	done
-	@echo "✅ Rust clean-stubs done"
-
-rust-stub-gen: rust-ensure-deps rust-verify-python-crates  ## Generate Python type stubs for maturin crates that have stub_gen
-	@echo "🦀 Generating Python type stubs..."
-	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
-	@for crate in $(RUST_MATURIN_CRATES); do \
-		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
-			pkg=$$(grep '^name = ' $$crate/Cargo.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
-			echo "  Stub-gen: $$pkg"; \
-			cargo run -p $$pkg --bin "$${pkg}_stub_gen" || exit 1; \
-		fi; \
-	done
-	@echo "✅ All stub files generated"
-
-rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
-	@echo "✅ Rust build dependencies installed"
-
-rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
-	@echo "🎯 Installing Rust cross-compilation targets..."
-	@rustup target add x86_64-unknown-linux-gnu
-	@rustup target add aarch64-unknown-linux-gnu
-	@rustup target add armv7-unknown-linux-gnueabihf
-	@rustup target add s390x-unknown-linux-gnu
-	@rustup target add powerpc64le-unknown-linux-gnu
-	@rustup target add x86_64-apple-darwin
-	@rustup target add aarch64-apple-darwin
-	@rustup target add x86_64-pc-windows-msvc
-
-rust-mcp-runtime-build:                 ## Build the experimental Rust MCP runtime
-	@echo "🦀 Building experimental Rust MCP runtime..."
-	@cd crates/mcp_runtime && cargo build --release
-
-rust-mcp-runtime-test:                  ## Run tests for the experimental Rust MCP runtime
-	@echo "🧪 Running Rust MCP runtime tests..."
-	@cd crates/mcp_runtime && cargo test --release
-
-rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
-	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
-	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
-
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
@@ -8917,16 +8289,17 @@ CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
 CF_CONTROLPLANE_PULL_POLICY ?= never
 CF_COMPOSE_BUILD ?= true
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+CONFORMANCE_CLIENT_VERSIONS ?= 2025-11-25 2026-07-28
+CONFORMANCE_SERVER_ERAS ?= legacy modern
 
-# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
-# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+# help: conformance          - Run both MCP client versions against legacy and modern fixtures through the built-in dataplane
+# help: conformance-bless    - Update selected baselines after the complete conformance matrix finishes
 .PHONY: conformance conformance-bless
 
 # Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# Exercise only the 2025-11-25 client against a legacy fixture.
 conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
@@ -8943,8 +8316,9 @@ conformance conformance-bless:
 	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
 	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
 	"$(CF_INTEGRATION)" conformance run \
-		--client-version 2025-11-25 \
-		--server-era legacy \
+		$(foreach version,$(CONFORMANCE_CLIENT_VERSIONS),--client-version $(version)) \
+		$(foreach era,$(CONFORMANCE_SERVER_ERAS),--server-era $(era)) \
+		--lane fixture-direct \
 		--lane builtin \
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
 		--output-dir "$(CF_INTEGRATION_DIR)/reports" \

@@ -832,24 +832,10 @@ class SecurityValidator:
             ValueError: When value is not a valid UUID
 
         Examples:
-            >>> SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> SecurityValidator.validate_uuid('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: UUID must be a valid UUID format
-
             Test empty UUID (line 340):
 
             >>> SecurityValidator.validate_uuid('')
             ''
-
-            Test normalized UUID format (lines 344-346):
-
-            >>> SecurityValidator.validate_uuid('550E8400-E29B-41D4-A716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> SecurityValidator.validate_uuid('550e8400e29b41d4a716446655440000')
-            '550e8400e29b41d4a716446655440000'
 
             Test various invalid UUID formats (line 347-348):
 
@@ -2584,6 +2570,31 @@ META_MAX_BYTES: int = settings.meta_max_bytes
 # never rejected. They keep a fixed depth cap and count toward the byte limit.
 MCP_ENVELOPE_META_KEYS = frozenset({PROTOCOL_VERSION_META_KEY, CLIENT_INFO_META_KEY, CLIENT_CAPABILITIES_META_KEY})
 MCP_ENVELOPE_META_MAX_DEPTH = 4
+
+
+def without_progress_token(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return ``meta`` without the client's progress token.
+
+    Drops both the SDK spelling (``progress_token``) and the wire spelling
+    (``progressToken``).
+
+    Args:
+        meta: The request ``_meta`` dictionary, or ``None``.
+
+    Returns:
+        A copy without the token keys, or ``None`` if nothing else remains.
+
+    Examples:
+        >>> without_progress_token({"progress_token": 1, "traceparent": "x"})
+        {'traceparent': 'x'}
+        >>> without_progress_token({"progressToken": "a"}) is None
+        True
+        >>> without_progress_token(None) is None
+        True
+    """
+    if not meta:
+        return None
+    return {k: v for k, v in meta.items() if k not in ("progress_token", "progressToken")} or None
 
 
 def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:

@@ -351,7 +351,7 @@ class TestUpdatePathRejectsMalformedKey:
 
         db = MagicMock()
         db.rollback = MagicMock()
-        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         service._notify_gateway_updated = AsyncMock()
 
         update = GatewayUpdate(
@@ -389,7 +389,7 @@ class TestUpdatePathRejectsMalformedKey:
 
         db = MagicMock()
         db.rollback = MagicMock()
-        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         service._notify_gateway_updated = AsyncMock()
 
         update = GatewayUpdate(

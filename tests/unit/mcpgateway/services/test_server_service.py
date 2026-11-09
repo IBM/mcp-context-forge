@@ -106,6 +106,7 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     server.oauth_enabled = False
     server.oauth_config = None
+    server.instructions = None
 
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
@@ -160,6 +161,9 @@ class TestValidateServerTeamAssignment:
     def test_accepts_owner_membership(self):
         db = self._build_db(team_exists=True, membership_exists=True)
         _validate_server_team_assignment(db, "owner@example.com", "team-1")
+
+
+OTHER_TEAM_ID = "00000000-0000-4000-8000-000000000001"
 
 
 class TestServerService:
@@ -441,6 +445,42 @@ class TestServerService:
         assert "550e8400e29b41d4a716446655440101" in result.associated_tools  # pragma: allowlist secret
         assert "550e8400e29b41d4a716446655440201" in result.associated_resources  # pragma: allowlist secret
         assert "550e8400e29b41d4a716446655440301" in result.associated_prompts  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    async def test_register_server_ignores_nested_team_and_owner(self, server_service, test_db):
+        """Stored team and owner come from the parameters, never from the payload."""
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        test_db.get = Mock(return_value=None)
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        server_create = ServerCreate(name="scoped_server", team_id=OTHER_TEAM_ID, owner_email="other@example.com")
+
+        await server_service.register_server(test_db, server_create, created_by="alice@example.com", team_id="team-a", owner_email="alice@example.com")
+
+        added = test_db.add.call_args[0][0]
+        assert added.team_id == "team-a"
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_register_server_conflict_check_uses_effective_scope(self, server_service, test_db):
+        """The duplicate-name lookup binds the effective team and owner, not the payload values."""
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        test_db.get = Mock(return_value=None)
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        server_create = ServerCreate(name="scoped_server", team_id=OTHER_TEAM_ID, owner_email="other@example.com")
+
+        with patch("mcpgateway.services.server_service.get_for_update", return_value=None) as spy:
+            await server_service.register_server(test_db, server_create, created_by="alice@example.com", team_id="team-a", owner_email="alice@example.com")
+
+        bound = set(spy.call_args.kwargs["where"].compile().params.values())
+        assert {"team-a", "alice@example.com"} <= bound
+        assert not {OTHER_TEAM_ID, "other@example.com"} & bound
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -1748,6 +1788,64 @@ class TestServerService:
         assert result.oauth_enabled is True
         assert result.oauth_config == new_oauth_config
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "stored, update_kwargs, expected",
+        [
+            (None, {"instructions": "Use the clock tools."}, "Use the clock tools."),
+            ("Old text", {"instructions": ""}, ""),
+            ("Old text", {"instructions": None}, None),
+            ("Old text", {"description": "new description"}, "Old text"),
+        ],
+        ids=["set", "empty-string-kept", "null-clears", "omitted-unchanged"],
+    )
+    async def test_update_server_instructions_follow_the_supplied_field(self, server_service, mock_server, test_db, stored, update_kwargs, expected):
+        """Only a supplied ``instructions`` field changes the stored value; "" and NULL stay distinct."""
+        mock_server.instructions = stored
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(**update_kwargs), "user@example.com")  # pragma: allowlist secret
+
+        assert mock_server.instructions == expected
+
+    @pytest.mark.asyncio
+    async def test_update_server_instructions_denied_for_non_owner(self, server_service, mock_server, test_db):
+        """A non-owner cannot change ``instructions``; the stored value stays as it was."""
+        mock_server.instructions = "Owner text"
+        test_db.get = Mock(return_value=mock_server)
+        test_db.rollback = Mock()
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)):
+            with pytest.raises(ServerError):
+                await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(instructions="Injected text"), "other@example.com")  # pragma: allowlist secret
+
+        assert mock_server.instructions == "Owner text"
+
+    @pytest.mark.asyncio
+    async def test_register_server_stores_instructions(self, server_service, test_db):
+        """The operator text from the create request reaches the stored row."""
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        captured = []
+        test_db.add = Mock(side_effect=captured.append)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        await server_service.register_server(test_db, ServerCreate(name="With Instructions", instructions="Use the clock tools."))
+
+        assert captured[0].instructions == "Use the clock tools."
 
     @pytest.mark.asyncio
     async def test_update_server_disable_oauth(self, server_service, mock_server, test_db):
@@ -3340,6 +3438,26 @@ class TestServerServiceCoverageMissingBranches:
                     ServerUpdate(name="new-name", visibility="team", team_id="t1"),
                     user_email="user@example.com",
                 )
+
+    @pytest.mark.asyncio
+    async def test_update_server_validates_foreign_team_before_name_conflict(self, server_service, mock_server):
+        """A foreign target team fails before the name lookup, so a 409 never confirms a name in that team."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        db = MagicMock()
+        db.rollback = Mock()
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server]) as lock,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.server_service._validate_server_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+        ):
+            with pytest.raises(ServerError, match="membership"):
+                await server_service.update_server(db, "srv-1", ServerUpdate(name="taken-name", visibility="team", team_id="foreign-team"), user_email="user@example.com")
+        assert lock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_update_server_team_name_check_no_conflict_continues_then_team_not_found(self, server_service, mock_server):

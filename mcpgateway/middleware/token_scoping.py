@@ -34,7 +34,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.paths import replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
-    get_auth_bearer_token_from_request,
+    get_request_auth_token,
     verify_jwt_token_cached,
 )
 
@@ -64,7 +64,6 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
-_AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
 
 
 class ResourceOwnershipResult(Enum):
@@ -192,6 +191,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Order matters: the first method+path match wins, so the concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
+    ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
+    ("DELETE", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/[^/]+/?$"), Permissions.A2A_UPDATE),
     ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
@@ -486,28 +488,6 @@ class TokenScopingMiddleware:
             normalized = f"/{normalized}"
         return replace_api_path_alias(normalized)
 
-    def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract JWT token from supported cookie names or Bearer auth header.
-
-        Args:
-            request: Request object carrying cookies and headers.
-
-        Returns:
-            JWT string when present and validly formatted; otherwise ``None``.
-        """
-        cookies = getattr(request, "cookies", None)
-        if cookies and hasattr(cookies, "get"):
-            for cookie_name in _AUTH_COOKIE_NAMES:
-                cookie_token = cookies.get(cookie_name)
-                if isinstance(cookie_token, str) and cookie_token.strip():
-                    return cookie_token.strip()
-
-        # Get the configured auth header (default Authorization) and parse
-        # the Bearer scheme case-insensitively. Reading from the configured
-        # header keeps token scoping aligned with the auth dependency so
-        # scope restrictions cannot be bypassed by setting AUTH_HEADER_NAME.
-        return get_auth_bearer_token_from_request(request)
-
     async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.
 
@@ -517,7 +497,7 @@ class TokenScopingMiddleware:
         Returns:
             Dict containing token scopes or None if no valid token
         """
-        token = self._extract_jwt_token_from_request(request)
+        token = get_request_auth_token(request)
         if not token:
             return None
 

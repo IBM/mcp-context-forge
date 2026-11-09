@@ -22,7 +22,7 @@ from mcpgateway.services.a2a_server_service import A2AServerService
 # ---------------------------------------------------------------------------
 
 
-def _make_server(name="test-server", sid=None, description="A test server", version=1, a2a_agents=None):
+def _make_server(name="test-server", sid=None, description="A test server", version=1, a2a_agents=None, visibility="public"):
     """Return a lightweight mock that looks like a DbServer row."""
     server = MagicMock()
     server.id = sid or uuid.uuid4().hex
@@ -30,25 +30,30 @@ def _make_server(name="test-server", sid=None, description="A test server", vers
     server.description = description
     server.version = version
     server.a2a_agents = a2a_agents if a2a_agents is not None else []
+    server.visibility = visibility
     return server
 
 
-def _make_interface(binding="https://agent.example.com/a2a", version="1.0", protocol="a2a"):
+def _make_interface(binding="https://agent.example.com/a2a", version="1.0", protocol="a2a", tenant=None):
     """Return a lightweight mock that looks like a DbServerInterface row."""
     iface = MagicMock()
     iface.binding = binding
     iface.version = version
     iface.protocol = protocol
+    iface.tenant = tenant
     return iface
 
 
-def _make_agent(aid=None, name="downstream-agent", enabled=True, capabilities=None):
+def _make_agent(aid=None, name="downstream-agent", enabled=True, capabilities=None, visibility="public", owner_email=None, team_id=None):
     """Return a lightweight mock that looks like a DbA2AAgent row."""
     agent = MagicMock()
     agent.id = aid or uuid.uuid4().hex
     agent.name = name
     agent.enabled = enabled
     agent.capabilities = capabilities if capabilities is not None else {}
+    agent.visibility = visibility
+    agent.owner_email = owner_email
+    agent.team_id = team_id
     return agent
 
 
@@ -149,6 +154,36 @@ class TestA2AServerService:
         assert len(card["skills"]) == 1
         assert card["skills"][0]["id"] == "summarize"
 
+    def test_get_server_agent_card_omits_skills_of_agents_hidden_from_caller(self, service, mock_db):
+        """A caller who can see a public server never reads skills of private or other-team agents (#6700)."""
+        public_agent = _make_agent(capabilities={"skills": [{"id": "public-skill"}]})
+        private_agent = _make_agent(capabilities={"skills": [{"id": "private-skill"}]}, visibility="private", owner_email="owner@example.com")
+        other_team_agent = _make_agent(capabilities={"skills": [{"id": "team-skill"}]}, visibility="team", team_id="team-b")
+        own_private_agent = _make_agent(capabilities={"skills": [{"id": "own-skill"}]}, visibility="private", owner_email="caller@example.com")
+        server = _make_server(a2a_agents=[public_agent, private_agent, other_team_agent, own_private_agent])
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server_id=server.id, user_email="caller@example.com", token_teams=["team-a"])
+
+        assert [skill["id"] for skill in card["skills"]] == ["public-skill", "own-skill"]
+
+    def test_get_server_agent_card_public_only_token_sees_only_public_agent_skills(self, service, mock_db):
+        """A public-only token reads skills of public agents only (#6700)."""
+        public_agent = _make_agent(capabilities={"skills": [{"id": "public-skill"}]})
+        team_agent = _make_agent(capabilities={"skills": [{"id": "team-skill"}]}, visibility="team", team_id="team-a")
+        server = _make_server(a2a_agents=[public_agent, team_agent])
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server_id=server.id, user_email="caller@example.com", token_teams=[])
+
+        assert [skill["id"] for skill in card["skills"]] == ["public-skill"]
+
     def test_get_server_agent_card_hidden_server_returns_none(self, service, mock_db):
         server = _make_server(name="private-server")
         server.visibility = "private"
@@ -156,6 +191,208 @@ class TestA2AServerService:
         mock_db.execute.return_value.scalar_one_or_none.return_value = server
 
         result = service.get_server_agent_card(mock_db, "private-server", user_email="user@example.com", token_teams=[])
+
+        assert result is None
+
+    def test_get_server_agent_card_v1_reports_supported_interfaces(self, service, mock_db):
+        """A v1.0 interface's card reports transport via supportedInterfaces, not a bare url (#7027)."""
+        server = _make_server(name="my-server", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="1.0", protocol="a2a-jsonrpc", tenant="acme")
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, "my-server")
+
+        assert "url" not in card
+        assert "supportsAuthenticatedExtendedCard" not in card
+        assert "stateTransitionHistory" not in card["capabilities"]
+        assert card["capabilities"]["extendedAgentCard"] is True
+        assert card["supportedInterfaces"] == [{"url": "https://a2a.example.com/agent", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "acme"}]
+
+    def test_get_server_agent_card_legacy_shape_for_v03_interface(self, service, mock_db):
+        """A v0.3 interface keeps the pre-1.0 shape, so existing v0.3 callers see no change (#7027)."""
+        server = _make_server(name="my-server", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="0.3")
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, "my-server")
+
+        assert card["url"] == "https://a2a.example.com/agent"
+        assert card["supportsAuthenticatedExtendedCard"] is True
+        assert "supportedInterfaces" not in card
+
+    def test_get_server_agent_card_capabilities_reflect_associated_agents(self, service, mock_db):
+        """Streaming/pushNotifications are True when any enabled associated agent declares them (#7027)."""
+        streaming_agent = _make_agent(name="a1", capabilities={"streaming": True})
+        push_agent = _make_agent(name="a2", capabilities={"pushNotifications": True})
+        server = _make_server(a2a_agents=[streaming_agent, push_agent])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["capabilities"]["streaming"] is True
+        assert card["capabilities"]["pushNotifications"] is True
+
+    def test_get_server_agent_card_legacy_caller_gets_legacy_shape_for_v1_interface(self, service, mock_db):
+        """A caller declaring a pre-1.0 A2A version keeps the legacy server card shape (#7027)."""
+        server = _make_server()
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface(version="1.0")}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name, caller_version="0.3")
+
+        assert "supportedInterfaces" not in card
+        assert card["supportsAuthenticatedExtendedCard"] is True
+
+    def test_get_server_agent_card_skips_malformed_capabilities(self, service, mock_db):
+        """Malformed free-form capabilities on one agent never break the card (#7027)."""
+        bad_agents = [
+            _make_agent(name="bad1", capabilities={"defaultInputModes": None, "defaultOutputModes": "text", "skills": None}),
+            _make_agent(name="bad2", capabilities={"skills": [{"id": ["list-id"]}, {"id": "ok"}, "not-a-dict"], "defaultInputModes": [None, 5, "file"]}),
+        ]
+        server = _make_server(a2a_agents=bad_agents)
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert [skill for skill in card["skills"] if isinstance(skill, dict)] == [{"id": "ok"}]
+        assert card["defaultInputModes"] == ["file"]
+        assert card["defaultOutputModes"] == ["text"]
+
+    def test_get_server_agent_card_modes_reflect_associated_agents(self, service, mock_db):
+        """defaultInputModes/defaultOutputModes union across enabled agents, not hardcoded (#7027)."""
+        agent_a = _make_agent(name="a1", capabilities={"defaultInputModes": ["text"]})
+        agent_b = _make_agent(name="a2", capabilities={"defaultInputModes": ["text", "file"], "defaultOutputModes": ["image"]})
+        server = _make_server(a2a_agents=[agent_a, agent_b])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["defaultInputModes"] == ["text", "file"]
+        assert card["defaultOutputModes"] == ["image"]
+
+    def test_get_server_agent_card_modes_default_to_text_when_unset(self, service, mock_db):
+        """No associated agent declares modes → falls back to ["text"] (#7027)."""
+        server = _make_server(a2a_agents=[_make_agent(capabilities={})])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["defaultInputModes"] == ["text"]
+        assert card["defaultOutputModes"] == ["text"]
+
+    def test_get_server_agent_card_dedupes_skill_ids_across_agents(self, service, mock_db):
+        """Identical skill ids from different agents don't collide silently (#7027)."""
+        agent_a = _make_agent(name="a1", capabilities={"skills": [{"id": "shared", "name": "From A"}]})
+        agent_b = _make_agent(name="a2", capabilities={"skills": [{"id": "shared", "name": "From B"}, {"id": "unique", "name": "Unique"}]})
+        server = _make_server(a2a_agents=[agent_a, agent_b])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        skill_ids = [s["id"] for s in card["skills"]]
+        assert skill_ids == ["shared", "unique"]
+        assert card["skills"][0]["name"] == "From A"
+
+    @pytest.mark.parametrize(
+        "protocol,expected_binding",
+        [
+            ("a2a-jsonrpc", "JSONRPC"),
+            ("a2a-grpc", "GRPC"),
+            ("a2a", "JSONRPC"),
+            ("a2a/v1", "JSONRPC"),
+        ],
+    )
+    def test_derive_protocol_binding(self, protocol, expected_binding):
+        from mcpgateway.services.a2a_server_service import _derive_protocol_binding
+
+        assert _derive_protocol_binding(protocol) == expected_binding
+
+    # ------------------------------------------------------------------
+    # get_server_agent_card
+    # ------------------------------------------------------------------
+
+    def test_get_server_agent_card_found_with_a2a_interface(self, service, mock_db):
+        """Server with an enabled A2A interface returns a populated AgentCard dict, looked up by ID (#6700)."""
+        server = _make_server(name="my-server", sid="srv-123", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="0.9")
+
+        exec_side_effects = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+        mock_db.execute.side_effect = exec_side_effects
+
+        card = service.get_server_agent_card(mock_db, server_id="srv-123")
+
+        assert card is not None
+        assert card["name"] == "my-server"
+        assert card["url"] == "https://a2a.example.com/agent"
+        assert card["protocolVersion"] == "0.9"
+        assert card["version"] == "2"
+
+    def test_get_server_agent_card_server_not_found(self, service, mock_db):
+        """Unknown server ID returns None."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        result = service.get_server_agent_card(mock_db, server_id="no-such-id")
+
+        assert result is None
+
+    def test_get_server_agent_card_no_a2a_interface(self, service, mock_db):
+        """Server exists but has no enabled A2A interface → returns None."""
+        server = _make_server(name="server-without-a2a", sid="srv-456")
+
+        exec_side_effects = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": None}),
+        ]
+        mock_db.execute.side_effect = exec_side_effects
+
+        result = service.get_server_agent_card(mock_db, server_id="srv-456")
+
+        assert result is None
+
+    def test_get_server_agent_card_hidden_server_returns_none(self, service, mock_db):
+        server = _make_server(name="private-server", sid="srv-789")
+        server.visibility = "private"
+        server.owner_email = "other@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = server
+
+        result = service.get_server_agent_card(mock_db, server_id="srv-789", user_email="user@example.com", token_teams=[])
 
         assert result is None
 

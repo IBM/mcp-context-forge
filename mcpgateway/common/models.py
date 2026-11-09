@@ -421,6 +421,10 @@ class InitializeRequest(BaseModel):
     )
 
 
+# Text that ContextForge sends as ``instructions`` when no backing server supplies its own.
+DEFAULT_SERVER_INSTRUCTIONS = "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
+
+
 class InitializeResult(BaseModel):
     """Server's response to the initialization request.
 

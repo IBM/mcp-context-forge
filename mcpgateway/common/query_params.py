@@ -14,7 +14,7 @@ These aliases intentionally preserve endpoint-level OpenAPI parameter metadata
 from typing import Annotated, Optional
 
 # Third-Party
-from fastapi import Query
+from fastapi import HTTPException, Query
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -244,6 +244,53 @@ QueryGatewayId = Annotated[
         description="Filter by gateway ID",
     ),
 ]
+
+QueryMcpServerId = Annotated[
+    Optional[str],
+    Query(
+        max_length=100,
+        pattern=settings.validation_gateway_id_pattern,
+        description="Alias of gateway_id: filter by MCP server ID",
+    ),
+]
+
+QueryMcpServerIdList = Annotated[
+    Optional[str],
+    Query(
+        max_length=1000,
+        pattern=settings.validation_gateway_id_list_pattern,
+        description="Alias of gateway_id: filter by MCP server ID(s), comma-separated",
+    ),
+]
+
+
+def resolve_gateway_id_filter(gateway_id: Optional[str], mcp_server_id: Optional[str]) -> Optional[str]:
+    """Merge the ``gateway_id`` query filter with its ``mcp_server_id`` alias.
+
+    Args:
+        gateway_id: Value of the ``gateway_id`` query parameter.
+        mcp_server_id: Value of the ``mcp_server_id`` alias query parameter.
+
+    Returns:
+        Optional[str]: The filter value supplied under either spelling.
+
+    Raises:
+        HTTPException: 422 when both spellings carry different values.
+
+    Examples:
+        >>> resolve_gateway_id_filter(None, "g1")
+        'g1'
+        >>> resolve_gateway_id_filter("g1", "g1")
+        'g1'
+        >>> resolve_gateway_id_filter("g1", "g2")
+        Traceback (most recent call last):
+            ...
+        fastapi.exceptions.HTTPException: 422: gateway_id and mcp_server_id conflict
+    """
+    if gateway_id is not None and mcp_server_id is not None and gateway_id != mcp_server_id:
+        raise HTTPException(status_code=422, detail="gateway_id and mcp_server_id conflict")
+    return gateway_id if gateway_id is not None else mcp_server_id
+
 
 QueryTraceId = Annotated[
     Optional[str],

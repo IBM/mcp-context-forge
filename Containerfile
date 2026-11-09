@@ -4,7 +4,7 @@
 # ContextForge - OCI-compliant multi-stage container build
 #
 # Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
-# builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
+# builds (amd64, arm64, s390x, ppc64le).
 #
 # This is the only production Containerfile (previously separate lite/scratch
 # variants were consolidated here).
@@ -12,7 +12,6 @@
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
 #   - Runtime stage uses ubi10-minimal for cross-platform compatibility
-#   - Optional Rust builder stage for native extensions (ENABLE_RUST=true)
 #   - Development headers are dropped from the final image
 #   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
@@ -22,8 +21,6 @@
 ###########################
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 # Enable HTMX Admin UI and Node.js frontend build steps.
 # Set false for s390x/ppc64le where @tailwindcss/oxide and lightningcss
 # have no prebuilt native binaries; those arches run with MCPGATEWAY_UI_ENABLED=false.
@@ -49,9 +46,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1792456870
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1792512952
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1792457157
+ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1792744468
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1792840089
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1792742351
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -63,103 +60,6 @@ ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1792457157
 ARG WHEELS_REF=${UBI_MINIMAL}
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
-
-###############################################################################
-# Rust builder stage - builds Rust MCP runtime and local native extensions
-# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile .
-# To build WITHOUT Rust (default): docker build -f Containerfile .
-###############################################################################
-FROM ${UBI_BASE} AS rust-builder
-ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST
-ARG ENABLE_RUST_MCP_RMCP
-
-# Set shell with pipefail for safety
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Only build if ENABLE_RUST=true
-RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/native-extension-wheels /build/target/release; \
-        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-mcp-runtime; \
-        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
-        printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
-        chmod +x /build/target/release/contextforge-mcp-runtime; \
-    fi
-
-# Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
-# hadolint ignore=DL3041
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        dnf upgrade -y && \
-        dnf install -y \
-            python${PYTHON_VERSION} \
-            python${PYTHON_VERSION}-devel \
-            python${PYTHON_VERSION}-pip \
-            gcc \
-            gcc-c++ \
-            openssl-devel \
-            postgresql-devel \
-            libpq-devel \
-            findutils \
-            curl && \
-        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-        dnf clean all && \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
-    fi
-ENV PATH="/root/.cargo/bin:$PATH"
-
-WORKDIR /build
-
-# Copy workspace and crates (only if ENABLE_RUST=true)
-COPY Cargo.toml Cargo.lock /build/
-COPY crates/ /build/crates/
-
-# Build local native extensions from maturin crates under crates/
-# hadolint ignore=DL3013
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        mkdir -p /build/native-extension-wheels && \
-        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
-        printf '%s\n' \
-            'import pathlib' \
-            'import subprocess' \
-            'import sys' \
-            'import tomllib' \
-            '' \
-            'crates_root = pathlib.Path("/build/crates")' \
-            'wheel_dir = pathlib.Path("/build/native-extension-wheels")' \
-            'for cargo_toml in sorted(crates_root.rglob("Cargo.toml")):' \
-            '    pyproject_toml = cargo_toml.with_name("pyproject.toml")' \
-            '    if not pyproject_toml.exists():' \
-            '        continue' \
-            '    pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))' \
-            '    build_system = pyproject.get("build-system", {})' \
-            '    backend = str(build_system.get("build-backend", ""))' \
-            '    requires = [str(item) for item in build_system.get("requires", [])]' \
-            '    if "maturin" not in backend and not any("maturin" in item for item in requires):' \
-            '        continue' \
-            '    crate_dir = cargo_toml.parent' \
-            '    print(f"🦀 Building local native extension: {crate_dir.name}")' \
-            '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
-            'print("✅ Local native extensions built successfully")' \
-            > /tmp/build_local_native_extensions.py && \
-        python3 /tmp/build_local_native_extensions.py && \
-        rm -f /tmp/build_local_native_extensions.py \
-    else \
-        echo "⏭️  Skipping local native extension build"; \
-    fi
-
-# Build MCP runtime binary
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
-            cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
-        else \
-            cargo build --release -p contextforge_mcp_runtime; \
-        fi && \
-        cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
-        echo "✅ Rust MCP runtime built successfully"; \
-    else \
-        echo "⏭️  Skipping Rust MCP runtime build"; \
-    fi
 
 ###############################################################################
 # Node.js builder stage - builds Tailwind CSS
@@ -284,17 +184,14 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 #      so setuptools must be able to import it while resolving "."'s build
 #      metadata below — copy just this module's import chain, not the rest of
 #      mcpgateway/, to keep the dep layer cache intact for normal source edits)
-#   3. Native extension wheels from rust-builder (consumed by venv install)
-# Everything else (rust binaries, frontend static, app code) is copied AFTER
-# the heavy venv install so those changes don't invalidate the dep layer.
+# Everything else (frontend static, app code) is copied AFTER the heavy venv
+# install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
 COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
 COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
-COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=wheels /wheels /tmp/wheels
-COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment — split into discrete RUN steps so a
@@ -302,13 +199,10 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #  1. Create venv; upgrade pip, setuptools, wheel, uv
 #  2. Install project dependencies and package (incl. observability and
 #     plugins from PyPI via the [plugins] extra)
-#  3. Install local native extensions from pre-built wheels (if built)
-#  4. Drop consumed wheel staging areas
-#  5. Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
-#  6. Remove build tools (keep runtime dist-info), caches, and artifacts
+#  3. Drop consumed wheel staging area
+#  4. Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
+#  5. Remove build tools (keep runtime dist-info), caches, and artifacts
 # ----------------------------------------------------------------------------
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 ARG MCPGATEWAY_UI_ENABLED=true
 
@@ -332,21 +226,11 @@ RUN set -euo pipefail \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra"
 
-# Step 3: Install local native extensions from pre-built wheels (if built).
-RUN set -euo pipefail \
-    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
-        echo "🦀 Installing local native extensions..."; \
-        /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
-        /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
-    else \
-        echo "⏭️  No local native extensions discovered"; \
-    fi
-
-# Step 4: Wheel staging areas are consumed — drop them before profiling so a
+# Step 3: Wheel staging area is consumed — drop it before profiling so a
 # profiling failure can never shadow a wheel-install failure (and vice versa).
-RUN rm -rf /tmp/local-native-extension-wheels /tmp/wheels
+RUN rm -rf /tmp/wheels
 
-# Step 5: Optionally install profiling tools (memray, py-spy).
+# Step 4: Optionally install profiling tools (memray, py-spy).
 RUN set -euo pipefail \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
@@ -356,7 +240,7 @@ RUN set -euo pipefail \
         echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
     fi
 
-# Step 6: Remove build tools (keep runtime dist-info for other packages),
+# Step 5: Remove build tools (keep runtime dist-info for other packages),
 # build caches, and build artifacts.
 RUN set -euo pipefail \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
@@ -368,11 +252,9 @@ RUN set -euo pipefail \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
 # ----------------------------------------------------------------------------
-# Copy Rust runtime binaries and frontend static output from their builder
-# stages AFTER the venv install so those changes don't invalidate the heavy
-# dependency layer above.
+# Copy frontend static output from its builder stages AFTER the venv install
+# so those changes don't invalidate the heavy dependency layer above.
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
 # Copy frontend static assets from node-builder (Tailwind CSS) and
 # frontend-builder (Vite output).  Both builder stages always produce their
@@ -423,8 +305,6 @@ FROM ${UBI_MINIMAL} AS runtime
 ARG ENABLE_FIPS=false
 
 ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------
@@ -502,8 +382,6 @@ COPY --from=builder --chown=10001:10001 /app /app
 # ----------------------------------------------------------------------------
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app" \
-    CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
-    CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
