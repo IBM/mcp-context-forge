@@ -608,9 +608,7 @@ class PromptService(BaseService):
             raise
         except Exception as exc:
             # The SDK's task group wraps the failure; the input-required signal, then an upstream JSON-RPC error, wins over any other leaf.
-            root_cause = _upstream_root_cause(exc, PromptInputRequired)
-            if isinstance(root_cause, PromptInputRequired):
-                raise root_cause from exc
+            root_cause = _upstream_root_cause(exc)
             # Either message may echo the gateway URL, so auth parameters are stripped from it.
             sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params_decrypted)
             if isinstance(root_cause, MCPError):

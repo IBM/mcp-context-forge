@@ -2309,9 +2309,6 @@ class ResourceService(BaseService):
                                 except ResourceInputRequired:
                                     raise
                                 except Exception as exc:
-                                    wrapped = _upstream_root_cause(exc, ResourceInputRequired)
-                                    if isinstance(wrapped, ResourceInputRequired):
-                                        raise wrapped from exc
                                     if attempt == max_read_attempts:
                                         raise
                                     sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
