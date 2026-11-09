@@ -789,7 +789,7 @@ class TestVaultRefreshAccessTokenNoPriorTTL:
             with patch("mcpgateway.services.token_backends.vault_backend.parse_expires_in", return_value=None):
                 with patch("mcpgateway.services.token_backends.vault_backend.compute_prior_ttl", return_value=None):
                     with patch("mcpgateway.services.token_backends.vault_backend.apply_omit_resource_and_normalize"):
-                        with patch.object(backend, "store_tokens", new_callable=AsyncMock):
+                        with patch.object(backend, "store_tokens", new_callable=AsyncMock, return_value=MagicMock(access_token="new_acc", expires_at=None, scopes=[])):
                             result = await backend._do_refresh_access_token(
                                 gateway_id="gw-1",
                                 team_id="t1",

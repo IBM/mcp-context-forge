@@ -1364,6 +1364,7 @@ class Permissions:
     # Gateway permissions
     GATEWAYS_CREATE = "gateways.create"
     GATEWAYS_READ = "gateways.read"
+    GATEWAYS_TOKEN_READ = "gateways.token_read"
     GATEWAYS_UPDATE = "gateways.update"
     GATEWAYS_DELETE = "gateways.delete"
 

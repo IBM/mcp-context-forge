@@ -26,7 +26,7 @@ from mcpgateway.config import Settings
 from mcpgateway.db import Gateway
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, TokenRecord, ValidationToken
+from .base import AbstractTokenBackend, AccessTokenDetails, TokenReauthorizationRequired, TokenRecord, ValidationToken
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
@@ -421,6 +421,50 @@ class VaultTokenBackend(AbstractTokenBackend):
             learned_aud=learned_aud,
             learned_iss=learned_iss,
         )
+
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
+        """Read token metadata together, bypassing the token-only cache.
+
+        Args:
+            gateway_id: Gateway identifier.
+            team_id: Token storage team scope.
+            app_user_email: Authenticated caller's email.
+            threshold_seconds: Refresh window in seconds.
+
+        Returns:
+            Access token details, or None when no record exists.
+
+        Raises:
+            TokenReauthorizationRequired: The stored grant needs authorization.
+            OAuthError: The provider cannot refresh an expired token.
+            ValueError: Stored token expiry is invalid.
+        """
+        mcp_url = self._resolve_mcp_url(gateway_id)
+        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+        lock = await self._get_refresh_lock(gateway_id, team_id, app_user_email)
+        async with lock:
+            result = await self._vault_request("GET", path)
+            if result is None:
+                return None
+            data = result["data"]["data"]
+            token = data.get("token")
+            if not isinstance(token, dict) or not token.get("access_token"):
+                return None
+            expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00")) if data.get("expires_at") else None
+            if expires_at and (expires_at - datetime.now(timezone.utc)).total_seconds() < threshold_seconds and token.get("refresh_token"):
+                try:
+                    return await self._refresh_token_details(gateway_id, team_id, app_user_email, token["refresh_token"], data)
+                except OAuthInvalidGrantError as exc:
+                    await self.revoke_user_tokens(gateway_id, team_id, app_user_email)
+                    raise TokenReauthorizationRequired() from exc
+                except TokenReauthorizationRequired:
+                    raise
+                except Exception:
+                    if expires_at <= datetime.now(timezone.utc):
+                        raise
+            if expires_at and expires_at <= datetime.now(timezone.utc):
+                raise TokenReauthorizationRequired()
+            return AccessTokenDetails(access_token=token["access_token"], expires_at=expires_at, scopes=token.get("scopes", []))
 
     async def get_user_token(
         self,
@@ -1056,116 +1100,8 @@ class VaultTokenBackend(AbstractTokenBackend):
             New access token or None if refresh failed
         """
         try:
-            # Get the gateway configuration
-            gateway = self.db.query(Gateway).filter(Gateway.id == gateway_id).first()
-
-            if not gateway or not gateway.oauth_config:
-                logger.error("No OAuth configuration found for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
-                return None
-
-            # PR #4341: Refuse refresh on private gateway whose owner != token owner
-            if not check_private_gateway_access(
-                gateway_visibility=getattr(gateway, "visibility", "public"),
-                gateway_owner_email=getattr(gateway, "owner_email", None),
-                token_owner_email=app_user_email,
-                gateway_id=gateway_id,
-            ):
-                return None
-
-            oauth_config = gateway.oauth_config.copy()
-
-            # Decrypt client_secret before calling the token endpoint.
-            # The gateway record stores client_secret encrypted at rest (same as DB backend).
-            # Sending an encrypted ciphertext envelope to the IdP causes repeated
-            # invalid_client errors that can trigger IdP rate-limiting / account lockout.
-            # Fail closed: raise OAuthError so the outer handler preserves the stored
-            # token for a later retry (same behaviour as DatabaseTokenBackend:436-446).
-            if "client_secret" in oauth_config and oauth_config["client_secret"]:
-                encryption_secret = getattr(self.settings, "auth_encryption_secret", None)
-                if encryption_secret:
-                    try:
-                        from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
-
-                        encryption = get_encryption_service(encryption_secret)
-                        decrypted_secret = await encryption.decrypt_secret_async(oauth_config["client_secret"])
-                        if decrypted_secret is None:
-                            raise OAuthError(
-                                f"client_secret decryption failed for gateway {gateway_id}: "
-                                "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
-                                "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
-                            )
-                        oauth_config["client_secret"] = decrypted_secret
-                    except OAuthError:
-                        raise
-                    except Exception as enc_err:
-                        # Fail closed: raise so the outer OAuthError handler preserves
-                        # the stored token for a later retry rather than sending the
-                        # raw ciphertext envelope as the literal client_secret to the IdP
-                        # (same behaviour as DatabaseTokenBackend lines 436-446).
-                        raise OAuthError(f"client_secret decryption setup failed for gateway {gateway_id}: {enc_err}") from enc_err
-
-            # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # PR #5244: Apply omit_resource flag and normalize resource parameter
-            apply_omit_resource_and_normalize(oauth_config, gateway.url, gateway_id)
-
-            # Use OAuthManager to refresh the token
-            oauth_manager = OAuthManager()
-
-            logger.info(
-                "Attempting to refresh token in Vault for gateway %s, user %s",
-                SecurityValidator.sanitize_log_message(gateway_id),
-                SecurityValidator.sanitize_log_message(app_user_email),
-            )
-            token_response = await oauth_manager.refresh_token(
-                refresh_token,
-                oauth_config,
-                ca_certificate=gateway.ca_certificate,
-                client_cert=gateway.client_cert,
-                client_key=gateway.client_key,
-            )
-
-            # Extract new tokens
-            new_access_token = token_response["access_token"]
-            new_refresh_token = token_response.get("refresh_token", refresh_token)
-            expires_in = parse_expires_in(token_response)
-
-            # PR #5244: Preserve prior TTL if refresh response omits expires_in
-            if expires_in is None:
-                expires_in = compute_prior_ttl(
-                    vault_data.get("expires_at"),
-                    vault_data.get("updated_at"),
-                    gateway_id,
-                )
-                if expires_in is None:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
-                        SecurityValidator.sanitize_log_message(gateway_id),
-                    )
-
-            # Store refreshed tokens back to Vault.
-            # Round-trip the previously-learned audience/issuer so they are not
-            # erased by the refresh cycle — the refresh response never carries
-            # aud/iss, and store_tokens guards with `if not None`.
-            await self.store_tokens(
-                gateway_id=gateway_id,
-                team_id=team_id,
-                user_id=vault_data.get("user_id", ""),
-                app_user_email=app_user_email,
-                access_token=new_access_token,
-                refresh_token=new_refresh_token,
-                expires_in=expires_in,
-                scopes=vault_data["token"]["scopes"],
-                learned_aud=vault_data.get("learned_aud"),
-                learned_iss=vault_data.get("learned_iss"),
-            )
-
-            logger.info(
-                "Successfully refreshed token in Vault for gateway %s, user %s",
-                SecurityValidator.sanitize_log_message(gateway_id),
-                SecurityValidator.sanitize_log_message(app_user_email),
-            )
-
-            return new_access_token
+            details = await self._refresh_token_details(gateway_id, team_id, app_user_email, refresh_token, vault_data)
+            return details.access_token
 
         except OAuthInvalidGrantError as e:
             # RFC 6749 §5.2: invalid_grant is a permanent failure — the refresh
@@ -1200,3 +1136,134 @@ class VaultTokenBackend(AbstractTokenBackend):
             )
             # Preserve token - this is likely a transient or configuration issue
             return None
+
+    async def _refresh_token_details(
+        self,
+        gateway_id: str,
+        team_id: str,
+        app_user_email: str,
+        refresh_token: str,
+        vault_data: dict,
+    ) -> AccessTokenDetails:
+        """Inner refresh logic — called only while the per-key lock is held.
+
+        Args:
+            gateway_id: Gateway ID
+            team_id: Team identifier
+            app_user_email: ContextForge user email
+            refresh_token: Plain-text refresh token
+            vault_data: Current Vault token data (for preserving metadata)
+
+        Returns:
+            Access token and metadata after a successful refresh
+        """
+        # Get the gateway configuration
+        gateway = self.db.query(Gateway).filter(Gateway.id == gateway_id).first()
+
+        if not gateway or not gateway.oauth_config:
+            logger.error("No OAuth configuration found for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
+            raise TokenReauthorizationRequired()
+
+        # PR #4341: Refuse refresh on private gateway whose owner != token owner
+        if not check_private_gateway_access(
+            gateway_visibility=getattr(gateway, "visibility", "public"),
+            gateway_owner_email=getattr(gateway, "owner_email", None),
+            token_owner_email=app_user_email,
+            gateway_id=gateway_id,
+        ):
+            raise TokenReauthorizationRequired()
+
+        oauth_config = gateway.oauth_config.copy()
+
+        # Decrypt client_secret before calling the token endpoint.
+        # The gateway record stores client_secret encrypted at rest (same as DB backend).
+        # Sending an encrypted ciphertext envelope to the IdP causes repeated
+        # invalid_client errors that can trigger IdP rate-limiting / account lockout.
+        # Fail closed: raise OAuthError so the outer handler preserves the stored
+        # token for a later retry (same behaviour as DatabaseTokenBackend:436-446).
+        if "client_secret" in oauth_config and oauth_config["client_secret"]:
+            encryption_secret = getattr(self.settings, "auth_encryption_secret", None)
+            if encryption_secret:
+                try:
+                    from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+                    encryption = get_encryption_service(encryption_secret)
+                    decrypted_secret = await encryption.decrypt_secret_async(oauth_config["client_secret"])
+                    if decrypted_secret is None:
+                        raise OAuthError(
+                            f"client_secret decryption failed for gateway {gateway_id}: "
+                            "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
+                            "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
+                        )
+                    oauth_config["client_secret"] = decrypted_secret
+                except OAuthError:
+                    raise
+                except Exception as enc_err:
+                    # Fail closed: raise so the outer OAuthError handler preserves
+                    # the stored token for a later retry rather than sending the
+                    # raw ciphertext envelope as the literal client_secret to the IdP
+                    # (same behaviour as DatabaseTokenBackend lines 436-446).
+                    raise OAuthError(f"client_secret decryption setup failed for gateway {gateway_id}: {enc_err}") from enc_err
+
+        # RFC 8707: Set resource parameter for JWT access tokens during refresh
+        # PR #5244: Apply omit_resource flag and normalize resource parameter
+        apply_omit_resource_and_normalize(oauth_config, gateway.url, gateway_id)
+
+        # Use OAuthManager to refresh the token
+        oauth_manager = OAuthManager()
+
+        logger.info(
+            "Attempting to refresh token in Vault for gateway %s, user %s",
+            SecurityValidator.sanitize_log_message(gateway_id),
+            SecurityValidator.sanitize_log_message(app_user_email),
+        )
+        token_response = await oauth_manager.refresh_token(
+            refresh_token,
+            oauth_config,
+            ca_certificate=gateway.ca_certificate,
+            client_cert=gateway.client_cert,
+            client_key=gateway.client_key,
+        )
+
+        # Extract new tokens
+        new_access_token = token_response["access_token"]
+        new_refresh_token = token_response.get("refresh_token", refresh_token)
+        expires_in = parse_expires_in(token_response)
+
+        # PR #5244: Preserve prior TTL if refresh response omits expires_in
+        if expires_in is None:
+            expires_in = compute_prior_ttl(
+                vault_data.get("expires_at"),
+                vault_data.get("updated_at"),
+                gateway_id,
+            )
+            if expires_in is None:
+                logger.info(
+                    "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                )
+
+        # Store refreshed tokens back to Vault.
+        # Round-trip the previously-learned audience/issuer so they are not
+        # erased by the refresh cycle — the refresh response never carries
+        # aud/iss, and store_tokens guards with `if not None`.
+        stored = await self.store_tokens(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            user_id=vault_data.get("user_id", ""),
+            app_user_email=app_user_email,
+            access_token=new_access_token,
+            refresh_token=new_refresh_token,
+            expires_in=expires_in,
+            scopes=vault_data["token"]["scopes"],
+            learned_aud=vault_data.get("learned_aud"),
+            learned_iss=vault_data.get("learned_iss"),
+        )
+
+        logger.info(
+            "Successfully refreshed token in Vault for gateway %s, user %s",
+            SecurityValidator.sanitize_log_message(gateway_id),
+            SecurityValidator.sanitize_log_message(app_user_email),
+        )
+
+        return AccessTokenDetails(access_token=stored.access_token, expires_at=stored.expires_at, scopes=stored.scopes)
