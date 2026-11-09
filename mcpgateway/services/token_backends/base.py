@@ -17,11 +17,33 @@ from typing import Literal, TYPE_CHECKING
 # Re-export canonical normalize_resource from utils.oauth_resource
 # (avoids duplication - refresh_helpers imports from here for backward compat)
 from mcpgateway.utils.oauth_resource import normalize_resource as normalize_resource_url
+from mcpgateway.services.oauth_manager import OAuthError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 __all__ = ["TokenRecord", "AbstractTokenBackend", "normalize_resource_url"]
+
+
+@dataclass(frozen=True, slots=True)
+class AccessTokenDetails:
+    """Carry an access token and its metadata without a refresh token."""
+
+    access_token: str
+    expires_at: datetime | None
+    scopes: list[str]
+
+
+class TokenReauthorizationRequired(OAuthError):
+    """The stored grant cannot supply a usable access token."""
+
+    def __init__(self, message: str = "OAuth reauthorization is required") -> None:
+        """Initialize the authorization failure.
+
+        Args:
+            message: Description of the unusable stored grant.
+        """
+        super().__init__(message)
 
 
 @dataclass
@@ -128,6 +150,25 @@ class AbstractTokenBackend(ABC):
         Returns:
             TokenRecord with plain-text tokens for immediate use
         """
+
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
+        """Return token metadata together, preserving retrieval failure reasons.
+
+        Args:
+            gateway_id: Gateway identifier.
+            team_id: Token storage team scope.
+            app_user_email: Authenticated caller's email.
+            threshold_seconds: Refresh window in seconds.
+
+        Returns:
+            Access token details, or None when no token exists.
+
+        Raises:
+            NotImplementedError: The backend does not support strict retrieval.
+            TokenReauthorizationRequired: The user must authorize again.
+            OAuthError: The provider cannot refresh an expired token.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     async def get_user_token(

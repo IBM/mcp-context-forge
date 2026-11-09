@@ -7,15 +7,18 @@ Unit tests for DatabaseTokenBackend.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
 from mcpgateway.db import OAuthToken
+from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
 
 
@@ -394,6 +397,88 @@ async def test_store_tokens_no_expires_in_persists_null(backend_with_encryption,
 
 
 # ---------- get_user_token ----------
+
+
+@pytest.mark.asyncio
+async def test_token_details_return_token_and_metadata(backend_no_encryption, mock_db):
+    """Return metadata from the same stored record as the access token."""
+    record = _make_token_record(access_token="caller-access")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+
+    result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "caller-access"
+    assert result.expires_at == record.expires_at
+    assert result.scopes == record.scopes
+    assert not hasattr(result, "refresh_token")
+    assert mock_db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_token_details_serialize_concurrent_refreshes(backend_no_encryption, mock_db):
+    """Concurrent requests use the refreshed token after the first refresh."""
+    record = _make_token_record(access_token="old", expires_at=datetime.now(timezone.utc) + timedelta(seconds=30))
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh(token_record, raise_errors=False):
+        started.set()
+        await release.wait()
+        token_record.access_token = "new"
+        token_record.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        return "new"
+
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=refresh)) as refresh_mock:
+        first = asyncio.create_task(backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com"))
+        await started.wait()
+        second = asyncio.create_task(backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com"))
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(first, second)
+
+    assert [result.access_token for result in results] == ["new", "new"]
+    refresh_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [OAuthError("unavailable"), httpx.ConnectError("unavailable"), ValueError("decryption failed")])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_token_details_keep_valid_token_when_refresh_fails(backend_no_encryption, mock_db, error, expired):
+    """A transient refresh failure preserves the current usable access token."""
+    record = _make_token_record(access_token="still-valid", expires_at=datetime.now(timezone.utc) + timedelta(seconds=-60 if expired else 60))
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=error)):
+        if expired:
+            with pytest.raises(type(error)):
+                await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+            return
+        result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "still-valid"
+
+
+@pytest.mark.asyncio
+async def test_token_details_distinguish_missing_and_expired(backend_no_encryption, mock_db):
+    """An expired stored token requires authorization; a missing row returns None."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    assert await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com") is None
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(refresh_token=None, expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
+
+    with pytest.raises(TokenReauthorizationRequired):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_token_details_propagate_database_failure(backend_no_encryption, mock_db):
+    """Database failures remain distinct from an absent token."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    mock_db.execute.side_effect = SQLAlchemyError("Database unavailable")
+    with pytest.raises(SQLAlchemyError):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
 
 
 @pytest.mark.asyncio
