@@ -17,26 +17,16 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-10-21T23:59:59Z"
-cpex-url-reputation = "2026-10-28T23:59:59Z"
-cpex-rate-limiter = "2026-10-28T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-10-28T23:59:59Z"
-cpex-pii-filter = "2026-10-28T23:59:59Z"
-cpex-retry-with-backoff = "2026-10-28T23:59:59Z"
-cpex-output-length-guard = "2026-10-28T23:59:59Z"
-cpex-secrets-detection = "2026-10-28T23:59:59Z"
-cpex-sql-sanitizer = "2026-10-28T23:59:59Z"
-certifi = "2026-10-27T23:59:59Z"
-pillow = "2026-10-27T23:59:59Z"
-uv = "2026-10-27T23:59:59Z"
-pip = "2026-10-27T23:59:59Z"
-brotli = "2026-10-27T23:59:59Z"
-brotlicffi = "2026-10-27T23:59:59Z"
-filelock = "2026-10-27T23:59:59Z"
-setuptools = "2026-10-27T23:59:59Z"
-virtualenv = "2026-10-27T23:59:59Z"
-opentelemetry-api = "2026-10-27T23:59:59Z"
-oauthlib = "2026-11-01T23:59:59Z"
+cpex = "2026-11-09T23:59:59Z"
+cpex-url-reputation = "2026-11-09T23:59:59Z"
+cpex-rate-limiter = "2026-11-09T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-11-09T23:59:59Z"
+cpex-pii-filter = "2026-11-09T23:59:59Z"
+cpex-retry-with-backoff = "2026-11-09T23:59:59Z"
+cpex-output-length-guard = "2026-11-09T23:59:59Z"
+cpex-secrets-detection = "2026-11-09T23:59:59Z"
+cpex-sql-sanitizer = "2026-11-09T23:59:59Z"
+oauthlib = "2026-11-09T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -180,7 +170,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
+    "schemathesis>=4.15.2,<4.31.1", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9; 4.31.1+ puts a 128-bit seed in xdist workerinput, which rstest msgpack cannot serialize
     "pyupgrade>=3.21.2",
     "radon>=6.0.1",
     "redis>=8.0.1",
