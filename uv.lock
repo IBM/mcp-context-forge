@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -8,30 +8,30 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-25T16:36:15.202348236Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
-setuptools = "2026-10-27T23:59:59Z"
-pillow = "2026-10-27T23:59:59Z"
-opentelemetry-api = "2026-10-27T23:59:59Z"
-oauthlib = "2026-11-01T23:59:59Z"
+brotli = "2026-10-27T23:59:59Z"
+brotlicffi = "2026-10-27T23:59:59Z"
+certifi = "2026-10-27T23:59:59Z"
 cpex = "2026-10-21T23:59:59Z"
-cpex-retry-with-backoff = "2026-10-28T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-10-28T23:59:59Z"
 cpex-output-length-guard = "2026-10-28T23:59:59Z"
 cpex-pii-filter = "2026-10-28T23:59:59Z"
-cpex-url-reputation = "2026-10-28T23:59:59Z"
 cpex-rate-limiter = "2026-10-28T23:59:59Z"
-cpex-sql-sanitizer = "2026-10-28T23:59:59Z"
-uv = "2026-10-27T23:59:59Z"
-brotlicffi = "2026-10-27T23:59:59Z"
-pip = "2026-10-27T23:59:59Z"
-brotli = "2026-10-27T23:59:59Z"
-virtualenv = "2026-10-27T23:59:59Z"
+cpex-retry-with-backoff = "2026-10-28T23:59:59Z"
 cpex-secrets-detection = "2026-10-28T23:59:59Z"
-certifi = "2026-10-27T23:59:59Z"
+cpex-sql-sanitizer = "2026-10-28T23:59:59Z"
+cpex-url-reputation = "2026-10-28T23:59:59Z"
 filelock = "2026-10-27T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-10-28T23:59:59Z"
+oauthlib = "2026-11-01T23:59:59Z"
+opentelemetry-api = "2026-10-27T23:59:59Z"
+pillow = "2026-10-27T23:59:59Z"
+pip = "2026-10-27T23:59:59Z"
+setuptools = "2026-10-27T23:59:59Z"
+uv = "2026-10-27T23:59:59Z"
+virtualenv = "2026-10-27T23:59:59Z"
 
 [[package]]
 name = "a2a-sdk"
@@ -173,9 +173,9 @@ name = "aiologic"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "sniffio", marker = "python_full_version < '3.13'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "wrapt", marker = "python_full_version < '3.13'" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f1/7a/d51f2fde1e8ae8a83431f8e97b7a71e9358cdb1d4d2ce6be387fa44d68de/aiologic-0.17.1.tar.gz", hash = "sha256:2e1b93b9e88ced318c2a63ad7b382688f40cbfe40e3d42258d49dc9c5aea179d", size = 252354, upload-time = "2026-06-27T20:41:33.25Z" }
 wheels = [
@@ -440,15 +440,15 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.8.0"
+version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "joserfc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/51/bc1729d3cfdc214b4935f4e886e4dd443c3065fd8e1e66423fe84b490f81/authlib-1.8.0.tar.gz", hash = "sha256:f3ecd5f1da737262fb53bf1a4d95c4ea1ad9dd509316587a255c99ab1838a4f0", size = 177759, upload-time = "2026-08-30T12:12:34.833Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/dc/087c08741a98d234c9b98beef8a28d3c309f814d14b6156422c5815bf6d6/authlib-1.9.1.tar.gz", hash = "sha256:5c7d9848f47cac340f060f76ae0bc09b59f5c8e89cc1bb032d4370a0c55b5974", size = 182700, upload-time = "2026-10-14T14:17:52.307Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/c6/6f124bcfbbfb20fba22c939b4e43a06dccfc0e1ca20e5634ca573cb1e271/authlib-1.8.0-py2.py3-none-any.whl", hash = "sha256:88aebbd9af6757e14e912d5dc007ae1dc1f3e27e3b2152ce7c552ee2c3b3c121", size = 260804, upload-time = "2026-08-30T12:12:33.162Z" },
+    { url = "https://files.pythonhosted.org/packages/39/44/a46089266de32a0d809023b6bf31b80a1f26a46954446a7ce695a565cbea/authlib-1.9.1-py2.py3-none-any.whl", hash = "sha256:8b9be8b1e5174dcbf5520e984f1a22dc2edae5b6e40a61d4cedbf86b97e9e69b", size = 266042, upload-time = "2026-10-14T14:17:50.695Z" },
 ]
 
 [[package]]
@@ -1326,8 +1326,8 @@ name = "culsans"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiologic", marker = "python_full_version < '3.13'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "aiologic" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d9/e3/49afa1bc180e0d28008ec6bcdf82a4072d1c7a41032b5b759b60814ca4b0/culsans-0.11.0.tar.gz", hash = "sha256:0b43d0d05dce6106293d114c86e3fb4bfc63088cfe8ff08ed3fe36891447fe33", size = 107546, upload-time = "2025-12-31T23:15:38.196Z" }
 wheels = [
