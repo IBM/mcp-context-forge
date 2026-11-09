@@ -28,6 +28,7 @@ import pytest
 
 # Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt
+from tests.live_gateway.helpers.mcp_test_helpers import TEST_PASSWORD
 
 pytestmark = pytest.mark.e2e
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -87,7 +88,7 @@ def _platform_viewer_client(admin_client: httpx.Client, base_url: str) -> httpx.
         A client authenticated with the platform viewer's session token.
     """
     email = f"observability-viewer-{uuid.uuid4().hex[:8]}@test.com"
-    password = f"Aa1!{secrets.token_urlsafe(24)}"
+    password = TEST_PASSWORD
     created = admin_client.post(
         "/auth/email/admin/users",
         json={
