@@ -104,7 +104,7 @@ from mcpgateway.services.metrics import (
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.prompt_service import _upstream_root_cause, PromptInputRequired, PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
+from mcpgateway.services.prompt_service import PromptInputRequired, PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import (
     _read_resource_with_meta,
     ResourceInputRequired,
@@ -1754,9 +1754,6 @@ async def _proxy_read_resource_to_gateway(  # pylint: disable=unused-argument
     except ResourceInputRequired:
         raise
     except Exception as e:
-        wrapped = _upstream_root_cause(e, ResourceInputRequired)
-        if isinstance(wrapped, ResourceInputRequired):
-            raise wrapped from e
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
         return []
 
