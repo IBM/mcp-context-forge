@@ -14,8 +14,10 @@ Run:
     uv run pytest tests/unit/mcpgateway/utils/test_mcp_proxy_client.py -v
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import json
 from unittest.mock import MagicMock, patch
@@ -26,6 +28,7 @@ from mcp.shared._httpx_utils import stream_within_origin
 from mcp.shared.exceptions import MCPError
 import pytest
 
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
@@ -412,3 +415,108 @@ async def test_error_response_hook_translates_final_redirect_but_never_cancellat
     assert translated.response.status_code == 307
     assert hook.to_transport_error(RuntimeError("unrelated")) is None
     assert hook.to_transport_error(asyncio.CancelledError()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["sse", "streamablehttp"])
+@pytest.mark.parametrize("assigned_id", [None, "assigned-upstream"])
+async def test_session_capture_and_real_initialization_span(monkeypatch, transport, assigned_id):
+    """Capture upstream IDs during the handshake and finish initialization before tool execution."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # Third-Party
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    # First-Party
+    from mcpgateway import observability
+    from mcpgateway.utils.streamable_http_compat import UpstreamSessionInfo
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(observability, "_TRACER", provider.get_tracer(__name__))
+    info = UpstreamSessionInfo()
+
+    @asynccontextmanager
+    async def handshake(*_args, **_kwargs):
+        if assigned_id:
+            if transport == "sse":
+                info.capture_sse(assigned_id)
+            else:
+                await info.capture_response(httpx2.Response(200, headers={"Mcp-Session-Id": assigned_id}))
+        yield MagicMock()
+
+    client_cls = MagicMock()
+
+    async def enter(*_args):
+        async with handshake():
+            return MagicMock()
+
+    client_cls.return_value.__aenter__.side_effect = enter
+    with (
+        patch("mcpgateway.utils.mcp_proxy_client.Client", client_cls),
+        patch("mcpgateway.utils.mcp_proxy_client.sse_client", return_value=MagicMock()) as sse_mock,
+        patch("mcpgateway.utils.mcp_proxy_client.streamable_http_client", return_value=MagicMock()),
+    ):
+        async with mcp_proxy_client(_URL, transport=transport, session_info=info):
+            spans = exporter.get_finished_spans()
+            assert len(spans) == 1
+            assert spans[0].name == "mcp.client.initialize"
+            assert spans[0].attributes.get("gateway.upstream.session_id") == assigned_id
+            assert info.session_id == assigned_id
+        if transport == "sse":
+            assert sse_mock.call_args.kwargs["on_session_created"] == info.capture_sse
+    provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_session_info_response_hook_retains_only_assigned_id():
+    """Capture IDs through real HTTP response hooks without replacing them on unrelated responses."""
+    # First-Party
+    from mcpgateway.utils.streamable_http_compat import UpstreamSessionInfo
+
+    info = UpstreamSessionInfo()
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(200, headers={"Mcp-Session-Id": "upstream"}))) as client:
+        info.install(client)
+        await client.get(_URL)
+    await info.capture_response(httpx2.Response(200))
+    await info.capture_response(httpx2.Response(503, headers={"Mcp-Session-Id": "unassigned"}))
+    assert info.session_id == "upstream"
+
+
+@pytest.mark.parametrize("enabled,external", [(False, False), (True, False), (True, True)])
+def test_upstream_request_context_limits_sdk_baggage(monkeypatch, enabled, external):
+    """Constrain SDK injection to external baggage policy and restore the caller context."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+    # Third-Party
+    from opentelemetry import baggage, context
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    # First-Party
+    from mcpgateway import observability
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(observability, "get_settings", lambda: settings)
+    monkeypatch.setattr(settings, "otel_baggage_enabled", enabled)
+    monkeypatch.setattr(settings, "otel_baggage_propagate_to_external", external)
+    token = context.attach(baggage.set_baggage("tenant.id", "tenant-a"))
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(observability.RequestRootFilteringSpanProcessor(SimpleSpanProcessor(exporter), system_traces_enabled=True))
+    try:
+        with provider.get_tracer(__name__).start_as_current_span("request") as parent:
+            with observability.upstream_request_context():
+                assert observability.trace.get_current_span() is parent
+                assert baggage.get_baggage("tenant.id") == ("tenant-a" if enabled and external else None)
+                with provider.get_tracer(__name__).start_as_current_span("sdk") as sdk_span:
+                    assert sdk_span.attributes["baggage.tenant.id"] == "tenant-a"
+            assert baggage.get_baggage("tenant.id") == "tenant-a"
+    finally:
+        context.detach(token)
+        provider.shutdown()

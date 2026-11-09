@@ -548,6 +548,10 @@ async def test_gateway_internal_session_headers_are_stripped_before_upstream(reg
             "Authorization": "Bearer token",
             "Mcp-Session-Id": "should-not-leak",
             "X-Mcp-Session-Id": "also-should-not-leak",
+            "TraceParent": "stale",
+            "traceSTATE": "old=value",
+            "Baggage": "tenant=old",
+            "X-Correlation-ID": "old",
         },
         transport_type=TransportType.STREAMABLE_HTTP,
     ):
@@ -558,6 +562,7 @@ async def test_gateway_internal_session_headers_are_stripped_before_upstream(reg
     assert forwarded_headers.get("Authorization") == "Bearer token"
     assert "Mcp-Session-Id" not in forwarded_headers
     assert "X-Mcp-Session-Id" not in forwarded_headers
+    assert not {key.lower() for key in forwarded_headers} & {"traceparent", "tracestate", "baggage", "x-correlation-id"}
     # The SDK always wants this Accept value.
     assert forwarded_headers.get("Accept") == "application/json, text/event-stream"
 
@@ -1744,8 +1749,8 @@ async def test_default_session_factory_client_handshake_failure_raises_contextua
     created_tasks: list[asyncio.Task] = []
     real_create_task = asyncio.create_task
 
-    def spy_create_task(coro, *, name=None):
-        task = real_create_task(coro, name=name)
+    def spy_create_task(coro, *, name=None, context=None):
+        task = real_create_task(coro, name=name, context=context)
         created_tasks.append(task)
         return task
 
@@ -2394,6 +2399,7 @@ async def test_default_session_factory_timeout_structured_logging_failure(monkey
     monkeypatch.setattr(usr, "Client", _FakeClient)
 
     # Patch get_structured_logger to fail
+    # First-Party
     from mcpgateway.services import structured_logger
 
     monkeypatch.setattr(structured_logger, "get_structured_logger", _broken_get_structured_logger)
@@ -2408,3 +2414,94 @@ async def test_default_session_factory_timeout_structured_logging_failure(monkey
     debug_logs = [rec for rec in caplog.records if rec.levelname == "DEBUG" and "Structured logging failed" in rec.getMessage()]
     assert len(debug_logs) >= 1, f"Expected DEBUG log for structured logging failure, got logs: {[r.getMessage() for r in caplog.records]}"
     assert any("timeout" in log.getMessage().lower() for log in debug_logs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", list(TransportType))
+async def test_factory_captures_upstream_id_and_detaches_request_baggage(monkeypatch, transport):
+    """Capture actual upstream IDs while lifecycle tasks exclude request baggage and identity."""
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # Third-Party
+    import httpx2
+    from opentelemetry import baggage, context, trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    # First-Party
+    from mcpgateway import observability
+    from mcpgateway.services import upstream_session_registry as usr
+    from mcpgateway.utils.trace_context import clear_trace_context, get_trace_user_email, set_trace_user_email
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer(__name__)
+    monkeypatch.setattr(observability, "_TRACER", tracer)
+
+    @asynccontextmanager
+    async def transport_context(**kwargs):
+        assert not baggage.get_all()
+        assert get_trace_user_email() is None
+        assert trace.get_current_span().is_recording()
+        if transport is TransportType.SSE:
+            kwargs["on_session_created"]("assigned")
+        else:
+            await kwargs["session_info"].capture_response(httpx2.Response(200, headers={"Mcp-Session-Id": "assigned"}))
+        yield ("read", "write")
+
+    monkeypatch.setattr(usr, "sse_client", transport_context)
+    monkeypatch.setattr(usr, "streamable_http_client", transport_context)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
+    baggage_token = context.attach(baggage.set_baggage("tenant.id", "first-request"))
+    set_trace_user_email("first@example.com")
+    try:
+        with tracer.start_as_current_span("call") as call_span:
+            _, lifecycle = await usr._default_session_factory(_make_request(transport_type=transport))
+            try:
+                assert lifecycle.session_info.session_id == "assigned"
+                initialized = exporter.get_finished_spans()[0]
+                assert initialized.name == "mcp.client.initialize"
+                assert initialized.parent.span_id == call_span.get_span_context().span_id
+                assert initialized.attributes["gateway.upstream.session_id"] == "assigned"
+                assert baggage.get_baggage("tenant.id") == "first-request"
+            finally:
+                lifecycle.shutdown_event.set()
+                await lifecycle.owner_task
+    finally:
+        context.detach(baggage_token)
+        clear_trace_context()
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("assigned", [False, True])
+async def test_registry_session_ids_follow_reuse_and_recreation(assigned):
+    """Retain an upstream ID on reuse and replace it after eviction without inventing stateless IDs."""
+    # Standard
+    from dataclasses import replace
+
+    # First-Party
+    from mcpgateway.utils.streamable_http_compat import UpstreamSessionInfo
+
+    factory, records = _make_fake_factory()
+
+    async def tracked_factory(req):
+        session, lifecycle = await factory(req)
+        return session, replace(lifecycle, session_info=UpstreamSessionInfo(f"assigned-{len(records)}" if assigned else None))
+
+    registry = UpstreamSessionRegistry(session_factory=tracked_factory)
+    arguments = {"downstream_session_id": "downstream", "gateway_id": "gateway", "url": "http://upstream/mcp", "headers": None, "transport_type": TransportType.STREAMABLE_HTTP}
+    try:
+        for _ in range(2):
+            async with registry.acquire(**arguments) as upstream:
+                assert upstream.upstream_session_id == ("assigned-1" if assigned else None)
+        assert len(records) == 1
+        await registry.evict_session("downstream")
+        async with registry.acquire(**arguments) as upstream:
+            assert upstream.upstream_session_id == ("assigned-2" if assigned else None)
+    finally:
+        await registry.close_all()
