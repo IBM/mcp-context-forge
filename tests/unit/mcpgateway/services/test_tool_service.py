@@ -3819,6 +3819,7 @@ class TestToolService:
     @pytest.mark.parametrize("failed", [False, True])
     async def test_invoke_tool_mcp_registry_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db, monkeypatch, transport, failed):
         """Reuse traced sessions with isolated per-call metadata and correct outcomes."""
+        pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
         # Third-Party
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
