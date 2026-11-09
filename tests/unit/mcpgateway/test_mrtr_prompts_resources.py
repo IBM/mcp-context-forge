@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 # Third-Party
+import anyio
 from mcp import Client
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.prompts.base import UserMessage
@@ -312,3 +313,69 @@ async def test_direct_proxy_read_raises_the_signal_and_forwards_the_retry(monkey
 
     contents = await tr._proxy_read_resource_to_gateway(gateway, "vault://bob", {}, None, {"pin": _answer(pin="4242")}, signal.value.result.request_state)
     assert contents[0].text == "secret for bob: 4242"
+
+
+# --------------------------------------------------------------------------- #
+# RESOURCE SERVICE: real rounds through invoke_resource on both transports.
+#
+# The resource service raises the "input required" signal while the SDK client
+# is still open. The SDK runs its client inside a task group, so on a real
+# connection the signal comes out wrapped in an ExceptionGroup. The fixture
+# below reproduces that wrapping, and the service has to unwrap it.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def grouped_in_process_proxy(upstream, monkeypatch):
+    """Like ``in_process_proxy``, but the client runs inside a task group, so the signal comes out wrapped in an ExceptionGroup."""
+
+    @asynccontextmanager
+    async def fake_proxy_client(**_kwargs):
+        async with anyio.create_task_group():
+            async with Client(upstream, mode=MODERN) as client:
+                yield client
+
+    monkeypatch.setattr(ps, "mcp_proxy_client", fake_proxy_client)
+    monkeypatch.setattr(rs, "mcp_proxy_client", fake_proxy_client)
+    monkeypatch.setattr(ps, "_downstream_session_id_from_request", lambda: None)
+    monkeypatch.setattr(ps, "build_gateway_auth_headers", lambda _gateway: {})
+
+
+def _gateway_resource(transport: str) -> tuple[MagicMock, MagicMock]:
+    resource = MagicMock()
+    resource.id, resource.name, resource.gateway_id = "res-1", "vault", "gw-1"
+    gateway = MagicMock()
+    gateway.id, gateway.name, gateway.url, gateway.transport = "gw-1", "upstream", "http://upstream.test/mcp", transport
+    gateway.ca_certificate = gateway.ca_certificate_sig = gateway.auth_type = gateway.oauth_config = gateway.auth_query_params = None
+    gateway.auth_value = {}
+    return resource, gateway
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["streamablehttp", "sse"])
+@pytest.mark.parametrize("proxy_fixture", ["in_process_proxy", "grouped_in_process_proxy"])
+async def test_resource_invoke_relays_the_question_and_serves_after_the_answer(request, transport, proxy_fixture):
+    """Both per-call transport branches raise the signal, wrapped or not, and serve once answered."""
+    request.getfixturevalue(proxy_fixture)
+    service = rs.ResourceService()
+    resource, gateway = _gateway_resource(transport)
+
+    with pytest.raises(ResourceInputRequired) as signal:
+        await service.invoke_resource(MagicMock(), "res-1", "vault://bob", resource_obj=resource, gateway_obj=gateway)
+    assert set(signal.value.result.input_requests) == {"pin"}
+
+    served = await service.invoke_resource(
+        MagicMock(), "res-1", "vault://bob", resource_obj=resource, gateway_obj=gateway, input_responses={"pin": _answer(pin="4242")}, request_state=signal.value.result.request_state
+    )
+    assert served == "secret for bob: 4242"
+
+
+def test_mrtr_intake_passes_a_non_elicitation_answer_through_raw():
+    """An answer that is not an ElicitResult (a sampling reply, say) is forwarded as the client sent it."""
+    ctx = _request_context(
+        MODERN, {"inputResponses": {"s": {"role": "assistant", "content": {"type": "text", "text": "hi"}}, "q": {"action": "accept", "content": {"pin": "1"}}}, "requestState": "sealed"}
+    )
+    mrtr_allowed, input_responses, request_state = tr._mrtr_intake(ctx)
+    assert mrtr_allowed and request_state == "sealed"
+    assert input_responses["s"] == {"role": "assistant", "content": {"type": "text", "text": "hi"}}
+    assert isinstance(input_responses["q"], types.ElicitResult)
