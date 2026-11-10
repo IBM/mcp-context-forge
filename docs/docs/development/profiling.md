@@ -776,5 +776,5 @@ except Exception as e:
 - [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, session pool, connection pool tuning
 - [Database Performance Guide](db-performance.md) - N+1 detection and query logging
 - [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity
-- [Performance Testing](../testing/performance.md) - Load testing with hey
+- [Performance Testing](https://github.com/IBM/mcp-context-forge/blob/main/tests/performance/performance.md) - Load testing with hey
 - [Scaling Guide](../manage/scale.md) - Production scaling configuration

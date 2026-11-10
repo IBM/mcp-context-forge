@@ -314,7 +314,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.1.0"
+    org.opencontainers.image.version="1.1.1"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
