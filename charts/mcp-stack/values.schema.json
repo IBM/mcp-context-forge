@@ -316,6 +316,25 @@
                 "database"
               ]
             },
+            "CEL_EXECUTION": {
+              "type": "string",
+              "description": "Where tool validation policies (CEL) run",
+              "default": "subprocess",
+              "enum": [
+                "subprocess",
+                "inprocess"
+              ]
+            },
+            "CEL_TIMEOUT_SECONDS": {
+              "type": "string",
+              "description": "Wall-clock limit for one policy evaluation (seconds, at most 1.0)",
+              "default": "1.0"
+            },
+            "CEL_WORKERS": {
+              "type": "string",
+              "description": "Policy sandbox worker processes per gateway process",
+              "default": "2"
+            },
             "CLIENT_MODE": {
               "type": "string"
             },

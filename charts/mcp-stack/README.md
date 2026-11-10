@@ -650,6 +650,9 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS | string | `'["&&", ";", "||", "$(", "> ", "< "]'` | Substrings blocked in tool descriptions (JSON array) |
+| mcpContextForge.config.CEL_EXECUTION | string | `"subprocess"` | Where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess |
+| mcpContextForge.config.CEL_TIMEOUT_SECONDS | string | `"1.0"` | Wall-clock limit for one policy evaluation (seconds, at most 1.0) |
+| mcpContextForge.config.CEL_WORKERS | string | `"2"` | Policy sandbox worker processes per gateway process |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |
@@ -1101,7 +1104,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | redis.probes.readiness.type | string | `"exec"` |  |
 | redis.probes.readiness.command[0] | string | `"sh"` |  |
 | redis.probes.readiness.command[1] | string | `"-c"` |  |
-| redis.probes.readiness.command[2] | string | `"if [ -n \"${REDIS_PASSWORD:-}\" ]; then\n  redis-cli --no-auth-warning -a \"${REDIS_PASSWORD}\" PING\nelse\n  redis-cli PING\nfi\n"` |  |
+| redis.probes.readiness.command[2] | string | `"if [ -n \"${REDIS_PASSWORD:-}\" ]; then\n  redis-cli --no-auth-warning -a \"${REDIS_PASSWORD}\" PING\nelse\n  redis-cli PING\nfi\n"` |  | <!-- pragma: allowlist secret -->
 | redis.probes.readiness.initialDelaySeconds | int | `10` |  |
 | redis.probes.readiness.periodSeconds | int | `15` |  |
 | redis.probes.readiness.timeoutSeconds | int | `5` |  |
@@ -1110,7 +1113,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | redis.probes.liveness.type | string | `"exec"` |  |
 | redis.probes.liveness.command[0] | string | `"sh"` |  |
 | redis.probes.liveness.command[1] | string | `"-c"` |  |
-| redis.probes.liveness.command[2] | string | `"if [ -n \"${REDIS_PASSWORD:-}\" ]; then\n  redis-cli --no-auth-warning -a \"${REDIS_PASSWORD}\" PING\nelse\n  redis-cli PING\nfi\n"` |  |
+| redis.probes.liveness.command[2] | string | `"if [ -n \"${REDIS_PASSWORD:-}\" ]; then\n  redis-cli --no-auth-warning -a \"${REDIS_PASSWORD}\" PING\nelse\n  redis-cli PING\nfi\n"` |  | <!-- pragma: allowlist secret -->
 | redis.probes.liveness.initialDelaySeconds | int | `5` |  |
 | redis.probes.liveness.periodSeconds | int | `20` |  |
 | redis.probes.liveness.timeoutSeconds | int | `5` |  |
@@ -1417,7 +1420,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | testing.fastTime.register.gatewayPath | string | `"/http"` |  |
 | testing.fastTime.register.transport | string | `"STREAMABLEHTTP"` |  |
 | testing.fastTime.register.createVirtualServer | bool | `true` |  |
-| testing.fastTime.register.virtualServerId | string | `"9779b6698cbd4b4995ee04a4fab38737"` |  |
+| testing.fastTime.register.virtualServerId | string | `"9779b6698cbd4b4995ee04a4fab38737"` |  | <!-- pragma: allowlist secret -->
 | testing.fastTime.register.virtualServerName | string | `"Fast Time Server"` |  |
 | testing.fastTime.register.virtualServerDescription | string | `"Virtual server exposing Fast Time MCP tools/resources/prompts"` |  |
 | testing.a2aEchoAgent.enabled | bool | `true` |  |

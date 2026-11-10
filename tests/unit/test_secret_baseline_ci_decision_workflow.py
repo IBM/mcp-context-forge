@@ -23,6 +23,14 @@ PRE_COMMIT_WORKFLOW = Path(".github/workflows/pre-commit.yml")
 DECISION_SCRIPT = Path(".github/scripts/secret_baseline_ci_decision.py")
 MAKEFILE = Path("Makefile")
 
+FULL_CI_IF = "needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false'"
+SECRETS_ONLY_IF = "needs.ci-decision.result == 'success' && needs.ci-decision.outputs.run-full-ci == 'false'"
+# The pre-commit job runs the fast path on pull requests and the full path on pushes; both share the CI decision gate.
+PRE_COMMIT_STEP_IFS = {
+    "Run pre-commit on changed files": f"github.event_name == 'pull_request' && ({FULL_CI_IF})",
+    "Run pre-commit on all files": f"github.event_name != 'pull_request' && ({FULL_CI_IF})",
+}
+
 
 class _JsonResponse(io.BytesIO):
     def __enter__(self) -> "_JsonResponse":
@@ -274,8 +282,8 @@ def test_previous_workflow_api_failure_runs_full_ci(monkeypatch: pytest.MonkeyPa
     ],
 )
 def test_full_ci_gate_only_skips_on_explicit_false(event_name: str, decision_result: str, run_full_ci: str, expected: bool) -> None:
-    full_ci_if = _step_if_expression("Run pre-commit")
-    assert full_ci_if == "needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false'"
+    for step_name, expected_if in PRE_COMMIT_STEP_IFS.items():
+        assert _step_if_expression(step_name) == expected_if
 
     should_run_full_ci = decision_result != "success" or run_full_ci != "false"
 
@@ -284,8 +292,6 @@ def test_full_ci_gate_only_skips_on_explicit_false(event_name: str, decision_res
 
 def test_pre_commit_uses_shared_decision_for_fast_path() -> None:
     text = PRE_COMMIT_WORKFLOW.read_text(encoding="utf-8")
-    full_ci_if = "needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false'"
-    secrets_only_if = "needs.ci-decision.result == 'success' && needs.ci-decision.outputs.run-full-ci == 'false'"
 
     assert "git diff-tree" not in text
     assert "github.event.pull_request.head.sha" not in text
@@ -296,8 +302,9 @@ def test_pre_commit_uses_shared_decision_for_fast_path() -> None:
     assert Path(".github/workflows/secret-baseline-ci-decision.yml").exists() is False
     assert DECISION_SCRIPT.exists()
     assert re.search(r"ci-decision:\n\s+name: Full CI decision", text)
-    assert _step_if_expression("Run pre-commit") == full_ci_if
-    assert _step_if_expression("Run detect-secrets validation") == secrets_only_if
+    for step_name, expected_if in PRE_COMMIT_STEP_IFS.items():
+        assert _step_if_expression(step_name) == expected_if
+    assert _step_if_expression("Run detect-secrets validation") == SECRETS_ONLY_IF
 
 
 def test_pr_workflows_gate_heavy_jobs_on_ci_decision() -> None:

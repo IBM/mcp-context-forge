@@ -69,7 +69,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 from mcp.types import ListToolsResult
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -151,6 +151,15 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_actor import build_actor_oauth_config, exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+from mcpgateway.services.tool_validation_policy import (
+    admit_stored_tool,
+    admit_tool,
+    apply_refusal,
+    check_policy_permission,
+    policy_changed,
+    policy_text,
+    record_policy_change,
+)
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
@@ -2451,6 +2460,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params=preparation.auth_query_params_encrypted,
             oauth_config=preparation.oauth_config,
             passthrough_headers=gateway.passthrough_headers,
+            tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
             tools=[],
             resources=[],
             prompts=[],
@@ -2554,6 +2564,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
+            if policy_text(getattr(gateway, "tool_validation_policy", None)):
+                await check_policy_permission(db, owner_email or created_by, resource_type="gateways", team_id=team_id)
             if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
                 existing_gateway = self._get_existing_gateway_for_slug_conflict(
                     db,
@@ -2632,6 +2644,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # receives the plain dict directly (see assignment above).
             tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
 
+            refusals = self._validation_refusals(tools, getattr(gateway, "tool_validation_policy", None), {}, context=f"register_gateway {gateway.name}")
+
             db_tools = []
             for tool in tools:
                 try:
@@ -2666,6 +2680,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             team_id=team_id,
                             owner_email=owner_email,
                             visibility=visibility,
+                            enabled=tool.name not in refusals,
+                            validation_refusal=refusals.get(tool.name),
                         )
                     )
                     # Warn after the tool is already in db_tools, not before: this call is
@@ -2875,6 +2891,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_query_params=preparation.auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 passthrough_headers=gateway.passthrough_headers,
+                tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
                 tools=db_tools,
                 resources=db_resources,
                 prompts=db_prompts,
@@ -2906,6 +2923,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.commit()
             db.refresh(db_gateway)
             notify_dataplane()
+            if db_gateway.tool_validation_policy:
+                record_policy_change(
+                    resource_type="gateway",
+                    resource_id=db_gateway.id,
+                    resource_name=db_gateway.name,
+                    team_id=db_gateway.team_id,
+                    user_email=owner_email or created_by,
+                    old=None,
+                    new=db_gateway.tool_validation_policy,
+                )
 
             # Update tracking
             self._active_gateways.add(db_gateway.url)
@@ -3849,6 +3876,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.url = self.normalize_url(str(gateway_update.url))
                 if gateway_update.description is not None:
                     gateway.description = gateway_update.description
+                old_policy = getattr(gateway, "tool_validation_policy", None)
+                policy_was_changed = "tool_validation_policy" in getattr(gateway_update, "model_fields_set", ()) and policy_changed(old_policy, gateway_update.tool_validation_policy)
+                if policy_was_changed:
+                    await check_policy_permission(db, user_email or modified_by, resource_type="gateways", team_id=gateway.team_id)
+                    gateway.tool_validation_policy = gateway_update.tool_validation_policy
+                    self._reapply_policy_to_stored_tools(gateway)
                 if gateway_update.transport is not None:
                     gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
@@ -4081,6 +4114,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     db.commit()
                     db.refresh(gateway)
+                    if policy_was_changed:
+                        record_policy_change(
+                            resource_type="gateway",
+                            resource_id=gateway.id,
+                            resource_name=gateway.name,
+                            team_id=gateway.team_id,
+                            user_email=user_email or modified_by,
+                            old=old_policy,
+                            new=gateway.tool_validation_policy,
+                        )
 
                     if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
                         await _evict_upstream_sessions_for_gateway(str(gateway.id))
@@ -4270,6 +4313,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db.commit()
                 db.refresh(gateway)
                 notify_dataplane()
+                if policy_was_changed:
+                    record_policy_change(
+                        resource_type="gateway",
+                        resource_id=gateway.id,
+                        resource_name=gateway.name,
+                        team_id=gateway.team_id,
+                        user_email=user_email or modified_by,
+                        old=old_policy,
+                        new=gateway.tool_validation_policy,
+                    )
 
                 # #4205: if a connect-affecting field changed, close any upstream
                 # MCP sessions pinned to this gateway so the next acquire rebuilds
@@ -4832,12 +4885,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Only update reachable status, keep enabled as-is
                     tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
                 else:
-                    # Update both enabled and reachable
+                    # Update both enabled and reachable. A tool the validation policy refused stays disabled.
                     tools_result = db.execute(
                         update(DbTool)
                         .where(DbTool.gateway_id == gateway_id)
                         .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
-                        .values(enabled=activate, reachable=reachable, updated_at=now)
+                        .values(enabled=case((DbTool.validation_refusal.is_(None), activate), else_=False), reachable=reachable, updated_at=now)
                     )
                 tools_updated = tools_result.rowcount
 
@@ -7108,7 +7161,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
+    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False, refusals: Optional[Dict[str, str]] = None) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -7117,6 +7170,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway: Gateway object
             created_via: String indicating creation source ("oauth", "update", etc.)
             update_visibility: Whether to propagate gateway visibility to existing tools
+            refusals: Validation policy refusals keyed by upstream tool name; see ``_validation_refusals``
 
         Returns:
             List of new tools to be added to the database
@@ -7124,6 +7178,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not tools:
             return []
 
+        refusals = refusals or {}
         tools_to_add = []
 
         # Batch fetch all existing tools for this gateway
@@ -7190,6 +7245,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     title_changed = existing_tool.title != _resolve_tool_title(tool)
 
+                    apply_refusal(existing_tool, refusals.get(tool.name))
+
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
 
@@ -7228,6 +7285,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     )
                     # Attach relationship to avoid NoneType during flush
                     db_tool.gateway = gateway
+                    apply_refusal(db_tool, refusals.get(tool.name))
                     tools_to_add.append(db_tool)
                     logger.debug("Created new tool: %s", tool.name)
             except Exception as e:
@@ -7542,6 +7600,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """Update/create fetched catalog rows inside caller transaction."""
         tools = [tool for tool in tools if tool is not None]
         existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
+        refusals = self._validation_refusals(
+            tools,
+            getattr(gateway, "tool_validation_policy", None),
+            {name: getattr(existing, "tool_validation_policy", None) for name, existing in existing_tools_by_original_name.items()},
+            context=f"{created_via} sync of gateway {gateway.name}",
+        )
         fetched_tool_names = {tool.name for tool in tools}
         # Match the caller's pruning policy: retained local aliases must still
         # participate in namespace validation, unlike stale discovered tools.
@@ -7567,7 +7631,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             new_tool_names=[tool.name for tool in tools],
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,
             new_prompt_names=[prompt.name for prompt in prompts] if include_prompts else None,
-            tools_to_add=self._update_or_create_tools(db, tools, gateway, created_via, update_visibility=update_visibility),
+            tools_to_add=self._update_or_create_tools(db, tools, gateway, created_via, update_visibility=update_visibility, refusals=refusals),
             resources_to_add=self._update_or_create_resources(db, resources, gateway, created_via, update_visibility=update_visibility) if include_resources else [],
             prompts_to_add=self._update_or_create_prompts(db, prompts, gateway, created_via, update_visibility=update_visibility) if include_prompts else [],
         )
@@ -8298,6 +8362,36 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> service._event_service.publish_event.assert_awaited_with(test_event)
         """
         await self._event_service.publish_event(event)
+
+    def _validation_refusals(self, tools: list[ToolCreate], gateway_policy: Any, tool_policies: dict[str, Any], context: str) -> dict[str, str]:
+        """Check fetched tools against the policy and collect the refused ones.
+
+        Args:
+            tools: Validated tools fetched from the upstream server.
+            gateway_policy: The gateway record's policy, or None.
+            tool_policies: Stored per-tool policies keyed by upstream tool name.
+            context: Short label for the log line.
+
+        Returns:
+            The refusal reason per refused tool, keyed by upstream tool name.
+        """
+        refusals: dict[str, str] = {}
+        for tool in tools:
+            name = getattr(tool, "name", None)
+            refusal = admit_tool(description=getattr(tool, "description", None), tool_name=name, tool_policy=tool_policies.get(name), gateway_policy=gateway_policy, context=context)
+            if refusal:
+                refusals[name] = refusal
+        return refusals
+
+    def _reapply_policy_to_stored_tools(self, gateway: DbGateway) -> None:
+        """Re-check every stored tool of a gateway against its policy from the saved descriptions, without contacting the upstream.
+
+        Args:
+            gateway: The gateway whose policy just changed, with its tools loaded.
+        """
+        context = f"policy change on gateway {gateway.name}"
+        for tool in gateway.tools:
+            apply_refusal(tool, admit_stored_tool(tool, gateway.tool_validation_policy, context))
 
     def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> tuple[list[ToolCreate], list[str]]:
         """Validate tools individually with richer logging and error aggregation.

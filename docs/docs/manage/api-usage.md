@@ -364,7 +364,7 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
-Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
 **Async create response example (`202 Accepted`):**
 

@@ -1913,11 +1913,10 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
 
         raise AssertionError(f"Streamable HTTP gateway {gw_id} did not produce a stable tool catalog within {_REPLICA_SYNC_DEADLINE_SECONDS}s")
     finally:
-        if gw_id:
-            with suppress(Exception):
-                delete_response = admin_api.delete(f"/gateways/{gw_id}")
-                if delete_response.status not in (200, 204, 404):
-                    logger.warning("Failed to delete Streamable HTTP gateway %s: %s %s", gw_id, delete_response.status, delete_response.text())
+        with suppress(Exception):
+            for gw in admin_api.get("/gateways").json():
+                if gw.get("name") == STREAMABLE_HTTP_GATEWAY_NAME or gw.get("url") == streamable_http_url:
+                    admin_api.delete(f"/gateways/{gw['id']}")
 
         # Restore any displaced pre-existing registration (e.g. the compose-seeded
         # "fast_time" gateway) so other tests relying on it keep working.

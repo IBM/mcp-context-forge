@@ -111,7 +111,7 @@ docker build -f Containerfile -t mcpgateway:airgapped .
 docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
 ```
 
-See [Container Deployment](../deployment/container.md#airgapped-deployments) for details.
+See [Container Deployment](../deployment/container.md#air-gapped-deployments-optional) for details.
 
 ### Local Development
 
