@@ -1167,7 +1167,7 @@ With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.prog
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
 
-Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#outbound-mcp-connect-mode-gateway-mcp-servers).
 
 ### Resources
 
