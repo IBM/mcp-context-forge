@@ -239,7 +239,7 @@ class Settings(BaseSettings):
         description=(
             "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma allowlist secret
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma: allowlist secret
             "(See Issue #1535 for details)"
         ),
     )
