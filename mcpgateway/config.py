@@ -234,13 +234,12 @@ class Settings(BaseSettings):
         default=False,
         description="Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
     )
-
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
             "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma allowlist secret
             "(See Issue #1535 for details)"
         ),
     )
