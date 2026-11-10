@@ -227,13 +227,29 @@ JWT trust mode controls how the gateway resolves the caller's identity. The defa
 | `JWT_TRUST_REVOCATION_CLAIM` | JWT claim used as the revocation identifier for trust-eligible tokens (`uti` for Entra roots) | `jti`         | non-empty string                                 |
 | `JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED` | Grant platform admin to Entra user tokens in a `JWT_TRUST_ADMIN_GROUPS` group          | `false`       | `true`, `false`                                  |
 | `JWT_TRUST_ADMIN_GROUPS`     | Entra group object IDs (GUIDs) whose members receive platform admin                          | empty         | CSV or JSON list of GUIDs                        |
+| `JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED` | Let any verified trust-mode principal read and invoke public A2A agents without a mapped role | `false`       | `true`, `false`                                  |
 
 Startup validation rules:
 
 - When `JWT_TRUST_MODE=jwt-trust`, every claim-mapping setting and `JWT_TRUST_REVOCATION_CLAIM` must be a non-empty string. The gateway refuses to start with an error naming the offending setting.
 - A trust-eligible token that lacks the configured revocation claim is rejected with `401`. The revocation claim is mandatory because trust mode relies on it for token revocation.
 - When `JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED=true`, `JWT_TRUST_MODE` must be `jwt-trust` and `JWT_TRUST_ADMIN_GROUPS` must list at least one group object ID. Group names are rejected.
+- When `JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED=true`, `JWT_TRUST_MODE` must be `jwt-trust`.
 - In trust mode, `JWT_CLAIM_TEAMS` must not name the same claim as the provider's groups claim (`SSO_ENTRA_GROUPS_CLAIM` / `SSO_KEYCLOAK_GROUPS_CLAIM` / `SSO_GENERIC_GROUPS_CLAIM`), which the external group-mapping resolver consumes; an aliased value would place raw external group IDs into native ContextForge team memberships before mapping. The gateway refuses to start with a remediation message naming both variables.
+
+#### Public A2A access
+
+With `JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED=true`, any verified trust-mode principal can list, read, and invoke `public` A2A agents. The principal needs no mapped role or team. App-only service principals (`idtyp=app`) qualify.
+
+The grant is fail-closed. It applies only when all of these hold:
+
+- The token is a verified trust-mode principal (`token_use=trusted`).
+- The route needs `a2a.read` or `a2a.invoke`. Create, update, and delete stay role-gated.
+- The target agent is `public` and enabled. Team and private agents still need a mapped role.
+- The token scopes allow the permission. An empty scope list inherits from RBAC.
+- No `HTTP_AUTH_CHECK_PERMISSION` plugin hook is registered. A registered hook stays authoritative.
+
+A request admitted by the grant runs with public-only scope. The gateway does not forward the caller's bearer token to the agent or to a remote gateway. Each grant writes one INFO log line with the user, permission, and target. The Rust sidecar routes under `/_internal/a2a/` are not covered.
 
 #### Entra group admin
 

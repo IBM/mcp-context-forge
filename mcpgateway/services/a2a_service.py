@@ -639,6 +639,27 @@ class A2AAgentService(BaseService):
 
         return {team.id: team.name for team in teams}
 
+    @staticmethod
+    def is_public_enabled_agent(db: Session, identifier: Optional[str]) -> bool:
+        """Return whether ``identifier`` names a public, enabled agent.
+
+        Args:
+            db: Database session.
+            identifier: Agent ID, name, or UAID.
+
+        Returns:
+            True when a public, enabled agent matches the identifier.
+        """
+        if not identifier:
+            return False
+        stmt = (
+            select(DbA2AAgent.id)
+            .where(DbA2AAgent.visibility == "public", DbA2AAgent.enabled.is_(True))
+            .where(or_(DbA2AAgent.id == identifier, DbA2AAgent.name == identifier, DbA2AAgent.uaid == identifier))
+            .limit(1)
+        )
+        return db.execute(stmt).first() is not None
+
     async def _check_agent_access(
         self,
         db: Session,
