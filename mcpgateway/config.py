@@ -234,6 +234,7 @@ class Settings(BaseSettings):
         default=False,
         description="Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
     )
+
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
