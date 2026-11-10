@@ -1151,7 +1151,7 @@ services:
     # service holds user sessions/auth, so an unexpected code swap matters.
     # Bump both together on release (see release-management.md #6.4); get the
     # digest with: docker buildx imagetools inspect <image>:<tag>
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.3.0@sha256:d99e8a392670e0bb368939a12e210bccb9b1bab3ff7cd8a354d2bc08d4d348ac}
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.3.1@sha256:f223f74ffba8398e292348f633139302f68e3e6a5521ba3b0d59bde84c8cde8b}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads
