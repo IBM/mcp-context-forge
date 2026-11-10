@@ -436,13 +436,17 @@ repos:
   # -----------------------------------------------------------------------------
   #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
   #  This tool must be run after all other tools have completed.
+  #  Runs against a temporary copy of .secrets.baseline so the hook never
+  #  rewrites line numbers in the committed file; see the wrapper script.
   # -----------------------------------------------------------------------------
-  - repo: https://github.com/ibm/detect-secrets
-    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
+  - repo: local
     hooks:
       - id: detect-secrets
         priority: 100
         name: 🔐 IBM Detect Secrets
         description: Detects secrets within a repository using IBM's detect-secrets.
-        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
+        entry: scripts/git/detect-secrets-hook-readonly.sh
+        language: python
+        additional_dependencies:
+          - git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
         types: [text]
