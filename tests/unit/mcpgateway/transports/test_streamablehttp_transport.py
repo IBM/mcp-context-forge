@@ -14901,7 +14901,7 @@ def _trust_mode(monkeypatch, *, payload=None, side_effect=None, revoked=False):
     monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", revocation)
     monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
     internal = AsyncMock(return_value={"sub": "internal@example.com"})
-    monkeypatch.setattr(tr, "verify_credentials", internal)
+    monkeypatch.setattr(tr, "verify_credentials_cached", internal)
     monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_try_oauth_access_token", AsyncMock(return_value=tr.OAuthAuthResult.NOT_APPLICABLE))
     monkeypatch.setattr("mcpgateway.auth.fresh_db_session", MagicMock())
     monkeypatch.setattr(
@@ -15115,7 +15115,7 @@ def _internal_path(monkeypatch, payload):
         monkeypatch: pytest monkeypatch fixture.
         payload: Payload verify_credentials returns.
     """
-    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value=payload))
+    monkeypatch.setattr(tr, "verify_credentials_cached", AsyncMock(return_value=payload))
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
     monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
     monkeypatch.setattr(tr.settings, "require_user_in_db", False)
