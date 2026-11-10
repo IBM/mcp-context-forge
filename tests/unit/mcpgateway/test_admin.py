@@ -8040,6 +8040,12 @@ class TestTokenExchangeAdminForms:
             "token_endpoint_auth_method": "client_secret_post",
         }
 
+    async def test_assemble_keeps_resource_for_a2a_client_credentials_form(self):
+        """A2A form handlers assemble ``oauth_resource`` into ``oauth_config["resource"]``."""
+        fields = {"oauth_grant_type": "client_credentials", "oauth_client_id": "c", "oauth_resource": "https://agent.example.com"}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["resource"] == "https://agent.example.com"
+
     @pytest.mark.parametrize("include_resource", [True, False])
     async def test_assemble_ignores_token_exchange_fields_for_other_grants(self, include_resource):
         """Stray token-exchange inputs never leak into client_credentials or A2A configs."""
