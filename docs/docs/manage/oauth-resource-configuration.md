@@ -57,6 +57,21 @@ ContextForge will send multiple `resource` parameters in the OAuth request. Duri
 !!! note "Resource URIs containing commas"
     URI paths and query components can legitimately contain unescaped commas (RFC 3986 pchar). The parser splits on `[,\s]+` **only when every resulting piece parses as an absolute URI**; if any piece would fail that check (no scheme), the whole input is stored as a single-URI resource. In practice: a single resource URI with commas in its query string is preserved intact.
 
+## A2A Agents
+
+An A2A agent with `auth_type: oauth` uses one agent-level token from the `client_credentials` grant. The gateway does not store a token per user for A2A agents, so there is no learned audience. Other grant types fail at invocation with an error.
+
+On each token request the gateway sends the `resource` parameter. The value is `oauth_config.resource` if set, else the origin of the agent endpoint URL. The gateway caches the token per agent until it expires.
+
+Before the gateway forwards the token to the agent, it validates the token claims with the same rules as gateways:
+
+| Precedence | Source | Severity |
+|---|---|---|
+| 1 (highest) | `oauth_config.resource` — admin-configured | Authoritative (blocking on mismatch) |
+| 2 (fallback) | Agent endpoint origin — auto-derived | Advisory, unless `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true` |
+
+Scope and issuer mismatches are blocking. Set the **Resource** field on the A2A agent form, or `oauth_config.resource` through the API, to force an audience.
+
 ## Forcing a Re-learn
 
 Two scenarios, two workflows:
