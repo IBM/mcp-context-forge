@@ -52,7 +52,13 @@ resolution. Each name resolves scope-exactly to exactly one active row
   other value (including the truthy-coercing strings ``"false"``/``"0"``
   /``"no"``) is non-admin. A present but non-canonical value logs one
   structured warning naming the claim and its JSON type, never the value.
-  A missing claim is silently non-admin (fail-closed).
+  A missing claim is silently non-admin (fail-closed). Optionally
+  (``jwt_trust_entra_group_admin_enabled``, default off), an Entra user
+  token whose final ``groups`` list contains an object ID from
+  ``jwt_trust_admin_groups`` is also admin. The grant ORs with the claim,
+  requires an Entra issuer whose path tenant equals ``tid``, and never
+  applies to app-only service principals (``idtyp == "app"`` or
+  ``sub == oid``).
 - ``auth_provider``: the token issuer (``iss``) when present, else the
   string ``"jwt-trust"``.
 - ``token_use``: the constant string ``"trusted"``.
@@ -67,6 +73,7 @@ with 401 semantics.
 from dataclasses import dataclass, field
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import HTTPException, status
@@ -88,6 +95,18 @@ _ADMIN_CLAIM_TRUE_STRINGS = frozenset({"true", "1", "yes"})
 #: Case-insensitive string values of the admin claim that are recognized
 #: explicit denials; they coerce False without a warning.
 _ADMIN_CLAIM_FALSE_STRINGS = frozenset({"false", "0", "no"})
+
+
+#: Hosts that issue Microsoft Entra tokens (global, sovereign clouds, v1 STS).
+_ENTRA_ISSUER_HOSTS = frozenset(
+    {
+        "login.microsoftonline.com",
+        "login.microsoftonline.us",
+        "login.microsoftonline.de",
+        "login.partner.microsoftonline.cn",
+        "sts.windows.net",
+    }
+)
 
 
 def _json_type_name(value: Any) -> str:
@@ -167,6 +186,69 @@ def _parse_admin_flag(value: Any, claim_name: str) -> bool:
         _json_type_name(value),
     )
     return False
+
+
+def _is_entra_user_token(payload: Dict[str, Any]) -> bool:
+    """Return True for an Entra token issued to an individual user.
+
+    The issuer must be an https Entra host whose first path segment equals
+    the ``tid`` claim. App-only tokens are excluded: Entra marks them with
+    ``idtyp == "app"``, and every app-only token carries ``sub == oid``
+    (user tokens carry a pairwise ``sub`` that differs from ``oid``).
+
+    Args:
+        payload: Verified JWT payload.
+
+    Returns:
+        True when the token is an Entra user token.
+
+    Examples:
+        >>> _is_entra_user_token({"iss": "https://login.microsoftonline.com/t1/v2.0", "tid": "t1", "sub": "s", "oid": "o"})
+        True
+        >>> _is_entra_user_token({"iss": "https://login.microsoftonline.com/t1/v2.0", "tid": "t1", "sub": "o", "oid": "o"})
+        False
+        >>> _is_entra_user_token({"iss": "https://idp.example.com/t1", "tid": "t1"})
+        False
+    """
+    issuer = payload.get("iss")
+    tenant = payload.get("tid")
+    if not isinstance(issuer, str) or not isinstance(tenant, str) or not tenant:
+        return False
+    parsed = urlparse(issuer)
+    if parsed.scheme != "https" or parsed.hostname not in _ENTRA_ISSUER_HOSTS:
+        return False
+    path_segments = [segment for segment in parsed.path.split("/") if segment]
+    if not path_segments or path_segments[0].casefold() != tenant.casefold():
+        return False
+    if payload.get("idtyp") == "app":
+        return False
+    oid = payload.get("oid")
+    return not (isinstance(oid, str) and payload.get("sub") == oid)
+
+
+def _has_entra_admin_group(payload: Dict[str, Any], settings: Any) -> bool:
+    """Return True when an Entra user token carries a configured admin group.
+
+    Fail-closed: requires the feature flag, a user token from an Entra
+    issuer, and a ``groups`` list containing an object ID listed in
+    ``jwt_trust_admin_groups`` (case-insensitive exact match).
+
+    Args:
+        payload: Verified JWT payload, with ``groups`` already resolved for
+            overage tokens.
+        settings: Settings carrying ``jwt_trust_entra_group_admin_enabled``
+            and ``jwt_trust_admin_groups``.
+
+    Returns:
+        True when the group grant applies.
+    """
+    if not settings.jwt_trust_entra_group_admin_enabled:
+        return False
+    admin_groups = {str(group).strip().casefold() for group in settings.jwt_trust_admin_groups if str(group).strip()}
+    groups = payload.get("groups")
+    if not admin_groups or not isinstance(groups, list) or not _is_entra_user_token(payload):
+        return False
+    return any(isinstance(group, str) and group.strip().casefold() in admin_groups for group in groups)
 
 
 def resolve_external_groups_to_teams(issuer: str, tenant: Optional[str], groups: List[str], db: Session) -> Tuple[List[str], List[str]]:
@@ -373,7 +455,10 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
       admin mapping, #5902).
     - ``is_admin`` (bool, default False): read from ``jwt_claim_admin`` and
       parsed strictly (``_parse_admin_flag``); a present but non-canonical
-      value coerces False with one structured warning.
+      value coerces False with one structured warning. When
+      ``jwt_trust_entra_group_admin_enabled`` is true, membership in a
+      ``jwt_trust_admin_groups`` group also grants admin to an Entra user
+      token (never to an app-only service principal).
     - ``auth_provider``: the token issuer (``iss``) when present, else
       ``"jwt-trust"``.
     - ``token_use``: the constant ``"trusted"``.
@@ -452,6 +537,9 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
     # intermediate state exists where one track says admin and the other
     # denies.
     is_admin = _parse_admin_flag(_get_claim(payload, settings.jwt_claim_admin), settings.jwt_claim_admin)
+    if not is_admin and _has_entra_admin_group(payload, settings):
+        is_admin = True
+        logger.info("Entra group admin granted to user %s by JWT_TRUST_ADMIN_GROUPS membership.", user_id)
     if is_admin and "platform_admin" not in roles:
         roles.append("platform_admin")
 
