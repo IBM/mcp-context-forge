@@ -171,7 +171,7 @@ class MyPlugin(PluginBase):
 
 ## Migrating OAuth Gateways to Token Exchange
 
-[RFC 8693 Token Exchange](../architecture/oauth-design.md#token-exchange-rfc-8693--on-behalf-of) (`grant_type: "token-exchange"`) is a strictly **opt-in** OAuth grant for gateways. It is a distinct configuration path from the OAuth flows described in [OAuth 2.0 Integration Design](../architecture/oauth-design.md).
+[RFC 8693 Token Exchange](../architecture/oauth-design.md#token-exchange-rfc-8693-on-behalf-of) (`grant_type: "token-exchange"`) is a strictly **opt-in** OAuth grant for gateways. It is a distinct configuration path from the OAuth flows described in [OAuth 2.0 Integration Design](../architecture/oauth-design.md).
 
 ### Impact on Existing Gateways
 

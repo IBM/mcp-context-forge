@@ -105,4 +105,4 @@ This decision has been implemented. All FastAPI endpoints use orjson for JSON se
 - Benchmark script: `scripts/benchmark_json_serialization.py`
 - Response class: `mcpgateway/utils/orjson_response.py`
 - FastAPI configuration: `mcpgateway/main.py:408`
-- Performance docs: `docs/docs/testing/performance.md`
+- Performance docs: `tests/performance/performance.md`
