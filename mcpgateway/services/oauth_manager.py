@@ -833,6 +833,7 @@ class OAuthManager:
         ca_certificate: Optional[str] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        send_resource: bool = False,
     ) -> Dict[str, Any]:
         """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
 
@@ -843,6 +844,7 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            send_resource: Send the RFC 8707 ``resource`` from ``credentials`` on the token request. Off by default so existing callers keep their request shape.
 
         Returns:
             Parsed token endpoint response containing at least ``access_token``.
@@ -870,6 +872,11 @@ class OAuthManager:
         if audience:
             token_data["audience"] = audience
             logger.debug("Including audience parameter in client credentials request: %s", sanitize_for_log(audience))
+
+        resource = runtime_credentials.get("resource")
+        if send_resource and resource and self._should_include_resource_parameter(runtime_credentials, scopes):
+            resources = resource if isinstance(resource, list) else [resource]
+            token_data = list(token_data.items()) + [("resource", item) for item in resources if item]  # type: ignore[assignment]
 
         # Fetch token with retries
         for attempt in range(self.max_retries):

@@ -482,6 +482,7 @@ def prepare_a2a_invocation(
     auth_type: Optional[str] = None,
     auth_value: Any = None,
     auth_query_params: Optional[Dict[str, str]] = None,
+    oauth_headers: Optional[Mapping[str, str]] = None,
     base_headers: Optional[Mapping[str, str]] = None,
     plugin_input_headers: Optional[Mapping[str, str]] = None,
     plugin_output_headers: Optional[Mapping[str, str]] = None,
@@ -522,6 +523,9 @@ def prepare_a2a_invocation(
                 configured_headers["Authorization"] = f"Bearer {api_key}"
             else:
                 configured_headers.update({str(key): str(value) for key, value in auth_value.items()})
+
+    if auth_type == "oauth" and oauth_headers:
+        configured_headers.update({str(key): str(value) for key, value in oauth_headers.items()})
 
     auth_query_params_decrypted: Dict[str, str] = {}
     target_endpoint_url = endpoint_url

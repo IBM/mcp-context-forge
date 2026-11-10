@@ -81,6 +81,7 @@ from mcpgateway.observability import create_child_span, create_span, inject_trac
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.a2a_oauth import resolve_a2a_oauth_headers
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -5662,6 +5663,8 @@ class ToolService(BaseService):
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
+        a2a_agent_id_value: Optional[str] = None
+        a2a_agent_oauth_config: Optional[Dict[str, Any]] = None
         a2a_agent_passthrough_headers: Optional[List[str]] = None
 
         if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
@@ -5687,6 +5690,8 @@ class ToolService(BaseService):
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
+            a2a_agent_id_value = a2a_agent_id
+            a2a_agent_oauth_config = getattr(a2a_agent, "oauth_config", None)
             a2a_agent_passthrough_headers = a2a_agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
@@ -7087,6 +7092,10 @@ class ToolService(BaseService):
                     # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
                     headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "x-vault-tokens"}
 
+                    a2a_oauth_headers: Dict[str, str] = {}
+                    if a2a_agent_auth_type == "oauth":
+                        a2a_oauth_headers = await resolve_a2a_oauth_headers(a2a_agent_id_value, a2a_agent_name, a2a_agent_endpoint_url, a2a_agent_oauth_config)
+
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
                         endpoint_url=a2a_agent_endpoint_url,
@@ -7096,6 +7105,7 @@ class ToolService(BaseService):
                         auth_type=a2a_agent_auth_type,
                         auth_value=a2a_agent_auth_value,
                         auth_query_params=a2a_agent_auth_query_params,
+                        oauth_headers=a2a_oauth_headers,
                         base_headers=headers,
                         plugin_input_headers=plugin_headers,
                         plugin_output_headers=plugin_returned_headers,
@@ -8709,6 +8719,10 @@ class ToolService(BaseService):
         """
         logger.info("Calling A2A agent '%s' at %s with arguments: %s", agent.name, agent.endpoint_url, parameters)
 
+        oauth_headers: Dict[str, str] = {}
+        if agent.auth_type == "oauth":
+            oauth_headers = await resolve_a2a_oauth_headers(agent.id, agent.name, agent.endpoint_url, agent.oauth_config)
+
         prepared = prepare_a2a_invocation(
             agent_type=agent.agent_type,
             endpoint_url=agent.endpoint_url,
@@ -8718,6 +8732,7 @@ class ToolService(BaseService):
             auth_type=agent.auth_type,
             auth_value=agent.auth_value,
             auth_query_params=agent.auth_query_params,
+            oauth_headers=oauth_headers,
             correlation_id=get_correlation_id(),
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)

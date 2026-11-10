@@ -44,6 +44,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
+from mcpgateway.services.a2a_oauth import A2AOAuthError, resolve_a2a_oauth_headers
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -2711,12 +2712,13 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
         correlation_id = get_correlation_id()
+        oauth_headers: Dict[str, str] = {}
         if agent_auth_type == "oauth":
-            # Resolve the credential here so prepare_a2a_invocation stays synchronous. The configured
-            # OAuth credential replaces any caller-supplied Authorization header.
-            oauth_authorization = await resolve_a2a_oauth_authorization(agent_id, agent_name, agent_oauth_config)
-            downstream_headers = {key: value for key, value in (downstream_headers or {}).items() if key.lower() != "authorization"}
-            downstream_headers["Authorization"] = oauth_authorization
+            try:
+                oauth_headers = await resolve_a2a_oauth_headers(agent_id, agent_name, agent_endpoint_url, agent_oauth_config)
+            except A2AOAuthError as e:
+                raise A2AAgentError(str(e)) from e
+
         try:
             prepared = prepare_a2a_invocation(
                 agent_type=agent_type,
@@ -2727,6 +2729,7 @@ class A2AAgentService(BaseService):
                 auth_type=agent_auth_type,
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
+                oauth_headers=oauth_headers,
                 base_headers=downstream_headers,
                 correlation_id=correlation_id,
             )
