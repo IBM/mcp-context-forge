@@ -163,4 +163,4 @@ and setting `ZAP_BASE_URL` before running `make test-zap`.
 - [OWASP Top 10 A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/)
 - [RBAC guide](../manage/rbac.md)
 - [Security features](../architecture/security-features.md)
-- [Performance / load testing](performance.md)
+- [Performance / load testing](https://github.com/IBM/mcp-context-forge/blob/main/tests/performance/performance.md)

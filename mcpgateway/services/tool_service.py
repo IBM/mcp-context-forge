@@ -29,7 +29,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
@@ -74,7 +74,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update, server_tool_association
+from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
@@ -101,6 +101,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+from mcpgateway.services.tool_validation_policy import admit_stored_tool, admit_tool, apply_refusal, check_policy_permission, policy_changed, policy_text, record_policy_change
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -1424,6 +1425,8 @@ class ToolService(BaseService):
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
+            "tool_validation_policy": tool.tool_validation_policy,
+            "validation_refusal": tool.validation_refusal,
             "extension_metadata": optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             "auth_type": tool.auth_type,
             "jsonpath_filter": tool.jsonpath_filter,
@@ -2317,6 +2320,29 @@ class ToolService(BaseService):
             return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
+    def _gateway_tool_validation_policies(self, db: Session, gateway_ids: Iterable[Any]) -> Dict[str, str]:
+        """Return the stored tool validation policies of several gateways in one query.
+
+        Args:
+            db: Database session.
+            gateway_ids: Gateway ids; anything that is not a non-empty string is skipped.
+
+        Returns:
+            The policy text per gateway id, for gateways that hold one.
+        """
+        wanted = {gateway_id for gateway_id in gateway_ids if isinstance(gateway_id, str) and gateway_id}
+        if not wanted:
+            return {}
+        rows = db.execute(select(DbGateway.id, DbGateway.tool_validation_policy).where(DbGateway.id.in_(wanted))).all()
+        return {str(gateway_id): policy for gateway_id, policy in rows if isinstance(policy, str)}
+
+    def _gateway_tool_validation_policy(self, db: Session, gateway_id: Optional[str]) -> Optional[str]:
+        """Return the stored tool validation policy of one gateway, or None."""
+        if not isinstance(gateway_id, str) or not gateway_id:
+            return None
+        policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+        return policy if isinstance(policy, str) else None
+
     async def register_tool(
         self,
         db: Session,
@@ -2392,6 +2418,18 @@ class ToolService(BaseService):
             tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
             validate_extension_metadata(tool_extension_metadata)
 
+            if policy_text(tool.tool_validation_policy):
+                await check_policy_permission(db, owner_email or created_by, resource_type="tools", team_id=team_id)
+            refusal = admit_tool(
+                description=tool.description,
+                tool_name=tool.name,
+                tool_policy=tool.tool_validation_policy,
+                gateway_policy=self._gateway_tool_validation_policy(db, tool.gateway_id),
+                context="register_tool",
+            )
+            if refusal:
+                raise ToolValidationError(f"Tool {tool.name!r} {refusal}")
+
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Scan tool name, description, and inputSchema
             # Convert to string to handle both string and non-string inputs
@@ -2453,6 +2491,7 @@ class ToolService(BaseService):
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
+                tool_validation_policy=tool.tool_validation_policy,
                 extension_metadata=tool_extension_metadata,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
@@ -2487,6 +2526,16 @@ class ToolService(BaseService):
             db.refresh(db_tool)
             notify_dataplane()
             await self._notify_tool_added(db_tool)
+            if db_tool.tool_validation_policy:
+                record_policy_change(
+                    resource_type="tool",
+                    resource_id=db_tool.id,
+                    resource_name=db_tool.name,
+                    team_id=db_tool.team_id,
+                    user_email=owner_email or created_by,
+                    old=None,
+                    new=db_tool.tool_validation_policy,
+                )
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
@@ -2581,6 +2630,9 @@ class ToolService(BaseService):
                 },
             )
             raise tnce
+        except (PermissionError, ToolValidationError):
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
 
@@ -2669,6 +2721,14 @@ class ToolService(BaseService):
 
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
+        may_set_policy = False
+        if any(policy_text(getattr(tool, "tool_validation_policy", None)) for tool in tools):
+            try:
+                await check_policy_permission(db, user_email or owner_email or created_by, resource_type="tools", team_id=team_id)
+                may_set_policy = True
+            except PermissionError as exc:
+                logger.info("Bulk import by %r: rows that set a tool validation policy will fail: %s", user_email or created_by, exc)
+
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
@@ -2690,6 +2750,7 @@ class ToolService(BaseService):
                 federation_source=federation_source,
                 unowned_names=unowned_names,
                 existing_tools_map=existing_tools_map,
+                may_set_policy=may_set_policy,
             )
 
             # Aggregate stats
@@ -2802,6 +2863,7 @@ class ToolService(BaseService):
         federation_source: Optional[str],
         unowned_names: frozenset = frozenset(),
         existing_tools_map: Optional[dict] = None,
+        may_set_policy: bool = False,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2821,6 +2883,7 @@ class ToolService(BaseService):
             unowned_names: Names of existing tools the caller may not modify.
             existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
+            may_set_policy: Whether the caller holds the permission to set a tool validation policy.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2837,6 +2900,7 @@ class ToolService(BaseService):
 
             tools_to_add = []
             tools_to_update = []
+            gateway_policies = self._gateway_tool_validation_policies(db, (tool.gateway_id for tool in chunk))
 
             for tool in chunk:
                 result = self._process_single_tool_for_bulk(
@@ -2853,6 +2917,8 @@ class ToolService(BaseService):
                     import_batch_id=import_batch_id,
                     federation_source=federation_source,
                     unowned_names=unowned_names,
+                    gateway_policy=gateway_policies.get(tool.gateway_id),
+                    may_set_policy=may_set_policy,
                 )
 
                 if result["status"] == "add":
@@ -2924,6 +2990,8 @@ class ToolService(BaseService):
         import_batch_id: Optional[str],
         federation_source: Optional[str],
         unowned_names: frozenset = frozenset(),
+        gateway_policy: Optional[str] = None,
+        may_set_policy: bool = False,
     ) -> dict:
         """Process a single tool for bulk import.
 
@@ -2941,6 +3009,8 @@ class ToolService(BaseService):
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
             unowned_names: Names of existing tools the caller may not modify.
+            gateway_policy: Tool validation policy of the tool's gateway, or None.
+            may_set_policy: Whether the caller holds the permission to set a tool validation policy.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2977,6 +3047,18 @@ class ToolService(BaseService):
                     # (e.g. MagicMock in tests). Don't hide actual violations - only this narrow
                     # pre-scan serialization step.
                     pass
+
+            if policy_text(tool.tool_validation_policy) and not may_set_policy:
+                return {"status": "fail", "error": f"Tool {tool.name!r} sets a tool validation policy, which requires the {Permissions.VALIDATION_POLICY_MANAGE} permission"}
+            refusal = admit_tool(
+                description=tool.description,
+                tool_name=tool.name,
+                tool_policy=tool.tool_validation_policy,
+                gateway_policy=gateway_policy,
+                context="register_tools_bulk",
+            )
+            if refusal:
+                return {"status": "fail", "error": f"Tool {tool.name!r} {refusal}"}
 
             # Extract auth information
             if tool.auth is None:
@@ -3990,6 +4072,7 @@ class ToolService(BaseService):
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolLockConflictError: If the tool row is locked by another transaction.
+            ToolValidationError: If the tool is disabled by the validation policy and activate is True.
             ToolError: For other errors.
             PermissionError: If user doesn't own the agent.
 
@@ -4000,6 +4083,7 @@ class ToolService(BaseService):
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
+            >>> tool.validation_refusal = None
             >>> db.get.return_value = tool
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
@@ -4029,6 +4113,9 @@ class ToolService(BaseService):
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
+
+            if activate and isinstance(tool.validation_refusal, str):
+                raise ToolValidationError(f"Tool {tool.original_name!r} cannot be enabled: {tool.validation_refusal}. Change the validation policy, then refresh the gateway.")
 
             is_activated = is_reachable = False
             if tool.enabled != activate:
@@ -4124,6 +4211,9 @@ class ToolService(BaseService):
             raise
         except ToolNotFoundError:
             # Re-raise not found without wrapping - allows 404 response
+            raise
+        except ToolValidationError:
+            db.rollback()
             raise
         except Exception as e:
             db.rollback()
@@ -7866,6 +7956,14 @@ class ToolService(BaseService):
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
                 tool.description = tool_update.description
+            old_policy = tool.tool_validation_policy
+            policy_was_changed = "tool_validation_policy" in getattr(tool_update, "model_fields_set", ()) and policy_changed(old_policy, tool_update.tool_validation_policy)
+            if policy_was_changed:
+                await check_policy_permission(db, user_email or modified_by, resource_type="tools", team_id=tool.team_id)
+                tool.tool_validation_policy = tool_update.tool_validation_policy
+            if tool_update.description is not None or policy_was_changed:
+                # The policy decides the tool's state, never whether the edit saves, exactly as a refresh does.
+                apply_refusal(tool, admit_stored_tool(tool, self._gateway_tool_validation_policy(db, tool.gateway_id), context="update_tool"))
             if tool_update.title is not None:
                 tool.title = tool_update.title
             if tool_update.integration_type is not None:
@@ -7922,6 +8020,10 @@ class ToolService(BaseService):
             notify_dataplane()
             await self._notify_tool_updated(tool)
             logger.info("Updated tool: %s", tool.name)
+            if policy_was_changed:
+                record_policy_change(
+                    resource_type="tool", resource_id=tool.id, resource_name=tool.name, team_id=tool.team_id, user_email=user_email or modified_by, old=old_policy, new=tool.tool_validation_policy
+                )
 
             # Structured logging: Audit trail for tool update
             changes = []

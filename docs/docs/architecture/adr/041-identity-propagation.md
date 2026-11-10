@@ -122,7 +122,7 @@ Token exchange attempts (success, failure, and degraded/negative-cache responses
 
 ### Documentation
 
-See [Token Exchange (RFC 8693 / On-Behalf-Of)](../oauth-design.md#token-exchange-rfc-8693--on-behalf-of) and [Migrating OAuth Gateways to Token Exchange](../../manage/identity-propagation.md#migrating-oauth-gateways-to-token-exchange).
+See [Token Exchange (RFC 8693 / On-Behalf-Of)](../oauth-design.md#token-exchange-rfc-8693-on-behalf-of) and [Migrating OAuth Gateways to Token Exchange](../../manage/identity-propagation.md#migrating-oauth-gateways-to-token-exchange).
 
 ## Consequences
 

@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 # Third-Party
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2022,7 +2022,13 @@ class A2AAgentService(BaseService):
                 # failures propagate so the caller knows the operation was incomplete.
                 if agent.tool_id:
                     now = datetime.now(timezone.utc)
-                    tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
+                    # A tool the validation policy refused stays disabled.
+                    tool_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.id == agent.tool_id)
+                        .where(DbTool.enabled != activate)
+                        .values(enabled=case((DbTool.validation_refusal.is_(None), activate), else_=False), updated_at=now)
+                    )
                     if tool_result.rowcount > 0:
                         db.commit()
                         await cache.invalidate_tools()
