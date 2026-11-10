@@ -225,11 +225,27 @@ JWT trust mode controls how the gateway resolves the caller's identity. The defa
 | `JWT_CLAIM_ADMIN`            | JWT claim carrying the admin flag in trust mode                                              | `is_admin`    | non-empty string                                 |
 | `JWT_TRUST_OVERAGE_POLICY`   | Policy when a token exceeds the group-claim overage limit                                    | `fail_closed` | `fail_closed`, `graph_lookup`, `proceed_without_groups` |
 | `JWT_TRUST_REVOCATION_CLAIM` | JWT claim used as the revocation identifier for trust-eligible tokens (`uti` for Entra roots) | `jti`         | non-empty string                                 |
+| `JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED` | Grant platform admin to Entra user tokens in a `JWT_TRUST_ADMIN_GROUPS` group          | `false`       | `true`, `false`                                  |
+| `JWT_TRUST_ADMIN_GROUPS`     | Entra group object IDs (GUIDs) whose members receive platform admin                          | empty         | CSV or JSON list of GUIDs                        |
 
 Startup validation rules:
 
 - When `JWT_TRUST_MODE=jwt-trust`, every claim-mapping setting and `JWT_TRUST_REVOCATION_CLAIM` must be a non-empty string. The gateway refuses to start with an error naming the offending setting.
 - A trust-eligible token that lacks the configured revocation claim is rejected with `401`. The revocation claim is mandatory because trust mode relies on it for token revocation.
+- When `JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED=true`, `JWT_TRUST_MODE` must be `jwt-trust` and `JWT_TRUST_ADMIN_GROUPS` must list at least one group object ID. Group names are rejected.
+
+#### Entra group admin
+
+With `JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED=true`, a user whose Entra token carries a group listed in `JWT_TRUST_ADMIN_GROUPS` becomes a platform admin. The grant sets `is_admin` and adds `platform_admin` to the roles in one step, exactly like the `JWT_CLAIM_ADMIN` claim. It ORs with that claim: a false claim does not block the group grant.
+
+The grant is fail-closed. It applies only when all of these hold:
+
+- The token issuer is an Entra host (`login.microsoftonline.com` and sovereign clouds, or `sts.windows.net`) over HTTPS, and the first issuer path segment equals the `tid` claim.
+- The token was issued to a user. Tokens with `idtyp=app`, or with `sub` equal to `oid`, are app-only service principals and never receive the group grant. A service principal can still be admin through the `JWT_CLAIM_ADMIN` claim.
+- The group appears in the final `groups` list. Overage groups resolved through `JWT_TRUST_OVERAGE_POLICY=graph_lookup` count. Under `fail_closed` an overage token is rejected before this check, and under `proceed_without_groups` it carries no groups and gets no grant.
+- A listed object ID matches exactly, ignoring case. Group names never match.
+
+Each grant logs one INFO line with the user ID. Removing the user from the Entra group takes effect when their current token expires or is revoked.
 
 All defaults preserve the current behavior: trust mode defaults to `db` and the new settings are inert until `jwt-trust` is enabled.
 

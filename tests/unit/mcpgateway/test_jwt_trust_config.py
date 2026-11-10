@@ -40,6 +40,8 @@ class TestJwtTrustDefaults:
         assert s.jwt_claim_admin == "is_admin"
         assert s.jwt_trust_overage_policy == "fail_closed"
         assert s.jwt_trust_revocation_claim == "jti"
+        assert s.jwt_trust_entra_group_admin_enabled is False
+        assert s.jwt_trust_admin_groups == []
 
 
 class TestJwtTrustModeBoot:
@@ -129,3 +131,40 @@ class TestComposeDeclaresTrustFlags:
         assert "# - JWT_TRUST_MODE=db" in text
         # The SSO profile deliberately enables external-IdP API tokens; trust mode stays commented/off.
         assert "- SSO_API_TOKEN_AUTH_ENABLED=true" in text
+
+
+class TestEntraGroupAdminConfig:
+    """Startup contract for the Entra group-to-admin feature flag."""
+
+    GROUP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def test_enabled_in_trust_mode_with_groups_boots(self):
+        s = _settings(jwt_trust_mode="jwt-trust", jwt_trust_entra_group_admin_enabled=True, jwt_trust_admin_groups=[self.GROUP])
+        assert s.jwt_trust_admin_groups == [self.GROUP]
+
+    def test_groups_parse_from_csv_and_json(self):
+        other = "99999999-8888-7777-6666-555555555555"
+        csv = _settings(jwt_trust_admin_groups=f"{self.GROUP}, {other}")
+        assert csv.jwt_trust_admin_groups == [self.GROUP, other]
+        js = _settings(jwt_trust_admin_groups=f'["{self.GROUP}"]')
+        assert js.jwt_trust_admin_groups == [self.GROUP]
+
+    def test_flag_requires_trust_mode(self):
+        with pytest.raises(ValidationError) as exc_info:
+            _settings(jwt_trust_mode="db", jwt_trust_entra_group_admin_enabled=True, jwt_trust_admin_groups=[self.GROUP])
+        assert "jwt_trust_entra_group_admin_enabled" in str(exc_info.value)
+        assert "jwt-trust" in str(exc_info.value)
+
+    def test_flag_requires_non_empty_groups(self):
+        with pytest.raises(ValidationError) as exc_info:
+            _settings(jwt_trust_mode="jwt-trust", jwt_trust_entra_group_admin_enabled=True, jwt_trust_admin_groups=[])
+        assert "jwt_trust_admin_groups" in str(exc_info.value)
+
+    def test_flag_rejects_group_names(self):
+        with pytest.raises(ValidationError) as exc_info:
+            _settings(jwt_trust_mode="jwt-trust", jwt_trust_entra_group_admin_enabled=True, jwt_trust_admin_groups=["Platform Admins"])
+        assert "object ID" in str(exc_info.value)
+
+    def test_groups_without_flag_are_inert(self):
+        s = _settings(jwt_trust_admin_groups=["not-a-guid"])
+        assert s.jwt_trust_entra_group_admin_enabled is False

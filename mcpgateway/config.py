@@ -87,6 +87,8 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_MOUNT_PREFIX = "/app"
 
+_ENTRA_OBJECT_ID_PATTERN = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
 
 def _normalize_env_list_vars() -> None:
     """Normalize list-typed env vars to valid JSON arrays.
@@ -100,6 +102,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GITHUB_ADMIN_ORGS",
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
+        "JWT_TRUST_ADMIN_GROUPS",
         "SSO_GENERIC_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
         "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
@@ -368,6 +371,14 @@ class Settings(BaseSettings):
     jwt_trust_revocation_claim: str = Field(
         default="jti",
         description="JWT claim used as the revocation identifier for trust-eligible tokens (default 'jti'; use 'uti' for Entra roots). A trust-eligible token missing this claim is rejected with 401.",
+    )
+    jwt_trust_entra_group_admin_enabled: bool = Field(
+        default=False,
+        description="Trust mode only: grant platform admin to Entra user tokens whose groups include an object ID in JWT_TRUST_ADMIN_GROUPS. Never applies to app-only service principals.",
+    )
+    jwt_trust_admin_groups: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="Entra group object IDs (GUIDs) whose members receive platform admin in trust mode when JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED is true (CSV/JSON)",
     )
 
     embed_environment_in_tokens: bool = Field(default=True, description="Embed environment claim in gateway-issued JWTs for environment isolation")
@@ -1984,6 +1995,14 @@ class Settings(BaseSettings):
             for name in claim_settings:
                 if not getattr(self, name).strip():
                     raise ValueError(f"Setting {name} must not be empty when jwt_trust_mode is enabled.")
+        if self.jwt_trust_entra_group_admin_enabled:
+            if self.jwt_trust_mode != "jwt-trust":
+                raise ValueError("Setting jwt_trust_entra_group_admin_enabled requires jwt_trust_mode to be 'jwt-trust'.")
+            if not self.jwt_trust_admin_groups:
+                raise ValueError("Setting jwt_trust_admin_groups must not be empty when jwt_trust_entra_group_admin_enabled is true.")
+            invalid = [group for group in self.jwt_trust_admin_groups if not _ENTRA_OBJECT_ID_PATTERN.fullmatch(str(group).strip())]
+            if invalid:
+                raise ValueError("Setting jwt_trust_admin_groups must list Entra group object IDs (GUIDs); group names are not accepted.")
         return self
 
     def get_security_warnings(self) -> List[str]:
@@ -3592,6 +3611,7 @@ Disallow: /
     # -------------------------------
     @field_validator(
         "sso_entra_admin_groups",
+        "jwt_trust_admin_groups",
         "sso_generic_admin_groups",
         "sso_trusted_domains",
         "sso_auto_admin_domains",
