@@ -8,7 +8,7 @@ Tests for GatewayService.transfer_gateway_ownership.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -155,6 +155,30 @@ async def test_transfer_success_public_gateway(service, mock_db):
     mock_db.commit.assert_called_once()
     mock_db.refresh.assert_called_once_with(gateway)
     assert result is expected_read
+
+
+@pytest.mark.asyncio
+async def test_transfer_invalidates_gateways_tools_resources_prompts(service, mock_db):
+    gateway = MagicMock()
+    gateway.visibility = "public"
+    gateway.team_id = None
+    gateway.owner_email = "old@example.com"
+    gateway.id = "gw-1"
+    mock_db.execute.side_effect = [_scalar_result(MagicMock()), _scalars_result([]), _scalars_result([]), _scalars_result([])]
+    cache = AsyncMock()
+
+    with (
+        patch("mcpgateway.services.gateway_service.get_for_update", return_value=gateway),
+        patch("mcpgateway.services.gateway_service.get_audit_trail_service"),
+        patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=cache),
+        patch.object(service, "convert_gateway_to_read"),
+    ):
+        await service.transfer_gateway_ownership(mock_db, "gw-1", "target@example.com", "actor@example.com")
+
+    cache.invalidate_gateways.assert_awaited_once()
+    cache.invalidate_tools.assert_awaited_once()
+    cache.invalidate_resources.assert_awaited_once()
+    cache.invalidate_prompts.assert_awaited_once()
 
 
 @pytest.mark.asyncio

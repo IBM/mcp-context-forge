@@ -31,6 +31,9 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
+# First-Party
+from mcpgateway.cache.catalog_change_bus import notify_catalog_change
+
 logger = logging.getLogger(__name__)
 
 
@@ -644,6 +647,8 @@ class RegistryCache:
             for key in keys_to_remove:
                 self._cache.pop(key, None)
 
+        notify_catalog_change(cache_type)
+
         # Clear Redis
         redis = await self._get_redis_client()
         if redis:
@@ -1063,6 +1068,7 @@ class CacheInvalidationSubscriber:
                     for key in keys_to_remove:
                         cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local registry:%s cache (%d keys)", cache_type, len(keys_to_remove))
+                notify_catalog_change(cache_type)
 
             elif message.startswith("tool_lookup:key:"):
                 # Handle one exact internal tool lookup key. This distinct

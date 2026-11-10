@@ -592,6 +592,24 @@ class Settings(BaseSettings):
             "set true to require a valid Bearer token for all /mcp requests."
         ),
     )
+    mcp_listen_max_lifetime_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Maximum lifetime of a subscriptions/listen stream in seconds; a token expiry earlier than this ends the stream sooner",
+    )
+    mcp_listen_max_streams_per_principal: int = Field(
+        default=32,
+        ge=1,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams per authenticated principal on one worker",
+    )
+    mcp_listen_max_anonymous_streams: int = Field(
+        default=256,
+        ge=0,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams shared by all anonymous callers on one worker; 0 refuses anonymous streams",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -2934,7 +2952,13 @@ class Settings(BaseSettings):
     # Modern (2026-07-28) change-event listeners
     # When enabled, the gateway holds one standing subscriptions/listen stream per
     # server to get the list changed event
-    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
+    gateway_modern_listeners_enabled: bool = Field(
+        default=False,
+        description=(
+            "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; "
+            "runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster"
+        ),
+    )
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")

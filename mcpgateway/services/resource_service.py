@@ -741,6 +741,8 @@ class ResourceService(BaseService):
             db.refresh(db_resource)
             notify_dataplane()
 
+            await _get_registry_cache().invalidate_resources()
+
             # Notify subscribers
             await self._notify_resource_added(db_resource)
 
@@ -984,6 +986,8 @@ class ResourceService(BaseService):
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
+        catalog_changed = False
+
         for chunk_start in range(0, len(resources), chunk_size):
             chunk = resources[chunk_start : chunk_start + chunk_size]
 
@@ -1167,6 +1171,7 @@ class ResourceService(BaseService):
                 # Commit the chunk
                 db.commit()
                 notify_dataplane()
+                catalog_changed = catalog_changed or bool(resources_to_add or resources_to_update)
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
@@ -1207,6 +1212,9 @@ class ResourceService(BaseService):
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
+
+        if catalog_changed:
+            await _get_registry_cache().invalidate_resources()
 
         # Final structured logging
         structured_logger.log(

@@ -518,6 +518,15 @@
             "GATEWAY_MAX_REDIRECTS": {
               "type": "string"
             },
+            "GATEWAY_MODERN_LISTENERS_ENABLED": {
+              "type": "string",
+              "description": "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
             "GATEWAY_TOOL_NAME_SEPARATOR": {
               "type": "string"
             },
@@ -849,6 +858,15 @@
                 "true",
                 "false"
               ]
+            },
+            "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
+              "type": "string"
+            },
+            "MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL": {
+              "type": "string"
+            },
+            "MCP_LISTEN_MAX_ANONYMOUS_STREAMS": {
+              "type": "string"
             },
             "MCP_SESSION_POOL_ENABLED": {
               "type": "string"

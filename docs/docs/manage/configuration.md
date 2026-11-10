@@ -505,6 +505,9 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
 | `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `MCP_LISTEN_MAX_LIFETIME_SECONDS` | Maximum lifetime of a `subscriptions/listen` stream (2026-07-28 clients). A token expiry earlier than this ends the stream sooner | `3600` | int (60-86400) |
+| `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` | Maximum concurrent `subscriptions/listen` streams for one authenticated principal on one worker. The gateway refuses further streams with "Subscription limit reached" | `32` | int (1-1024) |
+| `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers (`MCP_REQUIRE_AUTH=false`). `0` refuses all anonymous streams | `256` | int (0-1024) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -1228,6 +1231,7 @@ override them with its own CEL expression; see [Tool Description Content Validat
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs); also the catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
+| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker chosen by `PRIMARY_WORKER_ELECTION_BACKEND` (`filelock`: one per host, `redis`: one per cluster) | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
 | `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
@@ -1281,6 +1285,10 @@ override them with its own CEL expression; see [Tool Description Content Validat
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+!!! note "`subscriptions/listen` across workers"
+    `subscriptions/listen` events (2026-07-28 clients) reach listeners on other workers only with `CACHE_TYPE=redis`.
+    With any other `CACHE_TYPE`, delivery is best effort and limited to listeners on the same worker as the change.
 
 !!! warning "Redis Server Capacity"
     `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
