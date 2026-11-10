@@ -5301,6 +5301,18 @@ class TestLifespanAdvanced:
         assert events == ["elector", "listener"]
         assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" not in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_lifespan_shuts_down_resource_subscription_relay(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        relay = MagicMock()
+        relay.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, "get_resource_subscription_relay", MagicMock(return_value=relay))
+        await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=[])
+
+        relay.shutdown.assert_awaited_once()
+
 
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""

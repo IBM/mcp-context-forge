@@ -3,11 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Black-box proofs for MCP 2026-07-28 ``subscriptions/listen`` (#6571).
+Black-box proofs for MCP 2026-07-28 ``subscriptions/listen`` (#6571, #6573, #6644).
 
 Each module fixture starts its own gateway subprocess on SQLite with
 ``CACHE_TYPE=memory``. Two of them federate an SDK ``MCPServer`` upstream whose
-``grow`` tool adds a tool at runtime and announces it on its own listen bus:
+``grow`` tool adds a tool at runtime and announces it on its own listen bus,
+and whose ``touch`` tool announces an update to the ``test://note`` resource:
 
 - ``gateway_polling`` finds upstream changes through the scheduled auto-refresh.
 - ``gateway_listener`` finds them through the modern upstream listener.
@@ -74,6 +75,15 @@ async def grow(name: str, ctx: Context) -> str:
     mcp.add_tool(probe, name=name, description="Added at runtime.")
     await ctx.notify_tools_changed()
     return name
+@mcp.resource("test://note")
+def note() -> str:
+    """Return the note."""
+    return "note"
+@mcp.tool()
+async def touch(ctx: Context) -> str:
+    """Announce that the note changed."""
+    await ctx.notify_resource_updated("test://note")
+    return "touched"
 app = mcp.streamable_http_app(stateless_http=True, json_response=True)
 methods = Path(sys.argv[2])
 async def recorder(scope, receive, send):
@@ -373,6 +383,15 @@ def _listed(stack: _Stack, name: str) -> bool:
     return any(name in tool["name"] for tool in tools)
 
 
+def _resource_listed(stack: _Stack, uri: str) -> bool:
+    """Return whether the gateway catalog lists a resource with ``uri``."""
+    with _admin(stack) as client:
+        resources = client.get("/resources").json()
+    if isinstance(resources, dict):
+        resources = resources["resources"]
+    return any(resource["uri"] == uri for resource in resources)
+
+
 def _scoped_token(stack: _Stack, permissions: list[str]) -> str:
     """Mint a non-admin public-only token capped to the given permissions."""
     scopes = {"server_id": None, "permissions": permissions, "ip_restrictions": [], "time_restrictions": {}}
@@ -414,20 +433,60 @@ async def test_listen_on_server_scoped_path_gets_event(gateway_listener: _Stack)
         await _next_event(frames, "notifications/tools/list_changed", time.monotonic() + 3)
 
 
-def test_listen_ack_omits_resource_subscriptions(gateway_listener: _Stack) -> None:
-    """Requested resourceSubscriptions never appear in the ack filter."""
-    status, ack = _listen_once(gateway_listener, "/mcp/", gateway_listener.token, {"toolsListChanged": True, "resourceSubscriptions": ["file:///a"]})
+NOTE_URI = "test://note"
+
+
+async def _touch(stack: _Stack) -> None:
+    """Make the upstream announce a change to the note resource."""
+    # Third-Party
+    from mcp import Client  # pylint: disable=import-outside-toplevel
+
+    async with Client(stack.upstream_url) as client:
+        result = await client.call_tool("touch", {})
+    assert not result.is_error, result
+
+
+async def test_listen_resource_subscription_receives_upstream_update(gateway_listener: _Stack) -> None:
+    """An honored upstream URI is acked, and the upstream's resources/updated reaches the stream stamped with the subscription id."""
+    _wait(lambda: _resource_listed(gateway_listener, NOTE_URI), "upstream resource sync")
+    async with _listening(gateway_listener.base, "/mcp/", gateway_listener.token, {"resourceSubscriptions": [NOTE_URI, "test://missing"]}) as (ack, frames):
+        assert ack["params"]["notifications"] == {"resourceSubscriptions": [NOTE_URI]}, ack
+        deadline = time.monotonic() + LISTENER_WINDOW
+        while True:
+            # The relay opens its upstream stream after the ack; touch until an update arrives.
+            await _touch(gateway_listener)
+            try:
+                frame = await _next_event(frames, "notifications/resources/updated", min(deadline, time.monotonic() + 1))
+                break
+            except pytest.fail.Exception:
+                if time.monotonic() >= deadline:
+                    raise
+        assert frame["params"]["uri"] == NOTE_URI, frame
+
+
+def test_listen_resource_subscription_outside_virtual_server_not_acked(gateway_listener: _Stack) -> None:
+    """A URI that exists but is not attached to the virtual server is dropped from the ack on its path."""
+    _wait(lambda: _resource_listed(gateway_listener, NOTE_URI), "upstream resource sync")
+    status, ack = _listen_once(gateway_listener, f"/servers/{gateway_listener.server_id}/mcp/", gateway_listener.token, {"toolsListChanged": True, "resourceSubscriptions": [NOTE_URI]})
     assert status == 200, ack
     assert ack["params"]["notifications"] == {"toolsListChanged": True}, ack
 
 
-def test_modern_discover_omits_resources_subscribe(gateway_listener: _Stack) -> None:
-    """server/discover advertises listChanged and omits resources.subscribe."""
+def test_listen_resource_subscription_needs_resources_read(gateway_listener: _Stack) -> None:
+    """A token without resources.read gets the URIs dropped from the ack."""
+    token = _scoped_token(gateway_listener, ["tools.read"])
+    status, ack = _listen_once(gateway_listener, "/mcp/", token, {"toolsListChanged": True, "resourceSubscriptions": [NOTE_URI]})
+    assert status == 200, ack
+    assert ack["params"]["notifications"] == {"toolsListChanged": True}, ack
+
+
+def test_modern_discover_advertises_resources_subscribe(gateway_listener: _Stack) -> None:
+    """server/discover advertises listChanged and resources.subscribe."""
     status, payload = _call(gateway_listener, "/mcp/", gateway_listener.token, "server/discover")
     assert status == 200, payload
     capabilities = payload["result"]["capabilities"]
     assert capabilities["tools"]["listChanged"] is True, capabilities
-    assert "subscribe" not in capabilities.get("resources", {}), capabilities
+    assert capabilities["resources"]["subscribe"] is True, capabilities
 
 
 def test_listen_unauthenticated_401(gateway_listener: _Stack) -> None:

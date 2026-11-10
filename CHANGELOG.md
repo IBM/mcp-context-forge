@@ -15,7 +15,7 @@
 
 ### Changed
 
-- **2026-07-28 capabilities no longer advertise `resources.subscribe`** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - The gateway serves catalog change notifications through `subscriptions/listen` and does not honor `resourceSubscriptions`. 2026-07-28 clients use `subscriptions/listen` to track list changes. Handshake-era capabilities and `resources/subscribe` behavior stay unchanged.
+- **Per-resource subscriptions on `subscriptions/listen`** ([#6644](https://github.com/IBM/mcp-context-forge/issues/6644)) - A 2026-07-28 listen request can name resource URIs in `resourceSubscriptions`. The ack lists the URIs the caller can see that come from an enabled upstream server a standing stream can reach (not SSE, OAuth, query-parameter auth, private CA, or mTLS); they need `resources.read`. On `/servers/{id}/mcp` the resource must belong to that virtual server. An upstream `notifications/resources/updated` reaches the stream with the URI and the subscription ID in `_meta`. The worker that holds the stream keeps one shared upstream listen per server and URI, at most 256 per worker. A stream gets updates only from the upstream servers it was granted, even when two servers share a URI. One request considers at most 64 distinct URIs. 2026-07-28 capabilities advertise `resources.subscribe`.
 
 - **Health-check and auto-refresh jitter** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Health-loop ticks are now up to 10% shorter than the configured interval. Scheduled gateway auto-refresh can run up to 10% before its interval, and never later. The jitter keeps workers and gateways from refreshing in lockstep.
 
