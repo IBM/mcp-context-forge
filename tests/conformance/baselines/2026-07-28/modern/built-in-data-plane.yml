@@ -44,6 +44,14 @@ findings:
   name: ServerRejectsUndeclaredCapability
   status: FAILURE
 - scenario: server-stateless
+  check: sep-2575-server-sends-prompts-list-changed-on-subscription
+  name: ServerSendsPromptsListChangedOnSubscription
+  status: WARNING
+- scenario: server-stateless
+  check: sep-2575-server-sends-tools-list-changed-on-subscription
+  name: ServerSendsToolsListChangedOnSubscription
+  status: WARNING
+- scenario: server-stateless
   check: sep-2575-server-unsupported-version-error
   name: ServerUnsupportedVersionError
   status: FAILURE

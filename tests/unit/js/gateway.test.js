@@ -214,6 +214,7 @@ describe("editGateway", () => {
       <input id="edit-gateway-name" />
       <input id="edit-gateway-url" />
       <textarea id="edit-gateway-description"></textarea>
+      <textarea id="edit-gateway-validation-policy"></textarea>
       <input id="edit-gateway-tags" />
       <input id="edit-gateway-visibility-public" type="radio" name="visibility" />
       <input id="edit-gateway-visibility-team" type="radio" name="visibility" />
@@ -233,6 +234,7 @@ describe("editGateway", () => {
       name: "EditGW",
       url: "http://localhost:8080",
       description: "Edit me",
+      toolValidationPolicy: '!description.contains("$(")',
       visibility: "team",
       transport: "SSE",
       authType: "",
@@ -250,6 +252,7 @@ describe("editGateway", () => {
     expect(document.getElementById("edit-gateway-name").value).toBe("EditGW");
     expect(document.getElementById("edit-gateway-url").value).toBe("http://localhost:8080");
     expect(document.getElementById("edit-gateway-description").value).toBe("Edit me");
+    expect(document.getElementById("edit-gateway-validation-policy").value).toBe('!description.contains("$(")');
     expect(document.getElementById("edit-gateway-visibility-team").checked).toBe(true);
     expect(document.getElementById("edit-gateway-passthrough-headers").value).toBe("X-Custom");
     expect(openModal).toHaveBeenCalledWith("gateway-edit-modal");

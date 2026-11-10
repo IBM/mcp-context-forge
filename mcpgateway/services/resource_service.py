@@ -32,7 +32,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
@@ -108,8 +108,40 @@ except ImportError:
     PLUGINS_AVAILABLE = False
 
 
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+
+# Each honored URI holds one upstream stream; bound what one listen request can open.
+MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
+
+
+def _standing_stream_can_reach(gateway: DbGateway) -> bool:
+    """Return whether a standing upstream stream reaches ``gateway`` with its stored headers alone.
+
+    SSE is legacy-only. OAuth needs a per-user token. Query-parameter auth, a private CA,
+    and mTLS need connection setup that the relay client does not perform.
+
+    Args:
+        gateway: Registered upstream server row.
+
+    Returns:
+        bool: True when the resource subscription relay can watch this upstream.
+
+    Examples:
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="bearer"))
+        True
+        >>> _standing_stream_can_reach(DbGateway(transport="SSE"))
+        False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", client_cert="pem"))
+        False
+    """
+    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param"):
+        return False
+    return not (gateway.ca_certificate or gateway.client_cert)
 
 
 def _get_registry_cache():
@@ -741,6 +773,8 @@ class ResourceService(BaseService):
             db.refresh(db_resource)
             notify_dataplane()
 
+            await _get_registry_cache().invalidate_resources()
+
             # Notify subscribers
             await self._notify_resource_added(db_resource)
 
@@ -984,6 +1018,8 @@ class ResourceService(BaseService):
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
+        catalog_changed = False
+
         for chunk_start in range(0, len(resources), chunk_size):
             chunk = resources[chunk_start : chunk_start + chunk_size]
 
@@ -1167,6 +1203,7 @@ class ResourceService(BaseService):
                 # Commit the chunk
                 db.commit()
                 notify_dataplane()
+                catalog_changed = catalog_changed or bool(resources_to_add or resources_to_update)
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
@@ -1207,6 +1244,9 @@ class ResourceService(BaseService):
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
+
+        if catalog_changed:
+            await _get_registry_cache().invalidate_resources()
 
         # Final structured logging
         structured_logger.log(
@@ -3232,6 +3272,54 @@ class ResourceService(BaseService):
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
+
+    async def resolve_subscription_targets(
+        self,
+        db: Session,
+        uris: Sequence[str],
+        *,
+        server_id: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, List["UpstreamResourceTarget"]]:
+        """Resolve which requested resource URIs a ``subscriptions/listen`` caller may watch.
+
+        A URI is honored when an enabled resource with that URI passes the caller's visibility check.
+        On a server-scoped path the resource must belong to that virtual server.
+        The resource must come from an enabled upstream server that a standing stream reaches with its stored headers alone.
+        Only the first ``MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN`` distinct requested URIs are considered.
+
+        Args:
+            db: Database session.
+            uris: Resource URIs from ``resourceSubscriptions``.
+            server_id: Virtual server ID for ``/servers/{id}/mcp``, or ``None``.
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
+
+        Returns:
+            Dict[str, List[UpstreamResourceTarget]]: Upstream targets per honored URI.
+        """
+        # First-Party
+        from mcpgateway.services.modern_listener_service import gateway_listen_headers  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+        wanted = list(dict.fromkeys(uris))[:MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN]
+        if not wanted:
+            return {}
+        query = select(DbResource).where(DbResource.uri.in_(wanted), DbResource.enabled.is_(True), DbResource.gateway_id.is_not(None))
+        if server_id:
+            query = query.join(server_resource_association, server_resource_association.c.resource_id == DbResource.id).where(server_resource_association.c.server_id == server_id)
+
+        targets: Dict[str, List[UpstreamResourceTarget]] = {}
+        for resource in db.execute(query).scalars().all():
+            gateway = resource.gateway
+            if gateway is None or not gateway.enabled or not _standing_stream_can_reach(gateway):
+                continue
+            if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
+                continue
+            headers = tuple(gateway_listen_headers(gateway).items())
+            targets.setdefault(resource.uri, []).append(UpstreamResourceTarget(gateway_id=gateway.id, url=gateway.url, uri=resource.uri, headers=headers))
+        return {uri: targets[uri] for uri in wanted if uri in targets}
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """

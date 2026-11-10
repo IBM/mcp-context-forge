@@ -225,6 +225,7 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
@@ -257,6 +258,7 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -290,11 +292,21 @@ logger = logging_service.get_logger("mcpgateway")
 # Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
 # startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
-# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
-# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
-if settings.plugins.enabled:
-    enable_plugins(True)
-    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+def _enable_plugin_subsystem_if_configured() -> None:
+    """Enable the in-memory plugin flag when plugin settings mark the subsystem enabled.
+
+    Runs at module load time, mirroring the old singleton pattern.
+    ``get_plugin_manager()`` guards on this flag, so it must be set before lifespan runs.
+    Plugin settings are only consulted when the subsystem is enabled, so invalid
+    plugin configuration never blocks startup while the feature is off.
+    """
+    if settings.plugins.enabled:
+        enable_plugins(True)
+        logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+
+_enable_plugin_subsystem_if_configured()
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -1506,13 +1518,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.expose_error_details:
         logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
 
-    # Start the sandboxed jq worker pool before any service that might invoke
-    # tool response filters is initialised. A failure here (BrokenProcessPool,
-    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
-    # mode) is a hard startup failure and must propagate rather than letting
-    # the gateway boot with a broken or absent sandbox.
+    # Fork the sandbox pools while the process holds no sockets or threads.
+    # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
     start_jq_pool()
     start_validation_pool()
+    start_cel_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -1627,13 +1637,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
-    # Standing subscriptions/listen streams to modern (2026-07-28) servers
-    if settings.gateway_modern_listeners_enabled:
-        if settings.mcp_client_connect_mode == "legacy":
-            logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
-        else:
-            await init_modern_listener_service(_notification_svc).initialize()
-
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -1669,6 +1672,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_primary_worker_elector()
             logger.info("Primary-worker elector started (backend=redis)")
+
+        # Standing subscriptions/listen streams to modern (2026-07-28) servers
+        if settings.gateway_modern_listeners_enabled:
+            if settings.mcp_client_connect_mode == "legacy":
+                logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
+            else:
+                if settings.cache_type == "redis" and settings.primary_worker_election_backend == "filelock":
+                    logger.warning("Modern listeners run on the primary worker: one listener per host; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster")
+                await init_modern_listener_service(_notification_svc).initialize()
 
         try:
             init_plugin_manager_factory(
@@ -2051,6 +2063,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             if modern_listener_service is not None:
                 services_to_shutdown.insert(0, modern_listener_service)
 
+        services_to_shutdown.insert(0, get_resource_subscription_relay())
+
         await shutdown_services(services_to_shutdown)
 
         # Stop the primary-worker elector (releases the redis lease if held).
@@ -2085,6 +2099,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Shut down the sandboxed schema-validation worker pool
         shutdown_validation_pool()
+
+        # Shut down the sandboxed CEL worker pool
+        shutdown_cel_pool()
 
         logger.info("Shutdown complete")
 
@@ -6268,6 +6285,8 @@ async def create_tool(
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ex))
         if isinstance(ex, ToolNameConflictError):
             if not ex.enabled and ex.tool_id:
                 raise HTTPException(
@@ -12150,6 +12169,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
+        elif method == "subscriptions/listen":
+            # Streaming method: only the /mcp transport can serve it.
+            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
             if not mcp_method_registry.is_known_method(method):

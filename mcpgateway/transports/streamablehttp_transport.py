@@ -33,14 +33,16 @@ Examples:
 # Standard
 import asyncio
 import base64
+from collections import Counter
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import ipaddress
 import re
-from urllib.parse import urlsplit
+import time
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -52,8 +54,10 @@ import jwt
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.subscriptions import ListenHandler
 from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -67,6 +71,7 @@ from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.cache.catalog_change_bus import get_listen_handler
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS, LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
@@ -101,6 +106,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay, scoped_listen_bus
 from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer, SSOService
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
@@ -3957,6 +3963,55 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
         _v2_request_ctx.reset(token)
 
 
+LIST_PERMISSIONS: dict[str, str] = {
+    "tools/list": "tools.read",
+    "prompts/list": "prompts.read",
+    "resources/list": "resources.read",
+    "resources/templates/list": "resources.read",
+}
+
+
+async def _resolve_catalog_scope() -> tuple[Optional[str], dict[str, Any], dict[str, Any]]:
+    """Resolve the caller's catalog scope and enforce per-server OAuth once.
+
+    Returns:
+        ``(server_id, request_headers, user_context)`` for the current request.
+
+    Raises:
+        OAuthRequiredError: If ``MCP_REQUIRE_AUTH=false`` and an unauthenticated caller targets an ``oauth_enabled`` server.
+    """
+    server_id, headers, user_context = await _get_request_context_or_default()
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+    return server_id, headers, user_context
+
+
+def _token_allows_catalog_read(user_context: dict[str, Any], permission: str) -> bool:
+    """Apply the token-scope ceiling shared by the catalog ``*/list`` handlers and ``subscriptions/listen``.
+
+    This is a Layer-1 check only. An empty token scope sets no ceiling.
+    Neither path runs a per-method Layer-2 RBAC check for ``tools.read``,
+    ``prompts.read`` or ``resources.read``. The server-scoped route checks
+    only ``servers.use`` at entry. So the listen gate equals the ``*/list`` gate.
+
+    Args:
+        user_context: Request user context.
+        permission: The list permission, a value of ``LIST_PERMISSIONS``.
+
+    Returns:
+        bool: True when the token scope permits the read.
+
+    Examples:
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": ["tools.read"]}, "prompts.read")
+        False
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": []}, "prompts.read")
+        True
+        >>> _token_allows_catalog_read({}, "tools.read")
+        True
+    """
+    return not _should_enforce_streamable_rbac(user_context) or _check_scoped_permission(user_context, permission)
+
+
 async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     """Authorize and serve one MCP catalog page.
 
@@ -3974,12 +4029,9 @@ async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    server_id, headers, user_context = await _get_request_context_or_default()
-    permission = {"tools/list": "tools.read", "prompts/list": "prompts.read"}.get(method, "resources.read")
-    if _should_enforce_streamable_rbac(user_context) and not _check_scoped_permission(user_context, permission):
+    server_id, headers, user_context = await _resolve_catalog_scope()
+    if not _token_allows_catalog_read(user_context, LIST_PERMISSIONS[method]):
         raise PermissionError(_ACCESS_DENIED_MSG)
-    if not settings.mcp_require_auth:
-        await _check_server_oauth_enforcement(server_id, user_context)
     user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
     meta = getattr(params, "meta", None) if params is not None else None
     try:
@@ -4118,6 +4170,177 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
         _v2_request_ctx.reset(token)
 
 
+_LISTEN_FLAG_PERMISSIONS: dict[str, str] = {
+    "tools_list_changed": LIST_PERMISSIONS["tools/list"],
+    "prompts_list_changed": LIST_PERMISSIONS["prompts/list"],
+    "resources_list_changed": LIST_PERMISSIONS["resources/list"],
+}
+
+
+LISTEN_DEADLINE_FLOOR_SECONDS: float = 5.0
+
+
+def _listen_lifetime_seconds(user_context: Any) -> float:
+    """Return how long a listen stream may stay open.
+
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``, whichever is sooner.
+    The floor keeps the stream open long enough for the handler to send its ack first.
+
+    Args:
+        user_context: Resolved caller context; a missing or ``None`` ``exp`` claim sets no token limit.
+
+    Returns:
+        float: Seconds from now until the stream ends.
+    """
+    lifetime = float(settings.mcp_listen_max_lifetime_seconds)
+    exp = (user_context or {}).get("exp")
+    if exp is not None:
+        lifetime = min(lifetime, float(exp) - time.time())
+    return max(LISTEN_DEADLINE_FLOOR_SECONDS, lifetime)
+
+
+_listen_streams_by_principal: Counter[str] = Counter()
+_anonymous_listen_streams: int = 0  # pylint: disable=invalid-name
+
+
+def _claim_listen_slot(principal: Optional[str]) -> None:
+    """Count one open listen stream for ``principal``, or refuse it at the cap.
+
+    A caller with no email counts against the shared anonymous cap.
+    The check and the increment run without an ``await``, so concurrent streams cannot exceed the cap.
+
+    Args:
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
+
+    Raises:
+        MCPError: ``INTERNAL_ERROR`` "Subscription limit reached" when the cap is full.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if not principal:
+        if _anonymous_listen_streams >= settings.mcp_listen_max_anonymous_streams:
+            raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+        _anonymous_listen_streams += 1
+        return
+    if _listen_streams_by_principal[principal] >= settings.mcp_listen_max_streams_per_principal:
+        raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+    _listen_streams_by_principal[principal] += 1
+
+
+def _release_listen_slot(principal: Optional[str]) -> None:
+    """Free the slot ``_claim_listen_slot`` took, removing a principal key at zero.
+
+    Args:
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if not principal:
+        _anonymous_listen_streams -= 1
+    elif _listen_streams_by_principal[principal] <= 1:
+        del _listen_streams_by_principal[principal]
+    else:
+        _listen_streams_by_principal[principal] -= 1
+
+
+async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListenRequestParams) -> types.SubscriptionsListenResult:
+    """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
+
+    Each requested list kind passes the same token-scope gate as its ``*/list`` call.
+    ``resourceSubscriptions`` needs ``resources.read``; the ack keeps only URIs the caller can see that come from a reachable upstream server.
+    The stream holds one relay watch per honored upstream resource. Unknown filter keys are dropped.
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
+    Every server teardown sends ``notifications/cancelled`` naming the listen request, then the completion result.
+    A client disconnect cancels the handler and sends nothing.
+    Each principal may hold ``MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL`` streams; anonymous callers share ``MCP_LISTEN_MAX_ANONYMOUS_STREAMS``.
+
+    Args:
+        ctx: SDK request context.
+        params: The listen request params.
+
+    Returns:
+        types.SubscriptionsListenResult: The shared handler's completion result.
+
+    Raises:
+        MCPError: ``METHOD_NOT_FOUND`` for a handshake-era caller.
+            ``INTERNAL_ERROR`` "Subscription limit reached" when the caller is at its concurrent-stream cap.
+        PermissionError: If kinds or URIs were requested and the token scope denies every one, as ``tools/list`` or ``resources/read`` would.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        if not _caller_is_modern():
+            raise MCPError(code=types.METHOD_NOT_FOUND, message="Method not found", data="subscriptions/listen")
+        server_id, _, user_context = await _resolve_catalog_scope()
+        requested = [flag for flag in _LISTEN_FLAG_PERMISSIONS if getattr(params.notifications, flag)]
+        granted = {flag: True for flag in requested if _token_allows_catalog_read(user_context, _LISTEN_FLAG_PERMISSIONS[flag])}
+        requested_uris = list(params.notifications.resource_subscriptions or ())
+        uris_permitted = bool(requested_uris) and _token_allows_catalog_read(user_context, LIST_PERMISSIONS["resources/list"])
+        if (requested or requested_uris) and not granted and not uris_permitted:
+            raise PermissionError(_ACCESS_DENIED_MSG)
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+        targets: dict[str, list[Any]] = {}
+        if uris_permitted:
+            async with get_db() as db:
+                targets = await resource_service.resolve_subscription_targets(db, requested_uris, server_id=server_id, user_email=user_email, token_teams=token_teams)
+        _claim_listen_slot(user_email)
+        try:
+            async with get_resource_subscription_relay().watch([target for uri_targets in targets.values() for target in uri_targets]) as admitted:
+                admitted_set = set(admitted)
+                honored_uris = [uri for uri, uri_targets in targets.items() if admitted_set.intersection(uri_targets)]
+                narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted, resource_subscriptions=honored_uris or None)})
+                handler = _listen_handler_for(admitted)
+                result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+                with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
+                    result = await handler(ctx, narrowed)
+                await _send_listen_teardown(ctx)
+                return result
+        finally:
+            _release_listen_slot(user_email)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+def _listen_handler_for(admitted: List[Any]) -> Any:
+    """Return the ``ListenHandler`` that serves one stream.
+
+    Two upstream servers can expose one URI to different teams. A stream that watches
+    upstream resources therefore gets its own handler over a bus scoped to its targets.
+    Other streams share the process-wide handler.
+
+    Args:
+        admitted: Upstream resource targets the stream watches.
+
+    Returns:
+        Any: A ``ListenHandler`` to delegate the stream to.
+    """
+    if admitted:
+        return ListenHandler(scoped_listen_bus(admitted), max_subscriptions=1)
+    return get_listen_handler()
+
+
+LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _send_listen_teardown(ctx: Any) -> None:
+    """Send ``notifications/cancelled`` naming the listen request before the gateway closes the stream.
+
+    The 2026-07-28 cancellation spec requires this frame on every server teardown and forbids it for any other purpose.
+    A client that has stopped reading cannot hold the stream open: the send is bounded and its failure is only logged.
+
+    Args:
+        ctx: SDK request context of the listen request.
+    """
+    notification = types.CancelledNotification(
+        params=types.CancelledNotificationParams(request_id=ctx.request_id, reason="Subscription closed by server", _meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+    )
+    with anyio.move_on_after(LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS):
+        try:
+            await ctx.session.send_notification(notification, related_request_id=ctx.request_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("Listen teardown notification for %r not sent: %s", ctx.request_id, exc)
+
+
 # Register all handlers via the v2 add_request_handler API. set_logging_level
 # was already migrated to (_ctx, params) form so it registers directly.
 mcp_app.add_request_handler("server/discover", types.RequestParams, _adapt_discover_with_ttl_cache_scope)
@@ -4131,6 +4354,7 @@ mcp_app.add_request_handler("resources/read", types.ReadResourceRequestParams, _
 mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestParams, _adapt_list_resource_templates)
 mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
 mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
+mcp_app.add_request_handler("subscriptions/listen", types.SubscriptionsListenRequestParams, _adapt_subscriptions_listen)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------

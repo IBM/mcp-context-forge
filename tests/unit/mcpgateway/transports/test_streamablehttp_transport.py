@@ -22,13 +22,16 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import collections
 from contextlib import asynccontextmanager
 import json
+import time
 from types import SimpleNamespace
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
+import anyio
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
 import anyio
@@ -39,6 +42,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import PromptArgument
 import orjson
@@ -8252,6 +8256,28 @@ async def test_handle_streamable_http_unknown_method_without_session_returns_326
     payload = json.loads(response_body["body"])
     assert payload["error"]["code"] == -32601
     assert payload["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sessionless_legacy_listen_probe_still_method_not_found(monkeypatch):
+    """A legacy session-less subscriptions/listen probe keeps today's -32601, not the SDK's missing-session -32600."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    body = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "subscriptions/listen", "params": {"notifications": {"toolsListChanged": True}}}).encode()
+
+    await wrapper.handle_streamable_http(_make_scope("/mcp", method="POST"), _make_receive(body), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    response_body = next(m for m in messages if m["type"] == "http.response.body")
+    payload = json.loads(response_body["body"])
+    assert payload["error"]["code"] == -32601
+    assert payload["id"] == 7
 
 
 @pytest.mark.asyncio
@@ -21331,3 +21357,710 @@ class TestRequestMetaLimitsAndUpstreamResourceErrors:
         finally:
             tr._v2_request_ctx.reset(token)
         assert exc_info.value.error.code == types.INVALID_PARAMS
+
+
+# ---------------------------------------------------------------------------
+# subscriptions/listen (MCP 2026-07-28)
+# ---------------------------------------------------------------------------
+
+_MODERN_LISTEN_CTX = SimpleNamespace(protocol_version="2026-07-28", request_id=1)
+_ALL_LIST_KINDS = {"tools_list_changed": True, "prompts_list_changed": True, "resources_list_changed": True}
+
+
+def _listen_params(**flags):
+    """Build listen request params with the given filter flags."""
+    return types.SubscriptionsListenRequestParams(notifications=types.SubscriptionFilter(**flags))
+
+
+def _patch_listen_delegate(monkeypatch, delegate=None):
+    """Replace the shared ListenHandler with a recording fake and return it."""
+    delegate = delegate or AsyncMock(return_value=types.SubscriptionsListenResult())
+    monkeypatch.setattr(tr, "get_listen_handler", lambda: delegate)
+    monkeypatch.setattr(tr, "_listen_handler_for", lambda _admitted: delegate)
+    return delegate
+
+
+def _delegated_filter(delegate):
+    """Return the SubscriptionFilter the adapter handed to the shared handler."""
+    delegate.assert_awaited_once()
+    return delegate.await_args.args[1].notifications
+
+
+@pytest.fixture
+def listen_requires_auth(monkeypatch):
+    """Run listen tests with MCP_REQUIRE_AUTH=true so the OAuth check is skipped."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+
+async def test_listen_legacy_session_method_not_found(monkeypatch):
+    """A handshake-era caller gets -32601 and never reaches scope resolution or the shared handler."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    resolve = AsyncMock(return_value=("server-1", {}, _scoped_user_context(None)))
+    monkeypatch.setattr(tr, "_get_request_context_or_default", resolve)
+
+    with pytest.raises(MCPError) as exc_info:
+        await tr._adapt_subscriptions_listen(SimpleNamespace(protocol_version="2025-11-25", request_id=1), _listen_params(tools_list_changed=True))
+
+    assert exc_info.value.error.code == types.METHOD_NOT_FOUND == -32601
+    delegate.assert_not_awaited()
+    resolve.assert_not_awaited()
+
+
+async def test_listen_drops_kinds_without_permission(monkeypatch, listen_requires_auth):
+    """Only kinds whose */list permission the token scope grants survive narrowing."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(tools_list_changed=True)
+
+
+async def test_listen_all_list_kinds_denied_raises_like_tools_list(monkeypatch, listen_requires_auth):
+    """Every requested kind denied: the same PermissionError tools/list raises, and no stream opens."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+
+    with pytest.raises(PermissionError) as listen_exc:
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    with pytest.raises(PermissionError) as list_exc:
+        await tr._list_catalog_page("tools/list", None)
+
+    assert str(listen_exc.value) == str(list_exc.value) == tr._ACCESS_DENIED_MSG
+    delegate.assert_not_awaited()
+
+
+async def test_listen_empty_scope_keeps_all_kinds(monkeypatch, listen_requires_auth):
+    """An empty token scope sets no ceiling, so every requested list kind is kept."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(**_ALL_LIST_KINDS)
+
+
+def _patch_resource_targets(monkeypatch, targets):
+    """Resolve requested URIs to ``targets`` and record relay watches; return (resolver, watched)."""
+    resolver = AsyncMock(return_value=targets)
+    monkeypatch.setattr(tr.resource_service, "resolve_subscription_targets", resolver)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr(tr, "get_db", fake_get_db)
+    watched = {"active": [], "released": [], "admit": None}
+
+    class FakeRelay:
+        @asynccontextmanager
+        async def watch(self, watch_targets):
+            admitted = [t for t in watch_targets if watched["admit"] is None or t in watched["admit"]]
+            watched["active"] = admitted
+            try:
+                yield admitted
+            finally:
+                watched["released"] = admitted
+
+    monkeypatch.setattr(tr, "get_resource_subscription_relay", FakeRelay)
+    return resolver, watched
+
+
+def _upstream_target(gateway_id="gw-1", uri="file:///a"):
+    """Build an upstream target for listen tests."""
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+    return UpstreamResourceTarget(gateway_id=gateway_id, url=f"http://{gateway_id}/mcp", uri=uri)
+
+
+_UPSTREAM_TARGET = _upstream_target()
+
+
+async def test_listen_acks_only_uris_the_relay_admits(monkeypatch, listen_requires_auth):
+    """A URI whose upstream the relay does not admit (watch cap, legacy upstream) is dropped from the ack."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    other = _upstream_target(uri="file:///b")
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET], "file:///b": [other]})
+    watched["admit"] = [other]
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a", "file:///b"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(resource_subscriptions=["file:///b"])
+
+
+async def test_listen_acks_visible_resource_subscriptions(monkeypatch, listen_requires_auth):
+    """resourceSubscriptions the caller can see are honored, scoped to the request's server and identity."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    resolver, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resources_list_changed=True, resource_subscriptions=["file:///a", "file:///hidden"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(resources_list_changed=True, resource_subscriptions=["file:///a"])
+    assert resolver.await_args.args[1] == ["file:///a", "file:///hidden"]
+    assert resolver.await_args.kwargs == {"server_id": "server-1", "user_email": "dev@example.com", "token_teams": ["team-1"]}
+    assert watched["released"] == [_UPSTREAM_TARGET]
+
+
+async def test_listen_relay_watch_held_while_streaming(monkeypatch, listen_requires_auth):
+    """The upstream watch is open while the shared handler serves the stream, and released after."""
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+    seen = {}
+
+    async def delegate(_ctx, _params):
+        seen["active"] = list(watched["active"])
+        seen["released"] = list(watched["released"])
+        return types.SubscriptionsListenResult()
+
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    assert seen == {"active": [_UPSTREAM_TARGET], "released": []}
+    assert watched["released"] == [_UPSTREAM_TARGET]
+
+
+async def test_listen_releases_relay_watch_on_disconnect(monkeypatch, listen_requires_auth):
+    """A client disconnect releases the upstream watch."""
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _, watched = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    async def disconnected(_ctx, _params):
+        raise anyio.get_cancelled_exc_class()()
+
+    _patch_listen_delegate(monkeypatch, disconnected)
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    assert watched["released"] == [_UPSTREAM_TARGET]
+
+
+async def test_listen_resource_subscriptions_need_resources_read(monkeypatch, listen_requires_auth):
+    """Without resources.read the URIs are dropped and never resolved; a granted list kind still streams."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+    resolver, _ = _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True, resource_subscriptions=["file:///a"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(tools_list_changed=True)
+    resolver.assert_not_awaited()
+
+
+async def test_listen_only_resource_subscriptions_denied_raises_like_resources_read(monkeypatch, listen_requires_auth):
+    """Only URIs requested and no resources.read: the same PermissionError resources/read raises, and no stream opens."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
+    _patch_resource_targets(monkeypatch, {})
+
+    with pytest.raises(PermissionError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///a"]))
+
+    delegate.assert_not_awaited()
+
+
+async def test_listen_only_invisible_resource_subscriptions_gets_empty_filter(monkeypatch, listen_requires_auth):
+    """Permitted but invisible or unknown URIs are acked with an empty filter, not an error, so existence never leaks."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {})
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(resource_subscriptions=["file:///hidden"]))
+
+    assert _delegated_filter(delegate) == types.SubscriptionFilter()
+
+
+async def test_listen_drops_unknown_filter_keys(monkeypatch, listen_requires_auth):
+    """Extension keys in the filter are not forwarded; only gated list kinds reach the shared handler."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, types.SubscriptionsListenRequestParams(notifications={"toolsListChanged": True, "taskIds": ["t1"]}))
+
+    assert _delegated_filter(delegate).model_dump(by_alias=True, exclude_none=True) == {"toolsListChanged": True}
+
+
+async def test_listen_oauth_check_runs_once(monkeypatch):
+    """With MCP_REQUIRE_AUTH=false the OAuth enforcement runs once per listen, not once per kind."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    oauth_check = AsyncMock(return_value=None)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", oauth_check)
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(**_ALL_LIST_KINDS))
+
+    oauth_check.assert_awaited_once_with("server-1", {"is_authenticated": False})
+    assert _delegated_filter(delegate) == types.SubscriptionFilter(**_ALL_LIST_KINDS)
+
+
+async def test_listen_oauth_server_unauth_rejected(monkeypatch):
+    """An unauthenticated listen on an oauth_enabled server raises OAuthRequiredError, like the list path."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(side_effect=OAuthRequiredError("auth required", server_id="server-1")))
+
+    with pytest.raises(OAuthRequiredError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    with pytest.raises(OAuthRequiredError):
+        await tr._list_catalog_page("tools/list", None)
+    delegate.assert_not_awaited()
+
+
+def _listen_context_with_exp(exp):
+    """Build an authenticated user context carrying a JWT ``exp`` claim."""
+    return {**_scoped_user_context([]), "exp": exp}
+
+
+async def _block_forever(_ctx, _params):
+    """Fake shared handler that never completes on its own."""
+    await anyio.sleep_forever()
+
+
+def _listen_ctx_with_session():
+    """Build a modern listen context whose session records sent notifications."""
+    return SimpleNamespace(protocol_version="2026-07-28", request_id=1, session=SimpleNamespace(send_notification=AsyncMock()))
+
+
+def _assert_listen_completed(result, ctx):
+    """Assert the adapter sent the teardown cancel and returned a completion result tagged with the request id."""
+    assert isinstance(result, types.SubscriptionsListenResult)
+    assert result.meta[SUBSCRIPTION_ID_META_KEY] == ctx.request_id
+    _assert_teardown_cancel_sent(ctx)
+
+
+def _assert_teardown_cancel_sent(ctx):
+    """Assert exactly one notifications/cancelled naming the listen request went out on the stream."""
+    ctx.session.send_notification.assert_awaited_once()
+    notification = ctx.session.send_notification.await_args.args[0]
+    assert isinstance(notification, types.CancelledNotification)
+    assert notification.params.request_id == ctx.request_id
+    assert notification.params.meta[SUBSCRIPTION_ID_META_KEY] == ctx.request_id
+    assert ctx.session.send_notification.await_args.kwargs["related_request_id"] == ctx.request_id
+
+
+async def test_listen_ends_at_token_exp(monkeypatch, listen_requires_auth):
+    """A stream outliving the token exp sends notifications/cancelled, then a completion result tagged with the subscription id."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.25))
+    ctx = _listen_ctx_with_session()
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result, ctx)
+
+
+async def test_listen_without_exp_ends_at_max_lifetime(monkeypatch, listen_requires_auth):
+    """A token without exp is bounded by MCP_LISTEN_MAX_LIFETIME_SECONDS."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result, ctx)
+
+
+async def test_listen_exp_none_treated_as_missing(monkeypatch, listen_requires_auth):
+    """A JWT-path context with exp=None falls back to the max-lifetime deadline."""
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_listen_delegate(monkeypatch, _block_forever)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(None))
+    ctx = _listen_ctx_with_session()
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    _assert_listen_completed(result, ctx)
+
+
+async def test_listen_handler_end_sends_cancelled(monkeypatch, listen_requires_auth):
+    """The shared handler ending the stream itself (close or backlog cap) is a server teardown too."""
+    expected = types.SubscriptionsListenResult()
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=expected))
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+
+    assert await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True)) is expected
+    _assert_teardown_cancel_sent(ctx)
+
+
+async def test_listen_client_disconnect_sends_no_cancelled(monkeypatch, listen_requires_auth):
+    """A client disconnect cancels the handler; that is not a server teardown, so no cancel goes out."""
+
+    async def disconnected(_ctx, _params):
+        raise anyio.get_cancelled_exc_class()()
+
+    _patch_listen_delegate(monkeypatch, disconnected)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    ctx.session.send_notification.assert_not_awaited()
+
+
+async def test_listen_legacy_sends_no_cancelled(monkeypatch):
+    """A handshake-era caller gets -32601 and never sees notifications/cancelled."""
+    _patch_listen_delegate(monkeypatch)
+    ctx = _listen_ctx_with_session()
+    ctx.protocol_version = "2025-11-25"
+
+    with pytest.raises(MCPError):
+        await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    ctx.session.send_notification.assert_not_awaited()
+
+
+async def test_listen_teardown_send_failure_still_returns_result(monkeypatch, listen_requires_auth):
+    """A stream already gone when the cancel is sent still completes and releases its slot."""
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=types.SubscriptionsListenResult()))
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+    ctx = _listen_ctx_with_session()
+    ctx.session.send_notification.side_effect = anyio.ClosedResourceError()
+
+    result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    assert isinstance(result, types.SubscriptionsListenResult)
+    assert tr._listen_streams_by_principal == {}
+
+
+async def test_listen_deadline_floor_ack_precedes_result(monkeypatch, listen_requires_auth):
+    """A token about to expire still gets the floor, so the handler can send its ack first."""
+    floor = 0.3
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", floor)
+    started = {}
+
+    async def recording_delegate(_ctx, _params):
+        started["at"] = time.monotonic()
+        await anyio.sleep_forever()
+
+    _patch_listen_delegate(monkeypatch, recording_delegate)
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 0.01))
+    ctx = _listen_ctx_with_session()
+
+    with anyio.fail_after(5):
+        result = await tr._adapt_subscriptions_listen(ctx, _listen_params(tools_list_changed=True))
+
+    assert time.monotonic() - started["at"] >= floor - 0.02
+    _assert_listen_completed(result, ctx)
+
+
+async def test_listen_delegate_completing_early_returns_its_result(monkeypatch, listen_requires_auth):
+    """A delegate that finishes before the deadline keeps its own result."""
+    expected = types.SubscriptionsListenResult()
+    _patch_listen_delegate(monkeypatch, AsyncMock(return_value=expected))
+    _patch_request_context(monkeypatch, _listen_context_with_exp(time.time() + 3600))
+
+    assert await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True)) is expected
+
+
+async def test_listen_does_not_open_db_session(monkeypatch):
+    """Scope resolution closes its DB session before delegating, and the stream never opens one."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+    state = {"open": 0, "opened": 0, "delegating": False}
+
+    @asynccontextmanager
+    async def tracking_get_db():
+        if state["delegating"]:
+            raise AssertionError("get_db entered while the listen stream is being served")
+        state["open"] += 1
+        state["opened"] += 1
+        try:
+            db = MagicMock()
+            db.execute.return_value.scalar_one_or_none.return_value = None
+            yield db
+        finally:
+            state["open"] -= 1
+
+    async def delegate(_ctx, params):
+        state["delegating"] = True
+        assert state["open"] == 0, "a DB session is still open while the listen stream is served"
+        return types.SubscriptionsListenResult()
+
+    monkeypatch.setattr(tr, "get_db", tracking_get_db)
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert state["delegating"] is True
+    assert state["opened"] == 1  # the OAuth lookup ran and released its session
+
+
+@pytest.fixture
+def listen_counters(monkeypatch):
+    """Start each cap test with empty listen-stream counters."""
+    monkeypatch.setattr(tr, "_listen_streams_by_principal", collections.Counter())
+    monkeypatch.setattr(tr, "_anonymous_listen_streams", 0)
+
+
+def _listen_counters_empty():
+    """Return True when no listen stream holds a slot."""
+    return not tr._listen_streams_by_principal and tr._anonymous_listen_streams == 0
+
+
+def _context_for(email):
+    """Build an authenticated user context for ``email``."""
+    return {**_scoped_user_context([]), "email": email}
+
+
+def _blocking_delegate():
+    """Return a fake shared handler that parks until the returned event is set."""
+    release = anyio.Event()
+
+    async def park(_ctx, _params):
+        await release.wait()
+
+    delegate = AsyncMock(side_effect=park)
+    return delegate, release
+
+
+async def test_listen_per_principal_cap_refuses_extra_stream(monkeypatch, listen_requires_auth, listen_counters):
+    """The third concurrent stream of one principal is refused; the first two reach the shared handler."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 2)
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+    _patch_request_context(monkeypatch, _context_for("a@x.com"))
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(2):
+            tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        with pytest.raises(MCPError) as exc_info:
+            await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        release.set()
+
+    assert exc_info.value.error.code == types.INTERNAL_ERROR
+    assert exc_info.value.error.message == "Subscription limit reached"
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_per_principal_cap_is_per_principal(monkeypatch, listen_requires_auth, listen_counters):
+    """One principal at its cap does not block another principal."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 1)
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    async with anyio.create_task_group() as tg:
+        _patch_request_context(monkeypatch, _context_for("a@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 1:
+            await anyio.sleep(0)
+        _patch_request_context(monkeypatch, _context_for("b@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        release.set()
+
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_anonymous_cap_refuses_extra_stream(monkeypatch, listen_counters):
+    """Anonymous callers share one cap; an authenticated caller is unaffected."""
+    monkeypatch.setattr(tr.settings, "mcp_require_auth", False)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 1)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock())
+    delegate, release = _blocking_delegate()
+    _patch_listen_delegate(monkeypatch, delegate)
+
+    async with anyio.create_task_group() as tg:
+        _patch_request_context(monkeypatch, {"is_authenticated": False})
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 1:
+            await anyio.sleep(0)
+        with pytest.raises(MCPError) as exc_info:
+            await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        _patch_request_context(monkeypatch, _context_for("a@x.com"))
+        tg.start_soon(tr._adapt_subscriptions_listen, _MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+        while delegate.await_count < 2:
+            await anyio.sleep(0)
+        release.set()
+
+    assert exc_info.value.error.message == "Subscription limit reached"
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_anonymous_cap_zero_refuses_anonymous(monkeypatch, listen_counters):
+    """An anonymous cap of 0 refuses every anonymous stream before the shared handler runs."""
+    monkeypatch.setattr(tr.settings, "mcp_require_auth", False)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 0)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock())
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {"is_authenticated": False})
+
+    with pytest.raises(MCPError) as exc_info:
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert exc_info.value.error.message == "Subscription limit reached"
+    delegate.assert_not_awaited()
+    assert _listen_counters_empty()
+
+
+async def test_listen_cap_slot_released_on_error(monkeypatch, listen_requires_auth, listen_counters):
+    """A failing stream releases its slot, so the next call reaches the shared handler."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_streams_per_principal", 1)
+    delegate = _patch_listen_delegate(monkeypatch, AsyncMock(side_effect=[RuntimeError("boom"), types.SubscriptionsListenResult()]))
+    _patch_request_context(monkeypatch, _context_for("a@x.com"))
+
+    with pytest.raises(RuntimeError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+    assert _listen_counters_empty()
+    await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    assert delegate.await_count == 2
+    assert _listen_counters_empty()
+
+
+async def test_listen_cap_not_consumed_by_denied_request(monkeypatch, listen_requires_auth, listen_counters):
+    """A request denied by token scope never takes a slot."""
+    delegate = _patch_listen_delegate(monkeypatch)
+    _patch_request_context(monkeypatch, {**_context_for("a@x.com"), "scoped_permissions": ["servers.use"]})
+
+    with pytest.raises(PermissionError):
+        await tr._adapt_subscriptions_listen(_MODERN_LISTEN_CTX, _listen_params(tools_list_changed=True))
+
+    delegate.assert_not_awaited()
+    assert _listen_counters_empty()
+
+
+def test_listen_slot_treats_empty_email_as_anonymous(monkeypatch, listen_counters):
+    """An empty-string principal counts against the anonymous cap, and release stays symmetric."""
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_anonymous_streams", 1)
+
+    tr._claim_listen_slot("")
+    assert tr._anonymous_listen_streams == 1
+    assert not tr._listen_streams_by_principal
+    with pytest.raises(MCPError):
+        tr._claim_listen_slot(None)
+    tr._release_listen_slot("")
+
+    assert _listen_counters_empty()
+
+
+def test_listen_handler_registered():
+    """subscriptions/listen is served by the ContextForge adapter, not added to the legacy known-method set."""
+    assert "subscriptions/listen" in tr.mcp_app._request_handlers
+    assert "subscriptions/listen" not in tr._MCP_KNOWN_REQUEST_METHODS
+
+
+def test_modern_capabilities_advertise_list_changed_and_resource_subscribe():
+    """2026-07-28 advertises listChanged for all three kinds and resources.subscribe for resourceSubscriptions."""
+    capabilities = tr.mcp_app.get_capabilities(protocol_version="2026-07-28")
+
+    assert capabilities.tools.list_changed is True
+    assert capabilities.prompts.list_changed is True
+    assert capabilities.resources.list_changed is True
+    assert capabilities.resources.subscribe is True
+    assert capabilities.logging is None
+
+
+def test_legacy_capabilities_unchanged(monkeypatch):
+    """Handshake-era capabilities are identical to the output captured before listen support."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+
+    capabilities = tr.mcp_app.get_capabilities(protocol_version="2025-11-25")
+
+    assert capabilities.model_dump(mode="json", by_alias=True) == {
+        "experimental": None,
+        "logging": {},
+        "prompts": {"listChanged": False},
+        "resources": {"subscribe": False, "listChanged": False},
+        "tools": {"listChanged": False},
+        "completions": {},
+        "extensions": None,
+        "tasks": None,
+    }
+
+
+async def test_listen_over_modern_wire_acks_narrowed_filter_and_delivers_permitted_kind(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: the ack carries only permitted kinds; URIs need resources.read."""
+    # Third-Party
+    from mcp.shared.subscriptions import ToolsListChanged  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(tools_list_changed=True, prompts_list_changed=True, resource_subscriptions=["file:///a"]) as sub:
+            assert sub.honored.model_dump(by_alias=True, exclude_none=True) == {"toolsListChanged": True}
+            await get_listen_bus().publish(ToolsListChanged())
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    assert isinstance(event, ToolsListChanged)
+
+
+async def test_listen_over_modern_wire_deadline_sends_cancelled_teardown(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: the gateway's deadline teardown reaches the client as notifications/cancelled."""
+    # Third-Party
+    from mcp.client.subscriptions import SubscriptionLost  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(tr, "LISTEN_DEADLINE_FLOOR_SECONDS", 0.05)
+    monkeypatch.setattr(tr.settings, "mcp_listen_max_lifetime_seconds", 0.2)
+    _patch_request_context(monkeypatch, _scoped_user_context([]))
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(tools_list_changed=True) as sub:
+            # The SDK client settles a stream named by a server-sent cancel as lost, so the consumer re-listens.
+            with pytest.raises(SubscriptionLost):
+                await asyncio.wait_for(anext(sub), timeout=5)
+
+
+async def test_listen_over_modern_wire_delivers_resource_updated_with_subscription_id(monkeypatch, listen_requires_auth):
+    """End to end on the 2026-07-28 wire: an honored URI is acked and its resources/updated reaches the stream, stamped with the subscription id."""
+    # Third-Party
+    from mcp.shared.subscriptions import ResourceUpdated  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceUpdated  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(resource_subscriptions=["file:///a", "file:///hidden"]) as sub:
+            assert sub.honored.model_dump(by_alias=True, exclude_none=True) == {"resourceSubscriptions": ["file:///a"]}
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///other", gateway_id="gw-1"))
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-1"))
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    # The SDK client routes a frame to ``sub`` only by its subscription id stamp, so receiving it proves the stamp.
+    assert event == ResourceUpdated(uri="file:///a")
+
+
+async def test_listen_over_modern_wire_ignores_same_uri_from_another_gateway(monkeypatch, listen_requires_auth):
+    """Two upstreams can share a URI across teams: a stream gets updates only from the upstream it was granted."""
+    # First-Party
+    from mcpgateway.cache.catalog_change_bus import get_listen_bus  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceUpdated  # pylint: disable=import-outside-toplevel
+
+    _patch_request_context(monkeypatch, _scoped_user_context(["resources.read"]))
+    _patch_resource_targets(monkeypatch, {"file:///a": [_UPSTREAM_TARGET]})
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        async with modern_client.listen(resource_subscriptions=["file:///a"]) as sub:
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-other"))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(anext(sub), timeout=0.3)
+            await get_listen_bus().publish(UpstreamResourceUpdated(uri="file:///a", gateway_id="gw-1"))
+            event = await asyncio.wait_for(anext(sub), timeout=5)
+
+    assert event.uri == "file:///a"

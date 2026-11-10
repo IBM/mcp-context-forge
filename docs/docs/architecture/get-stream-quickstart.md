@@ -158,6 +158,74 @@ workers.
 make testing-down
 ```
 
+## Change delivery per protocol era
+
+The GET stream on this page serves the legacy (handshake) era, `2024-11-05`
+through `2025-11-25`. MCP `2026-07-28` has no standing GET stream. A modern
+client opts in to catalog changes with a `subscriptions/listen` request whose
+SSE response is the stream:
+
+| | Legacy (`2025-11-25` and earlier) | Modern (`2026-07-28`) |
+|---|---|---|
+| Stream | `GET /mcp` with `Mcp-Session-Id` | `POST /mcp` or `/servers/{id}/mcp` with `Mcp-Method: subscriptions/listen` |
+| Session | Stateful (`USE_STATEFUL_SESSIONS=true`) | None |
+| First frame | — | `notifications/subscriptions/acknowledged` with the honored filter |
+| Events | Upstream notifications relayed per session | `notifications/{tools,prompts,resources}/list_changed`, stamped with `_meta["io.modelcontextprotocol/subscriptionId"]` |
+| `subscriptions/listen` | `-32601` (also on `/rpc`) | Served |
+
+Listen events carry only the kind, never names, IDs, or row data. Each worker
+coalesces a burst of catalog changes into one event per kind (0.3 s window).
+Each requested kind passes the same token-scope check as its `*/list` call;
+the ack lists only the kinds that pass. A stream ends at the token `exp` or
+`MCP_LISTEN_MAX_LIFETIME_SECONDS` (default 3600), whichever comes first, and the
+client listens again. When the gateway ends a stream, it sends
+`notifications/cancelled` naming the listen request ID, then the completion
+result. The gateway sends `notifications/cancelled` on the modern era for no
+other purpose. A client that closes the stream gets no cancel frame.
+
+**Cross-worker fan-out.** With `CACHE_TYPE=redis`, a change on any worker or
+replica reaches every listen stream through the `mcpgw:cache:invalidate`
+channel. Without Redis, delivery is best effort: only streams on the worker
+that made the change get the event. A single-worker deployment still gets
+every event.
+
+**`ttlMs` fallback.** Delivery is best effort in the spec too, and there is no
+replay. Every list result carries `ttlMs`, so a client that misses an event
+still refetches when its cached list expires. A client that reconnects should
+refetch its lists once.
+
+**Shutdown.** Listen streams close abruptly when a worker stops, as legacy GET
+streams do. The client treats the close as a signal to reconnect.
+
+**Per-resource subscriptions.** A modern client can name resource URIs in
+`resourceSubscriptions`. The URIs need `resources.read`. The ack lists only
+URIs the caller can see that come from an enabled upstream server that a
+standing stream reaches with its stored headers alone: not SSE, not OAuth, not
+query-parameter auth, and no private CA or mTLS client certificate. On
+`/servers/{id}/mcp` the resource must also belong to that virtual server.
+Unknown and hidden URIs drop from the ack without an error. One request
+considers at most 64 distinct URIs.
+
+While the stream is open, the worker that holds it keeps one upstream
+`subscriptions/listen` per `(server, URI)`, shared across streams. An upstream
+`notifications/resources/updated` reaches each subscribed stream as
+`notifications/resources/updated` with the URI, stamped with that stream's
+subscription ID. Two upstream servers can expose the same URI to different
+teams; a stream gets updates only from the upstream servers it was granted. The
+relay needs no Redis, because the upstream stream lives on the same worker as
+the downstream stream. Each worker holds at most 256 distinct upstream resource
+streams; a URI that would open one more drops from the ack. A pre-2026 upstream
+sends no updates, and its URIs drop from later acks for an hour.
+When an upstream stream drops, the relay reconnects with jittered backoff and
+sends one update, so clients read the resource again.
+
+For `2026-07-28` callers the capabilities (also in `server/discover`) advertise
+`resources.subscribe`. Legacy capabilities and `resources/subscribe` are
+unchanged.
+
+`tests/live_gateway/mcp/test_subscriptions_listen.py` proves these paths
+against running gateways.
+
 ## Common gotchas
 
 - **No upstream MCP server registered = no notifications to fan out.** The
