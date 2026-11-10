@@ -97,6 +97,7 @@ from ..helpers.mcp_test_helpers import (
 )
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+from tests.live_gateway.e2e.test_candidate_credential_handshake import _GatewayFixture, isolated_gateway  # noqa: F401  pylint: disable=unused-import
 
 logger = logging.getLogger(__name__)
 
@@ -5793,3 +5794,161 @@ async def test_catalog_continuation_cross_replica(jwt_token: str) -> None:
             for endpoint, item_id in reversed(owned):
                 response = await _pagination_fixture_request(api, "DELETE", f"{BASE_URL}/{endpoint}/{item_id}")
                 assert response.status_code in (200, 204, 404), response.text
+
+
+@pytest.mark.parametrize("visibility", ["public", "team", "private"])
+def test_resource_uri_conflict_http_contract(admin_api: APIRequestContext, rbac_team: dict[str, Any], visibility: str) -> None:
+    """Resource creation and update retain conflict responses and persisted state."""
+    suffix = uuid.uuid4().hex
+    uri = f"file://conflict-{suffix}.txt"
+    scope = {"visibility": visibility, "team_id": rbac_team["id"]}
+    ids = []
+    try:
+        first = admin_api.post("/resources", data={"resource": {"uri": uri, "name": f"original-{suffix}", "content": "test"}, **scope})
+        assert first.status == 200, first.text()
+        original = first.json()
+        ids.append(original["id"])
+        target_uri = f"file://available-{suffix}.txt"
+        target = admin_api.post("/resources", data={"resource": {"uri": target_uri, "name": original["name"], "content": "test"}, **scope})
+        assert target.status == 200, target.text()
+        target_id = target.json()["id"]
+        ids.append(target_id)
+        for inactive in (False, True):
+            if inactive:
+                state = admin_api.post(f"/resources/{original['id']}/state?activate=false")
+                assert state.status == 200, state.text()
+            message = f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {uri})"
+            if inactive:
+                message += f" (currently inactive, ID: {original['id']})"
+            duplicate = admin_api.post("/resources", data={"resource": {"uri": uri, "name": f"duplicate-{suffix}", "content": "test"}, **scope})
+            assert duplicate.status == 409, duplicate.text()
+            assert duplicate.json() == {"detail": message}
+            update = admin_api.put(f"/resources/{target_id}", data={"uri": uri})
+            assert update.status == 409, update.text()
+            assert update.json() == {"detail": message}
+            info = admin_api.get(f"/resources/{target_id}/info")
+            assert info.status == 200, info.text()
+            assert info.json()["uri"] == target_uri
+        unchanged = admin_api.put(f"/resources/{target_id}", data={"uri": target_uri, "description": "Updated description"})
+        assert unchanged.status == 200, unchanged.text()
+        assert unchanged.json()["description"] == "Updated description"
+    finally:
+        for resource_id in reversed(ids):
+            response = admin_api.delete(f"/resources/{resource_id}")
+            assert response.status == 200, response.text()
+
+
+def test_resource_uri_conflict_database_fallback(admin_api: APIRequestContext, rbac_team: dict[str, Any]) -> None:
+    """Return a generic conflict when the database rejects a cross-visibility write."""
+    suffix = uuid.uuid4().hex
+    occupied_uri = f"file://occupied-{suffix}.txt"
+    target_uri = f"file://target-{suffix}.txt"
+    team_id = rbac_team["id"]
+    ids = []
+    try:
+        for uri, visibility in ((occupied_uri, "private"), (target_uri, "public")):
+            result = admin_api.post("/resources", data={"resource": {"uri": uri, "name": f"resource-{suffix}", "content": "test"}, "team_id": team_id, "visibility": visibility})
+            assert result.status == 200, result.text()
+            resource = result.json()
+            ids.append(resource["id"])
+            assert resource["teamId"] == team_id
+            assert resource["ownerEmail"] == ADMIN_EMAIL
+            assert resource["visibility"] == visibility
+
+        detail = {
+            "message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+            "success": False,
+        }
+        duplicate = admin_api.post("/resources", data={"resource": {"uri": occupied_uri, "name": f"duplicate-{suffix}", "content": "test"}, "team_id": team_id, "visibility": "public"})
+        if duplicate.ok:
+            ids.append(duplicate.json()["id"])
+        assert duplicate.status == 409, duplicate.text()
+        assert duplicate.json() == {"detail": detail}
+        update = admin_api.put(f"/resources/{ids[1]}", data={"uri": occupied_uri})
+        assert update.status == 409, update.text()
+        assert update.json() == {"detail": detail}
+
+        catalog = admin_api.get("/resources?limit=0&include_inactive=true")
+        assert catalog.status == 200, catalog.text()
+        rows = catalog.json()
+        if isinstance(rows, dict):
+            rows = rows["resources"]
+        assert sorted((row["uri"], row["id"]) for row in rows if row["uri"] in (occupied_uri, target_uri)) == [(occupied_uri, ids[0]), (target_uri, ids[1])]
+    finally:
+        for resource_id in reversed(ids):
+            response = admin_api.delete(f"/resources/{resource_id}")
+            assert response.status == 200, response.text()
+
+
+@pytest.mark.parametrize("isolated_gateway", [{"CONTENT_MAX_RESOURCE_SIZE": "102400"}], indirect=True)
+def test_resource_post_content_size_limit(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811
+    """Return the documented 413 for content larger than the configured limit."""
+    client, _, _, _ = isolated_gateway
+    response = client.post("/resources", json={"resource": {"uri": "file:///oversized.txt", "name": "Oversized", "content": "x" * 103424}})
+    assert response.status_code == 413, response.text
+    detail = response.json()["detail"]
+    assert detail["error"] == "Resource content size limit exceeded"
+    assert detail["actual_size"] == 103424
+    assert detail["max_size"] == 102400
+    resources = client.get("/resources")
+    assert resources.status_code == 200, resources.text
+    assert resources.json() == []
+
+
+@pytest.mark.parametrize(
+    ("isolated_gateway", "status"),
+    [
+        ({"CONTENT_ALLOWED_RESOURCE_MIMETYPES": '["text/plain"]', "CONTENT_STRICT_MIME_VALIDATION": "true"}, 415),
+        ({"CONTENT_ALLOWED_RESOURCE_MIMETYPES": '["text/plain"]', "CONTENT_STRICT_MIME_VALIDATION": "false"}, 200),
+    ],
+    indirect=["isolated_gateway"],
+    ids=["strict", "log-only"],
+)
+def test_resource_post_mime_allowlist(isolated_gateway: _GatewayFixture, status: int) -> None:  # noqa: F811
+    """Reject a disallowed MIME type only when strict validation is enabled."""
+    client, _, _, _ = isolated_gateway
+    uri = "file:///report.pdf"
+    response = client.post("/resources", json={"resource": {"uri": uri, "name": "Report", "mime_type": "application/pdf", "content": "Example content"}})
+    assert response.status_code == status, response.text
+    resources = client.get("/resources")
+    assert resources.status_code == 200, resources.text
+    if status == 415:
+        detail = response.json()["detail"]
+        assert detail["error"] == "Unsupported Media Type"
+        assert detail["mime_type"] == "application/pdf"
+        assert detail["allowed_types"] == ["text/plain"]
+        assert resources.json() == []
+    else:
+        assert response.json()["mimeType"] == "application/pdf"
+        assert [resource["uri"] for resource in resources.json()] == [uri]
+
+
+def test_resource_uri_conflict_http_denials(admin_api: APIRequestContext, playwright: Playwright, create_user: Any) -> None:
+    """Unauthenticated and unprivileged callers receive no URI conflict details."""
+    suffix = uuid.uuid4().hex
+    ids = []
+    email, _, user = create_user()
+    assert user.status == 201, user.text()
+    try:
+        for name in ("occupied", "target"):
+            response = admin_api.post(
+                "/resources",
+                data={"resource": {"uri": f"file://{name}-{suffix}.txt", "name": f"{name}-{suffix}", "content": "test"}, "visibility": "public"},
+            )
+            assert response.status == 200, response.text()
+            ids.append(response.json()["id"])
+        for token in ("", _make_jwt(email, teams=[])):
+            context = ApiTestHelper.new_context(playwright, BASE_URL, token)
+            try:
+                response = context.put(f"/resources/{ids[1]}", data={"uri": f"file://occupied-{suffix}.txt"})
+                assert response.status == 403, response.text()
+                assert "already exists" not in response.text()
+            finally:
+                context.dispose()
+        response = admin_api.get(f"/resources/{ids[1]}/info")
+        assert response.status == 200, response.text()
+        assert response.json()["uri"] == f"file://target-{suffix}.txt"
+    finally:
+        for resource_id in reversed(ids):
+            response = admin_api.delete(f"/resources/{resource_id}")
+            assert response.status == 200, response.text()

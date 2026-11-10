@@ -6891,6 +6891,7 @@ async def create_resource(
         db.commit()
         db.close()
         return result
+    # Catch ResourceError subclasses before ResourceError to preserve 409 and 422 responses.
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceValidationError as e:
@@ -7129,6 +7130,7 @@ async def update_resource(
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    # Catch ResourceError subclasses before ResourceError to preserve 404, 409, and 422 responses.
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:

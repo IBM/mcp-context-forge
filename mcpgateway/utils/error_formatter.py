@@ -47,6 +47,40 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+_RESOURCE_URI_CONFLICT_MESSAGE = "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
+
+
+def format_resource_uri_conflict_message(
+    *,
+    uri: str | None = None,
+    visibility: str | None = None,
+    enabled: bool = True,
+    resource_id: str | None = None,
+) -> str:
+    """Format a resource URI conflict with the available context.
+
+    Args:
+        uri: Conflicting URI, if known.
+        visibility: Resource visibility, if known.
+        enabled: Whether the conflicting resource is active.
+        resource_id: Identifier of the conflicting resource, if known.
+
+    Returns:
+        The shared conflict message with optional resource details.
+    """
+    message = _RESOURCE_URI_CONFLICT_MESSAGE
+    details = []
+    if visibility is not None:
+        details.append(f"visibility: {visibility.capitalize()}")
+    if uri is not None:
+        details.append(f"URI: {uri}")
+    if details:
+        message += f" ({', '.join(details)})"
+    if not enabled:
+        message += f" (currently inactive, ID: {resource_id})"
+    return message
+
+
 class ErrorFormatter:
     """Transform technical errors into user-friendly messages.
 
@@ -402,7 +436,7 @@ class ErrorFormatter:
             # unique constraint \"...\""), which matches none of the SQLite-shaped column-path patterns
             # below. Only the URI is unique -- resource names are display labels and may repeat.
             if "uq_team_owner_gateway_uri_resource" in error_str or "uq_team_owner_uri_resource_local" in error_str:
-                return {"message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.", "success": False}
+                return {"message": format_resource_uri_conflict_message(), "success": False}
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}
@@ -411,7 +445,7 @@ class ErrorFormatter:
                 elif "tools.name" in error_str:
                     return {"message": "A tool with this name already exists", "success": False}
                 elif "resources.uri" in error_str:
-                    return {"message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.", "success": False}
+                    return {"message": format_resource_uri_conflict_message(), "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:

@@ -221,7 +221,10 @@ describe("handleResourceFormSubmit", () => {
 
   // Issue #4991: a duplicate URI must be attributed to the URI field instead of
   // only surfacing as a generic banner/toast message.
-  test("attributes a 409 URI conflict to the URI field", async () => {
+  test.each([
+    "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Public, URI: resource://test)",
+    "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+  ])("attributes a 409 URI conflict to the URI field: %s", async (conflictMessage) => {
     const event = createFormEvent(`
       <form>
         <input name="name" value="TestResource" />
@@ -234,9 +237,6 @@ describe("handleResourceFormSubmit", () => {
       <div id="status-resources"></div>
       <div id="add-resource-loading" style="display:none"></div>
     `);
-
-    const conflictMessage =
-      "Public resource already exists with URI: resource://test — resource URIs must be unique within this scope (names may repeat).";
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 409 });
     // safeParseJsonResponse throws for non-OK responses (see security.js).

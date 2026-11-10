@@ -32,7 +32,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, cast, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
@@ -47,6 +47,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.sql.elements import ColumnElement
 
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent
@@ -83,6 +84,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import format_resource_uri_conflict_message, PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -96,7 +98,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -287,10 +288,7 @@ class ResourceURIConflictError(ResourceError):
         self.uri = uri
         self.enabled = enabled
         self.resource_id = resource_id
-        message = f"{visibility.capitalize()} resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
-        if not enabled:
-            message += f" (currently inactive, ID: {resource_id})"
-        super().__init__(message)
+        super().__init__(format_resource_uri_conflict_message(uri=uri, visibility=visibility, enabled=enabled, resource_id=resource_id))
 
 
 class ResourceValidationError(ResourceError):
@@ -334,6 +332,51 @@ def _validate_resource_team_assignment(db: Session, user_email: Optional[str], t
     )
     if not membership:
         raise PublicValidationError("User membership in team not sufficient for this update.")
+
+
+def _check_uri_conflict(
+    uri: str,
+    visibility: str,
+    *,
+    team_id: Optional[str],
+    owner_email: Optional[str],
+    gateway_id: Optional[str],
+    exclude_id: Optional[Union[str, int]],
+    scope_gateway: bool,
+    lookup: Callable[[ColumnElement[bool]], Optional[DbResource]],
+) -> None:
+    """Reject a URI that already exists in the requested resource scope.
+
+    Args:
+        uri: Resource URI to check.
+        visibility: Resource visibility, interpreted without case sensitivity.
+        team_id: Team identifier for team and private scopes.
+        owner_email: Effective owner for private scope.
+        gateway_id: Gateway identifier, including the local-resource value None.
+        exclude_id: Resource identifier to exclude during updates.
+        scope_gateway: Apply gateway filtering to public and team scopes.
+        lookup: Execute the condition with the caller's existing query strategy.
+
+    Raises:
+        ResourceURIConflictError: A resource already occupies the requested scope.
+    """
+    visibility = visibility.lower()
+    if visibility not in ("public", "team", "private") or (visibility == "team" and not team_id):
+        return
+
+    conditions = [DbResource.uri == uri, DbResource.visibility == visibility]
+    if visibility in ("team", "private"):
+        conditions.append(DbResource.team_id == team_id)
+    if visibility == "private":
+        conditions.append(DbResource.owner_email == owner_email)
+    if scope_gateway or visibility == "private":
+        conditions.append(DbResource.gateway_id == gateway_id)
+    if exclude_id is not None:
+        conditions.append(DbResource.id != exclude_id)
+
+    existing_resource = lookup(and_(*conditions))
+    if existing_resource:
+        raise ResourceURIConflictError(uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
 
 class ResourceService(BaseService):
@@ -671,37 +714,20 @@ class ResourceService(BaseService):
             if visibility.lower() == "team" and not team_id:
                 raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
 
-            # Check for existing resource with the same uri
-            if visibility.lower() == "public":
-                # Check for existing public resource with the same uri and gateway_id
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
-                if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-            elif visibility.lower() == "team":
-                # team_id is guaranteed non-None here: a ResourceValidationError is raised above for
-                # team visibility without a team_id.
-                # Check for existing team resource with the same uri and gateway_id
-                existing_resource = db.execute(
-                    select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
-                ).scalar_one_or_none()
-                if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-            elif visibility.lower() == "private":
-                # Scope the check to the DB constraint UniqueConstraint("team_id", "owner_email", "gateway_id", "uri"),
-                # mirroring the team_id/owner_email used when DbResource is constructed below.
-                effective_team_id = team_id
-                effective_owner = owner_email or created_by
-                existing_resource = db.execute(
-                    select(DbResource).where(
-                        DbResource.uri == resource.uri,
-                        DbResource.visibility == "private",
-                        DbResource.owner_email == effective_owner,
-                        DbResource.team_id == effective_team_id,
-                        DbResource.gateway_id == gateway_id,
-                    )
-                ).scalar_one_or_none()
-                if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+            def _lookup_register(condition: ColumnElement[bool]) -> Optional[DbResource]:
+                """Query database for existing resource matching conflict condition."""
+                return db.execute(select(DbResource).where(condition)).scalar_one_or_none()
+
+            _check_uri_conflict(
+                resource.uri,
+                cast(str, visibility),
+                team_id=team_id,
+                owner_email=owner_email or created_by,
+                gateway_id=gateway_id,
+                exclude_id=None,
+                scope_gateway=True,
+                lookup=_lookup_register,
+            )
 
             # Determine content storage (mime_type already detected above)
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
@@ -3359,39 +3385,24 @@ class ResourceService(BaseService):
             if resource_update.team_id is not None and resource_update.team_id != resource.team_id:
                 _validate_resource_team_assignment(db, user_email, resource_update.team_id)
 
-            # # Check for uri conflict if uri is being changed and visibility is public
             if resource_update.uri and resource_update.uri != resource.uri:
                 visibility = resource_update.visibility or resource.visibility
                 team_id = resource_update.team_id or resource.team_id
-                if visibility.lower() == "public":
-                    # Check for existing public resources with the same uri
-                    existing_resource = get_for_update(db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "public", DbResource.id != resource_id))
-                    if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-                elif visibility.lower() == "team" and team_id:
-                    # Check for existing team resource with the same uri
-                    existing_resource = get_for_update(
-                        db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.id != resource_id)
-                    )
-                    if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-                elif visibility.lower() == "private":
-                    # Scope the check to the DB constraint UniqueConstraint("team_id", "owner_email", "gateway_id", "uri").
-                    effective_owner = resource_update.owner_email or resource.owner_email
-                    existing_resource = get_for_update(
-                        db,
-                        DbResource,
-                        where=and_(
-                            DbResource.uri == resource_update.uri,
-                            DbResource.visibility == "private",
-                            DbResource.owner_email == effective_owner,
-                            DbResource.team_id == team_id,
-                            DbResource.gateway_id == resource.gateway_id,
-                            DbResource.id != resource_id,
-                        ),
-                    )
-                    if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+
+                def _lookup_update(condition: ColumnElement[bool]) -> Optional[DbResource]:
+                    """Use the existing update lookup for a matching resource."""
+                    return cast(Optional[DbResource], get_for_update(db, DbResource, where=condition))
+
+                _check_uri_conflict(
+                    resource_update.uri,
+                    visibility,
+                    team_id=team_id,
+                    owner_email=resource_update.owner_email or resource.owner_email,
+                    gateway_id=resource.gateway_id,
+                    exclude_id=resource_id,
+                    scope_gateway=False,
+                    lookup=_lookup_update,
+                )
 
             # Update fields if provided
             if resource_update.uri is not None:

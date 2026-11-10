@@ -3088,9 +3088,9 @@ class TestAdminResourceUriConflictMessage:
         assert second.status_code == 409
         assert body["success"] is False
         assert "Unable to complete the operation" not in body["message"]
-        assert "resource already exists with URI" in body["message"]
+        assert "A resource with this URI already exists in this scope" in body["message"]
         assert "file://dup.txt" in body["message"]
-        assert "resource URIs must be unique within this scope (names may repeat)." in body["message"]
+        assert "Resource URIs must be unique; names may repeat." in body["message"]
 
     @pytest.mark.parametrize("visibility", ["public", "team", "private"])
     async def test_duplicate_name_with_distinct_uri_returns_200(self, real_db, visibility):

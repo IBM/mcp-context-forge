@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Base, EmailUser
+from mcpgateway.db import Base, EmailUser, get_for_update
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -353,7 +353,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "Public resource already exists with URI" in str(exc_info.value)
+        assert "visibility: Public" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
@@ -365,7 +365,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "resource already exists with URI" in str(exc_info.value)
+        assert "A resource with this URI already exists in this scope" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_team_without_team_id_raises_validation_error(self, resource_service, mock_db, sample_resource_create):
@@ -5676,7 +5676,7 @@ class TestResourceServiceCoverageEdges:
 
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
-        assert "Team resource already exists with URI" in str(exc_info.value)
+        assert "visibility: Team" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_unknown_conflict_strategy_does_nothing(self, resource_service, mock_db):
@@ -9728,17 +9728,18 @@ class TestResourceUriUniquenessScope:
         return svc
 
     @staticmethod
-    def _create(uri: str, name: str) -> ResourceCreate:
+    def _create(uri: str, name: str, gateway_id: str | None = None) -> ResourceCreate:
         """Build a minimal ResourceCreate.
 
         Args:
             uri: Resource URI.
             name: Resource display name.
+            gateway_id: Optional gateway identifier.
 
         Returns:
             ResourceCreate: The populated creation schema.
         """
-        return ResourceCreate(uri=uri, name=name, description="d", mime_type="text/plain", content="content")
+        return ResourceCreate(uri=uri, name=name, description="d", mime_type="text/plain", content="content", gateway_id=gateway_id)
 
     # ------------------------------------------------------------------ #
     # Regression guard for #5664: names are display labels, not keys.    #
@@ -9786,9 +9787,7 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://dup.txt", "Second"), **kwargs)
 
         message = str(exc_info.value)
-        assert "resource already exists with URI" in message
-        assert "file://dup.txt" in message
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert message == "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: Private, URI: file://dup.txt)"
 
     @pytest.mark.asyncio
     async def test_register_private_same_uri_different_owner_succeeds(self, service, db):
@@ -9811,7 +9810,7 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://off.txt", "Off Again"), **kwargs)
 
         message = str(exc_info.value)
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert "Resource URIs must be unique; names may repeat." in message
         assert f"(currently inactive, ID: {created.id})" in message
 
     @pytest.mark.asyncio
@@ -9826,7 +9825,7 @@ class TestResourceUriUniquenessScope:
 
         message = str(exc_info.value)
         assert "file://taken.txt" in message
-        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert "Resource URIs must be unique; names may repeat." in message
         assert existing.id != target.id
 
     @pytest.mark.asyncio
@@ -9838,6 +9837,180 @@ class TestResourceUriUniquenessScope:
         result = await service.update_resource(db, target.id, ResourceUpdate(name="Original"))
 
         assert result.name == "Original"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["create", "update"])
+    @pytest.mark.parametrize(
+        "visibility,field,value,create_conflict,update_conflict",
+        [
+            ("public", None, None, True, True),
+            ("public", "gateway_id", "other-gateway", False, True),
+            ("public", "gateway_id", None, False, True),
+            ("public", "team_id", "other-team", True, True),
+            ("public", "owner_email", "other@example.com", True, True),
+            ("team", None, None, True, True),
+            ("team", "gateway_id", "other-gateway", False, True),
+            ("team", "gateway_id", None, False, True),
+            ("team", "team_id", "other-team", False, False),
+            ("team", "owner_email", "other@example.com", True, True),
+            ("private", None, None, True, True),
+            ("private", "gateway_id", "other-gateway", False, False),
+            ("private", "gateway_id", None, False, False),
+            ("private", "team_id", "other-team", False, False),
+            ("private", "owner_email", "other@example.com", False, False),
+        ],
+    )
+    async def test_uri_conflict_scope_matrix(self, service, db, operation, visibility, field, value, create_conflict, update_conflict):
+        """Creation and update preserve their distinct gateway, team, and owner scopes."""
+        scope = {"visibility": visibility, "team_id": "original-team", "owner_email": "owner@example.com", "created_by": "owner@example.com"}
+        existing = await service.register_resource(db, self._create("file://occupied.txt", "Existing", "original-gateway"), **scope)
+        gateway_id = "original-gateway"
+        if field == "gateway_id":
+            gateway_id = value
+        elif field is not None:
+            scope[field] = value
+
+        if operation == "create":
+            expected_conflict = create_conflict
+            request = service.register_resource(db, self._create(existing.uri, "Requested", gateway_id), **scope)
+        else:
+            target = await service.register_resource(db, self._create("file://available.txt", "Target", gateway_id), **scope)
+            expected_conflict = update_conflict
+            request = service.update_resource(db, target.id, ResourceUpdate(uri=existing.uri))
+
+        if expected_conflict:
+            with pytest.raises(ResourceURIConflictError) as caught:
+                await request
+            error = caught.value
+            assert error.uri == existing.uri
+            assert error.resource_id == existing.id
+            assert error.enabled is True
+            assert str(error) == (
+                f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri})"
+            )
+            if operation == "update":
+                db.expire_all()
+                assert db.get(DbResource, target.id).uri == "file://available.txt"
+        else:
+            result = await request
+            assert result.uri == existing.uri
+            assert result.gateway_id == gateway_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("visibility", ["public", "team", "private"])
+    @pytest.mark.parametrize("operation", ["create", "update"])
+    async def test_inactive_uri_conflict_preserves_metadata_and_side_effects(self, service, db, visibility, operation):
+        """Inactive conflicts preserve error metadata and leave persistence and notifications unchanged."""
+        scope = {"visibility": visibility, "team_id": "team-1", "created_by": "owner@example.com"}
+        existing = await service.register_resource(db, self._create("file://inactive.txt", "Existing"), **scope)
+        row = db.get(DbResource, existing.id)
+        row.enabled = False
+        db.commit()
+        target = await service.register_resource(db, self._create("file://target.txt", "Target"), **scope)
+        service._notify_resource_added.reset_mock()
+        service._notify_resource_updated.reset_mock()
+        count = db.query(DbResource).count()
+        with pytest.raises(ResourceURIConflictError) as caught:
+            if operation == "create":
+                await service.register_resource(db, self._create(existing.uri, "Duplicate"), **scope)
+            else:
+                await service.update_resource(db, target.id, ResourceUpdate(uri=existing.uri))
+        assert caught.value.enabled is False
+        assert caught.value.resource_id == existing.id
+        assert str(caught.value) == (
+            f"A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat. (visibility: {visibility.capitalize()}, URI: {existing.uri}) (currently inactive, ID: {existing.id})"
+        )
+        assert db.query(DbResource).count() == count
+        assert db.get(DbResource, target.id).uri == "file://target.txt"
+        service._notify_resource_added.assert_not_called()
+        service._notify_resource_updated.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("update", [ResourceUpdate(name="Renamed"), ResourceUpdate(uri="file://self.txt"), ResourceUpdate(visibility="private")])
+    async def test_unchanged_uri_does_not_run_conflict_lookup(self, service, db, update):
+        """Updates without a changed URI retain the single target-lock lookup."""
+        resource = await service.register_resource(db, self._create("file://self.txt", "Self"))
+
+        with patch("mcpgateway.services.resource_service.get_for_update", wraps=get_for_update) as lookup:
+            result = await service.update_resource(db, resource.id, update)
+        assert result.uri == resource.uri
+        assert lookup.call_count == 1
+        service._notify_resource_updated.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_multiple_public_matches_preserve_cardinality_error(self, service, db):
+        """Cross-gateway update checks retain scalar_one_or_none cardinality errors."""
+        for gateway in ("gateway-a", "gateway-b"):
+            await service.register_resource(db, self._create("file://occupied.txt", gateway, gateway))
+        target = await service.register_resource(db, self._create("file://available.txt", "Target"))
+        with pytest.raises(ResourceError, match="Failed to update resource: An unexpected error occurred") as caught:
+            await service.update_resource(db, target.id, ResourceUpdate(uri="file://occupied.txt"))
+        assert isinstance(caught.value.__context__, MultipleResultsFound)
+        assert db.get(DbResource, target.id).uri == "file://available.txt"
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_owner_precedes_conflict_lookup(self, service, db):
+        """Ownership denial prevents a second lookup and leaves the resource unchanged."""
+        resource = await service.register_resource(db, self._create("file://owned.txt", "Owned"), owner_email="owner@example.com")
+
+        with (
+            patch("mcpgateway.services.resource_service.get_for_update", wraps=get_for_update) as lookup,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new_callable=AsyncMock, return_value=False),
+        ):
+            with pytest.raises(PermissionError, match="Only the owner"):
+                await service.update_resource(db, resource.id, ResourceUpdate(uri="file://occupied.txt"), user_email="other@example.com")
+        assert lookup.call_count == 1
+        assert db.get(DbResource, resource.id).uri == resource.uri
+
+    @pytest.mark.asyncio
+    async def test_registration_preserves_multiple_match_error(self, service, db):
+        """Registration preserves cardinality errors for legacy public rows with distinct owners."""
+        for owner in ("first@example.com", "second@example.com"):
+            db.add(DbResource(uri="file://legacy.txt", name=owner, visibility="public", owner_email=owner))
+        db.commit()
+        with pytest.raises(ResourceError) as caught:
+            await service.register_resource(db, self._create("file://legacy.txt", "Requested"))
+        assert isinstance(caught.value.__context__, MultipleResultsFound)
+        assert db.query(DbResource).count() == 2
+        service._notify_resource_added.assert_not_called()
+
+    @pytest.mark.parametrize("visibility,team_id", [("unknown", "team-1"), ("team", None), ("team", "")])
+    def test_unused_conflict_scope_does_not_query(self, visibility, team_id):
+        """Unsupported visibility and absent team scopes retain their query-free behavior."""
+        from mcpgateway.services.resource_service import _check_uri_conflict
+
+        lookup = MagicMock()
+        _check_uri_conflict("file://unused.txt", visibility, team_id=team_id, owner_email=None, gateway_id=None, exclude_id=None, scope_gateway=False, lookup=lookup)
+        lookup.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("visibility", ["public", "team", "private"])
+    async def test_conflict_lookup_excludes_current_record(self, service, db, visibility):
+        """The shared lookup excludes the current row in every visibility scope."""
+        from sqlalchemy import select
+        from mcpgateway.services.resource_service import _check_uri_conflict
+
+        resource = await service.register_resource(db, self._create("file://current.txt", "Current"), visibility=visibility, team_id="team-1", owner_email="owner@example.com")
+        _check_uri_conflict(
+            resource.uri,
+            visibility.upper(),
+            team_id="team-1",
+            owner_email="owner@example.com",
+            gateway_id=None,
+            exclude_id=resource.id,
+            scope_gateway=False,
+            lookup=lambda condition: db.execute(select(DbResource).where(condition)).scalar_one_or_none(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_private_update_uses_requested_owner_for_conflicts(self, service, db):
+        """A requested private owner determines the conflict scope before field mutation."""
+        existing = await service.register_resource(db, self._create("file://owned.txt", "Existing"), visibility="private", owner_email="first@example.com")
+        target = await service.register_resource(db, self._create("file://available.txt", "Target"), visibility="private", owner_email="second@example.com")
+        with pytest.raises(ResourceURIConflictError) as caught:
+            await service.update_resource(db, target.id, ResourceUpdate(uri=existing.uri, owner_email="first@example.com"))
+        assert caught.value.resource_id == existing.id
+        assert db.get(DbResource, target.id).owner_email == "second@example.com"
 
 
 class TestUpstreamReadCacheDirective:
