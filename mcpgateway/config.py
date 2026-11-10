@@ -380,6 +380,10 @@ class Settings(BaseSettings):
         default_factory=list,
         description="Entra group object IDs (GUIDs) whose members receive platform admin in trust mode when JWT_TRUST_ENTRA_GROUP_ADMIN_ENABLED is true (CSV/JSON)",
     )
+    jwt_trust_public_a2a_access_enabled: bool = Field(
+        default=False,
+        description="Trust mode only: let any verified trust-mode principal, including app-only tokens, read and invoke public, enabled A2A agents without a mapped role. Team and private agents stay protected.",
+    )
 
     embed_environment_in_tokens: bool = Field(default=True, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=True, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
@@ -2018,6 +2022,8 @@ class Settings(BaseSettings):
             invalid = [group for group in self.jwt_trust_admin_groups if not _ENTRA_OBJECT_ID_PATTERN.fullmatch(str(group).strip())]
             if invalid:
                 raise ValueError("Setting jwt_trust_admin_groups must list Entra group object IDs (GUIDs); group names are not accepted.")
+        if self.jwt_trust_public_a2a_access_enabled and self.jwt_trust_mode != "jwt-trust":
+            raise ValueError("Setting jwt_trust_public_a2a_access_enabled requires jwt_trust_mode to be 'jwt-trust'.")
         return self
 
     def get_security_warnings(self) -> List[str]:

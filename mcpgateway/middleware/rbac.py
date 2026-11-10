@@ -957,7 +957,73 @@ async def check_permission_inline(
     return granted
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True, global_only: bool = False):
+PUBLIC_A2A_LIST_SCOPE = "*"
+_PUBLIC_A2A_PERMISSIONS = frozenset({"a2a.read", "a2a.invoke"})
+TRUSTED_PUBLIC_A2A_GRANT_STATE = "trusted_public_a2a_grant"
+
+
+async def _trusted_public_a2a_grant(user_context: dict, permission: str, public_a2a_param: str, kwargs: dict[str, Any]) -> bool:
+    """Decide whether a trusted principal may use a public A2A agent without a mapped role.
+
+    The grant applies only when ``JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED`` is on, the
+    principal is a verified trust-mode principal, and the target is a public, enabled
+    agent. The grant never applies while an ``HTTP_AUTH_CHECK_PERMISSION`` plugin hook is
+    registered, because the plugin decision stays authoritative. On success the request is
+    marked so handlers narrow the call to public scope.
+
+    Args:
+        user_context: Authenticated user context dict.
+        permission: Permission the route requires.
+        public_a2a_param: Name of the route kwarg holding the agent identifier, or ``PUBLIC_A2A_LIST_SCOPE`` for listings.
+        kwargs: Keyword arguments of the wrapped route.
+
+    Returns:
+        bool: True when the grant applies.
+    """
+    if not settings.jwt_trust_public_a2a_access_enabled or settings.jwt_trust_mode != "jwt-trust":
+        return False
+    if user_context.get("token_use") != "trusted" or permission not in _PUBLIC_A2A_PERMISSIONS:
+        return False
+    if not token_scope_grants(user_context.get("token_scopes"), permission):
+        return False
+
+    # Third-Party
+    from cpex.framework import HttpHookType  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+
+    plugin_manager = await get_plugin_manager()
+    if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
+        return False
+
+    request = kwargs.get("request")
+    if request is None or not hasattr(request, "state"):
+        return False
+
+    if public_a2a_param != PUBLIC_A2A_LIST_SCOPE:
+        db = kwargs.get("db") or user_context.get("db")
+        if db is None:
+            return False
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        identifier = kwargs.get(public_a2a_param)
+        if not isinstance(identifier, str) or not A2AAgentService.is_public_enabled_agent(db, identifier):
+            return False
+
+    setattr(request.state, TRUSTED_PUBLIC_A2A_GRANT_STATE, True)
+    logger.info("Trusted public A2A grant: user=%s permission=%s target=%s", get_user_id(user_context), permission, kwargs.get(public_a2a_param, PUBLIC_A2A_LIST_SCOPE))
+    return True
+
+
+def require_permission(
+    permission: str,
+    resource_type: Optional[str] = None,
+    allow_admin_bypass: bool = True,
+    global_only: bool = False,
+    public_a2a_param: Optional[str] = None,
+):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
@@ -971,6 +1037,10 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                      resources with no team column, where the normal per-request team
                      derivation (from a resource ID kwarg or "any team" aggregation) would
                      let a team-scoped role grant access to a globally-scoped resource.
+        public_a2a_param: Opt-in for A2A routes. Name of the route kwarg that holds the agent
+                     identifier, or ``PUBLIC_A2A_LIST_SCOPE`` for listings. When RBAC denies,
+                     a verified trust-mode principal still passes if
+                     ``JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED`` is on and the agent is public and enabled.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -1040,6 +1110,9 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 request=kwargs.get("request"),
                 allow_admin_bypass=allow_admin_bypass,
             )
+
+            if not granted and public_a2a_param:
+                granted = await _trusted_public_a2a_grant(user_context, permission, public_a2a_param, kwargs)
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
