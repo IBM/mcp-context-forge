@@ -28576,3 +28576,32 @@ async def test_admin_a2a_partial_html_returns_typed_404_when_disabled(monkeypatc
 
     assert excinfo.value.status_code == 404
     assert excinfo.value.detail["error"] == "a2a_disabled"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_returns_typed_404_when_disabled(monkeypatch, mock_request, mock_db):
+    """The edit route answers with the typed 404 instead of failing on a missing service."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+    mock_request.form.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_name, kwargs", [("get_a2a_plugin_bindings_partial", {}), ("admin_create_a2a_plugin_binding", {}), ("admin_delete_a2a_plugin_binding", {"binding_id": "b-1"})])
+async def test_admin_a2a_plugin_binding_routes_return_typed_404_when_disabled(monkeypatch, mock_request, mock_db, handler_name, kwargs):
+    """The plugin-binding routes answer with the typed 404 when A2A is disabled."""
+    from mcpgateway import admin as admin_module
+
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await getattr(admin_module, handler_name)(request=mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db}, **kwargs)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"

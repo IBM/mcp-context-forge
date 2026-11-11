@@ -17006,6 +17006,7 @@ async def admin_edit_a2a_agent(
         JSONResponse: A JSON response indicating success or failure.
 
     Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` if A2A is disabled.
         HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
@@ -17014,6 +17015,7 @@ async def admin_edit_a2a_agent(
         >>> admin_edit_a2a_agent.__name__
         'admin_edit_a2a_agent'
     """
+    raise_if_a2a_disabled()
 
     try:
         form = await request.form()
@@ -18024,6 +18026,7 @@ async def get_a2a_plugin_bindings_partial(
     Returns:
         HTMLResponse with rendered partial template.
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(f"User {get_user_email(user)} requested A2A plugin bindings partial")
 
     try:
@@ -18073,6 +18076,7 @@ async def admin_create_a2a_plugin_binding(
 
     Returns the refreshed partial on success or an error HTML fragment.
     """
+    raise_if_a2a_disabled()
     try:
         form = await request.form()
         team_id = form.get("team_id", "")
@@ -18152,6 +18156,7 @@ async def admin_delete_a2a_plugin_binding(
     POST endpoint (HTMX-compatible) that deletes a binding and returns
     the refreshed partial.
     """
+    raise_if_a2a_disabled()
     try:
         # Validate that binding_id is a valid UUID
         try:
