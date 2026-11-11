@@ -39,6 +39,7 @@ from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_s
 from mcpgateway.routers.email_auth import get_client_ip, get_user_agent
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.cimd_service import CimdService
 from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
