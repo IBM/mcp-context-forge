@@ -202,7 +202,7 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
     **Note:** Global-record admin routes (e.g., `/api/metrics/*`, `/api/logs/*`) additionally
     require an unrestricted platform-admin bearer or session token — see
     [Global-record routes](rbac.md#global-record-routes) — so Basic auth alone does not grant
-    access to those routes even with `API_ALLOW_BASIC_AUTH=true`.
+    access to those routes even with `API_ALLOW_BASIC_AUTH=true`. <!-- pragma: allowlist secret -->
 
     **Recommended:** Use JWT tokens instead of Basic auth:
     ```bash
