@@ -618,6 +618,7 @@ class TestTokenScopingMiddleware:
             ("POST", "/a2a/agent-1/test", Permissions.A2A_INVOKE),
             ("POST", "/v1/a2a/agent-1/test", Permissions.A2A_INVOKE),
             ("POST", "/a2a/agent-1/test/", Permissions.A2A_INVOKE),
+            ("GET", "/a2a/metrics", Permissions.A2A_READ),
         ],
     )
     def test_a2a_routes_map_to_declared_permission(self, middleware, method, path, permission):
@@ -636,6 +637,7 @@ class TestTokenScopingMiddleware:
             ("POST", "/a2a/agent-1/test", Permissions.A2A_READ),
             ("POST", "/a2a/agent-1/test", Permissions.A2A_UPDATE),
             ("POST", "/v1/a2a/agent-1/test", Permissions.A2A_READ),
+            ("GET", "/a2a/metrics", Permissions.A2A_INVOKE),
         ],
     )
     def test_a2a_routes_reject_wrong_permission(self, middleware, method, path, permission):
