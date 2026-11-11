@@ -14,9 +14,10 @@ and interactions with A2A-compatible agents.
 # Standard
 import base64
 import binascii
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
@@ -24,7 +25,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, case, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -39,7 +40,7 @@ from mcpgateway.db import fresh_db_session, get_for_update, server_tool_associat
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
 from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -58,7 +59,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_bas
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -368,6 +369,31 @@ class A2AAgentNotFoundError(A2AAgentError):
     """
 
 
+class A2AAgentDisabledError(A2AAgentError):
+    """Raised when an invoked A2A agent is disabled."""
+
+
+DEFAULT_A2A_TEST_MESSAGE = "ContextForge A2A agent connectivity test"
+DEFAULT_A2A_TEST_INTERACTION_TYPE = "test"
+A2A_TEST_NOT_FOUND_MESSAGE = "A2A agent not found"
+A2A_TEST_AGENT_ERROR_MESSAGE = "A2A agent invocation failed"
+A2A_TEST_AGENT_DISABLED_MESSAGE = "A2A agent is disabled"
+
+
+@dataclass(frozen=True)
+class A2ATestOutcome:
+    """Classified result of an A2A agent test invocation.
+
+    Attributes:
+        status_code: HTTP status matching the outcome (200, 404, 502, 422 or 500).
+        body: Response envelope. Success carries ``success``, ``result``, ``agent_name`` and
+            ``test_timestamp``. Failure carries ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+
+    status_code: int
+    body: Dict[str, Any]
+
+
 class A2AAgentNameConflictError(A2AAgentError):
     """Raised when an A2A agent name conflicts with an existing one."""
 
@@ -672,16 +698,16 @@ class A2AAgentService(BaseService):
 
         return False
 
-    def _visible_agent_ids(
+    def _visible_agent_filters(
         self,
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
-    ) -> List[str]:
-        """Return IDs of agents visible to the caller.
+        include_inactive: bool = False,
+    ) -> List[Any]:
+        """Return the SQL predicates that select agents visible to the caller.
 
-        Used by list_tasks and list_push_configs_for_dispatch.
-        Pushes visibility filtering into SQL to avoid loading all agents.
+        Disabled agents are excluded unless ``include_inactive`` is true.
 
         Note: admin bypass here requires BOTH token_teams=None AND
         user_email=None.  When token_teams=None but user_email is set
@@ -690,17 +716,27 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
 
-        PR #4341: Admin bypass (user_email=None AND token_teams=None) returns
-        agent IDs for public + team visibility only, explicitly excluding
-        private agents. This aligns with the post-#4341 invariant: admin bypass
-        must not grant visibility to another user's private resources.
-        """
-        # Admin bypass: return public + team agents only (exclude private)
-        if user_email is None and token_teams is None:
-            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility.in_(["public", "team"]))
-            return [row[0] for row in query.all()]
+        PR #4341: Admin bypass (user_email=None AND token_teams=None) selects
+        public + team visibility only, explicitly excluding private agents.
+        This aligns with the post-#4341 invariant: admin bypass must not grant
+        visibility to another user's private resources.
 
-        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[Any]: Predicates to combine with AND.
+        """
+        filters: List[Any] = []
+        if not include_inactive:
+            filters.append(DbA2AAgent.enabled.is_(True))
+
+        if user_email is None and token_teams is None:
+            filters.append(DbA2AAgent.visibility.in_(["public", "team"]))
+            return filters
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
@@ -713,14 +749,39 @@ class A2AAgentService(BaseService):
             elif token_teams is None and caller_is_admin:
                 # token_teams is None with user_email set → admin with email context
                 visibility_filters.append(DbA2AAgent.visibility == "team")
-            elif token_teams is None:
-                # Non-admin with token_teams=None should not see all team agents.
-                # The user_email check below still grants own-private access.
-                pass
+            # Non-admin with token_teams=None must not see all team agents;
+            # the own-private clause below still applies.
             if user_email:
                 visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
 
-        query = query.filter(or_(*visibility_filters))
+        filters.append(or_(*visibility_filters))
+        return filters
+
+    def _visible_agent_ids(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        include_inactive: bool = False,
+    ) -> List[str]:
+        """Return IDs of agents visible to the caller.
+
+        Used by list_tasks and list_push_configs_for_dispatch.
+        Pushes visibility filtering into SQL to avoid loading all agents.
+        See ``_visible_agent_filters`` for the visibility rules.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[str]: Visible agent IDs.
+        """
+        query = db.query(DbA2AAgent.id)
+        for predicate in self._visible_agent_filters(db, user_email, token_teams, include_inactive):
+            query = query.filter(predicate)
         return [row[0] for row in query.all()]
 
     async def _check_agent_access_by_id(
@@ -2240,6 +2301,122 @@ class A2AAgentService(BaseService):
 
         return plugin_headers, downstream_headers
 
+    async def _load_accessible_agent(self, db: Session, agent_id: str, user_email: Optional[str], token_teams: Optional[List[str]]) -> DbA2AAgent:
+        """Load an agent row once and enforce visibility.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Email used for visibility checks.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+
+        Returns:
+            DbA2AAgent: The agent row.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent is missing or the caller cannot see it.
+        """
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+        return agent
+
+    @staticmethod
+    def _test_failure(status_code: int, error: str, error_type: str, agent_id: str) -> A2ATestOutcome:
+        """Build a failure outcome whose envelope is validated through ``A2ATestError``.
+
+        Args:
+            status_code: HTTP status of the outcome.
+            error: Message returned to the caller.
+            error_type: One of the ``A2ATestError.error_type`` values.
+            agent_id: ID of the tested agent.
+
+        Returns:
+            A2ATestOutcome: Outcome carrying the validated failure envelope.
+        """
+        envelope = A2ATestError(error=error, error_type=error_type, agent_id=agent_id)  # type: ignore[arg-type]
+        return A2ATestOutcome(status_code, envelope.model_dump())
+
+    async def test_agent(
+        self,
+        db: Session,
+        agent_id: str,
+        *,
+        query: Optional[str] = None,
+        interaction_type: str = DEFAULT_A2A_TEST_INTERACTION_TYPE,
+        user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        include_agent_error_detail: bool = False,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> A2ATestOutcome:
+        """Invoke an A2A agent with a test message and classify the outcome.
+
+        Missing and inaccessible agents both classify as ``not_found`` so agent existence does not leak.
+        The 404 and 502 responses carry fixed messages unless ``include_agent_error_detail`` is true. The service always logs the exception detail.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            query: Test message. Falls back to ``DEFAULT_A2A_TEST_MESSAGE`` when empty.
+            interaction_type: Interaction source recorded for the invocation.
+            user_email: Email used for visibility checks. None with ``token_teams`` None means admin bypass.
+            user_id: Identity recorded for the invocation.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+            include_agent_error_detail: Return the exception text in the 404 and 502 responses. The Admin UI sets this so operators see the cause.
+            hop_count: Federation hop counter from the inbound request.
+            bearer_token: Bearer token to forward for cross-gateway calls.
+            content_type: Content-Type of the inbound request.
+            request_headers: Inbound request headers for passthrough and plugin context.
+
+        Returns:
+            A2ATestOutcome: HTTP status and response envelope.
+        """
+        log_agent_id = SecurityValidator.sanitize_log_message(agent_id)
+        try:
+            agent = await self._load_accessible_agent(db, agent_id, user_email, token_teams)
+            message = query or DEFAULT_A2A_TEST_MESSAGE
+            if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+                test_params: Dict[str, Any] = {"query": message}
+            else:
+                test_params = {"query": message, "message": message, "test": True, "timestamp": int(time.time())}
+
+            result = await self.invoke_agent(
+                db,
+                agent.name,
+                test_params,
+                interaction_type,
+                agent_id=agent.id,
+                user_email=user_email,
+                user_id=user_id,
+                token_teams=token_teams,
+                hop_count=hop_count,
+                bearer_token=bearer_token,
+                content_type=content_type,
+                request_headers=request_headers,
+            )
+            return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+        except A2AAgentNotFoundError as e:
+            logger.warning("A2A agent not found or access denied for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(404, str(e) if include_agent_error_detail else A2A_TEST_NOT_FOUND_MESSAGE, "not_found", agent_id)
+        except A2AAgentDisabledError as e:
+            logger.warning("A2A agent %s is disabled: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            if include_agent_error_detail:
+                return self._test_failure(502, str(e), "agent_error", agent_id)
+            return self._test_failure(502, A2A_TEST_AGENT_DISABLED_MESSAGE, "agent_disabled", agent_id)
+        except A2AAgentError as e:
+            logger.error("A2A agent error for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(502, str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE, "agent_error", agent_id)
+        except ValidationError as e:
+            logger.warning("Validation error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(422, ErrorFormatter.format_validation_error(e)["message"], "validation_error", agent_id)
+        except Exception as e:
+            logger.error("Unexpected error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(500, unexpected_error_detail(e), "internal_error", agent_id)
+
     async def invoke_agent(
         self,
         db: Session,
@@ -2381,7 +2558,7 @@ class A2AAgentService(BaseService):
             raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
-            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+            raise A2AAgentDisabledError(f"A2A Agent '{agent_name}' is disabled")
 
         # Extract all needed data to local variables before releasing DB connection
         agent_id = agent.id
@@ -3308,19 +3485,35 @@ class A2AAgentService(BaseService):
             logger.error("Cross-gateway routing transport failure: %s", e)
             raise A2AAgentError(f"Cross-gateway routing failed: {unexpected_error_detail(e)}")
 
-    async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
-        """Aggregate metrics for all A2A agents.
+    async def aggregate_metrics(
+        self,
+        db: Session,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics for A2A agents visible to the caller.
 
         Combines recent raw metrics (within retention period) with historical
         hourly rollups for complete historical coverage. Uses in-memory caching
         (10s TTL) to reduce database load under high request rates.
 
+        Calling with ``user_email`` and ``token_teams`` both None aggregates every agent
+        and is reserved for callers already gated on ``admin.metrics``. Any other
+        combination counts only the agents ``_visible_agent_ids`` returns for that
+        caller, including disabled ones, and bypasses the shared cache.
+
         Args:
             db: Database session.
+            user_email: Email of the caller for owner matching in visibility checks.
+            token_teams: Teams from the token. [] = public-only, [...] = team-scoped,
+                None with ``user_email`` set = admin context (public, team and own-private).
 
         Returns:
             A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
+        if user_email is not None or token_teams is not None:
+            return self._aggregate_scoped_metrics(db, user_email, token_teams)
+
         # Check cache first (if enabled)
         # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
@@ -3341,27 +3534,63 @@ class A2AAgentService(BaseService):
 
         result = aggregate_metrics_combined(db, "a2a_agent")
 
-        total_interactions = result.total_executions
-        successful_interactions = result.successful_executions
-        failed_interactions = result.failed_executions
-
-        metrics = A2AAgentAggregateMetrics(
-            total_agents=total_agents,
-            active_agents=active_agents,
-            total_interactions=total_interactions,
-            successful_interactions=successful_interactions,
-            failed_interactions=failed_interactions,
-            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            avg_response_time=float(result.avg_response_time or 0.0),
-            min_response_time=float(result.min_response_time or 0.0),
-            max_response_time=float(result.max_response_time or 0.0),
-        )
+        metrics = self._build_aggregate_metrics(result, total_agents, active_agents)
 
         # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
             metrics_cache.set("a2a", metrics.model_dump())
 
         return metrics
+
+    def _aggregate_scoped_metrics(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics over the agents visible to the caller.
+
+        Visibility stays in SQL as a subquery, so the statement size does not
+        grow with the number of visible agents.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+
+        Returns:
+            A2AAgentAggregateMetrics: Aggregated metrics for the visible agents.
+        """
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
+
+        filters = self._visible_agent_filters(db, user_email, token_teams, include_inactive=True)
+        total_agents, active_agents = db.execute(
+            select(func.count(DbA2AAgent.id), func.coalesce(func.sum(case((DbA2AAgent.enabled.is_(True), 1), else_=0)), 0)).where(*filters)  # pylint: disable=not-callable
+        ).one()
+        result = aggregate_metrics_combined(db, "a2a_agent", entity_ids=select(DbA2AAgent.id).where(*filters))
+        return self._build_aggregate_metrics(result, total_agents, int(active_agents))
+
+    @staticmethod
+    def _build_aggregate_metrics(result: Any, total_agents: int, active_agents: int) -> A2AAgentAggregateMetrics:
+        """Build the aggregate metrics model from a combined metrics result.
+
+        Args:
+            result: Combined raw and rollup metrics.
+            total_agents: Number of agents counted.
+            active_agents: Number of enabled agents counted.
+
+        Returns:
+            A2AAgentAggregateMetrics: The aggregate model.
+        """
+        total_interactions = result.total_executions
+        successful_interactions = result.successful_executions
+        return A2AAgentAggregateMetrics(
+            total_agents=total_agents,
+            active_agents=active_agents,
+            total_interactions=total_interactions,
+            successful_interactions=successful_interactions,
+            failed_interactions=result.failed_executions,
+            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
+            avg_response_time=float(result.avg_response_time or 0.0),
+            min_response_time=float(result.min_response_time or 0.0),
+            max_response_time=float(result.max_response_time or 0.0),
+        )
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
         """Reset metrics for agents (raw + hourly rollups).

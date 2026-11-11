@@ -42,6 +42,7 @@ from starlette.websockets import WebSocketDisconnect
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
+from mcpgateway.services.a2a_service import A2ATestOutcome
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -4806,6 +4807,12 @@ class TestMetricsEndpoints:
 # ----------------------------------------------------- #
 # A2A Agent API Tests                                   #
 # ----------------------------------------------------- #
+def _a2a_metrics(**overrides):
+    values = dict(total_agents=0, active_agents=0, total_interactions=0, successful_interactions=0, failed_interactions=0, success_rate=0.0, avg_response_time=0.0, min_response_time=0.0, max_response_time=0.0)
+    values.update(overrides)
+    return A2AAgentAggregateMetrics(**values)
+
+
 class TestA2AAgentEndpoints:
     """Test A2A agent API endpoints."""
 
@@ -4876,6 +4883,177 @@ class TestA2AAgentEndpoints:
         response = test_client.delete("/a2a/agent-1", headers=auth_headers)
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_success(self, mock_service, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test returns the success envelope."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {"ok": 1}, "agent_name": "a", "test_timestamp": 1.0}))
+        response = test_client.post("/a2a/agent-1/test", json={"query": "hi"}, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["agent_name"] == "a" and body["result"] == {"ok": 1} and "test_timestamp" in body
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert kwargs["query"] == "hi"
+        assert "interaction_type" not in kwargs
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_no_body_uses_service_default(self, mock_service, test_client, auth_headers):
+        """An empty body leaves the message to the service default."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {}, "agent_name": "a", "test_timestamp": 1.0}))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_service.test_agent.call_args.kwargs["query"] is None
+
+    @pytest.mark.parametrize("status,error_type", [(404, "not_found"), (502, "agent_error"), (422, "validation_error"), (500, "internal_error")])
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_errors_raise_http_exception(self, mock_service, status, error_type, test_client, auth_headers):
+        """Failures surface as HTTPException with the classified envelope in detail."""
+        body = {"success": False, "error": "boom", "error_type": error_type, "agent_id": "agent-1"}
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(status, body))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == status
+        assert response.json()["detail"] == body
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("u@x.com", ["team-a"]))
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_forwards_layer1_scope(self, mock_service, _mock_scope, test_client, auth_headers):
+        """Visibility scope comes from get_scoped_resource_access_context, so other teams' agents stay hidden."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(404, {"success": False, "error": "nf", "error_type": "not_found", "agent_id": "agent-1"}))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 404
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert kwargs["user_email"] == "u@x.com" and kwargs["token_teams"] == ["team-a"]
+
+    def test_test_a2a_agent_unauthenticated_returns_401(self, app_with_temp_db):
+        """POST /a2a/{agent_id}/test without credentials returns 401."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            response = TestClient(app_with_temp_db, raise_server_exceptions=False).post("/a2a/agent-1/test")
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+        assert response.status_code == 401
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test without a2a.invoke returns 403 and never reaches the service."""
+        mock_service.test_agent = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.test_agent.assert_not_called()
+
+    def test_test_a2a_agent_service_unavailable_returns_503(self, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test returns 503 when the A2A service is not loaded."""
+        with patch("mcpgateway.main.a2a_service", None):
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 503
+
+    def test_test_a2a_agent_rejects_unknown_body_fields(self, test_client, auth_headers):
+        """The request body forbids extra fields."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "hi", "extra": 1}, headers=auth_headers)
+        assert response.status_code == 422
+
+    def test_test_a2a_agent_rejects_oversized_query(self, test_client, auth_headers):
+        """A query over 4096 characters fails body validation."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "x" * 4097}, headers=auth_headers)
+        assert response.status_code == 422
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_forwards_request_context(self, mock_service, test_client, auth_headers):
+        """The route forwards the shared invoke context, including passthrough headers and content type."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {}, "agent_name": "a", "test_timestamp": 1.0}))
+        context = {
+            "user_id": "uid",
+            "user_email": "u@x.com",
+            "token_teams": ["team-a"],
+            "hop_count": 2,
+            "bearer_token": None,
+            "content_type": "application/json",
+            "request_headers": {"x-trace": "abc"},
+        }
+        with patch("mcpgateway.main._extract_a2a_request_context", return_value=context) as extract:
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 200
+        extract.assert_called_once()
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert {key: kwargs[key] for key in context} == context
+
+    def test_test_a2a_agent_openapi_documents_wrapped_error_body(self, test_client):
+        """OpenAPI documents the wire shape: an object holding the envelope under detail."""
+        spec = test_client.app.openapi()
+        operation = spec["paths"]["/v1/a2a/{agent_id}/test"]["post"]
+        for status in ("404", "422", "500", "502"):
+            assert operation["responses"][status]["content"]["application/json"]["schema"]["$ref"].endswith("/A2ATestErrorResponse")
+        wrapper = spec["components"]["schemas"]["A2ATestErrorResponse"]
+        assert wrapper["properties"]["detail"]["$ref"].endswith("/A2ATestError")
+
+    def test_test_a2a_agent_in_openapi(self, test_client):
+        """The route is part of the OpenAPI schema."""
+        paths = test_client.app.openapi()["paths"]
+        assert "post" in paths["/v1/a2a/{agent_id}/test"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_scoped(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics is not read as an agent ID and passes the Layer-1 scope."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics(total_agents=2))
+        mock_service.get_agent = AsyncMock()
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("u@x.com", ["team-a"])):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["totalAgents"] == 2
+        assert mock_service.aggregate_metrics.call_args.kwargs == {"user_email": "u@x.com", "token_teams": ["team-a"]}
+        mock_service.get_agent.assert_not_called()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_unscoped_context_fails_closed(self, mock_service, test_client, auth_headers):
+        """A (None, None) scope must not select the global aggregate."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics())
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=(None, None)):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_service.aggregate_metrics.call_args.kwargs["token_teams"] == []
+
+    @patch("mcpgateway.main.settings")
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_disabled_returns_404(self, mock_service, mock_settings, test_client, auth_headers):
+        """The route returns 404 when MCPGATEWAY_A2A_METRICS_ENABLED is false."""
+        mock_settings.mcpgateway_a2a_metrics_enabled = False
+        mock_service.aggregate_metrics = AsyncMock()
+        response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 404
+        mock_service.aggregate_metrics.assert_not_called()
+
+    def test_get_a2a_agent_metrics_unauthenticated_returns_401(self, app_with_temp_db):
+        """GET /a2a/metrics without credentials must return 401."""
+        from fastapi import HTTPException, status as http_status
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            assert client.get("/a2a/metrics").status_code == 401
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics without a2a.read must return 403 and not reach the service."""
+        mock_service.aggregate_metrics = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.aggregate_metrics.assert_not_called()
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
@@ -6612,7 +6790,6 @@ def test_startup_no_warning_when_a2a_disabled():
 def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
     """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
@@ -6631,7 +6808,6 @@ def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
 def test_startup_succeeds_with_uaid_require_allowlist_false():
     """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
