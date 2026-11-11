@@ -216,6 +216,42 @@ def _is_dict_of_dicts(value: Any) -> bool:
     return value is None or (isinstance(value, dict) and all(isinstance(item, dict) for item in value.values()))
 
 
+def _is_string_list(value: Any) -> bool:
+    """Report whether ``value`` is absent or a list of strings.
+
+    Args:
+        value: Candidate document fragment.
+
+    Returns:
+        True for ``None``, or a list whose items are all strings.
+
+    Examples:
+        >>> _is_string_list(["read"]), _is_string_list(None), _is_string_list("read"), _is_string_list([1])
+        (True, True, False, False)
+    """
+    return value is None or (isinstance(value, list) and all(isinstance(item, str) for item in value))
+
+
+def _has_valid_capabilities(capabilities: Any) -> bool:
+    """Report whether ``capabilities`` is absent, or a mapping whose feature flags are booleans.
+
+    Args:
+        capabilities: ``capabilities`` value of the card.
+
+    Returns:
+        True when the value maps onto the suggestion without a silent type coercion.
+
+    Examples:
+        >>> _has_valid_capabilities({"streaming": True}), _has_valid_capabilities({"streaming": "false"}), _has_valid_capabilities([])
+        (True, False, True)
+    """
+    if not capabilities:
+        return True
+    if not isinstance(capabilities, dict):
+        return False
+    return all(capabilities.get(flag) is None or isinstance(capabilities[flag], bool) for flag in ("streaming", "pushNotifications"))
+
+
 def _has_valid_requirements(requirements: Any, legacy: bool) -> bool:
     """Report whether security requirements have the shape the spec defines.
 
@@ -234,9 +270,11 @@ def _has_valid_requirements(requirements: Any, legacy: bool) -> bool:
         if not isinstance(entry, dict):
             return False
         if legacy:
-            if not all(isinstance(scopes, list) for scopes in entry.values()):
+            if not all(isinstance(scopes, list) and _is_string_list(scopes) for scopes in entry.values()):
                 return False
-        elif not _is_dict_of_dicts(entry.get("schemes")):
+            continue
+        schemes = entry.get("schemes")
+        if not _is_dict_of_dicts(schemes) or not all(_is_string_list(scopes.get("list")) for scopes in (schemes or {}).values()):
             return False
     return True
 
@@ -269,7 +307,7 @@ def _is_well_formed(raw: Dict[str, Any]) -> bool:
     Returns:
         True when normalization and mapping can run without a type error.
     """
-    if not isinstance(raw.get("capabilities") or {}, dict) or not isinstance(raw.get("additionalInterfaces") or [], list):
+    if not _has_valid_capabilities(raw.get("capabilities")) or not isinstance(raw.get("additionalInterfaces") or [], list):
         return False
     if not _is_dict_of_dicts(raw.get("securitySchemes")) or not all(_has_valid_flows(scheme) for scheme in (raw.get("securitySchemes") or {}).values()):
         return False
@@ -382,6 +420,32 @@ def _suggest_auth(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     return chosen, warnings
 
 
+def _skill_auth_warnings(card: Dict[str, Any]) -> List[str]:
+    """Warn when skills declare their own security requirements.
+
+    ContextForge stores one auth configuration per agent, so a requirement that only a
+    skill declares is not mapped and the agent would call that skill unauthenticated.
+
+    Args:
+        card: Card in the 1.0 shape.
+
+    Returns:
+        One warning naming up to three such skills, or an empty list.
+
+    Examples:
+        >>> _skill_auth_warnings({"skills": [{"id": "s1", "securityRequirements": [{"schemes": {"k": {}}}]}, {"id": "s2"}]})
+        ["Skill 's1' declares its own security requirements. ContextForge stores one authentication configuration per agent, so configure authentication for it manually."]
+        >>> _skill_auth_warnings({"skills": [{"id": "s2"}]})
+        []
+    """
+    names = [str(skill.get("id") or skill.get("name") or "unnamed")[:60] for skill in card.get("skills") or [] if skill.get("securityRequirements")]
+    if not names:
+        return []
+    listed = ", ".join(f"'{name}'" for name in names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+    subject, own, pronoun = (f"Skill {listed} declares its", "own", "it") if len(names) == 1 else (f"Skills {listed} declare their", "own", "them")
+    return [f"{subject} {own} security requirements. ContextForge stores one authentication configuration per agent, so configure authentication for {pronoun} manually."]
+
+
 def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
     """Map one 1.0 security scheme to ``A2AAgentCreate`` auth fields.
 
@@ -424,7 +488,7 @@ def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
 
 
 def _oauth_host_warnings(fields: Dict[str, Any], endpoint_url: str) -> List[str]:
-    """Warn when an OAuth URL from the card points at a different host than the agent.
+    """Warn when an OAuth URL from the card leaves the agent host or does not use TLS.
 
     A card is untrusted input. The client secret a user later enters goes to these URLs.
 
@@ -433,15 +497,24 @@ def _oauth_host_warnings(fields: Dict[str, Any], endpoint_url: str) -> List[str]
         endpoint_url: The selected agent endpoint.
 
     Returns:
-        One warning per OAuth URL on a foreign host.
+        One warning per OAuth URL on a foreign host, and one per OAuth URL that is not ``https``.
+
+    Examples:
+        >>> cfg = {"oauth_config": {"token_url": "http://a.example.com/t"}}
+        >>> _oauth_host_warnings(cfg, "https://a.example.com/rpc")
+        ["The card's OAuth token_url uses 'http', not https. Verify it before entering a client secret."]
     """
     agent_host = urlparse(endpoint_url).hostname
     warnings = []
     for key in ("authorization_url", "token_url"):
         url = (fields.get("oauth_config") or {}).get(key)
-        host = urlparse(url).hostname if isinstance(url, str) else None
-        if host and host != agent_host:
-            warnings.append(f"The card's OAuth {key} points to '{host}', which differs from the agent host. Verify it before entering a client secret.")
+        parsed = urlparse(url) if isinstance(url, str) else None
+        if not parsed or not parsed.hostname:
+            continue
+        if parsed.hostname != agent_host:
+            warnings.append(f"The card's OAuth {key} points to '{parsed.hostname}', which differs from the agent host. Verify it before entering a client secret.")
+        if parsed.scheme != "https":
+            warnings.append(f"The card's OAuth {key} uses '{parsed.scheme}', not https. Verify it before entering a client secret.")
     return warnings
 
 
@@ -491,6 +564,7 @@ def suggest_agent_fields(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str
     auth_fields, auth_warnings = _suggest_auth(card)
     fields.update(auth_fields)
     warnings.extend(auth_warnings)
+    warnings.extend(_skill_auth_warnings(card))
     warnings.extend(_oauth_host_warnings(auth_fields, interface["url"]))
     return {key: value for key, value in fields.items() if value is not None}, warnings
 
@@ -571,7 +645,7 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
     """GET one URL under the outbound policy and parse a size-capped JSON body.
 
     The request asks for an identity encoding and discards a content-encoded response, so
-    a small compressed body cannot expand past the size cap. The whole read has a total deadline.
+    a small compressed body cannot expand past the size cap. DNS resolution and the read share one deadline.
 
     Args:
         url: Candidate card URL.
@@ -583,14 +657,13 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         ``WWW-Authenticate`` value of a non-200 response.
     """
     try:
-        target = await resolve_pinned_target(url, "A2A card URL")
-    except ValueError as exc:
-        logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
-        return None, None, None
-
-    request_headers = target.apply_headers({"Accept": "application/json", "Accept-Encoding": "identity", **(headers or {})})
-    try:
         async with asyncio.timeout(float(settings.federation_timeout)):
+            try:
+                target = await resolve_pinned_target(url, "A2A card URL")
+            except ValueError as exc:
+                logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
+                return None, None, None
+            request_headers = target.apply_headers({"Accept": "application/json", "Accept-Encoding": "identity", **(headers or {})})
             async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
                 return await _read_body(client, url, target, request_headers)
     except orjson.JSONDecodeError:
@@ -636,6 +709,8 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     Tries each candidate URL in order. Any answer other than a card moves to the next
     candidate, except a 401 or 403, which stops with ``auth_required`` so the caller can
     retry with credentials, and a blocked or failed request, which stops with ``unreachable``.
+    The whole search, including DNS resolution of every candidate, shares one ``FEDERATION_TIMEOUT``
+    deadline, and exceeding it also yields ``unreachable``.
 
     Args:
         base_url: Endpoint or direct card URL.
@@ -645,15 +720,20 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     Returns:
         The normalized card with a suggested agent mapping, or a response naming why no card was returned.
     """
-    for url in build_candidate_urls(base_url, path):
-        status, document, challenge = await _get_json(url, headers)
-        if status is None:
-            return _unreachable()
-        if status in (401, 403):
-            return _auth_required(challenge)
-        if document is None or not is_agent_card(document):
-            continue
-        found = _build_found_response(url, document)
-        if found:
-            return found
+    try:
+        async with asyncio.timeout(float(settings.federation_timeout)):
+            for url in build_candidate_urls(base_url, path):
+                status, document, challenge = await _get_json(url, headers)
+                if status is None:
+                    return _unreachable()
+                if status in (401, 403):
+                    return _auth_required(challenge)
+                if document is None or not is_agent_card(document):
+                    continue
+                found = _build_found_response(url, document)
+                if found:
+                    return found
+    except TimeoutError:
+        logger.warning("A2A card search for %s exceeded the total deadline", sanitize_url_for_logging(base_url))
+        return _unreachable()
     return _not_found()

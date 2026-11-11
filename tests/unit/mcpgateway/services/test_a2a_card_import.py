@@ -83,6 +83,12 @@ MALFORMED_CARDS = [
     {**LEGACY_BASE, "security": [{"s": "x"}]},
     {**LEGACY_BASE, "additionalInterfaces": 5},
     {**LEGACY_BASE, "skills": [{"id": "s", "security": ["x"]}]},
+    {**V1_BASE, "capabilities": {"streaming": "false"}},
+    {**V1_BASE, "capabilities": {"pushNotifications": 1}},
+    {**LEGACY_BASE, "capabilities": {"streaming": "true"}},
+    {**V1_BASE, "securitySchemes": {"s": {"oauth2SecurityScheme": {}}}, "securityRequirements": [{"schemes": {"s": {"list": "read"}}}]},
+    {**V1_BASE, "securityRequirements": [{"schemes": {"s": {"list": [1]}}}]},
+    {**LEGACY_BASE, "security": [{"s": [1]}]},
 ]
 
 
@@ -360,6 +366,59 @@ class TestAuthFields:
         assert any("evil.example.net" in warning for warning in warnings)
 
 
+class TestSkillAuthAndTransportWarnings:
+    """Warnings for authentication the single-auth suggestion cannot represent."""
+
+    _BASE = {"name": "a", "supportedInterfaces": [{"url": "https://a.example.com/rpc", "protocolBinding": "JSONRPC"}]}
+    _SKILL_AUTH = [{"schemes": {"key": {}}}]
+
+    def test_skill_level_requirement_warns_and_suggests_no_auth(self):
+        """A requirement that only a skill declares is reported, because the agent would call it unauthenticated."""
+        card = {**self._BASE, "skills": [{"id": "private-skill", "securityRequirements": self._SKILL_AUTH}, {"id": "open-skill"}]}
+        fields, warnings = suggest_agent_fields(card)
+        assert "auth_type" not in fields
+        assert any("'private-skill'" in warning and "declares its own security requirements" in warning and "open-skill" not in warning for warning in warnings)
+
+    def test_several_skills_are_named_in_one_warning_and_capped(self):
+        """The warning stays one line, names up to three skills, and counts the rest."""
+        card = {**self._BASE, "skills": [{"id": f"s{i}", "securityRequirements": self._SKILL_AUTH} for i in range(5)]}
+        _, warnings = suggest_agent_fields(card)
+        skill_warnings = [warning for warning in warnings if "own security requirements" in warning]
+        assert len(skill_warnings) == 1
+        assert "'s0', 's1', 's2' and 2 more declare their own" in skill_warnings[0]
+
+    def test_skill_without_requirements_adds_no_warning(self):
+        """Skills without requirements, or with an empty list, are not reported."""
+        card = {**self._BASE, "skills": [{"id": "a"}, {"id": "b", "securityRequirements": []}]}
+        _, warnings = suggest_agent_fields(card)
+        assert not any("own security requirements" in warning for warning in warnings)
+
+    def test_legacy_skill_level_security_warns_after_normalization(self):
+        """A 0.3 skill's ``security`` is converted first, so the same warning applies."""
+        legacy = {**LEGACY_BASE, "skills": [{"id": "s", "name": "s", "description": "d", "tags": [], "security": [{"key": []}]}]}
+        _, warnings = suggest_agent_fields(normalize_card(legacy)[0])
+        assert any("'s' declares its own security requirements" in warning for warning in warnings)
+
+    @pytest.mark.parametrize("url, warns", [("http://a.example.com/t", True), ("https://a.example.com/t", False)])
+    def test_oauth_url_without_tls_warns_even_on_the_agent_host(self, url, warns):
+        """A plain-http token address is flagged although its host matches the agent host."""
+        card = {**self._BASE, "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {"clientCredentials": {"tokenUrl": url}}}}}, "securityRequirements": [{"schemes": {"s": {}}}]}
+        _, warnings = suggest_agent_fields(card)
+        assert any("not https" in warning for warning in warnings) is warns
+
+    def test_legacy_card_with_combined_schemes_maps_into_a_valid_agent_create(self):
+        """A 0.3 requirement that needs two schemes yields a warning and a registrable suggestion."""
+        legacy = {
+            **LEGACY_BASE,
+            "securitySchemes": {"key": {"type": "apiKey", "in": "header", "name": "X-API-Key"}, "bearer": {"type": "http", "scheme": "bearer"}},
+            "security": [{"key": [], "bearer": []}],
+        }
+        fields, warnings = suggest_agent_fields(normalize_card(legacy)[0])
+        assert "auth_type" not in fields
+        assert any("'key', 'bearer'" in warning and "together" in warning for warning in warnings)
+        assert A2AAgentCreate(**fields).endpoint_url == "https://bad.example.com/rpc"
+
+
 class TestRoundTrip:
     """A card ContextForge publishes imports back into the same agent (#4734 acceptance)."""
 
@@ -531,6 +590,46 @@ class TestFetch:
         with pytest.raises(CardPathError):
             await fetch_agent_card("https://agent.example.com", "/../x", None)
         assert fetch.seen == []
+
+
+@pytest.mark.asyncio
+class TestTotalDeadline:
+    """One ``FEDERATION_TIMEOUT`` bounds DNS resolution and every candidate request together."""
+
+    async def test_candidates_share_one_deadline(self, monkeypatch):
+        """Two slow non-card answers that are each within the limit still exceed it together."""
+        monkeypatch.setattr(a2a_card_import.settings, "federation_timeout", 0.05)
+        calls = []
+
+        async def slow_not_found(url, headers):
+            calls.append(url)
+            await asyncio.sleep(0.04)
+            return 404, None, None
+
+        monkeypatch.setattr(a2a_card_import, "_get_json", slow_not_found)
+        result = await fetch_agent_card("https://old.example.com", None, None)
+        assert result.outcome == "unreachable"
+        assert len(calls) == 2
+
+    async def test_dns_resolution_is_inside_the_deadline(self, monkeypatch):
+        """A resolver that never answers is abandoned as unreachable."""
+        monkeypatch.setattr(a2a_card_import.settings, "federation_timeout", 0.05)
+
+        async def hung_resolver(url, field_name):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", hung_resolver)
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
+
+    async def test_fast_search_is_unaffected(self, monkeypatch):
+        """A search that finishes inside the limit still returns the card."""
+        monkeypatch.setattr(a2a_card_import.settings, "federation_timeout", 5)
+
+        async def quick(url, headers):
+            return (200, V1_CARD, None) if url.endswith("agent-card.json") else (404, None, None)
+
+        monkeypatch.setattr(a2a_card_import, "_get_json", quick)
+        assert (await fetch_agent_card("https://agent.example.com", None, None)).found is True
 
 
 @pytest.mark.asyncio
