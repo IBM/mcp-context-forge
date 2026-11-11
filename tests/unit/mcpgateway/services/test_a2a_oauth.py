@@ -124,3 +124,21 @@ async def test_client_credentials_resource_is_opt_in():
     assert "resource" not in dict(manager._post_token_request.call_args.args[1])
     await manager.get_client_credentials_token_response(cfg, send_resource=True)
     assert ("resource", "https://agent.example.com") in list(manager._post_token_request.call_args.args[1])
+
+
+@pytest.mark.asyncio
+async def test_invalid_expires_in_falls_back_to_default_ttl(fresh_cache):
+    manager = MagicMock()
+    manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": _jwt("https://agent.example.com"), "expires_in": "soon"})
+    fresh_cache.set = AsyncMock()
+    await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, CONFIG, oauth_manager=manager)
+    assert fresh_cache.set.call_args.kwargs["expires_in"] == a2a_oauth._FALLBACK_TTL
+
+
+@pytest.mark.asyncio
+async def test_token_cached_while_waiting_for_lock_skips_token_request(fresh_cache):
+    manager = _manager(_jwt("https://agent.example.com"))
+    fresh_cache.get = AsyncMock(side_effect=[None, "peer-token"])
+    headers = await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, CONFIG, oauth_manager=manager)
+    assert headers == {"Authorization": "Bearer peer-token"}
+    manager.get_client_credentials_token_response.assert_not_awaited()
