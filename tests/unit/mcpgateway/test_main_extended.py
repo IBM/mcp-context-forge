@@ -6126,10 +6126,6 @@ class TestA2ABranchCoverage:
         response = await main_mod.create_a2a_agent(agent, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert response.status_code == 403
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_validation_and_integrity_errors(self, monkeypatch):
@@ -6186,11 +6182,6 @@ class TestA2ABranchCoverage:
         import mcpgateway.main as main_mod
         from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
-
         svc = MagicMock()
         svc.delete_agent = AsyncMock(side_effect=PermissionError("nope"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
@@ -6216,11 +6207,6 @@ class TestA2ABranchCoverage:
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
 
         svc = MagicMock()
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
@@ -6259,22 +6245,6 @@ class TestA2ABranchCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
         db = MagicMock()
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.list_a2a_agents(
-                request,
-                include_inactive=False,
-                tags="a, b",
-                team_id=None,
-                visibility=None,
-                cursor=None,
-                include_pagination=False,
-                limit=None,
-                db=db,
-                user={"email": "user@example.com"},
-            )
-        assert excinfo.value.status_code == 503
 
         agent = MagicMock()
         agent.model_dump.return_value = {"id": "agent-1"}
@@ -11871,7 +11841,15 @@ class TestRemainingCoverageGaps:
         assert result["status"] == "success"
         a2a.reset_metrics.assert_awaited_once()
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
+
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", True)
+        monkeypatch.setattr(main_mod, "a2a_service", a2a)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_metrics_enabled", False)
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
@@ -11989,11 +11967,6 @@ class TestRemainingCoverageGaps:
             "extract_modification_metadata",
             lambda *_a, **_k: {"modified_by": "u", "modified_from_ip": "127.0.0.1", "modified_via": "api", "modified_user_agent": "test"},
         )
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
 
         validation = ValidationError.from_exception_data("A2AAgentUpdate", [{"type": "missing", "loc": ("name",), "msg": "Field required", "input": {}}])
         svc = MagicMock()
@@ -12141,28 +12114,6 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.tag_service, "get_entities_by_tag", AsyncMock(return_value=[]))
         _ = await main_mod.get_entities_by_tag.__wrapped__(request, "tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
 
-    async def test_get_a2a_agent_service_unavailable(self, monkeypatch):
-        # First-Party
-        import mcpgateway.main as main_mod
-
-        request = _make_request("/a2a/a1")
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
-
-    async def test_get_a2a_agent_card_service_unavailable(self, monkeypatch):
-        # First-Party
-        import mcpgateway.main as main_mod
-
-        request = _make_request("/a2a/a1/card")
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent_card.__wrapped__("a1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
-
     async def test_get_a2a_agent_card_resolves_standalone_agent(self, monkeypatch):
         """A standalone agent's card is returned without consulting the virtual-server fallback (#6700)."""
         # First-Party
@@ -12256,15 +12207,6 @@ class TestRemainingCoverageGaps:
             user={"email": "u"},
         )
         assert svc.register_agent.call_args.kwargs["team_id"] is None
-
-    async def test_set_a2a_agent_state_service_unavailable(self, monkeypatch):
-        # First-Party
-        import mcpgateway.main as main_mod
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_a2a_agent_state.__wrapped__("a1", activate=True, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
 
     async def test_delete_tool_not_found_maps_to_404(self, monkeypatch):
         # First-Party

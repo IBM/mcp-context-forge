@@ -7624,6 +7624,28 @@ class EmailUserResponse(BaseModel):
         )
 
 
+class FeatureFlags(BaseModel):
+    """Deployment feature flags readable by any authenticated user.
+
+    Attributes:
+        a2a: Whether A2A is enabled on this gateway.
+    """
+
+    a2a: bool = Field(description="Whether A2A is enabled on this gateway")
+
+
+class CurrentUserResponse(EmailUserResponse):
+    """Response schema for ``GET /auth/email/me``.
+
+    Adds deployment feature flags that any authenticated user may read.
+
+    Attributes:
+        features: Deployment feature flags.
+    """
+
+    features: FeatureFlags = Field(description="Deployment feature flags readable by any authenticated user")
+
+
 class AuthenticationResponse(BaseModel):
     """Response schema for successful authentication.
 

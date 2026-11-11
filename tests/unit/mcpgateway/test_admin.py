@@ -6505,11 +6505,11 @@ class TestA2AAgentManagement:
         mock_request.state = MagicMock()
         mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
-        assert isinstance(result, dict)
-        assert "data" in result
-        assert len(result["data"]) == 0
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @patch("mcpgateway.admin.a2a_service")
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
@@ -6618,8 +6618,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_set_a2a_agent_state_disabled_redirects(self, monkeypatch, mock_request, mock_db):
         """Cover disabled-features early redirect in admin_set_a2a_agent_state."""
-        monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
         mock_request.scope = {"root_path": "/root"}
 
         result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -6695,8 +6694,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_delete_a2a_agent_disabled_redirects(self, monkeypatch, mock_request, mock_db):
         """Cover disabled-features early redirect in admin_delete_a2a_agent."""
-        monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
         mock_request.scope = {"root_path": ""}
 
         result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -6817,12 +6815,12 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
         monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert result.status_code == 403
-        body = json.loads(result.body)
-        assert body["success"] is False
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -19985,12 +19983,12 @@ async def test_get_performance_endpoints(monkeypatch, allow_permission):
 async def test_admin_add_a2a_agent_disabled_features(monkeypatch, mock_db, allow_permission):
     request = MagicMock(spec=Request)
     monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 403
-    payload = json.loads(response.body)
-    assert payload["success"] is False
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
 
 
 @pytest.mark.asyncio
@@ -28543,3 +28541,67 @@ class TestCatalogPermissionErrorBranches:
         with pytest.raises(HTTPException) as exc_info:
             await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler,kwargs",
+    [
+        (admin_get_agent, {"agent_id": "agent-1"}),
+        (admin_get_all_agent_ids, {"include_inactive": False, "team_id": None}),
+        (admin_search_a2a_agents, {"q": "x", "tags": None, "include_inactive": False, "limit": 10, "team_id": None}),
+    ],
+)
+async def test_admin_a2a_read_routes_return_typed_404_when_disabled(monkeypatch, mock_request, mock_db, handler, kwargs):
+    """The admin A2A read routes answer with the typed a2a_disabled 404 instead of reading the database."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    if handler is admin_get_agent:
+        kwargs = {**kwargs, "request": mock_request}
+
+    with pytest.raises(HTTPException) as excinfo:
+        await handler(db=mock_db, user={"email": "user@example.com", "db": mock_db}, **kwargs)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_a2a_partial_html_returns_typed_404_when_disabled(monkeypatch, mock_request, mock_db):
+    """The partial route answers with the typed 404 even when agent rows remain in the database."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_a2a_partial_html(mock_request, page=1, per_page=10, include_inactive=False, render=None, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_returns_typed_404_when_disabled(monkeypatch, mock_request, mock_db):
+    """The edit route answers with the typed 404 instead of failing on a missing service."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+    mock_request.form.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_name, kwargs", [("get_a2a_plugin_bindings_partial", {}), ("admin_create_a2a_plugin_binding", {}), ("admin_delete_a2a_plugin_binding", {"binding_id": "b-1"})])
+async def test_admin_a2a_plugin_binding_routes_return_typed_404_when_disabled(monkeypatch, mock_request, mock_db, handler_name, kwargs):
+    """The plugin-binding routes answer with the typed 404 when A2A is disabled."""
+    from mcpgateway import admin as admin_module
+
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await getattr(admin_module, handler_name)(request=mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db}, **kwargs)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
