@@ -1020,6 +1020,8 @@ _TOKEN_EXCHANGE_FORM_FIELDS: Dict[str, str] = {
     "oauth_actor_token_type": "actor_token_type",
 }
 
+_OAUTH_REGISTRATION_METHODS = ("auto", "cimd", "dcr")
+
 _DISCOVERY_OVERRIDE_FORM_FIELDS: Dict[str, str] = {
     "oauth_discovery_token_url": "token_url",
     "oauth_discovery_client_id": "client_id",
@@ -1163,6 +1165,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     oauth_password = str(fields.get("oauth_password", ""))
     oauth_scopes_str = str(fields.get("oauth_scopes", ""))
     oauth_audience = str(fields.get("oauth_audience", "")).strip()
+    oauth_registration_method = str(fields.get("oauth_registration_method", "")).strip()
     oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
     token_exchange_values = {config_key: str(fields.get(form_key, "")).strip() for form_key, config_key in _TOKEN_EXCHANGE_FORM_FIELDS.items()} if oauth_grant_type == "token-exchange" else {}
 
@@ -1208,6 +1211,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
             oauth_config["scopes"] = scopes
     if oauth_resource:
         oauth_config["resource"] = oauth_resource
+    if oauth_registration_method in _OAUTH_REGISTRATION_METHODS:
+        oauth_config["registration_method"] = oauth_registration_method
     oauth_config.update({key: value for key, value in token_exchange_values.items() if value})
     if oauth_grant_type == "token-exchange":
         discovery = await _assemble_discovery_from_fields(fields, encrypt_secret=encrypt_secret)

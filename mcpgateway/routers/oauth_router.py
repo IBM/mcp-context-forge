@@ -37,6 +37,7 @@ from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.services.cimd_service import CimdService
 from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
@@ -235,6 +236,50 @@ def _default_redirect_uri(request: Optional[Request] = None) -> str:
     root_path = resolve_root_path(request) if request is not None else str(settings.app_root_path).rstrip("/")
     # str() of a pydantic HttpUrl appends a trailing slash; rstrip keeps the path single-slashed.
     return f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
+
+
+async def _fill_issuer_endpoints(oauth_config: Dict[str, Any], dcr_service: DcrService, issuer: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    """Fill missing ``authorization_url`` and ``token_url`` from issuer metadata, in place.
+
+    Args:
+        oauth_config: Request-local OAuth configuration to update.
+        dcr_service: Service used for RFC 8414 metadata discovery.
+        issuer: Authorization server issuer URL.
+        metadata: Authorization server metadata already fetched by the caller. Discovered when omitted.
+    """
+    if oauth_config.get("authorization_url") and oauth_config.get("token_url"):
+        return
+    # OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
+    if metadata is None:
+        metadata = await dcr_service.discover_as_metadata(issuer)
+    for config_key, metadata_key in (("authorization_url", "authorization_endpoint"), ("token_url", "token_endpoint")):
+        if not oauth_config.get(config_key):
+            oauth_config[config_key] = await validate_issuer_scoped_endpoint(metadata.get(metadata_key), issuer, metadata_key)
+    logger.info(f"Discovered OAuth endpoints for {issuer}")
+
+
+async def _persist_registered_oauth_config(gateway: Gateway, oauth_config: Dict[str, Any], db: Session) -> None:
+    """Persist registration-derived OAuth fields on the gateway.
+
+    The request-local ``resource`` derivation is stripped before writing to shared
+    config. This route enforces gateway *access* but not gateways.update, so
+    persisting the auto-derived resource would let any authenticated caller pin the
+    shared audience for all users. An admin-configured resource is preserved as-is.
+
+    Args:
+        gateway: Gateway row to update.
+        oauth_config: Request-local OAuth configuration holding the registered client.
+        db: Database session.
+    """
+    persist_dict = dict(oauth_config)
+    stored_resource = (gateway.oauth_config or {}).get("resource")
+    if stored_resource is None:
+        persist_dict.pop("resource", None)
+    else:
+        persist_dict["resource"] = stored_resource
+    gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
+    gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
+    db.commit()
 
 
 def _is_well_formed_audience(value: Any) -> bool:
@@ -668,10 +713,11 @@ async def initiate_oauth_flow(
     the gateway supports the Authorization Code flow, and redirects the user to the OAuth
     provider's authorization URL to begin the OAuth process.
 
-    **Phase 1.4: DCR Integration**
-    If the gateway has an issuer but no client_id, and DCR is enabled, this endpoint will
-    automatically register the gateway as an OAuth client with the Authorization Server
-    using Dynamic Client Registration (RFC 7591).
+    **Client registration**
+    If the gateway has an issuer but no client_id, this endpoint prefers a Client ID
+    Metadata Document (CIMD) when the Authorization Server advertises support. Otherwise,
+    when DCR is enabled, it registers the gateway using the deprecated Dynamic Client
+    Registration (RFC 7591) fallback.
 
     Args:
         gateway_id: The unique identifier of the gateway to authorize.
@@ -730,17 +776,60 @@ async def initiate_oauth_flow(
             oauth_config["redirect_uri"] = _default_redirect_uri(request)
             logger.info("No redirect_uri configured on gateway OAuth config; defaulting to derived callback %s", oauth_config["redirect_uri"])
 
-        # Phase 1.4: Auto-trigger DCR if credentials are missing
-        # Check if gateway has issuer but no client_id (DCR scenario)
+        # Client registration order: manual credentials, then CIMD, then deprecated DCR fallback.
         issuer = oauth_config.get("issuer")
         client_id = oauth_config.get("client_id")
+        safe_gateway_id = SecurityValidator.sanitize_log_message(gateway_id)
 
         if issuer and not client_id:
-            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
-                logger.info(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id. Attempting DCR...")
+            reg_method = oauth_config.get("registration_method", "auto")
+            if reg_method not in ("auto", "cimd", "dcr"):
+                reg_method = "auto"
+
+            use_cimd = False
+            use_dcr = False
+            cimd_skip_reason = None
+
+            cimd_service = CimdService(root_path=resolve_root_path(request))
+            if reg_method == "cimd":
+                failed_guard = cimd_service.failed_guard(issuer, oauth_config["redirect_uri"])
+                if failed_guard:
+                    logger.warning(f"CIMD registration refused for gateway {safe_gateway_id}: guard {failed_guard} failed")
+                    raise HTTPException(status_code=400, detail=f"CIMD registration is not permitted for this gateway ({failed_guard})")
+                use_cimd = True
+            elif reg_method == "dcr":
+                use_dcr = True
+            else:  # auto
+                if await cimd_service.is_applicable(issuer, oauth_config["redirect_uri"]):
+                    use_cimd = True
+                else:
+                    use_dcr = True
+                    cimd_skip_reason = cimd_service.skip_reason
+
+            if use_cimd:
+                try:
+                    await _fill_issuer_endpoints(oauth_config, DcrService(), issuer, cimd_service.as_metadata)
+                    oauth_config["client_id"] = cimd_service.client_id
+                    oauth_config["token_endpoint_auth_method"] = settings.cimd_token_endpoint_auth_method
+                    oauth_config["registration_method"] = "cimd"
+                    await _persist_registered_oauth_config(gateway, oauth_config, db)
+                    logger.info(f"Gateway {safe_gateway_id} registered with {SecurityValidator.sanitize_log_message(issuer)} via Client ID Metadata Document")
+                except Exception as cimd_ex:
+                    logger.error(f"CIMD registration failed for gateway {safe_gateway_id}: {type(cimd_ex).__name__}")
+                    raise HTTPException(status_code=500, detail="Failed to register OAuth client via CIMD")
+            elif use_dcr and settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
+                if reg_method == "dcr":
+                    fallback_reason = "registration_method is dcr"
+                elif cimd_skip_reason == "not_advertised":
+                    fallback_reason = "the issuer does not advertise Client ID Metadata Document (CIMD) support"
+                else:
+                    fallback_reason = f"CIMD was skipped ({cimd_skip_reason})"
+                logger.warning(
+                    f"Gateway {safe_gateway_id} is using Dynamic Client Registration (RFC 7591) for issuer {SecurityValidator.sanitize_log_message(issuer)} because {fallback_reason}. "
+                    "MCP 2026-07-28 deprecates DCR."
+                )
 
                 try:
-                    # Initialize DCR service
                     dcr_service = DcrService()
 
                     # Check if client is already registered in database
@@ -753,7 +842,7 @@ async def initiate_oauth_flow(
                         db=db,
                     )
 
-                    logger.info(f"✅ DCR successful for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: client_id={SecurityValidator.sanitize_log_message(registered_client.client_id)}")
+                    logger.info(f"✅ DCR successful for gateway {safe_gateway_id}: client_id={SecurityValidator.sanitize_log_message(registered_client.client_id)}")
 
                     # Decrypt the client secret for use in OAuth flow (if present - public clients may not have secrets)
                     decrypted_secret = None
@@ -770,52 +859,32 @@ async def initiate_oauth_flow(
                         oauth_config["client_secret"] = decrypted_secret
                     # Include token_endpoint_auth_method from DCR registration
                     oauth_config["token_endpoint_auth_method"] = registered_client.token_endpoint_auth_method
+                    oauth_config["registration_method"] = "dcr"
 
-                    # Discover AS metadata to get authorization/token endpoints if not already set
-                    # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
-                    if not oauth_config.get("authorization_url") or not oauth_config.get("token_url"):
-                        metadata = await dcr_service.discover_as_metadata(issuer)
-                        for config_key, metadata_key in (("authorization_url", "authorization_endpoint"), ("token_url", "token_endpoint")):
-                            if not oauth_config.get(config_key):
-                                oauth_config[config_key] = await validate_issuer_scoped_endpoint(metadata.get(metadata_key), issuer, metadata_key)
-                        logger.info(f"Discovered OAuth endpoints for {issuer}")
+                    await _fill_issuer_endpoints(oauth_config, dcr_service, issuer)
+                    await _persist_registered_oauth_config(gateway, oauth_config, db)
 
-                    # Persist only DCR-derived fields (client credentials + AS metadata) —
-                    # deliberately strip the request-local `resource` derivation before
-                    # writing to shared config. This route enforces gateway *access* but
-                    # not gateways.update, so persisting the auto-derived resource would
-                    # let any authenticated caller pin the shared audience for all users
-                    # — the same RBAC-bypass class of bug the callback-path redesign
-                    # eliminated by moving learned audience to OAuthToken.learned_aud.
-                    # Admin-configured resource (present in gateway.oauth_config before
-                    # this request) is preserved as-is.
-                    persist_dict = dict(oauth_config)
-                    stored_resource = (gateway.oauth_config or {}).get("resource")
-                    if stored_resource is None:
-                        persist_dict.pop("resource", None)
-                    else:
-                        persist_dict["resource"] = stored_resource
-                    gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
-                    gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
-                    db.commit()
-
-                    logger.info(f"Updated gateway {SecurityValidator.sanitize_log_message(gateway_id)} with DCR credentials and auth_type=oauth")
+                    logger.info(f"Updated gateway {safe_gateway_id} with DCR credentials and auth_type=oauth")
 
                 except DcrError as dcr_err:
-                    logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
+                    logger.error(f"DCR failed for gateway {safe_gateway_id}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
                         detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
-                    logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
+                    logger.error(f"Unexpected error during DCR for gateway {safe_gateway_id}: {dcr_ex}")
                     raise HTTPException(status_code=500, detail="Failed to register OAuth client")
             else:
-                # DCR is disabled or auto-register is off
-                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
+                # CIMD/DCR is unavailable
+                logger.warning(f"Gateway {safe_gateway_id} has issuer but no client_id, and registration is disabled")
                 raise HTTPException(
                     status_code=400,
-                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
+                    detail=(
+                        "Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable registration: "
+                        "set CIMD_ENABLED=true for Client ID Metadata Documents, or DCR_ENABLED=true and "
+                        "DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true for Dynamic Client Registration."
+                    ),
                 )
 
         # Validate required fields for OAuth flow
