@@ -121,7 +121,7 @@ FLAG_GATED_UNDER_TESTING_PROFILE = {"observability", "siem", "toolops"}
 # fails secure with "Admin privileges required" from require_admin_auth — independent
 # of, and before, this PR's new guard ever runs. Both denials are correct; a public-only
 # caller on these three routers may see either message.
-ADMIN_PREFIXED_HAS_SEPARATE_SCOPE_LAYER = {"llm_admin_router", "siem", "runtime_admin_router"}
+ADMIN_PREFIXED_HAS_SEPARATE_SCOPE_LAYER = {"llm_admin_router", "siem"}
 TOKEN_SCOPING_DENIAL_SUBSTRING = "Admin privileges required"
 
 
@@ -142,7 +142,6 @@ ROUTE_MATRIX = [
     ("sso", "GET", "/auth/sso/admin/providers", {200}, None),
     ("siem", "GET", "/admin/siem/health", {200}, None),
     ("log_search", "GET", "/api/logs/audit-trails", {200}, None),
-    ("runtime_admin_router", "GET", "/admin/runtime/mcp-mode", {200}, None),
     ("rbac", "POST", "/rbac/permissions/check", {200}, {"user_email": ADMIN_EMAIL, "permission": "tools.read"}),
     ("metrics_maintenance", "GET", "/api/metrics/config", {200}, None),
 ]

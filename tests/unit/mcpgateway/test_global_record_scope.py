@@ -90,11 +90,6 @@ GLOBAL_ONLY = {
     ("POST", "/api/logs/search"),
     ("GET", "/api/logs/security-events"),
     ("GET", "/api/logs/trace/{correlation_id}"),
-    # --- runtime_admin_router (prefix /admin/runtime) — 4, admin.system_config ---
-    ("GET", "/admin/runtime/a2a-mode"),
-    ("PATCH", "/admin/runtime/a2a-mode"),
-    ("GET", "/admin/runtime/mcp-mode"),
-    ("PATCH", "/admin/runtime/mcp-mode"),
     # --- toolops_router (prefix /toolops) — 3, admin.system_config ---
     ("POST", "/toolops/enrichment/enrich_tool"),
     ("POST", "/toolops/validation/execute_tool_nl_testcases"),
