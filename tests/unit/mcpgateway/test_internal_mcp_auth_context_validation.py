@@ -19,7 +19,8 @@ from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.main import _build_internal_mcp_auth_context_for_rpc, _validate_internal_mcp_auth_context
+from mcpgateway.main import _build_internal_mcp_auth_context_for_rpc, _build_internal_mcp_forwarded_user, _validate_internal_mcp_auth_context
+from mcpgateway.auth_context import encode_internal_mcp_auth_context
 
 
 def test_valid_public_only_context_passes():
@@ -39,6 +40,7 @@ def test_valid_authenticated_context_may_carry_privileges():
         {"is_authenticated": False, "is_admin": True},  # public-only must not be admin
         {"is_authenticated": False, "permission_is_admin": True},  # nor via permission_is_admin
         {"is_authenticated": False, "email": "attacker@evil.com"},  # public-only must not carry an identity
+        {"is_authenticated": False, "user_id": "attacker@evil.com"},  # nor a canonical user_id
     ],
 )
 def test_contradictory_public_only_context_is_rejected(ctx):
@@ -105,6 +107,7 @@ def test_rpc_builder_anonymous_is_floored_and_passes_validator():
         ctx = _build_internal_mcp_auth_context_for_rpc(_rpc_request(None), {})
     assert ctx["is_authenticated"] is False
     assert ctx["email"] is None
+    assert ctx["user_id"] is None
     assert ctx["teams"] == []
     assert ctx["is_admin"] is False
     _validate_internal_mcp_auth_context(ctx)
@@ -115,6 +118,24 @@ def test_rpc_builder_admin_bypass_passes_validator():
     with patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)), patch("mcpgateway.main._extract_scoped_permissions", return_value=None):
         ctx = _build_internal_mcp_auth_context_for_rpc(_rpc_request(None), {"email": "admin@example.com", "is_admin": True})
     assert ctx["is_authenticated"] is True
+    assert ctx["user_id"] == "admin@example.com"
     assert ctx["is_admin"] is True
     assert ctx["teams"] is None
     _validate_internal_mcp_auth_context(ctx)
+
+
+@pytest.mark.parametrize(
+    ("forwarded", "expected_user_id"),
+    [
+        ({"user_id": "u-1", "email": "u@example.com", "is_authenticated": True}, "u-1"),
+        ({"email": "u@example.com", "is_authenticated": True}, "u@example.com"),
+    ],
+)
+def test_forwarded_user_carries_user_id(forwarded, expected_user_id):
+    """The owner-side forwarded user carries ``user_id``, falling back to the e-mail."""
+    request = MagicMock()
+    request.headers = {"x-contextforge-mcp-auth-context": encode_internal_mcp_auth_context(forwarded)}
+    with patch("mcpgateway.main._is_trusted_internal_mcp_runtime_request", return_value=True), patch("mcpgateway.main._INTERNAL_MCP_AUTH_CONTEXT_HEADER", "x-contextforge-mcp-auth-context"):
+        user = _build_internal_mcp_forwarded_user(request)
+    assert user["user_id"] == expected_user_id
+    assert user["email"] == "u@example.com"

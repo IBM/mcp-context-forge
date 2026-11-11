@@ -6153,11 +6153,14 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
     # Standard
     from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
 
+    # First-Party
+    from mcpgateway.auth_context import get_user_id  # pylint: disable=import-outside-toplevel
+
     email = ctx.get("email")
     if email:
         user_identity_var.set(
             UserContext(
-                user_id=email,
+                user_id=get_user_id(ctx),
                 email=email,
                 is_admin=ctx.get("is_admin", False),
                 teams=ctx.get("teams"),
@@ -6218,6 +6221,7 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 
         # Trusted proxy auth is DB/header-derived, not JWT-derived, so there is no token exp claim to clamp.
         _proxy_ctx: dict[str, Any] = {
+            "user_id": proxy_user,
             "email": proxy_user,
             "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
             "is_authenticated": True,
@@ -6251,6 +6255,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
 
     forwarded: dict[str, Any] = {}
     for key in (
+        "user_id",
         "email",
         "teams",
         "team_name",
@@ -6435,6 +6440,7 @@ class _StreamableHttpAuthHandler:
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {
+                "user_id": None,
                 "email": None,
                 "teams": [],  # Empty list = public-only access
                 "is_authenticated": False,
@@ -6674,6 +6680,7 @@ class _StreamableHttpAuthHandler:
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
             auth_user_ctx: dict[str, Any] = {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
@@ -6974,6 +6981,7 @@ class _StreamableHttpAuthHandler:
         # auth_method distinguishes the origin for audit/logging.
         user_context_var.set(
             {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,

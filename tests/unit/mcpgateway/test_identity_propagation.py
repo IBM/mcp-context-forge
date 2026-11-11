@@ -798,6 +798,27 @@ class TestSetUserIdentityFromDict:
         # Reset
         user_identity_var.set(None)
 
+    def test_explicit_user_id_wins_over_email(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _set_user_identity_from_dict, user_identity_var
+
+        _set_user_identity_from_dict({"user_id": "u-1", "email": "alice@co.com"})
+        uc = user_identity_var.get()
+        assert uc.user_id == "u-1"
+        assert uc.email == "alice@co.com"
+        user_identity_var.set(None)
+
+    def test_forwarded_auth_context_carries_user_id(self):
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context, user_context_var
+
+        token = user_context_var.set({"user_id": "u-1", "email": "alice@co.com", "is_authenticated": True})
+        try:
+            forwarded = get_streamable_http_auth_context()
+        finally:
+            user_context_var.reset(token)
+        assert forwarded["user_id"] == "u-1"
+
     def test_noop_without_email(self):
         # First-Party
         from mcpgateway.transports.streamablehttp_transport import _set_user_identity_from_dict, user_identity_var
