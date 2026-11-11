@@ -378,6 +378,25 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 - The response carries `Cache-Control: private, no-store` because its content depends on the caller.
 - `supportsAuthenticatedExtendedCard` is `true`, but the gateway does not serve an extended card yet.
 
+## Agent Skills
+
+Set the skills an agent advertises with the top-level `skills` field on `POST /a2a` and `PUT /a2a/{agent_id}`. An update that sends only `skills` leaves `capabilities` unchanged.
+
+```json
+{
+  "skills": [
+    {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+  ]
+}
+```
+
+- Each skill needs `id`, `name`, `description`, and `tags`. Extra keys such as `examples` pass through to the card.
+- `name`, `description`, and `tags` reject HTML and script patterns.
+- An agent holds at most 100 skills, each skill holds at most 50 tags, and every `id` must be unique in the list.
+- `id`, `name`, and each tag are limited to the name length limit. `description` is limited to the description length limit.
+- Cards read the `skills` field first. An agent without the field publishes `capabilities["skills"]`.
+- An explicit `"skills": []` is authoritative. The agent publishes no skills and the `capabilities["skills"]` fallback does not apply.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents

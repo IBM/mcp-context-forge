@@ -40,7 +40,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
-from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -936,6 +936,7 @@ class A2AAgentService(BaseService):
                     agent_type=agent_data.agent_type,
                     protocol_version=agent_data.protocol_version,
                     capabilities=agent_data.capabilities,
+                    skills=dump_agent_skills(agent_data.skills) if agent_data.skills is not None else None,
                     config=agent_data.config,
                     auth_type=auth_type,
                     auth_value=auth_value,  # This should be encrypted in practice
@@ -1588,7 +1589,7 @@ class A2AAgentService(BaseService):
                 "pushNotifications": bool(capabilities.get("pushNotifications", False)),
                 "stateTransitionHistory": bool(capabilities.get("stateTransitionHistory", False)),
             },
-            "skills": capabilities.get("skills") or [],
+            "skills": get_agent_skills(agent),
             "supportsAuthenticatedExtendedCard": True,
         }
 
@@ -1637,7 +1638,7 @@ class A2AAgentService(BaseService):
             "capabilities": card_capabilities,
             "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
             "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
-            "skills": capabilities.get("skills") or [],
+            "skills": get_agent_skills(agent),
         }
         if agent.icon_url:
             card["iconUrl"] = agent.icon_url
@@ -1795,6 +1796,9 @@ class A2AAgentService(BaseService):
                 # auth_value is persisted by the credential block below, which preserves masked placeholders
                 if field == "auth_value":
                     continue
+
+                if field == "skills" and value is not None:
+                    value = dump_agent_skills(value)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
@@ -3661,6 +3665,7 @@ class A2AAgentService(BaseService):
         # Build dict from ORM model
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}
         agent_data["metrics"] = metrics
+        agent_data["skills"] = get_agent_skills(db_agent)
         agent_data["team"] = getattr(db_agent, "team", None)
         # Include auth_query_params for the _mask_query_param_auth validator
         agent_data["auth_query_params"] = getattr(db_agent, "auth_query_params", None)

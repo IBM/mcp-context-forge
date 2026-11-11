@@ -2517,3 +2517,94 @@ class TestMcpServerIdResponseAlias:
     def test_alias_in_response_body_is_ignored_on_input(self):
         response = GatewayImpactPreview.model_validate({"gateway_id": "gw-1", "servers": [], "mcp_server_id": "other"})
         assert response.mcp_server_id == "gw-1"
+
+
+class TestA2AAgentSkills:
+    """Skills are a typed top-level field on A2A agent create and update schemas."""
+
+    VALID_SKILL = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+    def test_create_accepts_valid_skill_and_keeps_capabilities_untouched(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", capabilities={"streaming": True}, skills=[self.VALID_SKILL])
+
+        assert agent.skills[0].tags == ["text"]
+        assert agent.capabilities == {"streaming": True}
+
+    @pytest.mark.parametrize("missing", ["id", "name", "description", "tags"])
+    def test_create_rejects_skill_missing_required_key(self, missing):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        skill = {k: v for k, v in self.VALID_SKILL.items() if k != missing}
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[skill])
+
+    def test_update_with_only_skills_leaves_capabilities_unset(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        update = A2AAgentUpdate(skills=[self.VALID_SKILL])
+
+        assert update.model_fields_set == {"skills"}
+
+    def test_update_rejects_skill_without_tags(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=[{"id": "s", "name": "n", "description": "d"}])
+
+    def test_skill_keeps_extra_agent_card_fields(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[{**self.VALID_SKILL, "examples": ["x"]}])
+
+        assert agent.skills[0].model_dump()["examples"] == ["x"]
+
+    @pytest.mark.parametrize("field,value", [("name", "<script>alert(1)</script>"), ("description", "<img src=x onerror=alert(1)>"), ("id", "<script>x</script>")])
+    def test_skill_rejects_markup(self, field, value):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, field: value})
+
+    def test_skill_rejects_markup_in_tag(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["<script>x</script>"]})
+
+    def test_skill_rejects_oversized_values(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["x" * 100000]})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["t"] * 51})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "name": "n" * 100000})
+
+    def test_skill_rejects_deeply_nested_extra_field(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        nested: dict = {}
+        for _ in range(500):
+            nested = {"a": nested}
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "extra": nested})
+
+    def test_create_and_update_reject_too_many_skills(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        skills = [{**self.VALID_SKILL, "id": f"s{i}"} for i in range(101)]
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=skills)
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=skills)
+
+    def test_create_and_update_reject_duplicate_skill_ids(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[self.VALID_SKILL, self.VALID_SKILL])
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentUpdate(skills=[self.VALID_SKILL, self.VALID_SKILL])
