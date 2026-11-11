@@ -399,6 +399,21 @@ class TestSkillAuthAndTransportWarnings:
         _, warnings = suggest_agent_fields(normalize_card(legacy)[0])
         assert any("'s' declares its own security requirements" in warning for warning in warnings)
 
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"securitySchemes": {"weird": {"type": "sigv4"}}, "security": [{"weird": ["scope"]}]},
+            {"security": [{"undeclared": []}]},
+        ],
+    )
+    def test_legacy_security_with_no_supported_scheme_still_warns(self, extra):
+        """A 0.3 requirement is kept when no scheme converts, so the unsupported scheme is reported."""
+        card, _ = normalize_card({**LEGACY_BASE, **extra})
+        assert card["securityRequirements"]
+        fields, warnings = suggest_agent_fields(card)
+        assert "auth_type" not in fields
+        assert any("is not supported and was ignored" in warning for warning in warnings)
+
     @pytest.mark.parametrize("url, warns", [("http://a.example.com/t", True), ("https://a.example.com/t", False)])
     def test_oauth_url_without_tls_warns_even_on_the_agent_host(self, url, warns):
         """A plain-http token address is flagged although its host matches the agent host."""

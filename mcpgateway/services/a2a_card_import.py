@@ -200,6 +200,7 @@ def _normalize_legacy_card(raw: Dict[str, Any]) -> Dict[str, Any]:
             schemes[name] = converted
     if schemes:
         card["securitySchemes"] = schemes
+    if schemes or raw.get("security"):
         card["securityRequirements"] = _convert_legacy_requirements(raw.get("security") or [])
     return card
 
