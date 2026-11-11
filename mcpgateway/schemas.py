@@ -744,13 +744,12 @@ _GATEWAY_ID_CAMEL_ALIAS = AliasChoices("gatewayId", "gateway_id", "mcpServerId",
 
 
 class McpServerIdResponseMixin(BaseModelWithConfigDict):
-    """Response mixin that emits ``mcp_server_id`` next to ``gateway_id``.
+    """Response mixin that emits ``mcp_server_id`` next to a nullable ``gateway_id``.
 
     ``mcp_server_id`` is the product-terminology alias of ``gateway_id``. Both keys
-    carry the same value until the legacy name is removed.
+    carry the same value until the legacy name is removed. The subclass declares
+    ``gateway_id``.
     """
-
-    gateway_id: Optional[str] = None
 
     @computed_field(description="Product-terminology alias of gateway_id")  # type: ignore[prop-decorator]
     @property
@@ -760,7 +759,25 @@ class McpServerIdResponseMixin(BaseModelWithConfigDict):
         Returns:
             Optional[str]: The gateway ID, or None when the record has no gateway.
         """
-        return self.gateway_id
+        return getattr(self, "gateway_id", None)
+
+
+class RequiredMcpServerIdResponseMixin(BaseModelWithConfigDict):
+    """Response mixin that emits ``mcp_server_id`` next to a required ``gateway_id``.
+
+    The alias is non-null, so the OpenAPI type of ``mcpServerId`` matches ``gatewayId``.
+    The subclass declares ``gateway_id`` as ``str``.
+    """
+
+    @computed_field(description="Product-terminology alias of gateway_id")  # type: ignore[prop-decorator]
+    @property
+    def mcp_server_id(self) -> str:
+        """Return the value of ``gateway_id`` under its product-terminology name.
+
+        Returns:
+            str: The gateway ID.
+        """
+        return str(getattr(self, "gateway_id"))
 
 
 def _reject_conflicting_aliases(data: Any, *spellings: str) -> Any:
@@ -4769,7 +4786,7 @@ class GatewayRead(BaseModelWithConfigDict):
         return GatewayRead.model_validate(masked_data)
 
 
-class GatewayRefreshResponse(McpServerIdResponseMixin):
+class GatewayRefreshResponse(RequiredMcpServerIdResponseMixin):
     """Response schema for manual gateway refresh API.
 
     Contains counts of added, updated, and removed items for tools, resources, and prompts,
@@ -4800,7 +4817,7 @@ class GatewayImpactServer(BaseModelWithConfigDict):
     name: str = Field(..., description="Name of the affected virtual server")
 
 
-class GatewayImpactPreview(McpServerIdResponseMixin):
+class GatewayImpactPreview(RequiredMcpServerIdResponseMixin):
     """Layer-1-scoped preview of virtual servers affected by gateway deletion."""
 
     gateway_id: str = Field(..., description="ID of the gateway being evaluated")

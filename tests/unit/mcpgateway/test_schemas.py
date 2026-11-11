@@ -65,7 +65,6 @@ from mcpgateway.schemas import (
     GatewayImpactPreview,
     GatewayRefreshResponse,
     ListFilters,
-    McpServerIdResponseMixin,
     PromptCreate,
     PromptMetrics,
     PromptRead,
@@ -2399,21 +2398,104 @@ class TestToolOutputSchemaShapes:
 class TestMcpServerIdResponseAlias:
     """Responses carrying ``gateway_id`` also emit ``mcp_server_id`` (issue #6544)."""
 
+    _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    @classmethod
+    def _tool(cls, gateway_id):
+        return ToolRead.model_validate(
+            {
+                "id": "t1",
+                "original_name": "tool",
+                "request_type": "POST",
+                "integration_type": "REST",
+                "url": None,
+                "description": None,
+                "headers": None,
+                "annotations": {},
+                "jsonpath_filter": None,
+                "auth": None,
+                "input_schema": {"type": "object"},
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "deprecated": False,
+                "reachable": True,
+                "gateway_id": gateway_id,
+                "name": "tool",
+                "gateway_slug": "gw",
+                "custom_name": "tool",
+                "custom_name_slug": "tool",
+            }
+        )
+
+    @classmethod
+    def _resource(cls, gateway_id):
+        return ResourceRead.model_validate({"id": "r1", "uri": "test://r", "name": "r", "description": None, "mime_type": None, "size": None, "created_at": cls._NOW, "updated_at": cls._NOW, "enabled": True, "gateway_id": gateway_id})
+
+    @classmethod
+    def _prompt(cls, gateway_id):
+        return PromptRead.model_validate(
+            {
+                "id": "p1",
+                "name": "p",
+                "original_name": "p",
+                "custom_name": "p",
+                "custom_name_slug": "p",
+                "description": None,
+                "template": "hi",
+                "arguments": [],
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "gateway_id": gateway_id,
+            }
+        )
+
     @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
     def test_serialization_schema_lists_alias(self, model):
         properties = model.model_json_schema(mode="serialization")["properties"]
         assert "mcpServerId" in properties
         assert "gatewayId" in properties
 
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_alias_openapi_type_matches_gateway_id(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert properties["mcpServerId"].get("type") == properties["gatewayId"].get("type")
+        assert properties["mcpServerId"].get("anyOf") == properties["gatewayId"].get("anyOf")
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_both_keys_with_a_gateway(self, build):
+        record = getattr(self, build)("gw-1")
+        dumped = record.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_null_alias_without_a_gateway(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True)
+        assert dumped["gatewayId"] is None
+        assert dumped["mcpServerId"] is None
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_exclude_none_drops_alias_with_gateway_id(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True, exclude_none=True)
+        assert "gatewayId" not in dumped
+        assert "mcpServerId" not in dumped
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_json_key_order_is_unchanged_by_the_alias(self, build):
+        keys = list(getattr(self, build)("gw-1").model_dump(by_alias=True))
+        assert keys[0] == "id"
+        assert keys[-1] == "mcpServerId"
+
     def test_refresh_response_emits_both_keys(self):
         response = GatewayRefreshResponse(gateway_id="gw-1", duration_ms=1, refreshed_at=datetime.now(timezone.utc))
         dumped = response.model_dump(by_alias=True)
         assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
 
-    def test_alias_is_none_without_gateway(self):
-        response = McpServerIdResponseMixin()
-        assert response.model_dump()["mcp_server_id"] is None
+    def test_impact_preview_emits_both_keys(self):
+        dumped = GatewayImpactPreview(gateway_id="gw-1", servers=[]).model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
 
     def test_alias_in_response_body_is_ignored_on_input(self):
-        response = McpServerIdResponseMixin.model_validate({"gateway_id": "gw-1", "mcp_server_id": "other"})
+        response = GatewayImpactPreview.model_validate({"gateway_id": "gw-1", "servers": [], "mcp_server_id": "other"})
         assert response.mcp_server_id == "gw-1"
