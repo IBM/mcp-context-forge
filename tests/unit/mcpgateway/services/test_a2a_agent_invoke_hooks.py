@@ -1036,3 +1036,50 @@ class TestA2AInvokeGlobalContext:
             )
 
         assert result["result"] == "ok"
+
+
+class TestA2AInvokeOAuth:
+    """OAuth agents get an agent-level token before the outbound call."""
+
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_oauth_failure_raises_agent_error(self, mock_get_for_update, service, mock_db, mock_agent):
+        # First-Party
+        from mcpgateway.services.a2a_oauth import A2AOAuthError
+
+        mock_agent.auth_type = "oauth"
+        mock_agent.oauth_config = {"grant_type": "client_credentials"}
+        mock_get_for_update.return_value = mock_agent
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch("mcpgateway.services.a2a_service.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
+        ):
+            with pytest.raises(A2AAgentError, match="token refused"):
+                await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_oauth_token_is_sent_as_authorization_header(self, mock_get_for_update, mock_get_client, mock_fresh_db, _mock_metrics, service, mock_db, mock_agent):
+        mock_agent.auth_type = "oauth"
+        mock_agent.oauth_config = {"grant_type": "client_credentials"}
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+        resolve = AsyncMock(return_value={"Authorization": "Bearer agent-token"})
+
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)), patch("mcpgateway.services.a2a_service.resolve_a2a_oauth_headers", resolve):
+            result = await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
+
+        assert result["result"] == "ok"
+        resolve.assert_awaited_once_with(mock_agent.id, mock_agent.name, mock_agent.endpoint_url, mock_agent.oauth_config)
+        sent_headers = {key.lower(): value for key, value in mock_client.post.call_args.kwargs["headers"].items()}
+        assert sent_headers["authorization"] == "Bearer agent-token"
