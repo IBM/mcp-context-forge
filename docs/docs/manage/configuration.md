@@ -28,7 +28,7 @@ Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.exam
 Before upgrading, set strong values for every enabled authentication path:
 
 1. Run `make init-secrets-patch-env` against the existing `.env`, or set the values manually.
-2. Set `BASIC_AUTH_PASSWORD` when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+2. Set `BASIC_AUTH_PASSWORD` when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`. <!-- pragma: allowlist secret -->
 3. Set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` when `EMAIL_AUTH_ENABLED=true`.
 4. For Helm or Kubernetes, update the corresponding Secret values before restarting the gateway.
 
@@ -68,7 +68,7 @@ ContextForge supports multiple database backends with full feature parity across
 | Database    | Support Level | Connection String Example                                    | Notes                          |
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
+| PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     | <!-- pragma: allowlist secret -->
 
 ### PostgreSQL System Dependencies
 
@@ -196,8 +196,8 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 !!! info "Basic Authentication"
     **Basic Authentication is DISABLED by default** for security. `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
 
-    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
-    - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
+    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`) <!-- pragma: allowlist secret -->
+    - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`) <!-- pragma: allowlist secret -->
 
     **Recommended:** Use JWT tokens instead of Basic auth:
     ```bash
@@ -218,6 +218,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
+| `MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED` | Show the built-in Admin UI deprecation notice | `true` | bool |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
 | `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
@@ -232,6 +233,14 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED` | Enable automatic cleanup of expired AppBridge sessions | `true` | bool |
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS` | Seconds between expired AppBridge session cleanup runs | `300` | int, 60-86400 |
 | `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE` | Maximum expired AppBridge sessions to delete per cleanup batch | `1000` | int, 1-100000 |
+
+The Admin UI deprecation banner announces that support ends on **27 January 2027**.
+It appears below the header on authenticated Admin UI pages and links to the
+[new UI](https://github.com/contextforge-org/contextforge-web-ui) and
+[getting started documentation](https://github.com/IBM/mcp-context-forge#optional-web-ui).
+The close button hides the banner until the page refreshes. Dismissal does not persist across page loads.
+Set `MCPGATEWAY_UI_DEPRECATION_NOTICE_ENABLED=false` to hide it, then restart the gateway.
+The banner remains informational after the notice date. It does not disable the Admin UI or automatically expire.
 
 !!! note "Per-Request UI Hiding"
     For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
@@ -268,7 +277,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 **Configuration Effects:**
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
-- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality. `GET /v1/a2a/metrics` returns 404 with `A2A metrics are disabled`, and `GET /v1/metrics` omits the A2A key
 
 ### Experimental Dataplane Publisher
 
@@ -496,6 +505,9 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
 | `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `MCP_LISTEN_MAX_LIFETIME_SECONDS` | Maximum lifetime of a `subscriptions/listen` stream (2026-07-28 clients). A token expiry earlier than this ends the stream sooner | `3600` | int (60-86400) |
+| `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` | Maximum concurrent `subscriptions/listen` streams for one authenticated principal on one worker. The gateway refuses further streams with "Subscription limit reached" | `32` | int (1-1024) |
+| `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers (`MCP_REQUIRE_AUTH=false`). `0` refuses all anonymous streams | `256` | int (0-1024) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -591,7 +603,7 @@ For dual-era peers, use `auto` instead of `legacy` only when modern protocol neg
 | `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
 
-**GitHub OAuth:**
+**GitHub OAuth:** <!-- pragma: allowlist secret -->
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
@@ -600,7 +612,7 @@ For dual-era peers, use `auto` instead of `legacy` only when modern protocol neg
 | `SSO_GITHUB_CLIENT_SECRET`    | GitHub OAuth client secret                       | (none)                | string  |
 | `SSO_GITHUB_ADMIN_ORGS`       | GitHub orgs granting admin privileges (JSON)     | `[]`                  | JSON array |
 
-**Google OAuth:**
+**Google OAuth:** <!-- pragma: allowlist secret -->
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
@@ -688,9 +700,20 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `["mcp:read"]`                 | JSON array    |
 | `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `DCR_APPLICATION_TYPE`                     | `application_type` sent in DCR requests (MCP 2026-07-28)       | `auto`                         | `auto`, `web`, `native` |
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
+| `CIMD_ENABLED`                             | Prefer Client ID Metadata Documents over DCR when the AS supports them. On upgrade, gateways with an issuer but no `client_id` switch from DCR to CIMD; set `false` to keep DCR | `true`                 | bool          |
+| `CIMD_CLIENT_NAME`                         | `client_name` in the published Client ID Metadata Document     | `ContextForge`                 | string        |
+| `CIMD_CLIENT_METADATA_URL`                 | Optional explicit public URL of the metadata document (overrides auto-derived URL). Must end with `/oauth/client-metadata.json` | `None`                 | string        |
+| `CIMD_TOKEN_ENDPOINT_AUTH_METHOD`         | Preferred token endpoint authentication method for CIMD clients | `none`                 | `none`, `private_key_jwt` |
+| `CIMD_PRIVATE_KEY_PATH`                   | Dedicated PEM private key for CIMD `private_key_jwt` assertions; never the JWT signing key | `""`                 | path          |
+| `CIMD_KEY_ID`                             | `kid` of the CIMD signing key in assertions and the CIMD JWKS  | `cimd-1`                       | string        |
+| `CIMD_SIGNING_ALG`                        | Signing algorithm for CIMD client assertions                   | `RS256`                        | `RS256`, `RS384`, `RS512`, `PS256`, `ES256`, `ES384`, `ES512` |
+| `CIMD_PREVIOUS_PUBLIC_KEY_PATH`           | Previous CIMD public key PEM published in the JWKS during rotation | `""`                       | path          |
+| `CIMD_PREVIOUS_KEY_ID`                    | `kid` published for the previous CIMD public key; set to the former `CIMD_KEY_ID` | `""` (`<CIMD_KEY_ID>-previous`) | string |
+| `CIMD_DOCUMENT_CACHE_SECONDS`             | Cache-Control max-age in seconds for the Client ID Metadata Document endpoint | `3600`                 | int           |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
 
@@ -723,7 +746,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 | Setting                   | Description                    | Default                                        | Options    |
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
-| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification, including SSO/OIDC and JWKS key fetches | `false`                                        | bool       |
 | `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
 | `APP_DOMAIN`              | Domain for production CORS origins | `http://localhost:4444`                     | string     |
 | `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |
@@ -1072,7 +1095,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`   | OTLP collector endpoint                        | (none)                | `http://localhost:4317`                   |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`   | OTLP protocol                                  | `grpc`                | `grpc`, `http/protobuf`                   |
-| `OTEL_EXPORTER_OTLP_HEADERS`    | Authentication headers                         | (empty)               | `api-key=secret,x-auth=token`             |
+| `OTEL_EXPORTER_OTLP_HEADERS`    | Authentication headers                         | (empty)               | `api-key=secret,x-auth=token`             | <!-- pragma: allowlist secret -->
 | `LANGFUSE_OTEL_ENDPOINT`        | Optional Langfuse OTLP/HTTP endpoint override  | (empty)               | `https://cloud.langfuse.com/api/public/otel/v1/traces` |
 | `LANGFUSE_PUBLIC_KEY`           | Langfuse project public key for derived OTLP auth | (empty)            | `pk-lf-...`                               |
 | `LANGFUSE_SECRET_KEY`           | Langfuse project secret key for derived OTLP auth | (empty)            | `sk-lf-...`                               |
@@ -1149,13 +1172,15 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 `MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
+With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`. A body over `MCP_BODY_PEEK_MAX_BYTES` keeps the JSON response, with no progress.
+
 ### Federation
 
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
 
-Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#outbound-mcp-connect-mode-gateway-mcp-servers).
 
 ### Resources
 
@@ -1192,6 +1217,12 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
 | `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | Enable forbidden pattern checks on tool descriptions | `true` | bool |
 | `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | Substrings blocked in tool descriptions | `["&&", "||", "$(", "> ", "< "]` | JSON array |
+| `CEL_EXECUTION` | Where tool validation policies (CEL) are evaluated | `subprocess` | `subprocess`, `inprocess` |
+| `CEL_TIMEOUT_SECONDS` | Wall-clock limit for one policy evaluation | `1.0` | 0 < float ≤ 1.0 |
+| `CEL_WORKERS` | Policy sandbox worker processes per gateway process | `2` | int > 0 |
+
+The forbidden-pattern settings are the global default of the **tool validation policy**. A gateway or a tool can
+override them with its own CEL expression; see [Tool Description Content Validation](../best-practices/input-validation.md#tool-description-content-validation).
 
 **Strict Mode Scenarios:**
 
@@ -1210,6 +1241,7 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs); also the catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
+| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker chosen by `PRIMARY_WORKER_ELECTION_BACKEND` (`filelock`: one per host, `redis`: one per cluster) | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
 | `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
@@ -1263,6 +1295,10 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+!!! note "`subscriptions/listen` across workers"
+    `subscriptions/listen` events (2026-07-28 clients) reach listeners on other workers only with `CACHE_TYPE=redis`.
+    With any other `CACHE_TYPE`, delivery is best effort and limited to listeners on the same worker as the change.
 
 !!! warning "Redis Server Capacity"
     `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
@@ -1501,11 +1537,8 @@ the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
 MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/list` return bounded pages.
 Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
 Python handles pagination for global and virtual-server catalogs.
-This change covers Python MCP endpoints. Rust runtime pagination remains outside this change.
 `MCP_LIST_PAGE_SIZE` controls protocol catalog pages. `PAGINATION_DEFAULT_PAGE_SIZE` controls REST and Admin pages.
 The separate defaults prevent REST configuration changes from altering MCP traversal behavior.
-The Rust tools bridge sends no request body. Python returns the complete authorized tools catalog for that bridge.
-Rust cursor support remains a separate part of [#6990](https://github.com/IBM/mcp-context-forge/issues/6990).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -1582,7 +1615,7 @@ Create a `.env` file for Docker deployments:
 # .env file for Docker
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
+DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp # pragma: allowlist secret
 REDIS_URL=redis://redis:6379/0
 JWT_SECRET_KEY=$(openssl rand -hex 32)
 AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
@@ -1609,7 +1642,7 @@ services:
     ports:
       - "4444:4444"
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp # pragma: allowlist secret
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=$(openssl rand -hex 32)
     depends_on:
@@ -1622,7 +1655,7 @@ services:
     image: postgres:17
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=changeme
+      - POSTGRES_PASSWORD=changeme # pragma: allowlist secret
       - POSTGRES_DB=mcp
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -1654,11 +1687,11 @@ kind: ConfigMap
 metadata:
   name: mcpgateway-config
 data:
-  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
+    DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp" # pragma: allowlist secret
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
-  BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env"
+  BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env" # pragma: allowlist secret
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"

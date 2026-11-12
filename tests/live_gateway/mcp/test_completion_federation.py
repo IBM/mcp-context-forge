@@ -19,7 +19,7 @@ existing transport settings, without a modern-only gate.
 Requires the `testing` compose profile (provides `completion_test_server`
 and `completion_test_server_no_completions` alongside the gateway):
 
-    make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=
+    make docker-nuke testing-up
     pytest tests/live_gateway/mcp/test_completion_federation.py -v
 """
 

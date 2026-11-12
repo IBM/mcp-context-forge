@@ -647,15 +647,24 @@ The following roles are created automatically when the system starts:
 #### 3. Developer (Team Scope)
 - **Permissions**:
 
-  - `teams.join` - Join public teams
-  - `tools.read` - View tools
-  - `tools.execute` - Execute tools
-  - `resources.read` - View resources
-  - `prompts.read` - View prompts
+  - `admin.dashboard`, `admin.overview` - Access the administration dashboard and overview
+  - `gateways.read`, `gateways.create`, `gateways.update`, `gateways.delete` - Manage upstream gateways
+  - `servers.read`, `servers.use`, `servers.create`, `servers.update`, `servers.delete` - Manage and use virtual servers
+  - `teams.read`, `teams.join` - View and join teams
+  - `tools.read`, `tools.create`, `tools.update`, `tools.delete`, `tools.execute`, `tools.preview` - Manage, execute, and preview tools
+  - `plugins.read` - View plugins
+  - `resources.read`, `resources.create`, `resources.update`, `resources.delete` - Manage resources
+  - `prompts.read`, `prompts.create`, `prompts.update`, `prompts.delete` - Manage prompts
+  - `a2a.read`, `a2a.create`, `a2a.update`, `a2a.delete`, `a2a.invoke` - Manage and invoke A2A agents
+  - `llm.read`, `llm.invoke` - View LLM configuration and invoke LLMs
+  - `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke` - Manage the user's API tokens
 
 - **Scope**: Team
-- **Description**: Developer with tool and resource access
-- **Use Case**: Team members who need to use tools and access resources
+- **Description**: Developer with resource CRUD, execution, invocation, and token self-service permissions
+- **Use Case**: Team members who manage integrations and resources, including upstream gateway configurations
+
+Use a custom role for fewer actions. Review all applicable role assignments before treating access as restricted.
+See the [RBAC guide](../manage/rbac.md#built-in-rbac-roles) for the complete built-in role comparison.
 
 #### 4. Viewer (Team Scope)
 - **Permissions**:

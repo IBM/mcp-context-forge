@@ -28,8 +28,8 @@ import os
 import re
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
 # Third-Party
@@ -50,6 +50,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
@@ -72,7 +73,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update, server_tool_association
+from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
@@ -81,6 +82,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
@@ -96,7 +98,9 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+from mcpgateway.services.tool_validation_policy import admit_stored_tool, admit_tool, apply_refusal, check_policy_permission, policy_changed, policy_text, record_policy_change
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -934,6 +938,41 @@ def _validate_mapping_contents(mapping: dict, label: str, tool_name: str) -> dic
     return mapping
 
 
+def _substitute_url_template(tool_url: str, payload: dict[str, Any]) -> str:
+    """Fill ``{param}`` placeholders in a REST tool URL with percent-encoded argument values.
+
+    Each value becomes one path segment or one query value. The helper removes every
+    substituted key from ``payload``.
+
+    Args:
+        tool_url: URL template that can hold ``{param}`` placeholders.
+        payload: Tool arguments. The helper pops each substituted key.
+
+    Returns:
+        The URL with every placeholder replaced.
+
+    Raises:
+        ToolInvocationError: If an argument is missing, holds a dot segment, or already holds a percent-encoded sequence.
+
+    Examples:
+        >>> _substitute_url_template("https://h/v1/users/{id}/public", {"id": "42#"})
+        'https://h/v1/users/42%23/public'
+    """
+    if "{" not in tool_url or "}" not in tool_url:
+        return tool_url
+    final_url = tool_url
+    for param in dict.fromkeys(re.findall(r"\{(\w+)\}", tool_url)):
+        if param not in payload:
+            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+        text = str(payload.pop(param))
+        if any(part in (".", "..") for part in re.split(r"[/\\]", text)):
+            raise ToolInvocationError(f"URL parameter '{param}' must not contain dot segments")
+        if unquote(text) != text:
+            raise ToolInvocationError(f"URL parameter '{param}' must not contain percent-encoded sequences")
+        final_url = final_url.replace(f"{{{param}}}", quote(text, safe=""))
+    return final_url
+
+
 def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) -> None:
     """Validate that header mapping target names are safe and well-formed.
 
@@ -1385,6 +1424,8 @@ class ToolService(BaseService):
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
+            "tool_validation_policy": tool.tool_validation_policy,
+            "validation_refusal": tool.validation_refusal,
             "extension_metadata": optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             "auth_type": tool.auth_type,
             "jsonpath_filter": tool.jsonpath_filter,
@@ -1428,6 +1469,7 @@ class ToolService(BaseService):
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
                 "auth_value": getattr(gateway, "auth_value", None),
+                "identity_propagation": getattr(gateway, "identity_propagation", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -2277,6 +2319,29 @@ class ToolService(BaseService):
             return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
+    def _gateway_tool_validation_policies(self, db: Session, gateway_ids: Iterable[Any]) -> Dict[str, str]:
+        """Return the stored tool validation policies of several gateways in one query.
+
+        Args:
+            db: Database session.
+            gateway_ids: Gateway ids; anything that is not a non-empty string is skipped.
+
+        Returns:
+            The policy text per gateway id, for gateways that hold one.
+        """
+        wanted = {gateway_id for gateway_id in gateway_ids if isinstance(gateway_id, str) and gateway_id}
+        if not wanted:
+            return {}
+        rows = db.execute(select(DbGateway.id, DbGateway.tool_validation_policy).where(DbGateway.id.in_(wanted))).all()
+        return {str(gateway_id): policy for gateway_id, policy in rows if isinstance(policy, str)}
+
+    def _gateway_tool_validation_policy(self, db: Session, gateway_id: Optional[str]) -> Optional[str]:
+        """Return the stored tool validation policy of one gateway, or None."""
+        if not isinstance(gateway_id, str) or not gateway_id:
+            return None
+        policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+        return policy if isinstance(policy, str) else None
+
     async def register_tool(
         self,
         db: Session,
@@ -2346,17 +2411,23 @@ class ToolService(BaseService):
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
 
-            if team_id is None:
-                team_id = tool.team_id
-
-            if owner_email is None:
-                owner_email = tool.owner_email
-
             if visibility is None:
                 visibility = tool.visibility or "public"
 
             tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
             validate_extension_metadata(tool_extension_metadata)
+
+            if policy_text(tool.tool_validation_policy):
+                await check_policy_permission(db, owner_email or created_by, resource_type="tools", team_id=team_id)
+            refusal = admit_tool(
+                description=tool.description,
+                tool_name=tool.name,
+                tool_policy=tool.tool_validation_policy,
+                gateway_policy=self._gateway_tool_validation_policy(db, tool.gateway_id),
+                context="register_tool",
+            )
+            if refusal:
+                raise ToolValidationError(f"Tool {tool.name!r} {refusal}")
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Scan tool name, description, and inputSchema
@@ -2419,6 +2490,7 @@ class ToolService(BaseService):
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
+                tool_validation_policy=tool.tool_validation_policy,
                 extension_metadata=tool_extension_metadata,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
@@ -2451,7 +2523,18 @@ class ToolService(BaseService):
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
+            notify_dataplane()
             await self._notify_tool_added(db_tool)
+            if db_tool.tool_validation_policy:
+                record_policy_change(
+                    resource_type="tool",
+                    resource_id=db_tool.id,
+                    resource_name=db_tool.name,
+                    team_id=db_tool.team_id,
+                    user_email=owner_email or created_by,
+                    old=None,
+                    new=db_tool.tool_validation_policy,
+                )
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
@@ -2546,6 +2629,9 @@ class ToolService(BaseService):
                 },
             )
             raise tnce
+        except (PermissionError, ToolValidationError):
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
 
@@ -2634,6 +2720,14 @@ class ToolService(BaseService):
 
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
+        may_set_policy = False
+        if any(policy_text(getattr(tool, "tool_validation_policy", None)) for tool in tools):
+            try:
+                await check_policy_permission(db, user_email or owner_email or created_by, resource_type="tools", team_id=team_id)
+                may_set_policy = True
+            except PermissionError as exc:
+                logger.info("Bulk import by %r: rows that set a tool validation policy will fail: %s", user_email or created_by, exc)
+
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
@@ -2655,6 +2749,7 @@ class ToolService(BaseService):
                 federation_source=federation_source,
                 unowned_names=unowned_names,
                 existing_tools_map=existing_tools_map,
+                may_set_policy=may_set_policy,
             )
 
             # Aggregate stats
@@ -2767,6 +2862,7 @@ class ToolService(BaseService):
         federation_source: Optional[str],
         unowned_names: frozenset = frozenset(),
         existing_tools_map: Optional[dict] = None,
+        may_set_policy: bool = False,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2786,6 +2882,7 @@ class ToolService(BaseService):
             unowned_names: Names of existing tools the caller may not modify.
             existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
+            may_set_policy: Whether the caller holds the permission to set a tool validation policy.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2802,6 +2899,7 @@ class ToolService(BaseService):
 
             tools_to_add = []
             tools_to_update = []
+            gateway_policies = self._gateway_tool_validation_policies(db, (tool.gateway_id for tool in chunk))
 
             for tool in chunk:
                 result = self._process_single_tool_for_bulk(
@@ -2818,6 +2916,8 @@ class ToolService(BaseService):
                     import_batch_id=import_batch_id,
                     federation_source=federation_source,
                     unowned_names=unowned_names,
+                    gateway_policy=gateway_policies.get(tool.gateway_id),
+                    may_set_policy=may_set_policy,
                 )
 
                 if result["status"] == "add":
@@ -2847,22 +2947,29 @@ class ToolService(BaseService):
             if tools_to_add:
                 db.add_all(tools_to_add)
 
+            audit_counts: dict[str | None, dict[str, int]] = {}
+            for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
+                for db_tool in tools:
+                    counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
+                    counts[operation] += 1
+
             # Commit the chunk
             db.commit()
+            notify_dataplane()
 
             # Refresh tools for notifications and audit trail
             for db_tool in tools_to_add:
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
 
-            # Log bulk audit trail entry
-            if tools_to_add or tools_to_update:
+            for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
                     user_id=created_by or "system",
-                    action="bulk_create_tools" if tools_to_add else "bulk_update_tools",
+                    action="bulk_create_tools" if counts["created"] else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
-                    details={"count": len(tools_to_add) + len(tools_to_update), "import_batch_id": import_batch_id},
+                    team_id=audit_team_id,
+                    details={"count": sum(counts.values()), "import_batch_id": import_batch_id},
                 )
 
         except Exception as e:
@@ -2888,6 +2995,8 @@ class ToolService(BaseService):
         import_batch_id: Optional[str],
         federation_source: Optional[str],
         unowned_names: frozenset = frozenset(),
+        gateway_policy: Optional[str] = None,
+        may_set_policy: bool = False,
     ) -> dict:
         """Process a single tool for bulk import.
 
@@ -2905,6 +3014,8 @@ class ToolService(BaseService):
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
             unowned_names: Names of existing tools the caller may not modify.
+            gateway_policy: Tool validation policy of the tool's gateway, or None.
+            may_set_policy: Whether the caller holds the permission to set a tool validation policy.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2942,6 +3053,18 @@ class ToolService(BaseService):
                     # pre-scan serialization step.
                     pass
 
+            if policy_text(tool.tool_validation_policy) and not may_set_policy:
+                return {"status": "fail", "error": f"Tool {tool.name!r} sets a tool validation policy, which requires the {Permissions.VALIDATION_POLICY_MANAGE} permission"}
+            refusal = admit_tool(
+                description=tool.description,
+                tool_name=tool.name,
+                tool_policy=tool.tool_validation_policy,
+                gateway_policy=gateway_policy,
+                context="register_tools_bulk",
+            )
+            if refusal:
+                return {"status": "fail", "error": f"Tool {tool.name!r} {refusal}"}
+
             # Extract auth information
             if tool.auth is None:
                 auth_type = None
@@ -2950,9 +3073,8 @@ class ToolService(BaseService):
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
 
-            # Use provided parameters or schema values
-            tool_team_id = team_id if team_id is not None else getattr(tool, "team_id", None)
-            tool_owner_email = owner_email or getattr(tool, "owner_email", None) or created_by
+            tool_team_id = team_id
+            tool_owner_email = owner_email or created_by
             tool_visibility = visibility if visibility is not None else (getattr(tool, "visibility", None) or "public")
 
             existing_tool = existing_tools_map.get(tool.name)
@@ -3856,6 +3978,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
             db.commit()
+            notify_dataplane()
             await self._notify_tool_deleted(tool_info)
             logger.info("Permanently deleted tool: %s", tool_info["name"])
 
@@ -3954,6 +4077,7 @@ class ToolService(BaseService):
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolLockConflictError: If the tool row is locked by another transaction.
+            ToolValidationError: If the tool is disabled by the validation policy and activate is True.
             ToolError: For other errors.
             PermissionError: If user doesn't own the agent.
 
@@ -3964,6 +4088,7 @@ class ToolService(BaseService):
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
+            >>> tool.validation_refusal = None
             >>> db.get.return_value = tool
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
@@ -3994,6 +4119,9 @@ class ToolService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
 
+            if activate and isinstance(tool.validation_refusal, str):
+                raise ToolValidationError(f"Tool {tool.original_name!r} cannot be enabled: {tool.validation_refusal}. Change the validation policy, then refresh the gateway.")
+
             is_activated = is_reachable = False
             if tool.enabled != activate:
                 tool.enabled = activate
@@ -4009,6 +4137,7 @@ class ToolService(BaseService):
 
                 db.commit()
                 db.refresh(tool)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -4088,6 +4217,9 @@ class ToolService(BaseService):
         except ToolNotFoundError:
             # Re-raise not found without wrapping - allows 404 response
             raise
+        except ToolValidationError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
 
@@ -4141,6 +4273,7 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         user_context: Optional[UserContext] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -4157,6 +4290,7 @@ class ToolService(BaseService):
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
             user_context: Optional UserContext for identity propagation.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -4307,9 +4441,9 @@ class ToolService(BaseService):
                         # Call tool with meta if provided
                         if request_meta_data:
                             logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data, progress_callback=progress_callback)
                         else:
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, progress_callback=progress_callback)
                     with create_span(
                         "mcp.client.response",
                         {
@@ -4414,26 +4548,33 @@ class ToolService(BaseService):
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        # Delegation keys never collide with impersonation keys, so a mode change misses stale entries.
+        variant = exchange_cache_variant(oauth_config)
+        mode = exchange_mode(oauth_config)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
         # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
             # L6: record the degraded-mode denial so an outage burst is observable.
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
             raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
         # P1: single-flight. Only one coroutine exchanges per {gw,user,aud,subject}; the rest
         # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
             scopes = oauth_config.get("scopes") or []
             started = time.monotonic()
             try:
+                # Inside the try block: an actor acquisition failure takes the same negative-cache and audit path.
+                actor_token, actor_token_type = await resolve_actor_token(
+                    self.oauth_manager, oauth_config, gateway_id=gateway_id, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
+                )
                 response = await self.oauth_manager.token_exchange(
                     oauth_config=oauth_config,
                     subject_token=subject_token,
@@ -4444,12 +4585,15 @@ class ToolService(BaseService):
                     ca_certificate=ca_certificate,
                     client_cert=client_cert,
                     client_key=client_key,
+                    actor_token=actor_token,
+                    actor_token_type=actor_token_type,
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 # H1: caller gets a generic message; AS detail never echoed out.
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)  # P4
+                await invalidate_actor_token(gateway_id, oauth_config, e)
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)  # P4
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -4461,6 +4605,7 @@ class ToolService(BaseService):
                     latency_ms=latency_ms,
                     correlation_id=correlation_id,
                     request_id=request_id,
+                    mode=mode,
                 )
                 sec_logger.log(
                     level="WARNING",
@@ -4470,6 +4615,7 @@ class ToolService(BaseService):
                     custom_fields={
                         "gateway_id": gateway_id,
                         "target_audience": audience,
+                        "mode": mode,
                         "latency_ms": latency_ms,
                         "error": safe_reason,
                         "correlation_id": correlation_id,
@@ -4486,7 +4632,7 @@ class ToolService(BaseService):
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token, variant=variant)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -4498,6 +4644,7 @@ class ToolService(BaseService):
                 latency_ms=latency_ms,
                 correlation_id=correlation_id,
                 request_id=request_id,
+                mode=mode,
             )
             sec_logger.log(
                 level="INFO",
@@ -4507,6 +4654,7 @@ class ToolService(BaseService):
                 custom_fields={
                     "gateway_id": gateway_id,
                     "target_audience": audience,
+                    "mode": mode,
                     "expires_in": expires_in,
                     "latency_ms": latency_ms,
                     "correlation_id": correlation_id,
@@ -4565,7 +4713,7 @@ class ToolService(BaseService):
         subject_token = extract_inbound_bearer(request_headers)
         if not looks_like_jwt(subject_token):
             return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token)
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token, variant=exchange_cache_variant(oauth_config))
 
     async def _send_with_token_exchange_retry(
         self,
@@ -5092,6 +5240,7 @@ class ToolService(BaseService):
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
                     "gateway_mode": gateway.gateway_mode,
+                    "identity_propagation": getattr(gateway, "identity_propagation", None),
                 }
                 # Create minimal tool payload for direct proxy (no DB tool needed)
                 tool_payload = {
@@ -5432,6 +5581,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_identity_propagation = gateway_payload.get("identity_propagation") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -5696,11 +5846,13 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
+                        # Pass tool_auth_type so X-Upstream-Authorization cannot override
+                        # a credential already set in headers for managed auth types.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -5718,7 +5870,7 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -5754,19 +5906,7 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path and query parameter substitution (using local variable)
-                    final_url = tool_url
-                    if "{" in tool_url and "}" in tool_url:
-                        # Extract ALL parameters (path and query) from URL template
-                        url_params = re.findall(r"\{(\w+)\}", tool_url)
-                        url_substitutions = {}
-
-                        for param in url_params:
-                            if param in payload:
-                                url_substitutions[param] = payload.pop(param)  # Remove from payload
-                                final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
-                            else:
-                                raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+                    final_url = _substitute_url_template(tool_url, payload)
 
                     # --- Extract query params from URL if query_mapping or header_mapping is used ---
                     # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
@@ -6198,8 +6338,8 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data)
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -6871,11 +7011,13 @@ class ToolService(BaseService):
                     a2a_allowlist = a2a_agent_passthrough_headers or []
                     headers = {"Content-Type": "application/json"}
                     if request_headers:
+                        # Pass a2a_agent_auth_type so X-Upstream-Authorization cannot inject
+                        # an Authorization header into A2A calls with agent-managed credentials.
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=None,
+                            gateway_auth_type=a2a_agent_auth_type,
                             gateway_passthrough_headers=a2a_allowlist,
                         )
                         if not settings.enable_sensitive_header_passthrough:
@@ -7795,6 +7937,14 @@ class ToolService(BaseService):
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
                 tool.description = tool_update.description
+            old_policy = tool.tool_validation_policy
+            policy_was_changed = "tool_validation_policy" in getattr(tool_update, "model_fields_set", ()) and policy_changed(old_policy, tool_update.tool_validation_policy)
+            if policy_was_changed:
+                await check_policy_permission(db, user_email or modified_by, resource_type="tools", team_id=tool.team_id)
+                tool.tool_validation_policy = tool_update.tool_validation_policy
+            if tool_update.description is not None or policy_was_changed:
+                # The policy decides the tool's state, never whether the edit saves, exactly as a refresh does.
+                apply_refusal(tool, admit_stored_tool(tool, self._gateway_tool_validation_policy(db, tool.gateway_id), context="update_tool"))
             if tool_update.title is not None:
                 tool.title = tool_update.title
             if tool_update.integration_type is not None:
@@ -7848,8 +7998,13 @@ class ToolService(BaseService):
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(tool)
+            notify_dataplane()
             await self._notify_tool_updated(tool)
             logger.info("Updated tool: %s", tool.name)
+            if policy_was_changed:
+                record_policy_change(
+                    resource_type="tool", resource_id=tool.id, resource_name=tool.name, team_id=tool.team_id, user_email=user_email or modified_by, old=old_policy, new=tool.tool_validation_policy
+                )
 
             # Structured logging: Audit trail for tool update
             changes = []

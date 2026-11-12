@@ -27,6 +27,35 @@ MCPGATEWAY_A2A_ENABLED=true
 MCPGATEWAY_A2A_METRICS_ENABLED=true
 ```
 
+### When A2A Is Disabled
+
+With `MCPGATEWAY_A2A_ENABLED=false`, every A2A route returns 404 with one typed body:
+
+```json
+{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}
+```
+
+Clients branch on `detail.error`. The check runs after authentication, so unauthenticated callers still receive 401. The OpenAPI schema omits the A2A operations.
+
+Any authenticated user can discover the flag with `GET /auth/email/me`, which returns `features`:
+
+```json
+{"email": "user@example.com", "features": {"a2a": false}}
+```
+
+The admin state, edit, and delete form routes still redirect to the A2A tab, which is hidden when A2A is off.
+
+Status changes from earlier releases:
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/a2a/*`, `/v1/a2a/*` | 404, generic body | 404, typed body |
+| `GET /admin/a2a` | 200, empty page | 404, typed body |
+| `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial` | 500 or 200 | 404, typed body |
+| `POST /admin/a2a` | 403, `success: false` | 404, typed body |
+| `POST /admin/a2a/{agent_id}/test` | 403, `success: false` | 404, typed body |
+| `POST /metrics/reset`, entity `a2a` | 400, "A2A features are disabled" | 404, typed body |
+
 ### 2. Register an A2A Agent
 
 **Via Admin UI:**
@@ -82,6 +111,29 @@ curl -X POST "http://localhost:4444/a2a/hello_world_agent/invoke" \
     "interaction_type": "test"
   }'
 ```
+
+**Via the test endpoint:**
+
+`POST /v1/a2a/{agent_id}/test` sends a test message and needs no payload. It requires `a2a.invoke`. The optional body field `query` sets the message.
+
+```bash
+curl -X POST "http://localhost:4444/v1/a2a/$AGENT_ID/test" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "hello"}'
+```
+
+Success returns 200 with `success`, `result`, `agent_name`, and `test_timestamp`. Failure returns an error status with a `detail` object holding `success`, `error`, `error_type`, and `agent_id`. Request body validation failures (an extra field, a `query` over 4096 characters, a non-JSON body) return the default FastAPI 422, where `detail` is a list of validation errors.
+
+| Status | `error_type` | `error` | Cause |
+|--------|--------------|---------|-------|
+| 404 | `not_found` | `A2A agent not found` | Agent missing or not visible to the caller |
+| 502 | `agent_disabled` | `A2A agent is disabled` | Agent is disabled |
+| 502 | `agent_error` | `A2A agent invocation failed` | Agent unreachable or returned an error |
+| 422 | `validation_error` | Validation message | Invalid test parameters |
+| 500 | `internal_error` | Sanitized message | Unexpected error |
+
+The 404 response is identical for a missing agent and an agent the caller cannot see. The 502 response never carries upstream error text; the gateway logs it. The `result` field relays the agent response unchanged. The gateway forwards the same passthrough headers as a normal invocation, and a test call counts in the agent metrics.
 
 ### 4. Create Virtual Server with A2A Agent
 
@@ -248,6 +300,8 @@ Common error codes:
 - `SubscribeToTask` - Subscribe to task updates
 - `GetExtendedAgentCard` - Get agent capabilities
 
+**Agent card shape:** Agents with a stored protocol version of 1.x return the A2A 1.0 card, with `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. The 1.0 card omits `url`, `protocolVersion`, `supportsAuthenticatedExtendedCard`, and `stateTransitionHistory`. Agents with a 0.x version keep the legacy card. A caller that sends `A2A-Version: 0.3` also gets the legacy card. The card describes the upstream agent, so `supportedInterfaces` and OAuth flows carry the registered upstream URLs. The card never contains credential values. See [ADR-048](../../architecture/adr/048-a2a-v1-protocol-migration.md).
+
 **Features:**
 - ✅ Full RBAC and token scoping
 - ✅ Cross-gateway authentication forwarding
@@ -322,6 +376,95 @@ curl -X POST "http://localhost:4444/rpc" \
 - Need tool discovery via `tools/list`
 - Want unified interface for both MCP and A2A tools
 
+## Fetching an Agent Card
+
+`GET /v1/a2a/{agent_id}/card` returns the A2A AgentCard for an agent. `agent_id` is the agent's ID, the same
+identifier used by `GET /v1/a2a/{agent_id}`. If no standalone agent matches, the route falls back to a virtual
+server with that ID that exposes an A2A interface. The caller needs the `a2a.read` permission.
+
+```bash
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  http://localhost:4444/v1/a2a/$AGENT_ID/card
+```
+
+```json
+{
+  "name": "demo-agent",
+  "description": "Demo agent",
+  "url": "http://localhost:9999/",
+  "version": "1",
+  "protocolVersion": "1.0",
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "capabilities": {"streaming": false, "pushNotifications": false, "stateTransitionHistory": false},
+  "skills": [],
+  "supportsAuthenticatedExtendedCard": true
+}
+```
+
+- A missing ID, a disabled agent, and an agent the caller cannot see all return the same `404`. The response never confirms that a private agent exists.
+- A virtual server card lists only the skills of attached agents that the caller can see.
+- The response carries `Cache-Control: private, no-store` because its content depends on the caller.
+- `supportsAuthenticatedExtendedCard` is `true`, but the gateway does not serve an extended card yet.
+
+## Agent Skills
+
+Set the skills an agent advertises with the top-level `skills` field on `POST /a2a` and `PUT /a2a/{agent_id}`. An update that sends only `skills` leaves `capabilities` unchanged.
+
+```json
+{
+  "skills": [
+    {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+  ]
+}
+```
+
+- Each skill needs `id`, `name`, `description`, and `tags`. Extra keys such as `examples` pass through to the card.
+- `name`, `description`, and `tags` reject HTML and script patterns.
+- An agent holds at most 100 skills, each skill holds at most 50 tags, and every `id` must be unique in the list.
+- `id`, `name`, and each tag are limited to the name length limit. `description` is limited to the description length limit.
+- Cards read the `skills` field first. An agent without the field publishes `capabilities["skills"]`.
+- An explicit `"skills": []` is authoritative. The agent publishes no skills and the `capabilities["skills"]` fallback does not apply.
+
+## Reading an Agent Card Before Registration
+
+`POST /v1/a2a/fetch-card` (also `/a2a/fetch-card`) reads the Agent Card of an agent that is not registered yet. The response
+carries the card in the A2A 1.0 shape and a suggested set of `A2AAgentCreate` fields, so a client can pre-fill a registration form.
+The route stores nothing. It needs `a2a.create`, the permission that registering the agent needs, because it makes the gateway
+send an outbound request to a caller-chosen host.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"baseUrl": "https://agent.example.com"}' \
+  http://localhost:4444/v1/a2a/fetch-card
+```
+
+| Request field | Meaning |
+|---------------|---------|
+| `baseUrl` | Agent endpoint, or a direct URL ending in `.json`. Userinfo, a query and a fragment are rejected with 422. |
+| `path` | Optional card path appended to `baseUrl`. Traversal, percent-encoding, a query and a fragment are rejected with 422. |
+| `headers` | Optional headers, for example `Authorization` for a protected card. Framing headers (`Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `Proxy-*`), `Host` and `Accept-Encoding` are rejected. Send credentials over HTTPS only. |
+
+Without `path`, the gateway tries `/.well-known/agent-card.json` and then `/.well-known/agent.json`.
+
+| `outcome` | `found` | Meaning |
+|-----------|---------|---------|
+| `found` | `true` | A valid card. `card` is normalized to 1.0, `rawCard` is the document as fetched (omitted when identical), `suggestedAgent` maps the card, `warnings` lists what could not be mapped. |
+| `no_card` | `false` | The host answered, but no valid card exists at the tried locations. A card with wrongly typed fields also reports `no_card`, for example a `streaming` that is not a boolean, or required scopes that are not a list of strings. |
+| `auth_required` | `false` | The card endpoint answered 401 or 403. `authScheme` holds the `WWW-Authenticate` scheme name. Retry with `headers`. |
+| `unreachable` | `false` | The outbound URL policy refused the address, the connection failed, or the search took longer than `FEDERATION_TIMEOUT`. All causes return the same response. |
+
+Notes on the suggested mapping:
+
+- ContextForge stores one `auth_type`. Alternative security requirements are reported in `warnings`. Schemes that one requirement lists together cannot be represented and are skipped with a warning.
+- OAuth `scopes` hold only the scopes the requirement names. A requirement with no scopes requests none.
+- The suggestion never contains credential values, team, visibility or tags.
+- `tokenUrl` and `authorizationUrl` come from the remote card. A warning appears when either points to a host other than the agent host, or does not use `https`. Verify the URL before entering a client secret.
+- A requirement that only a skill declares cannot be mapped, because ContextForge stores one authentication configuration per agent. A warning names up to three such skills. Configure their authentication manually.
+
+The fetch applies the SSRF settings (`SSRF_ALLOW_LOCALHOST`, `SSRF_ALLOW_PRIVATE_NETWORKS`, `SSRF_BLOCKED_NETWORKS`, `SSRF_ALLOWED_NETWORKS`), does not follow redirects,
+pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends after `FEDERATION_TIMEOUT` seconds in total, including DNS resolution and every candidate URL.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents
@@ -372,7 +515,7 @@ For agents that expect standard JSONRPC format:
 |-----------|-------------|---------|
 | `api_key` | API key in Authorization header | `Authorization: Bearer your-key` |
 | `bearer` | Bearer token authentication | `Authorization: Bearer your-token` |
-| `oauth` | OAuth 2.0 flow (stored tokens) | Handled automatically |
+| `oauth` | OAuth 2.0 client credentials | The gateway gets a token from `oauth_config.token_url` and sends it as `Authorization: Bearer`. It caches the token until 30 seconds before it expires. A token with no `expires_in`, or with `expires_in` of 30 seconds or less, is not cached. The authorization-code grant is not supported. A missing `oauth_config`, an unsupported grant, or a token failure fails the invocation with an error that names the agent. |
 | `none` | No authentication required | - |
 
 When `auth_type` is `api_key`, the configured API key is sent as the outbound `Authorization` header. If a base or passthrough request header also contains `Authorization`, the configured A2A agent API key takes precedence for the outbound agent call.
@@ -393,6 +536,69 @@ A2A agents provide comprehensive metrics:
 - **Response Times**: Min/max/average response times
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
+
+### Aggregate Metrics Endpoint
+
+`GET /v1/a2a/metrics` returns aggregate metrics for the agents the caller can see. The route requires `a2a.read`, not `admin.metrics`.
+
+| Caller | Agents counted |
+|--------|----------------|
+| Token with `teams: []` | Public |
+| Token with `teams: ["t1"]` | Public, team `t1`, own private |
+| Admin token with `teams: null` | Public, all team, own private |
+
+The count includes disabled agents. `activeAgents` counts the enabled ones. An admin never counts the private agents of other users, so the result can be lower than `a2aAgents` on `GET /v1/metrics`, which aggregates every agent.
+
+| Status | Cause |
+|--------|-------|
+| 200 | `A2AAgentAggregateMetrics` body |
+| 401/403 | Missing authentication or missing `a2a.read` |
+| 404 | `MCPGATEWAY_A2A_METRICS_ENABLED` is `false` |
+| 503 | A2A service unavailable |
+
+## Task and Push Notification Routes
+
+ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks`.
+
+| Method | Path | Permission |
+|--------|------|------------|
+| GET | `/v1/a2a/{agent_id}/tasks` | `a2a.read` |
+| GET | `/v1/a2a/{agent_id}/tasks/{task_id}` | `a2a.read` |
+| POST | `/v1/a2a/{agent_id}/tasks/{task_id}/cancel` | `a2a.invoke` |
+| POST | `/v1/a2a/{agent_id}/tasks/{task_id}/messages` | `a2a.invoke` |
+| POST, GET | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs` | `a2a.update`, `a2a.read` |
+| GET, DELETE | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}` | `a2a.read`, `a2a.update` |
+
+- Tasks have no owner of their own. Access follows the agent: the agent owner, a team owner for team agents, or a platform admin. Other callers receive `404`.
+- The list route returns task summaries without `history` and `artifacts`. Use the single-task route for those fields.
+- The list route accepts `pageSize` (1-100) and `pageToken`. Pass `nextPageToken` from one response as `pageToken` in the next request. An empty `nextPageToken` marks the last page. A malformed `pageToken` returns `400`.
+- The `state` filter accepts the A2A task states: `submitted`, `working`, `input-required`, `auth-required`, `completed`, `canceled`, `failed`, `rejected`.
+- The cancel route changes the task state in the gateway only. It does not signal the remote agent. A task in a terminal state is returned unchanged.
+- Creating a push notification config returns `201`. Posting the same `webhook_url` again updates the config and returns `200`. Responses never include `auth_token`.
+- Cancel, follow-up message, and push config writes create audit trail entries. The follow-up entry holds IDs only.
+
+### Follow-up Messages
+
+`POST /v1/a2a/{agent_id}/tasks/{task_id}/messages` sends a follow-up message to an existing task, for example the answer to an `input-required` or `auth-required` task. The caller must own the agent, as on the cancel route.
+
+```json
+{"text": "Yes, proceed."}
+```
+
+Send either `text` (one text part) or `message` (an A2A message object in the 0.3 or 1.0 shape). Send exactly one of them.
+
+- The gateway sets `taskId` and `contextId` from the stored task, sets `role` to the user role, and generates `messageId`. It converts the message for 0.3 and 1.0 agents.
+- `message` accepts only `parts`, `metadata`, `extensions`, `referenceTaskIds`, and the identity fields `messageId`, `role`, `taskId`, `contextId` and `kind`. A message holds at most 50 parts. A text part and `text` hold at most 65536 characters.
+- The `task_continued` event stores the message ID and the kind and length of each part. It never stores the content.
+- Two follow-ups sent at the same moment can both pass the state check.
+
+| Status | Cause |
+|--------|-------|
+| 200 | The agent response, unchanged. The stored task takes the state from the response. |
+| 400 | `taskId` or `contextId` differs from the stored task, `role` is not the user role, or the agent call fails |
+| 404 | The agent or task does not exist, or the caller does not own the agent |
+| 409 | The task is in a terminal state |
+| 422 | The body is invalid, has unsupported `message` fields, or exceeds the size limits |
 
 ## Lifecycle Management
 
@@ -438,7 +644,9 @@ the `a2a.read` role.
 |----------|--------|------------|
 | `/a2a` | GET | `a2a.read` |
 | `/a2a/{agent_id}` | GET | `a2a.read` |
+| `/a2a/{agent_id}/card` | GET | `a2a.read` |
 | `/a2a` | POST | `a2a.create` |
+| `/a2a/fetch-card` | POST | `a2a.create` |
 | `/a2a/{agent_id}` | PUT | `a2a.update` |
 | `/a2a/{agent_id}/state` | POST | `a2a.update` |
 | `/a2a/{agent_id}/toggle` | POST | `a2a.update` (deprecated, use `/state`) |

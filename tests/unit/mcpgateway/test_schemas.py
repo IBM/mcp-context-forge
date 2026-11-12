@@ -55,11 +55,15 @@ def test_root_create_rejects_unknown_fields():
         RootCreate(uri="https://example.com/root", unexpected=True)
 
     assert excinfo.value.errors()[0]["type"] == "extra_forbidden"
+
+
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
     EventMessage,
+    GatewayImpactPreview,
+    GatewayRefreshResponse,
     ListFilters,
     PromptCreate,
     PromptMetrics,
@@ -1037,6 +1041,39 @@ class TestServerSchemas:
         assert server_with_objects.associated_prompts == ["13"]
 
 
+class TestServerInstructionsSchema:
+    """The operator ``instructions`` field on the server schemas."""
+
+    def test_defaults_to_not_set(self):
+        """An absent field means "not set"; the field is not in ``model_fields_set``."""
+        assert ServerCreate(name="s").instructions is None
+        assert "instructions" not in ServerUpdate(name="s").model_fields_set
+
+    def test_empty_string_is_kept(self):
+        """An empty string is a real value: "send no instructions"."""
+        assert ServerCreate(name="s", instructions="").instructions == ""
+        assert "instructions" in ServerUpdate(instructions="").model_fields_set
+
+    def test_explicit_null_is_tracked_on_update(self):
+        """An explicit null on update is a supplied field, so it can clear the value."""
+        update = ServerUpdate(instructions=None)
+        assert "instructions" in update.model_fields_set
+        assert update.instructions is None
+
+    def test_text_is_not_sanitized(self):
+        """Markdown and angle brackets pass through unchanged."""
+        text = "Use `now` before <tz> lookups.\n\n- one\n- two"
+        assert ServerCreate(name="s", instructions=text).instructions == text
+
+    @pytest.mark.parametrize("model", [ServerCreate, ServerUpdate])
+    def test_over_length_text_is_rejected(self, model):
+        """Text over the description limit fails validation."""
+        limit = SecurityValidator.MAX_DESCRIPTION_LENGTH
+        assert model(name="s", instructions="x" * limit).instructions == "x" * limit
+        with pytest.raises(ValidationError):
+            model(name="s", instructions="x" * (limit + 1))
+
+
 class TestToggleAndListSchemas:
     """Test status toggle and list filter schemas."""
 
@@ -1425,6 +1462,24 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    @pytest.mark.parametrize(
+        "oauth_config,expected",
+        [
+            ({"registration_method": "cimd", "client_id": "c"}, "cimd"),
+            ({"registration_method": "dcr"}, "dcr"),
+            ({"client_id": "c"}, None),
+            (None, None),
+        ],
+    )
+    def test_gateway_read_exposes_registration_method(self, oauth_config, expected):
+        """GatewayRead mirrors oauth_config.registration_method, including through masking."""
+        # First-Party
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(id="gw-1", name="Test Gateway", slug="test-gateway", url="https://example.com", transport="STREAMABLEHTTP", oauth_config=oauth_config)
+        assert gateway.registration_method == expected
+        assert gateway.masked().registration_method == expected
+
     def test_gateway_read_tool_count_defaults_to_zero(self):
         """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
         # First-Party
@@ -1597,6 +1652,140 @@ class TestGatewayCreateCamelCase:
         update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
         for key in update_keys:
             assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
+
+
+class TestMcpServerIdProductTerminologyAlias:
+    """`gateway_id` request bodies may additionally spell it `mcp_server_id` (mcp-context-forge#6544).
+
+    The API's internal field name and response key stay `gateway_id` for now — only
+    request-side acceptance changes, so these tests also pin down that the output
+    key is unaffected.
+    """
+
+    def test_tool_create_accepts_mcp_server_id(self):
+        """ToolCreate (no camelCase alias_generator) accepts the new snake_case name."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", mcp_server_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_create_still_accepts_gateway_id(self):
+        """The existing field name keeps working."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", gateway_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_update_accepts_mcp_server_id_and_camel_case(self):
+        """ToolUpdate uses BaseModelWithConfigDict, so the camelCase spelling must also work."""
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        assert ToolUpdate(mcp_server_id="gw-2").gateway_id == "gw-2"
+        assert ToolUpdate(mcpServerId="gw-3").gateway_id == "gw-3"
+        # Pre-existing spellings are unaffected.
+        assert ToolUpdate(gateway_id="gw-4").gateway_id == "gw-4"
+        assert ToolUpdate(gatewayId="gw-5").gateway_id == "gw-5"
+
+    def test_resource_create_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate
+
+        resource = ResourceCreate(uri="file:///x", name="r", content="c", mcp_server_id="gw-6")
+        assert resource.gateway_id == "gw-6"
+
+    def test_prompt_create_accepts_mcp_server_id_and_camel_case(self):
+        # First-Party
+        from mcpgateway.schemas import PromptCreate
+
+        assert PromptCreate(name="p", template="t", mcp_server_id="gw-7").gateway_id == "gw-7"
+        assert PromptCreate(name="p", template="t", mcpServerId="gw-8").gateway_id == "gw-8"
+
+    def test_gateway_handshake_request_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        req = GatewayHandshakeRequest(base_url="https://example.com", mcp_server_id="gw-9")
+        assert req.gateway_id == "gw-9"
+
+    def test_response_still_serializes_under_existing_key(self):
+        """Output aliasing is a documented follow-up, not part of this change.
+
+        Until it lands, the response key stays exactly what it is today
+        regardless of which accepted input spelling populated the field.
+        """
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        data = ToolUpdate(mcp_server_id="gw-10").model_dump(by_alias=True, exclude_unset=True)
+        assert data == {"gatewayId": "gw-10"}
+
+
+class TestServerCreateRequestProductTerminologyAlias:
+    """The virtual-server create body may use `virtual_server` as well as `server` (mcp-context-forge#6544)."""
+
+    def test_accepts_legacy_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"server": {"name": "s1"}, "team_id": None, "visibility": "public"})
+        assert payload.server.name == "s1"
+        assert payload.visibility == "public"
+
+    def test_accepts_virtual_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"virtual_server": {"name": "s2"}, "team_id": "team-1", "visibility": "team"})
+        assert payload.server.name == "s2"
+        assert payload.team_id == "team-1"
+
+
+class TestProductTerminologyAliasConflicts:
+    """Conflicting spellings of one field fail validation (#6544)."""
+
+    @pytest.mark.parametrize(
+        ("factory", "kwargs"),
+        [
+            (ToolCreate, {"name": "t", "url": "http://example.com"}),
+            (ToolUpdate, {}),
+            (ResourceCreate, {"uri": "file:///x", "name": "r", "content": "c"}),
+            (PromptCreate, {"name": "p", "template": "t"}),
+        ],
+    )
+    def test_conflicting_gateway_id_spellings_rejected(self, factory, kwargs):
+        with pytest.raises(ValueError, match="Conflicting values"):
+            factory.model_validate({**kwargs, "gateway_id": "a", "mcp_server_id": "b"})
+
+    def test_matching_spellings_accepted(self):
+        assert ToolUpdate.model_validate({"gatewayId": "a", "mcpServerId": "a"}).gateway_id == "a"
+
+    def test_conflicting_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError, match="Conflicting values"):
+            ServerCreateRequest.model_validate({"server": {"name": "a"}, "virtual_server": {"name": "b"}})
+
+    def test_missing_server_keys_rejected(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        with pytest.raises(ValueError):
+            ServerCreateRequest.model_validate({"team_id": "t"})
+
+    def test_openapi_property_names_unchanged(self):
+        """The first accepted spelling keeps the pre-alias OpenAPI property name."""
+        assert "gatewayId" in ToolUpdate.model_json_schema()["properties"]
+        assert "gatewayId" in PromptCreate.model_json_schema()["properties"]
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        assert "gatewayId" in GatewayHandshakeRequest.model_json_schema()["properties"]
+        assert "gateway_id" in ToolCreate.model_json_schema()["properties"]
+        assert "gateway_id" in ResourceCreate.model_json_schema()["properties"]
 
 
 class TestTitleSchemas:
@@ -2222,3 +2411,200 @@ class TestToolOutputSchemaShapes:
     def test_tool_result_carries_any_json_value(self, value):
         result = ToolResult(content=[], structured_content=value)
         assert result.structured_content == value
+
+
+class TestMcpServerIdResponseAlias:
+    """Responses carrying ``gateway_id`` also emit ``mcp_server_id`` (issue #6544)."""
+
+    _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    @classmethod
+    def _tool(cls, gateway_id):
+        return ToolRead.model_validate(
+            {
+                "id": "t1",
+                "original_name": "tool",
+                "request_type": "POST",
+                "integration_type": "REST",
+                "url": None,
+                "description": None,
+                "headers": None,
+                "annotations": {},
+                "jsonpath_filter": None,
+                "auth": None,
+                "input_schema": {"type": "object"},
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "deprecated": False,
+                "reachable": True,
+                "gateway_id": gateway_id,
+                "name": "tool",
+                "gateway_slug": "gw",
+                "custom_name": "tool",
+                "custom_name_slug": "tool",
+            }
+        )
+
+    @classmethod
+    def _resource(cls, gateway_id):
+        return ResourceRead.model_validate({"id": "r1", "uri": "test://r", "name": "r", "description": None, "mime_type": None, "size": None, "created_at": cls._NOW, "updated_at": cls._NOW, "enabled": True, "gateway_id": gateway_id})
+
+    @classmethod
+    def _prompt(cls, gateway_id):
+        return PromptRead.model_validate(
+            {
+                "id": "p1",
+                "name": "p",
+                "original_name": "p",
+                "custom_name": "p",
+                "custom_name_slug": "p",
+                "description": None,
+                "template": "hi",
+                "arguments": [],
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "gateway_id": gateway_id,
+            }
+        )
+
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_serialization_schema_lists_alias(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert "mcpServerId" in properties
+        assert "gatewayId" in properties
+
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_alias_openapi_type_matches_gateway_id(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert properties["mcpServerId"].get("type") == properties["gatewayId"].get("type")
+        assert properties["mcpServerId"].get("anyOf") == properties["gatewayId"].get("anyOf")
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_both_keys_with_a_gateway(self, build):
+        record = getattr(self, build)("gw-1")
+        dumped = record.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_null_alias_without_a_gateway(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True)
+        assert dumped["gatewayId"] is None
+        assert dumped["mcpServerId"] is None
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_exclude_none_drops_alias_with_gateway_id(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True, exclude_none=True)
+        assert "gatewayId" not in dumped
+        assert "mcpServerId" not in dumped
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_json_key_order_is_unchanged_by_the_alias(self, build):
+        keys = list(getattr(self, build)("gw-1").model_dump(by_alias=True))
+        assert keys[0] == "id"
+        assert keys[-1] == "mcpServerId"
+
+    def test_refresh_response_emits_both_keys(self):
+        response = GatewayRefreshResponse(gateway_id="gw-1", duration_ms=1, refreshed_at=datetime.now(timezone.utc))
+        dumped = response.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    def test_impact_preview_emits_both_keys(self):
+        dumped = GatewayImpactPreview(gateway_id="gw-1", servers=[]).model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    def test_alias_in_response_body_is_ignored_on_input(self):
+        response = GatewayImpactPreview.model_validate({"gateway_id": "gw-1", "servers": [], "mcp_server_id": "other"})
+        assert response.mcp_server_id == "gw-1"
+
+
+class TestA2AAgentSkills:
+    """Skills are a typed top-level field on A2A agent create and update schemas."""
+
+    VALID_SKILL = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+    def test_create_accepts_valid_skill_and_keeps_capabilities_untouched(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", capabilities={"streaming": True}, skills=[self.VALID_SKILL])
+
+        assert agent.skills[0].tags == ["text"]
+        assert agent.capabilities == {"streaming": True}
+
+    @pytest.mark.parametrize("missing", ["id", "name", "description", "tags"])
+    def test_create_rejects_skill_missing_required_key(self, missing):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        skill = {k: v for k, v in self.VALID_SKILL.items() if k != missing}
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[skill])
+
+    def test_update_with_only_skills_leaves_capabilities_unset(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        update = A2AAgentUpdate(skills=[self.VALID_SKILL])
+
+        assert update.model_fields_set == {"skills"}
+
+    def test_update_rejects_skill_without_tags(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=[{"id": "s", "name": "n", "description": "d"}])
+
+    def test_skill_keeps_extra_agent_card_fields(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[{**self.VALID_SKILL, "examples": ["x"]}])
+
+        assert agent.skills[0].model_dump()["examples"] == ["x"]
+
+    @pytest.mark.parametrize("field,value", [("name", "<script>alert(1)</script>"), ("description", "<img src=x onerror=alert(1)>"), ("id", "<script>x</script>")])
+    def test_skill_rejects_markup(self, field, value):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, field: value})
+
+    def test_skill_rejects_markup_in_tag(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["<script>x</script>"]})
+
+    def test_skill_rejects_oversized_values(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["x" * 100000]})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["t"] * 51})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "name": "n" * 100000})
+
+    def test_skill_rejects_deeply_nested_extra_field(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        nested: dict = {}
+        for _ in range(500):
+            nested = {"a": nested}
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "extra": nested})
+
+    def test_create_and_update_reject_too_many_skills(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        skills = [{**self.VALID_SKILL, "id": f"s{i}"} for i in range(101)]
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=skills)
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=skills)
+
+    def test_create_and_update_reject_duplicate_skill_ids(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[self.VALID_SKILL, self.VALID_SKILL])
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentUpdate(skills=[self.VALID_SKILL, self.VALID_SKILL])

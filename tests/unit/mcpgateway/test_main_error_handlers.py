@@ -19,9 +19,17 @@ from sqlalchemy.exc import IntegrityError, StatementError
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayToolNameConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayToolNameConflictError
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
+
+
+_TE_MISSING_AUDIENCE = {"grant_type": "token-exchange", "client_id": "cf", "client_secret": "s", "token_url": "https://as.example.com/token"}  # pragma: allowlist secret
+
+
+def _reject_token_exchange_config(*_args, **_kwargs):
+    """Raise the real token-exchange validation error for a config without target_audience."""
+    GatewayService._validate_token_exchange_config(dict(_TE_MISSING_AUDIENCE))
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +189,16 @@ class TestGatewayCreateErrorHandlers:
             assert response.status_code == 400
             assert "Unable to process input" in response.json()["message"]
 
+    def test_register_gateway_public_validation_error(self, test_client, auth_headers):
+        """A PublicValidationError from register_gateway returns 400 with its specific message."""
+        with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
+            mock_register.side_effect = _reject_token_exchange_config
+
+            gateway_data = {"name": "te-gateway", "url": "http://localhost:9000", "auth_type": "oauth", "oauth_config": dict(_TE_MISSING_AUDIENCE)}
+            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == "target_audience is required for token-exchange grant type"
+
     def test_register_gateway_name_conflict_error(self, test_client, auth_headers):
         """Test GatewayNameConflictError handling in register_gateway."""
         with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
@@ -291,6 +309,16 @@ class TestGatewayUpdateErrorHandlers:
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 403
+
+    def test_update_gateway_public_validation_error(self, test_client, auth_headers):
+        """A PublicValidationError from update_gateway returns 400 with its specific message."""
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = _reject_token_exchange_config
+
+            gateway_data = {"auth_type": "oauth", "oauth_config": dict(_TE_MISSING_AUDIENCE)}
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == "target_audience is required for token-exchange grant type"
 
     def test_update_gateway_not_found_error(self, test_client, auth_headers):
         """Test GatewayNotFoundError handling in update_gateway."""

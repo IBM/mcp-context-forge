@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 # Third-Party
 import pytest
 from fastapi import HTTPException
+from fastapi.routing import APIRoute
 
 # First-Party
 from mcpgateway.llm_schemas import (
@@ -424,7 +425,39 @@ async def test_set_model_state_provider_not_found_fallback(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_get_gateway_models(monkeypatch: pytest.MonkeyPatch, mock_db):
+async def test_get_gateway_models(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "get_gateway_models", lambda db: [])
-    result = await llm_config_router.get_gateway_models(db=mock_db, current_user={"email": "user@test.com"})
+    result = await llm_config_router.get_gateway_models(db=mock_db, current_user_ctx=ctx)
     assert result.count == 0
+
+
+def test_get_gateway_models_requires_llm_read():
+    assert getattr(llm_config_router.get_gateway_models, "_required_permission", None) == "llm.read"
+
+
+@pytest.mark.asyncio
+async def test_get_gateway_models_denies_without_llm_read(monkeypatch: pytest.MonkeyPatch, mock_permission_service, ctx, mock_db):
+    mock_permission_service.check_permission = AsyncMock(return_value=False)
+    service_call = MagicMock(return_value=[])
+    monkeypatch.setattr(llm_config_router.llm_provider_service, "get_gateway_models", service_call)
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_config_router.get_gateway_models(db=mock_db, current_user_ctx=ctx)
+    assert excinfo.value.status_code == 403
+    await_args = mock_permission_service.check_permission.await_args
+    assert await_args is not None
+    assert await_args.kwargs["permission"] == "llm.read"
+    service_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_gateway_models_rejects_missing_user(mock_db):
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_config_router.get_gateway_models(db=mock_db, current_user_ctx=None)
+    assert excinfo.value.status_code == 401
+
+
+def test_every_llm_config_route_declares_permission():
+    api_routes = [route for route in llm_config_router.llm_config_router.routes if isinstance(route, APIRoute)]
+    assert api_routes
+    unguarded = [route.path for route in api_routes if not getattr(route.endpoint, "_required_permission", None)]
+    assert unguarded == []

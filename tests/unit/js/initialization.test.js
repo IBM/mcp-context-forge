@@ -57,7 +57,7 @@ import {
 import {
   handleGatewayFormSubmit,
 } from "../../../mcpgateway/admin_ui/formSubmitHandlers.js";
-import { handleAuthTypeSelection } from "../../../mcpgateway/admin_ui/auth.js";
+import { handleAuthTypeSelection, refreshTokenExchangeFields } from "../../../mcpgateway/admin_ui/auth.js";
 import {
   handleAddParameter,
   handleAddPassthrough,
@@ -85,10 +85,13 @@ import {
 // ---------------------------------------------------------------------------
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
+  bindActorClientToggle: vi.fn(),
+  bindDiscoveryToggle: vi.fn(),
   handleAuthTypeChange: vi.fn(),
   handleAuthTypeSelection: vi.fn(),
   handleEditOAuthGrantTypeChange: vi.fn(),
   handleOAuthGrantTypeChange: vi.fn(),
+  refreshTokenExchangeFields: vi.fn(),
 }));
 
 vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
@@ -559,6 +562,18 @@ describe("initializeEventListeners", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(handleAuthTypeSelection).toHaveBeenCalled();
+  });
+
+  test("gateway edit auth-type change refreshes the token-exchange group", () => {
+    const select = document.createElement("select");
+    select.id = "auth-type-gw-edit";
+    select.innerHTML = '<option value="basic">basic</option>';
+    document.body.appendChild(select);
+
+    initializeEventListeners();
+    select.dispatchEvent(new Event("change"));
+
+    expect(refreshTokenExchangeFields).toHaveBeenCalledWith("gw-edit");
   });
 
   test("attaches add-gateway-form submit handler", () => {

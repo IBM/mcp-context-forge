@@ -56,6 +56,7 @@ import asyncio
 from base64 import b64decode
 import binascii
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -67,7 +68,6 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
-import httpx
 import jwt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -76,7 +76,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import SSOProvider
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
+from mcpgateway.services.sso_service import _NoRedirectPyJWKClient, resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -88,6 +88,14 @@ basic_security = HTTPBasic(auto_error=False)
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Return whether a hostname is a loopback IP address."""
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _resolve_auth_header_name(settings_obj: Any | None = None) -> str:
@@ -161,6 +169,60 @@ def get_auth_bearer_token_from_request(request: Any) -> Optional[str]:
         return None
     token = parts[1].strip()
     return token or None
+
+
+def get_request_cookie_token(request: Any) -> Optional[str]:
+    """Resolve the JWT from the auth cookies of a request.
+
+    Order: ``jwt_token`` cookie, then ``access_token`` cookie. Empty or
+    whitespace-only values count as absent.
+
+    Args:
+        request: FastAPI/Starlette ``Request``-like object exposing ``.cookies``.
+
+    Returns:
+        The token string when present, otherwise ``None``.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_request_cookie_token(SimpleNamespace(cookies={"access_token": "a"}))
+        'a'
+        >>> get_request_cookie_token(SimpleNamespace(cookies={"jwt_token": " "})) is None
+        True
+    """
+    cookies = getattr(request, "cookies", None)
+    if not cookies:
+        return None
+    for name in ("jwt_token", "access_token"):
+        value = cookies.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def get_request_auth_token(request: Any) -> Optional[str]:
+    """Resolve the JWT for a request using one fixed precedence.
+
+    Order: Bearer token in the configured auth header, then the ``jwt_token``
+    cookie, then the ``access_token`` cookie. Empty or whitespace-only values
+    count as absent.
+
+    Args:
+        request: FastAPI/Starlette ``Request``-like object exposing ``.headers`` and ``.cookies``.
+
+    Returns:
+        The token string when present, otherwise ``None``.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_request_auth_token(SimpleNamespace(headers={"authorization": "Bearer abc"}, cookies={"jwt_token": "xyz"}))
+        'abc'
+        >>> get_request_auth_token(SimpleNamespace(headers={}, cookies={"jwt_token": "xyz"}))
+        'xyz'
+        >>> get_request_auth_token(None) is None
+        True
+    """
+    return get_auth_bearer_token_from_request(request) or get_request_cookie_token(request)
 
 
 class ConfigurableHTTPBearer(HTTPBearer):
@@ -869,6 +931,7 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                 "is_admin": user_info.is_admin,
                 "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
                 "email": proxy_user,
+                "user_id": proxy_user,  # canonical user_id, phase-1 value = e-mail
                 # token_use: "session" signals DB-backed team resolution to downstream dispatchers
                 # (main.py:2870, streamablehttp_transport.py:1998) so they route via resolve_session_teams
                 # rather than treating the proxy payload as an API-token payload with embedded teams.
@@ -886,6 +949,7 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                     "is_admin": True,
                     "teams": None,  # Admin bypass
                     "email": proxy_user,
+                    "user_id": proxy_user,  # canonical user_id, phase-1 value = e-mail
                     "token_use": "session",  # nosec B105 - Not a password; JWT claim type
                 }
             else:
@@ -1024,20 +1088,16 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
                 )
             return "anonymous"
 
-    # Standard JWT authentication flow - prioritize manual cookie reading
+    # Standard JWT authentication flow - the configured auth header takes precedence over cookies
     token = None
 
-    # 1. First try manual cookie reading (most reliable)
-    if hasattr(request, "cookies") and request.cookies:
-        manual_token = request.cookies.get("jwt_token")
-        if manual_token:
-            token = manual_token
+    header_token = getattr(credentials, "credentials", None)
+    if header_token:
+        token = header_token
 
-    # 2. Then try Authorization header
-    if not token and credentials and credentials.credentials:
-        token = credentials.credentials
+    if not token:
+        token = get_request_cookie_token(request)
 
-    # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
 
@@ -1490,11 +1550,11 @@ async def require_auth_header_first(
     jwt_token: str | None = None,
     request: Request | None = None,
 ) -> str | dict:
-    """Like require_auth_override but Authorization header takes precedence over cookies.
+    """Authenticate with the configured auth header first, then the cookie, then ``jwt_token``.
 
     Token resolution order (matches streamable_http_auth middleware):
-    1. Authorization Bearer header (highest priority)
-    2. Cookie ``jwt_token`` from ``request.cookies``
+    1. Bearer token from the configured auth header (highest priority)
+    2. Cookie ``jwt_token``, then ``access_token``, from ``request.cookies``
     3. ``jwt_token`` keyword argument
 
     Use this in the stateful-session fallback (``_get_request_context_or_default``)
@@ -1603,9 +1663,9 @@ async def require_auth_header_first(
     if scheme.lower() == "bearer" and param:
         token = param
 
-    # 2. Cookie from request.cookies
-    if not token and hasattr(request, "cookies") and request.cookies:
-        token = request.cookies.get("jwt_token") or None
+    # 2. Auth cookies from request.cookies (jwt_token, then access_token)
+    if not token:
+        token = get_request_cookie_token(request)
 
     # 3. jwt_token keyword argument
     if not token and jwt_token:
@@ -1664,9 +1724,7 @@ async def require_admin_auth(
             from mcpgateway.db import get_db
             from mcpgateway.services.email_auth_service import EmailAuthService
 
-            token = jwt_token
-            if not token and credentials:
-                token = credentials.credentials
+            token = getattr(credentials, "credentials", None) or jwt_token
 
             if token:
                 db_session = next(get_db())
@@ -1779,27 +1837,6 @@ _oauth_oidc_metadata_cache: dict[str, tuple[float, Optional[dict[str, Any]], flo
 _OAUTH_OIDC_METADATA_TTL = 300  # seconds — successful discovery
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT = 30  # seconds — 404/malformed
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT = 5  # seconds — timeouts / 5xx / network
-
-
-class _NoRedirectPyJWKClient(jwt.PyJWKClient):
-    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
-
-    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
-    redirects transparently, bypassing the same-origin check enforced on the
-    jwks_uri before this client is constructed.  Overriding with httpx
-    (follow_redirects=False) closes the SSRF redirect bypass across the full
-    fetch chain.
-    """
-
-    def fetch_data(self) -> Any:
-        """Fetch JWKS data without following redirects."""
-        try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
-                resp = _client.get(self.uri, headers=self.headers)
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPError as exc:
-            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
 
 
 _oauth_jwks_client_cache: dict[str, _NoRedirectPyJWKClient] = {}
@@ -2009,12 +2046,28 @@ async def verify_oauth_access_token(
         jwks_uri = jwks_uri.strip()
 
         # Defense-in-depth: a *live-discovered* jwks_uri must share the
-        # issuer's origin and use HTTPS. A compromised metadata endpoint
+        # issuer's origin. A compromised metadata endpoint
         # could otherwise redirect key fetches to an attacker-controlled or
         # internal host. Doesn't apply to jwks_uri_override (see above).
-        jwks_parts = urlsplit(jwks_uri)
-        issuer_parts = urlsplit(normalized_issuer)
-        if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
+        jwks_parts = urlsplit("")
+        issuer_parts = urlsplit("")
+        try:
+            jwks_parts = urlsplit(jwks_uri)
+            issuer_parts = urlsplit(normalized_issuer)
+            # Accessing ports validates malformed port values.
+            _ = jwks_parts.port
+            _ = issuer_parts.port
+            jwks_hostname = jwks_parts.hostname
+            issuer_hostname = issuer_parts.hostname
+        except ValueError:
+            jwks_hostname = issuer_hostname = None
+
+        same_origin = jwks_parts.netloc == issuer_parts.netloc and bool(jwks_parts.netloc) and bool(issuer_parts.netloc)
+        local_http = False
+        if jwks_parts.scheme.lower() == issuer_parts.scheme.lower() == "http" and settings.ssrf_allow_localhost:
+            local_hosts = {jwks_hostname, issuer_hostname}
+            local_http = all(host and (host.rstrip(".").lower() in {"localhost", "localhost.localdomain"} or _is_loopback_host(host)) for host in local_hosts)
+        if not (same_origin and (jwks_parts.scheme.lower() == "https" or local_http)):
             logger.warning(
                 "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
                 sanitize_for_log(jwks_uri),
@@ -2297,6 +2350,7 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     payload: dict = {
         "sub": email,
         "email": email,
+        "user_id": email,  # canonical user_id, phase-1 value = e-mail
         "token": token,
         "token_use": "session",  # nosec B105 - JWT claim type, not a password
         "source": "external_idp",  # audit/telemetry only -- never drives authz

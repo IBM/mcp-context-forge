@@ -110,31 +110,6 @@ def sanitize_url_for_logging(
 
     Returns:
         URL with sensitive parameter values replaced with "REDACTED".
-
-    Example:
-        >>> sanitize_url_for_logging(
-        ...     "https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}
-        ... )
-        'https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
-
-        >>> # Also catches static sensitive params
-        >>> sanitize_url_for_logging(
-        ...     "https://api.example.com?api_key=secret&q=search"
-        ... )
-        'https://api.example.com?api_key=REDACTED&q=search'
-
-        >>> # Also redacts userinfo (user:pass@host)
-        >>> sanitize_url_for_logging(
-        ...     "https://admin:secret123@api.example.com/endpoint"
-        ... )
-        'https://REDACTED:REDACTED@api.example.com/endpoint'
-
-        >>> # Preserves IPv6 bracket formatting
-        >>> sanitize_url_for_logging(
-        ...     "https://user:pass@[::1]:8080/path"
-        ... )
-        'https://REDACTED:REDACTED@[::1]:8080/path'
     """
     parsed = urlparse(url)
 

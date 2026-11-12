@@ -7,6 +7,8 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+import asyncio
+import base64
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
@@ -22,10 +24,10 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import _A2A_OAUTH_ACQUIRE_LOCKS, _A2A_OAUTH_TOKEN_CACHE, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, resolve_a2a_oauth_authorization
 from mcpgateway.services.encryption_service import get_encryption_service
 
-from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -365,6 +367,47 @@ class TestA2AAgentService:
                 assert mock_schema.called
                 assert sample_db_agent.version == 2  # Should be incremented
 
+    async def test_update_agent_skills_only_preserves_capabilities(self, service, mock_db, sample_db_agent):
+        """A request that sends only skills stores them as dicts and leaves capabilities intact."""
+        sample_db_agent.version = 1
+        sample_db_agent.capabilities = {"streaming": True, "pushNotifications": True}
+        skill = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(skills=[skill]))
+
+        assert sample_db_agent.skills == [skill]
+        assert sample_db_agent.capabilities == {"streaming": True, "pushNotifications": True}
+
+    async def test_update_agent_empty_skills_blocks_capabilities_fallback(self, service, mock_db, sample_db_agent):
+        """An explicit empty skills list is stored and wins over legacy capabilities skills."""
+        from mcpgateway.services.a2a_protocol import get_agent_skills
+
+        sample_db_agent.version = 1
+        sample_db_agent.capabilities = {"skills": [{"id": "legacy"}]}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(skills=[]))
+
+        assert sample_db_agent.skills == []
+        assert get_agent_skills(sample_db_agent) == []
+
+    def test_get_agent_skills_logs_malformed_value(self, caplog):
+        """A non-list skills value yields an empty list and a warning naming the agent."""
+        from types import SimpleNamespace
+
+        from mcpgateway.services.a2a_protocol import get_agent_skills
+
+        with caplog.at_level("WARNING"):
+            assert get_agent_skills(SimpleNamespace(id="agent-1", skills=None, capabilities={"skills": "oops"})) == []
+        assert "agent-1" in caplog.text
+
     async def test_update_agent_team_id_rejects_nonexistent_team(self, service, mock_db, sample_db_agent):
         """Reassigning an agent to a non-existent team must raise A2AAgentError."""
         sample_db_agent.version = 1
@@ -531,6 +574,108 @@ class TestA2AAgentService:
         persisted = decode_auth(sample_db_agent.auth_value)
         assert persisted["X-API-Key"] == "original-secret", "Unchanged masked header must be preserved"
         assert persisted["X-Client-ID"] == "new-client-value", "Changed header must be updated"
+
+    async def _run_update(self, service, mock_db, agent, **fields):
+        """Run update_agent with the Admin UI form shape (auth_value submitted as an empty string)."""
+        agent.version = 1
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                await service.update_agent(mock_db, agent.id, A2AAgentUpdate(auth_value="", **fields))
+
+    @staticmethod
+    def _basic(user, pw):
+        return {"Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
+
+    async def test_update_agent_admin_form_masked_basic_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged basic credential; the stored value stays."""
+        sample_db_agent.auth_type = "basic"
+        stored = encode_auth(self._basic("real", "pw"))  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="real", auth_password=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_bearer_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged bearer token; the stored value stays."""
+        sample_db_agent.auth_type = "bearer"
+        stored = encode_auth({"Authorization": "Bearer real-token"})  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="bearer", auth_token=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_authheader_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits the mask for an unchanged custom header; the stored value stays."""
+        sample_db_agent.auth_type = "authheaders"
+        stored = encode_auth({"X-A": "real-a"})  # pragma: allowlist secret
+        sample_db_agent.auth_value = stored
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="authheaders", auth_header_key="X-A", auth_header_value=settings.masked_auth_value)
+
+        assert sample_db_agent.auth_value == stored
+
+    async def test_update_agent_admin_form_masked_multi_header_preserves_credential(self, service, mock_db, sample_db_agent):
+        """Admin form resubmits masks for multi-header auth; the stored values stay (issue #3637)."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-A": "real-a", "X-B": "real-b"})  # pragma: allowlist secret
+
+        await self._run_update(
+            service,
+            mock_db,
+            sample_db_agent,
+            auth_type="authheaders",
+            auth_headers=[{"key": "X-A", "value": settings.masked_auth_value}, {"key": "X-B", "value": settings.masked_auth_value}],
+        )
+
+        assert decode_auth(sample_db_agent.auth_value) == {"X-A": "real-a", "X-B": "real-b"}
+
+    async def test_update_agent_rotates_basic_credential(self, service, mock_db, sample_db_agent):
+        """A new basic password replaces the stored credential."""
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth(self._basic("real", "old"))  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="real", auth_password="new")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == self._basic("real", "new")
+
+    async def test_update_agent_rotates_bearer_credential(self, service, mock_db, sample_db_agent):
+        """A new bearer token replaces the stored credential."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer old"})  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="bearer", auth_token="new-token")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == {"Authorization": "Bearer new-token"}
+
+    async def test_update_agent_rotates_authheaders_credential(self, service, mock_db, sample_db_agent):
+        """A new custom header value replaces the stored credential."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-A": "old"})  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="authheaders", auth_header_key="X-A", auth_header_value="new-value")  # pragma: allowlist secret
+
+        assert decode_auth(sample_db_agent.auth_value) == {"X-A": "new-value"}
+
+    async def test_update_agent_new_username_with_masked_password_keeps_stored_password(self, service, mock_db, sample_db_agent):
+        """A new username with a masked password pairs the new username with the stored password."""
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth(self._basic("old-user", "stored-pw"))  # pragma: allowlist secret
+
+        await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
+
+        assert decode_auth(sample_db_agent.auth_value) == self._basic("new-user", "stored-pw")  # pragma: allowlist secret
+
+    async def test_update_agent_new_username_with_masked_password_without_stored_basic_rejected(self, service, mock_db, sample_db_agent):
+        """A masked password without stored basic credentials returns a validation error."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer x"})  # pragma: allowlist secret
+
+        with pytest.raises(A2AAgentError, match="auth_password"):
+            await self._run_update(service, mock_db, sample_db_agent, auth_type="basic", auth_username="new-user", auth_password=settings.masked_auth_value)
 
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
@@ -938,6 +1083,178 @@ class TestA2AAgentService:
         for header_name, header_value in auth_headers.items():
             assert headers_used[header_name] == header_value
 
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_agent_oauth_sends_bearer_token(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+        """An agent with auth_type oauth is invoked with a token from its configured token URL (#7382)."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "ok", "status": "success"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        oauth_config = {"grant_type": "client_credentials", "client_id": "cid", "client_secret": "s", "token_url": "https://idp.example.com/token"}  # pragma: allowlist secret
+        agent = MagicMock(
+            id=sample_db_agent.id,
+            name="oauth-agent",
+            enabled=True,
+            endpoint_url="https://api.example.com/secure-agent",
+            auth_type="oauth",
+            auth_value=None,
+            oauth_config=oauth_config,
+            protocol_version="1.0",
+            agent_type="generic",
+        )
+        service.get_agent_by_name = AsyncMock(return_value=agent)
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_fn.return_value = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+                mock_manager_cls.return_value.get_client_credentials_token = AsyncMock(return_value=("tok-123", 3600))
+                result = await service.invoke_agent(mock_db, "oauth-agent", {"test": "data"}, request_headers={"Authorization": "Bearer caller-token"})
+
+        assert result["response"] == "ok"
+        mock_manager_cls.return_value.get_client_credentials_token.assert_awaited_once_with(oauth_config)
+        assert mock_client.post.call_args.kwargs["headers"]["Authorization"] == "Bearer tok-123"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_caches_until_expiry(self):
+        """The token is reused until expiry rather than requested per invocation."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=[("tok-1", 3600), ("tok-2", 3600)])
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-1"
+            assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-1"
+            assert fetch.await_count == 1
+            # A changed config never reuses the old token.
+            assert await resolve_a2a_oauth_authorization("a1", "agent", {**config, "scopes": ["x"]}) == "Bearer tok-2"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_refetches_after_expiry(self):
+        """An expired cached token is replaced."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=[("tok-1", 3600), ("tok-2", 3600)])
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            with patch("mcpgateway.services.a2a_service.time.monotonic", return_value=1000.0):
+                await resolve_a2a_oauth_authorization("a1", "agent", config)
+            with patch("mcpgateway.services.a2a_service.time.monotonic", return_value=1000.0 + 3600):
+                assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-2"
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_token_failure_names_agent(self):
+        """Token acquisition failure surfaces as A2AAgentError, not an unauthenticated request."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            mock_manager_cls.return_value.get_client_credentials_token = AsyncMock(side_effect=RuntimeError("boom"))
+            with pytest.raises(A2AAgentError, match="oauth-agent"):
+                await resolve_a2a_oauth_authorization("a1", "oauth-agent", config)
+
+    async def test_resolve_a2a_oauth_authorization_shares_one_inflight_request(self):
+        """Concurrent cache misses for one agent and config make a single token request."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+
+        async def slow_token(_credentials):
+            await asyncio.sleep(0.05)
+            return "tok-1", 3600
+
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=slow_token)
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            results = await asyncio.gather(*(resolve_a2a_oauth_authorization("a1", "agent", config) for _ in range(50)))
+
+        assert set(results) == {"Bearer tok-1"}
+        assert fetch.await_count == 1
+        assert not _A2A_OAUTH_ACQUIRE_LOCKS
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_does_not_share_across_configs(self):
+        """Concurrent requests for different agents each get their own token request."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+
+        async def slow_token(_credentials):
+            await asyncio.sleep(0.02)
+            return "tok", 3600
+
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=slow_token)
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            await asyncio.gather(resolve_a2a_oauth_authorization("a1", "one", config), resolve_a2a_oauth_authorization("a2", "two", config))
+
+        assert fetch.await_count == 2
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    async def test_resolve_a2a_oauth_authorization_failure_is_not_cached_and_releases_lock(self):
+        """A failed acquisition leaves no cached token, and the next caller retries."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"}
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls:
+            fetch = AsyncMock(side_effect=[RuntimeError("boom"), ("tok-1", 3600)])
+            mock_manager_cls.return_value.get_client_credentials_token = fetch
+            with pytest.raises(A2AAgentError):
+                await resolve_a2a_oauth_authorization("a1", "agent", config)
+            assert await resolve_a2a_oauth_authorization("a1", "agent", config) == "Bearer tok-1"
+        assert not _A2A_OAUTH_ACQUIRE_LOCKS
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+
+    @pytest.mark.parametrize(
+        "agent_overrides, user_email, token_teams, error",
+        [
+            ({"visibility": "private", "team_id": "t1", "owner_email": "other@x.com"}, "me@x.com", [], A2AAgentNotFoundError),
+            ({"visibility": "team", "team_id": "t1", "owner_email": "other@x.com"}, "me@x.com", ["other-team"], A2AAgentNotFoundError),
+            ({"visibility": "public", "team_id": "t1", "owner_email": "other@x.com", "enabled": False}, "me@x.com", [], A2AAgentError),
+        ],
+    )
+    async def test_invoke_oauth_agent_denied_acquires_no_token_and_sends_no_request(self, service, mock_db, monkeypatch, agent_overrides, user_email, token_teams, error):
+        """A caller who cannot see or use an OAuth agent triggers neither token acquisition nor a downstream call."""
+        _A2A_OAUTH_TOKEN_CACHE.clear()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        fields = {
+            "id": "a1",
+            "name": "oauth-agent",
+            "enabled": True,
+            "endpoint_url": "https://x.com",
+            "auth_type": "oauth",
+            "auth_value": None,
+            "auth_query_params": None,
+            "oauth_config": {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token"},
+            "agent_type": "generic",
+            "protocol_version": "1.0",
+            "visibility": "public",
+            "team_id": None,
+            "owner_email": None,
+            **agent_overrides,
+        }
+        agent = SimpleNamespace(**fields)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+
+        with patch("mcpgateway.services.a2a_service.OAuthManager") as mock_manager_cls, patch("mcpgateway.services.http_client_service.get_http_client") as mock_get_client:
+            mock_manager_cls.return_value.get_client_credentials_token = AsyncMock()
+            with pytest.raises(error):
+                await service.invoke_agent(mock_db, "oauth-agent", {}, user_email=user_email, token_teams=token_teams)
+
+        mock_manager_cls.return_value.get_client_credentials_token.assert_not_awaited()
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.parametrize("config", [None, {}, {"grant_type": "authorization_code"}])
+    async def test_resolve_a2a_oauth_authorization_rejects_unsupported(self, config):
+        """Missing config or a non-client-credentials grant fails closed."""
+        with pytest.raises(A2AAgentError, match="oauth-agent"):
+            await resolve_a2a_oauth_authorization("a1", "oauth-agent", config)
+
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""
         # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
@@ -1068,6 +1385,45 @@ class TestA2AAgentService:
         assert result.metrics.failure_rate == 50.0
         assert result.metrics.avg_response_time == 1.5
         assert result.team == "Test Team"
+
+    def test_convert_agent_to_read_masks_basic_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable basic-auth credential (issue #6704).
+
+        This is the conversion every a2a.read-gated endpoint (get_agent, list_agents,
+        register_agent, update_agent, set_agent_state) routes through before returning
+        an A2AAgentRead, so masking here is the single enforcement point for the
+        contract described in #6704.
+        """
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Basic " + base64.b64encode(b"admin:s3cr3t").decode()})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_password == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_username == "admin"
+
+    def test_convert_agent_to_read_masks_bearer_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable bearer token (issue #6704)."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer top-secret-token"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_token == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_type == "bearer"
+
+    def test_convert_agent_to_read_masks_authheaders_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable custom auth header value (issue #6704)."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "top-secret-key"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_header_value == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert result.auth_headers == [{"key": "X-API-Key", "value": settings.masked_auth_value}]
 
     def test_get_team_name_and_batch(self, service, mock_db):
         """Test team name lookup helpers."""
@@ -2760,6 +3116,11 @@ class TestInvokeAgentEdgeCases:
             visibility="public",
             team_id=None,
             owner_email=None,
+            tenant=None,
+            icon_url=None,
+            auth_type=None,
+            oauth_config=None,
+            auth_query_params=None,
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
@@ -2769,6 +3130,346 @@ class TestInvokeAgentEdgeCases:
         assert result["capabilities"]["streaming"] is True
         assert result["capabilities"]["pushNotifications"] is True
         assert result["skills"] == [{"id": "s1"}]
+
+    async def test_get_agent_card_prefers_skills_field_over_capabilities(self, service, mock_db):
+        agent = self._make_card_agent(skills=[{"id": "new"}], capabilities={"streaming": True, "skills": [{"id": "legacy"}]})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["skills"] == [{"id": "new"}]
+        assert result["capabilities"]["streaming"] is True
+
+    async def test_get_agent_card_falls_back_to_capabilities_skills(self, service, mock_db):
+        agent = self._make_card_agent(skills=None, capabilities={"skills": [{"id": "legacy"}]})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["skills"] == [{"id": "legacy"}]
+
+    @staticmethod
+    def _make_card_agent(**overrides):
+        """Build a SimpleNamespace with every field the card builders touch, defaults overridable (#7027)."""
+        defaults = dict(
+            id="agent-1",
+            name="ag",
+            description="desc",
+            endpoint_url="https://x.com",
+            version=2,
+            protocol_version="1.0",
+            capabilities={},
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            tenant=None,
+            icon_url=None,
+            auth_type=None,
+            oauth_config=None,
+            auth_query_params=None,
+        )
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    async def test_get_agent_card_v1_reports_supported_interfaces(self, service, mock_db):
+        """A v1.0 agent's card reports transport via supportedInterfaces, not a bare url (#7027)."""
+        agent = self._make_card_agent(protocol_version="1.0", tenant="acme")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert "url" not in result
+        assert "supportsAuthenticatedExtendedCard" not in result
+        assert "stateTransitionHistory" not in result["capabilities"]
+        assert result["capabilities"]["extendedAgentCard"] is True
+        assert result["supportedInterfaces"] == [{"url": "https://x.com", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "acme"}]
+
+    async def test_get_agent_card_legacy_shape_for_v03_agent(self, service, mock_db):
+        """A v0.3 agent keeps the pre-1.0 shape, so existing v0.3 callers see no change (#7027)."""
+        agent = self._make_card_agent(protocol_version="0.3", capabilities={"stateTransitionHistory": True})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["url"] == "https://x.com"
+        assert result["supportsAuthenticatedExtendedCard"] is True
+        assert result["capabilities"]["stateTransitionHistory"] is True
+        assert "supportedInterfaces" not in result
+
+    async def test_get_agent_card_v1_uses_stored_input_output_modes(self, service, mock_db):
+        """Input/output modes come from stored capabilities, not a hardcoded ["text"] (#7027)."""
+        agent = self._make_card_agent(capabilities={"defaultInputModes": ["text", "file"], "defaultOutputModes": ["image"]})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["defaultInputModes"] == ["text", "file"]
+        assert result["defaultOutputModes"] == ["image"]
+
+    async def test_get_agent_card_v1_defaults_modes_when_unset(self, service, mock_db):
+        """Absent stored modes fall back to ["text"] rather than omitting the field (#7027)."""
+        agent = self._make_card_agent(capabilities={})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["defaultInputModes"] == ["text"]
+        assert result["defaultOutputModes"] == ["text"]
+
+    async def test_get_agent_card_v1_includes_icon_url_when_present(self, service, mock_db):
+        agent = self._make_card_agent(icon_url="https://x.com/icon.png")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["iconUrl"] == "https://x.com/icon.png"
+
+    async def test_get_agent_card_v1_omits_icon_url_when_absent(self, service, mock_db):
+        agent = self._make_card_agent(icon_url=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert "iconUrl" not in result
+
+    async def test_get_agent_card_v1_omits_security_fields_when_no_auth(self, service, mock_db):
+        agent = self._make_card_agent(auth_type=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert "securitySchemes" not in result
+        assert "securityRequirements" not in result
+
+    @pytest.mark.parametrize(
+        "auth_type,expected_scheme",
+        [
+            ("basic", {"httpAuthSecurityScheme": {"scheme": "basic"}}),
+            ("bearer", {"httpAuthSecurityScheme": {"scheme": "bearer"}}),
+        ],
+    )
+    def test_build_security_scheme_http_and_api_key_types(self, auth_type, expected_scheme):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type=auth_type)
+
+        schemes, requirements = _build_security_scheme(agent)
+
+        scheme_name = f"{auth_type}Auth"  # basicAuth / bearerAuth
+        assert schemes == {scheme_name: expected_scheme}
+        assert requirements == [{"schemes": {scheme_name: {}}}]
+
+    def test_build_security_scheme_authheaders_omitted_without_name(self):
+        """authheaders has no non-secret header name, so no schema-invalid apiKey scheme is emitted."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="authheaders")) == (None, None)
+
+    def test_build_security_scheme_query_param_without_names_omitted(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="query_param", auth_query_params={})) == (None, None)
+
+    def test_build_security_scheme_oauth_reads_stored_scopes_list(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scopes": ["read", "write"]})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
+
+    def test_build_security_scheme_oauth_always_emits_scopes_map(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token"})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
+
+    @pytest.mark.parametrize(
+        "oauth_config",
+        [
+            {"grant_type": "client_credentials"},
+            {"grant_type": "authorization_code", "token_url": "https://auth.example.com/token"},
+            {"grant_type": "password", "token_url": "https://auth.example.com/token"},
+            {},
+        ],
+    )
+    def test_build_security_scheme_oauth_missing_required_fields_omitted(self, oauth_config):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="oauth", oauth_config=oauth_config)) == (None, None)
+
+    def test_build_security_scheme_query_param_surfaces_param_name_only(self):
+        """The param name (a dict key) is safe to surface; the encrypted value never is (#7027)."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="query_param", auth_query_params={"tavilyApiKey": "<encrypted>"})  # pragma: allowlist secret
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes == {"apiKeyAuth": {"apiKeySecurityScheme": {"location": "query", "name": "tavilyApiKey"}}}
+        assert "<encrypted>" not in str(schemes)
+
+    def test_build_security_scheme_oauth_client_credentials(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "token_url": "https://auth.example.com/token",
+                "scope": "read write",
+                "client_secret": "<should-never-appear>",  # pragma: allowlist secret
+            },
+        )
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        flows = schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]
+        assert flows["clientCredentials"]["tokenUrl"] == "https://auth.example.com/token"
+        assert flows["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
+        assert "<should-never-appear>" not in str(schemes)
+
+    def test_build_security_scheme_oauth_authorization_code(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(
+            auth_type="oauth",
+            oauth_config={"grant_type": "authorization_code", "authorization_url": "https://auth.example.com/authorize", "token_url": "https://auth.example.com/token"},
+        )
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        flows = schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]
+        assert flows["authorizationCode"]["authorizationUrl"] == "https://auth.example.com/authorize"
+        assert flows["authorizationCode"]["tokenUrl"] == "https://auth.example.com/token"
+
+    def test_build_security_scheme_unrecognized_auth_type_returns_none(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="not-a-real-type")
+
+        assert _build_security_scheme(agent) == (None, None)
+
+    @pytest.mark.parametrize("caller_version,expect_v1", [(None, True), ("", True), ("1.0", True), ("v1.0", True), ("0.3", False)])
+    async def test_get_agent_card_caller_version_selects_shape(self, service, mock_db, caller_version, expect_v1):
+        """A pre-1.0 caller keeps the legacy shape for a 1.x agent; otherwise the stored version decides (#7027)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(protocol_version="1.0")
+
+        result = await service.get_agent_card(mock_db, "ag", caller_version=caller_version)
+
+        assert ("supportedInterfaces" in result) is expect_v1
+        assert ("url" in result) is (not expect_v1)
+
+    async def test_get_agent_card_v1_caller_does_not_upgrade_legacy_agent(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(protocol_version="0.3")
+
+        result = await service.get_agent_card(mock_db, "ag", caller_version="1.0")
+
+        assert "supportedInterfaces" not in result
+
+    @pytest.mark.parametrize("scopes", [5, {"a": 1}, True])
+    def test_build_security_scheme_oauth_non_list_scopes_coerced_to_empty(self, scopes):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scopes": scopes})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
+
+    async def test_get_agent_card_null_skills_yield_empty_list(self, service, mock_db):
+        for version in ("1.0", "0.3"):
+            agent = self._make_card_agent(protocol_version=version, capabilities={"skills": None})
+            mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+            result = await service.get_agent_card(mock_db, "ag")
+
+            assert result["skills"] == []
+
+    async def test_get_agent_card_v1_includes_extensions(self, service, mock_db):
+        extensions = [{"uri": "https://example.com/ext", "required": False}]
+        mock_db.execute.return_value.scalar_one_or_none.return_value = self._make_card_agent(capabilities={"extensions": extensions})
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["capabilities"]["extensions"] == extensions
+
+    async def test_get_agent_card_v1_full_card_with_auth_never_leaks_credentials_and_parses_with_sdk(self, service, mock_db):
+        """A full v1 card carries the derived scheme, no credential values, and parses as an SDK AgentCard (#7027)."""
+        agent = self._make_card_agent(
+            auth_type="oauth",
+            auth_value="<enc-auth-value>",  # pragma: allowlist secret
+            oauth_config={
+                "grant_type": "client_credentials",
+                "token_url": "https://auth.example.com/token",
+                "scopes": ["read"],
+                "client_secret": "<leak-client-secret>",  # pragma: allowlist secret
+                "private_key": "<leak-private-key>",  # pragma: allowlist secret
+            },
+            capabilities={"streaming": True, "skills": [{"id": "s1", "name": "S1", "description": "d", "tags": ["t"]}]},
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, "ag")
+
+        assert result["securitySchemes"]["oauth2Auth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read"}
+        assert result["securityRequirements"] == [{"schemes": {"oauth2Auth": {}}}]
+        rendered = str(result)
+        for secret in ("<enc-auth-value>", "<leak-client-secret>", "<leak-private-key>"):
+            assert secret not in rendered
+
+        json_format = pytest.importorskip("google.protobuf.json_format")
+        types = pytest.importorskip("a2a.types")
+        json_format.ParseDict(result, types.AgentCard())
+
+    async def test_get_agent_card_by_id_returns_none_when_agent_missing(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        assert await service.get_agent_card(mock_db, agent_id="missing") is None
+
+    async def test_get_agent_card_by_id_returns_none_when_visibility_denies(self, service, mock_db):
+        """Mirrors ``test_get_agent_card_returns_none_when_visibility_denies`` for the by-ID lookup (#6700)."""
+        agent = self._make_card_agent(visibility="private", owner_email="other@example.com")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, agent_id="a1", user_email=None, token_teams=None)
+
+        assert result is None
+
+    async def test_get_agent_card_by_id_builds_capabilities(self, service, mock_db):
+        agent = self._make_card_agent(capabilities={"streaming": True, "pushNotifications": True, "skills": [{"id": "s1"}]})
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, agent_id="a1")
+
+        assert result["name"] == "ag"
+        assert result["capabilities"]["streaming"] is True
+        assert result["capabilities"]["pushNotifications"] is True
+        assert result["skills"] == [{"id": "s1"}]
+
+    async def test_get_agent_card_by_id_honours_caller_version(self, service, mock_db):
+        agent = self._make_card_agent(protocol_version="1.0")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card(mock_db, agent_id="a1", caller_version="0.3")
+
+        assert result["url"] == "https://x.com"
+        assert "supportedInterfaces" not in result
 
     async def test_invoke_prepare_failure_without_auth_wraps_error(self, service, mock_db, monkeypatch):
         agent = SimpleNamespace(

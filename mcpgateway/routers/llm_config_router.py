@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
 from mcpgateway.common.query_params import QueryProviderId
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
@@ -599,9 +598,10 @@ async def set_model_state(
     summary="Get Gateway Models",
     description="Get enabled models for the LLM Chat dropdown.",
 )
+@require_permission("llm.read")
 async def get_gateway_models(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> GatewayModelsResponse:
     """Get enabled models for the LLM Chat dropdown.
 
@@ -610,7 +610,7 @@ async def get_gateway_models(
 
     Args:
         db: Database session.
-        current_user: Authenticated user.
+        current_user_ctx: Authenticated user context.
 
     Returns:
         List of available gateway models.

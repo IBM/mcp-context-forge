@@ -2546,7 +2546,7 @@ ContextForge is built on a high-performance foundation:
 - [Gunicorn Configuration](../deployment/local.md)
 - [Kubernetes Deployment](../deployment/kubernetes.md)
 - [Helm Charts](../deployment/helm.md)
-- [Performance Testing](../testing/performance.md)
+- [Performance Testing](https://github.com/IBM/mcp-context-forge/blob/main/tests/performance/performance.md)
 - [Observability](observability.md)
 - [Configuration Guide](configuration.md)
 - [Database Tuning](tuning.md)

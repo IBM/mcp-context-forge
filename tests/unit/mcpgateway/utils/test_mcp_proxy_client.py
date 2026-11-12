@@ -16,11 +16,13 @@ Run:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
 # Third-Party
 import httpx2
+from mcp.shared._httpx_utils import stream_within_origin
 from mcp.shared.exceptions import MCPError
 import pytest
 
@@ -341,3 +343,72 @@ async def test_a_failing_tool_call_after_a_good_handshake_keeps_only_real_upstre
         assert leaf.error.code == expected[1]
     else:
         assert isinstance(leaf, httpx2.DecodingError), repr(leaf)
+
+
+def _redirecting_factory(location: str, seen: list[str]):
+    """Build a client factory whose upstream answers every request with a 307 to ``location``."""
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        seen.append(str(request.url))
+        return httpx2.Response(307, headers={"location": location})
+
+    def factory(**kwargs):
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(answer), **{k: v for k, v in kwargs.items() if v is not None})
+
+    return factory
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["streamablehttp", "sse"])
+async def test_cross_origin_redirect_surfaces_status_error_and_is_not_followed(transport: str) -> None:
+    """A redirect off the registered origin fails as HTTPStatusError 307 and no request reaches the target."""
+    seen: list[str] = []
+    factory = _redirecting_factory("http://other.example.com/mcp/", seen)
+
+    with pytest.raises(BaseException) as exc_info:  # noqa: B017 - the leaf type is asserted below
+        async with mcp_proxy_client(_URL, mode="legacy", httpx_client_factory=factory, transport=transport):
+            pass
+
+    leaf = _unwrap(exc_info.value)
+    assert isinstance(leaf, httpx2.HTTPStatusError), repr(leaf)
+    assert leaf.response.status_code == 307
+    assert leaf.response.headers["location"] == "http://other.example.com/mcp/"
+    assert all("other.example.com" not in url for url in seen)
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_ignores_followed_redirect_and_never_rewrites_unrelated_errors() -> None:
+    """A same-origin redirect the SDK follows is no failure; unrelated errors and cancellation pass through."""
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/mcp":
+            return httpx2.Response(307, headers={"location": "/mcp/"})
+        return httpx2.Response(202)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(answer))
+    hook = ErrorResponseHook().install(client)
+    async with client, stream_within_origin(client, "POST", _URL, json={}) as response:
+        assert response.status_code == 202
+
+    assert hook.to_transport_error(_SDK_STAND_IN) is None
+    assert hook.to_transport_error(RuntimeError("unrelated")) is None
+    assert hook.to_transport_error(asyncio.CancelledError()) is None
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_translates_final_redirect_but_never_cancellation() -> None:
+    """A redirect off the registered origin is kept and translated for the SDK's stand-in error only."""
+
+    def answer(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(307, headers={"location": "http://other.example.com/mcp"})
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(answer))
+    hook = ErrorResponseHook().install(client)
+    async with client, stream_within_origin(client, "POST", _URL, json={}) as response:
+        assert response.status_code == 307
+
+    translated = hook.to_transport_error(_SDK_STAND_IN)
+    assert isinstance(translated, httpx2.HTTPStatusError)
+    assert translated.response.status_code == 307
+    assert hook.to_transport_error(RuntimeError("unrelated")) is None
+    assert hook.to_transport_error(asyncio.CancelledError()) is None

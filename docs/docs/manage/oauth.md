@@ -116,6 +116,49 @@ Example OAuth-enabled gateway record:
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
 
+---
+
+## Client Registration Methods
+
+When connecting to upstream authorization servers where you have not pre-registered a static Client ID and Client Secret, ContextForge supports zero-touch client registration. The registration strategy is set per gateway via `oauth_config.registration_method` (defaults to `auto`).
+
+### Supported Registration Methods
+
+1. **Client ID Metadata Documents (CIMD) (`cimd`)**:
+   - Instead of exchanging credentials statically, the gateway acts as a public client identified by the URL of a metadata document it publishes.
+   - When the authorization server metadata advertises `client_id_metadata_document_supported: true` (or when `registration_method` is explicitly set to `"cimd"`), the gateway uses its published document URL (`/oauth/client-metadata.json`) as the `client_id` directly, completely avoiding any registration API calls.
+   - **Important**: The published document URL **must be reachable** from the authorization server, as the server will fetch this URL dynamically to validate the gateway's client identity.
+
+2. **Dynamic Client Registration (DCR) (`dcr`)**:
+   - Deprecated path. Registers the gateway dynamically via the RFC 7591 `/register` API of the authorization server, yielding a generated `client_id` and `client_secret` saved in the database.
+   - Triggers a deprecation warning indicating that the upstream server does not support CIMD.
+
+3. **Automatic Selection (`auto`)**:
+   - The default mode. ContextForge queries the authorization server's `.well-known` configuration. If CIMD is supported, it uses CIMD. Otherwise, it falls back to Dynamic Client Registration (DCR).
+
+!!! warning "Upgrade behavior"
+    `CIMD_ENABLED` defaults to `true`. A gateway that has an issuer but no `client_id` and no stored registration switches from DCR to CIMD on upgrade when the authorization server advertises support. Set `CIMD_ENABLED=false`, or set `registration_method` to `dcr` on one gateway, to keep DCR. Gateways with configured credentials or a stored DCR registration are unchanged.
+
+The registration method is visible as `registration_method` in the gateway read API and on the gateway OAuth panel in the Admin UI.
+
+### CIMD Behind Reverse Proxies
+
+By default, ContextForge derives the metadata document URL dynamically. If your gateway runs behind a reverse proxy, load balancer, or Kubernetes ingress, the auto-derived URL might reflect internal hostnames.
+
+The gateway resolves the reverse-proxy root path from the request, so the redirect URI follows the public path. Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the document is served (e.g., `https://my-gateway.example.com/oauth/client-metadata.json`) to guarantee the authorization server can reach and validate the gateway. The value must end with `/oauth/client-metadata.json`, the only path the gateway serves; other paths are rejected at startup. The redirect URI and JWKS URL derive from the part before that path.
+
+### CIMD with Private-Key JWT (Confidential Client)
+
+To run as a confidential client using CIMD without any shared secrets:
+- Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
+- Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. Startup fails without it. `JWT_ALGORITHM` (default `HS256`) is not used, so the default needs no change; the JWKS publishes only the CIMD key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
+- The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
+- The gateway serves the public key derived from the CIMD key at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`).
+- To rotate the key, set `CIMD_KEY_ID` to a new value, point `CIMD_PRIVATE_KEY_PATH` at the new key, set `CIMD_PREVIOUS_PUBLIC_KEY_PATH` to the old public key, and set `CIMD_PREVIOUS_KEY_ID` to the old `CIMD_KEY_ID`. The JWKS then publishes both keys under their own `kid`, so authorization servers with a cached key set still verify old assertions. Reusing the same `CIMD_KEY_ID` for a new key can fail until the authorization server refreshes its cache.
+- All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
+
+---
+
 ### Token Endpoint Authentication
 
 `token_endpoint_auth_method` selects how the gateway authenticates to the token endpoint:
@@ -263,6 +306,18 @@ OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
   blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
 
 ---
+
+## MCP 2026-07-28 Authorization Profile
+
+What the gateway does as an OAuth client toward upstream servers, per the `2026-07-28` authorization specification:
+
+- **Issuer validation (RFC 9207).** When the authorization server sends `iss` on the callback, it must equal the `issuer` of that server's validated metadata, compared as plain strings. A server that advertises `authorization_response_iss_parameter_supported` and then omits `iss` is refused. A mismatch is refused before the code is redeemed and before any provider error text is shown, and raises a security event. When metadata discovery fails, the configured issuer is compared instead, without its trailing slash, and a warning names the gateway. A metadata issuer that is a template, such as a multi-tenant placeholder, cannot be validated and is skipped with a warning. Gateways configured with only `authorization_url` and `token_url` have nothing to compare against.
+- **Dynamic Client Registration.** Requests carry `application_type`: `native` for a loopback redirect URI and `web` otherwise, or the value of `DCR_APPLICATION_TYPE`. The specification deprecates DCR in favour of Client ID Metadata Documents but keeps it for authorization servers without that support.
+- **Credentials bound to their issuer.** Dynamically registered clients are stored and looked up per gateway and issuer. A static `client_id` carried over an issuer change is flagged in the log and as a security event, because the new authorization server did not issue it.
+- **Client ID Metadata Documents.** Not implemented. The gateway registers dynamically or uses pre-registered credentials.
+- **Client tokens toward upstreams.** An upstream with its own credentials never receives the caller's token. An upstream registered with auth type `none` receives the caller's `Authorization` header, which deployments rely on when the upstream validates the same token as the gateway. `X-Upstream-Authorization` always carries a credential the caller chose for the upstream.
+
+Protected resource metadata (RFC 9728), the `resource` parameter (RFC 8707) and audience checks on inbound tokens were already in place; see the sections above and [OAuth Resource Configuration](oauth-resource-configuration.md).
 
 ## Redirect URI and Callback
 

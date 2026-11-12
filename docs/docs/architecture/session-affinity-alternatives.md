@@ -388,7 +388,7 @@ Priority order (try in this sequence; fall through if the constraints don't fit)
 
 4. **Approach 4: Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
 
-Within Approach 3, the transport sub-options (3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
+Within Approach 3, the transport sub-options (3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3-redis-based-cross-worker-forwarding) above. They don't change the priority order.
 
 ## Action Plan
 

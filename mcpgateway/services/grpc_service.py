@@ -64,6 +64,14 @@ _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES = 8 * 1024 * 1024
 _GRPC_TOOL_NAME_MAX_LENGTH = 256
 
 
+async def _invalidate_tools_cache() -> None:
+    """Drop cached tool lists so every worker sees committed gRPC tool changes."""
+    # First-Party
+    from mcpgateway.cache.registry_cache import get_registry_cache  # pylint: disable=import-outside-toplevel
+
+    await get_registry_cache().invalidate_tools()
+
+
 def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
     """Enforce per-service descriptor count/size limits before storage.
 
@@ -401,6 +409,8 @@ class GrpcService:
 
         db.commit()
         db.refresh(service)
+        if scoping_changed:
+            await _invalidate_tools_cache()
 
         logger.info("Updated gRPC service: %s", service.name)
 
@@ -476,6 +486,8 @@ class GrpcService:
 
         db.delete(service)
         db.commit()
+        if tool_ids:
+            await _invalidate_tools_cache()
 
         logger.info("Deleted gRPC service: %s (removed %d tools)", service.name, len(tool_ids))
 
@@ -700,6 +712,8 @@ class GrpcService:
 
         finally:
             channel.close()
+
+        await _invalidate_tools_cache()
 
     def _sync_tools_from_reflection(
         self,

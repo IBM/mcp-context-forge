@@ -348,7 +348,10 @@ class TestResourcesEditModal:
         resources_page.open_resource_edit_modal(0)
 
         expect(resources_page.resource_edit_modal).to_be_visible()
-        expect(resources_page.resource_edit_name_input).to_have_value(resource_name)
+        expect(resources_page.resource_edit_name_input).not_to_have_value("")
+        # Federated rows show the gateway-prefixed name; the modal edits only the unprefixed custom name.
+        edit_name = resources_page.resource_edit_name_input.input_value()
+        assert resource_name.endswith(edit_name), f"Edit name {edit_name!r} is not a suffix of table name {resource_name!r}"
 
         resources_page.cancel_resource_edit()
 

@@ -1009,7 +1009,7 @@ async def test_server_conflict_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}, "metadata": {"entity_counts": {"servers": 1}}}
 
     # Setup conflict and existing server
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server", server_id="server_id")
     import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "update_server"
@@ -1022,6 +1022,8 @@ async def test_server_conflict_update_success(import_service, mock_db):
     # Should update the server
     assert status.updated_entities == 1
     import_service.server_service.update_server.assert_called_once()
+    assert import_service.server_service.update_server.await_args.args[1] == "server_id"
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1041,6 +1043,8 @@ async def test_server_conflict_update_not_found(import_service, mock_db):
     # Should skip the server and add warning
     assert status.skipped_entities == 1
     assert any("Could not find existing server to update" in warning for warning in status.warnings)
+    import_service.server_service.update_server.assert_not_called()
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1051,7 +1055,7 @@ async def test_server_conflict_update_exception(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}, "metadata": {"entity_counts": {"servers": 1}}}
 
     # Setup conflict, existing server, but update fails
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("error_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("error_server", server_id="server_id")
     import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "error_server"
@@ -1853,7 +1857,7 @@ async def test_process_tool_dry_run_adds_warning(import_service, mock_db):
         "integration_type": "REST",
         "request_type": "GET",
     }
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, True, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, True, status, "importer@example.com")
     assert any("Would import tool" in msg for msg in status.warnings)
 
 
@@ -1868,7 +1872,7 @@ async def test_process_tool_conflict_skip(import_service, mock_db):
     }
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.SKIP, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.SKIP, False, status, "importer@example.com")
     assert status.skipped_entities == 1
     assert any("Skipped existing tool" in msg for msg in status.warnings)
 
@@ -1885,8 +1889,8 @@ async def test_process_tool_conflict_update_found(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
-    import_service.tool_service.update_tool.assert_called_with(mock_db, "t1", ANY)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
+    import_service.tool_service.update_tool.assert_called_with(mock_db, "t1", ANY, user_email="importer@example.com")
     assert status.updated_entities == 1
 
 
@@ -1902,7 +1906,7 @@ async def test_process_tool_conflict_update_not_found(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
     import_service.tool_service.list_tools.return_value = ([], None)
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.skipped_entities == 1
     assert any("Could not find existing tool to update" in msg for msg in status.warnings)
@@ -1921,7 +1925,7 @@ async def test_process_tool_conflict_update_error(import_service, mock_db):
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
     import_service.tool_service.update_tool.side_effect = Exception("update failed")
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.skipped_entities == 1
     assert any("Could not update tool" in msg for msg in status.warnings)
@@ -1938,7 +1942,7 @@ async def test_process_tool_conflict_rename(import_service, mock_db):
     }
     import_service.tool_service.register_tool.side_effect = [ToolNameConflictError("tool1"), None]
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.RENAME, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.RENAME, False, status, "importer@example.com")
     assert import_service.tool_service.register_tool.call_count == 2
     assert status.created_entities == 1
     assert any("Renamed tool" in msg for msg in status.warnings)
@@ -1956,7 +1960,7 @@ async def test_process_tool_conflict_fail(import_service, mock_db):
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
 
     with pytest.raises(ImportError) as exc:
-        await import_service._process_tool(mock_db, tool_data, ConflictStrategy.FAIL, False, status)
+        await import_service._process_tool(mock_db, tool_data, ConflictStrategy.FAIL, False, status, "importer@example.com")
     assert "Tool name conflict" in str(exc.value)
 
 
@@ -2290,7 +2294,7 @@ async def test_process_server_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}}
 
     import_service.tool_service.list_tools.return_value = ([], None)
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("existing_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("existing_server", server_id="srv-1")
     mock_server = MagicMock()
     mock_server.name = "existing_server"
     mock_server.id = "srv-1"
@@ -2309,8 +2313,8 @@ async def test_process_server_update_exception(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}}
 
     import_service.tool_service.list_tools.return_value = ([], None)
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("err_server")
-    import_service.server_service.list_servers.side_effect = Exception("DB error")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("err_server", server_id="srv-1")
+    import_service.server_service.update_server.side_effect = Exception("DB error")
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -2572,7 +2576,7 @@ async def test_process_tool_success_increments_created(import_service, mock_db):
     status = ImportStatus("tool-ok-1")
     tool_data = {"name": "tool_ok", "url": "http://example.com", "integration_type": "REST", "request_type": "GET"}
 
-    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status, "importer@example.com")
 
     assert status.created_entities == 1
     import_service.tool_service.register_tool.assert_awaited_once()
@@ -2697,6 +2701,39 @@ async def test_convert_to_server_update_resolves_tool_references(import_service,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_create_carries_instructions(import_service, mock_db, instructions):
+    """Instructions survive import; an empty string stays an empty override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    create = await import_service._convert_to_server_create(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert create.instructions == instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, "", "Call get_system_time first."])
+async def test_convert_to_server_update_carries_instructions(import_service, mock_db, instructions):
+    """An exported instructions value, including null and the empty string, reaches the update."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv", "instructions": instructions})
+
+    assert update.instructions == instructions
+    assert "instructions" in update.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_convert_to_server_update_without_instructions_leaves_override_unchanged(import_service, mock_db):
+    """An export that has no instructions key must not clear a stored override."""
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    update = await import_service._convert_to_server_update(mock_db, {"name": "srv"})
+
+    assert "instructions" not in update.model_fields_set
+
+
+@pytest.mark.asyncio
 async def test_analyze_import_item_handles_service_exception(import_service, mock_db):
     import_service.tool_service.list_tools.side_effect = Exception("boom")
     result = await import_service._analyze_import_item(mock_db, "tools", {"name": "tool1"})
@@ -2804,6 +2841,38 @@ async def test_assign_imported_items_to_team_personal_team_missing_returns(impor
 
 
 @pytest.mark.asyncio
+async def test_assign_imported_items_to_team_invalidates_catalog_caches(import_service):
+    # First-Party
+    from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
+
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = SimpleNamespace(id="team-1", name="Personal Team")
+    orphan = SimpleNamespace(team_id=None, owner_email=None, visibility=None, federation_source="")
+    orphan_query = MagicMock()
+    orphan_query.filter.return_value = orphan_query
+    orphan_query.all.return_value = [orphan]
+    empty_query = MagicMock()
+    empty_query.filter.return_value = empty_query
+    empty_query.all.return_value = []
+    user_query = MagicMock()
+    user_query.filter.return_value.first.return_value = user
+    queries = {EmailUser: user_query, Tool: orphan_query, Server: empty_query, Resource: empty_query, Prompt: empty_query, Gateway: empty_query, A2AAgent: empty_query}
+    db = MagicMock()
+    db.query.side_effect = lambda model: queries[model]
+    cache = AsyncMock()
+
+    with patch("mcpgateway.cache.registry_cache.get_registry_cache", return_value=cache):
+        await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+
+    db.commit.assert_called_once()
+    cache.invalidate_tools.assert_awaited_once()
+    cache.invalidate_resources.assert_awaited_once()
+    cache.invalidate_prompts.assert_awaited_once()
+    cache.invalidate_servers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_assign_imported_items_to_team_assigns_and_commits(import_service):
     # First-Party
     from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
@@ -2905,6 +2974,92 @@ async def test_process_tools_bulk_restores_original_description(import_service, 
     call_kwargs = import_service.tool_service.register_tools_bulk.call_args[1]
     assert call_kwargs["import_batch_id"] is not None
     assert call_kwargs["created_via"] == "import"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("personal_team_id", [None, "trusted-personal-team"])
+@pytest.mark.parametrize(
+    ("entity_type", "service_name", "method_name", "entity"),
+    [
+        ("tools", "tool_service", "register_tools_bulk", {"name": "importtool", "url": "https://api.example.com/tool", "integration_type": "REST"}),
+        ("resources", "resource_service", "register_resources_bulk", {"name": "importresource", "uri": "resource://import/doc", "content": "hello"}),
+        ("prompts", "prompt_service", "register_prompts_bulk", {"name": "importprompt", "template": "Hello", "arguments": []}),
+    ],
+)
+async def test_bulk_imports_use_importer_team_and_ignore_payload_scope(import_service, mock_db, personal_team_id, entity_type, service_name, method_name, entity):
+    """Bulk imports use the authenticated importer's personal team and preserve NULL when no team exists."""
+    actor = "importer@example.com"
+    user = MagicMock()
+    user.email = actor
+    user.get_personal_team.return_value = SimpleNamespace(id=personal_team_id, name="Personal Team") if personal_team_id else None
+    mock_db.query.return_value.filter.return_value.first.return_value = user
+    register = getattr(getattr(import_service, service_name), method_name)
+    register.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    payload = {**entity, "team_id": "untrusted-team", "owner_email": "other@example.com", "visibility": "public"}
+    status = ImportStatus("import-team-audit")
+
+    await import_service._process_entities(
+        db=mock_db,
+        entity_type=entity_type,
+        entity_list=[payload],
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by=actor,
+    )
+
+    call = register.await_args.kwargs
+    assert call["team_id"] == personal_team_id
+    assert call["created_by"] == actor
+    assert call["created_via"] == "import"
+    assert call[entity_type][0].team_id is None
+    assert call[entity_type][0].owner_email is None
+    assert "owner_email" not in call
+    assert "visibility" not in call
+    assert payload["team_id"] == "untrusted-team"
+    assert status.created_entities == 1
+    assert status.errors == []
+    user.get_personal_team.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("personal_team_id", [None, "trusted-personal-team"])
+@pytest.mark.parametrize("rename", [False, True])
+async def test_server_import_creation_and_rename_use_trusted_ownership(import_service, mock_db, personal_team_id, rename):
+    """Server creation and rename receive trusted ownership before registration and reject payload ownership."""
+    actor = "importer@example.com"
+    context = {"team_id": personal_team_id, "user_email": actor} if personal_team_id else None
+    import_service._get_user_context = AsyncMock(return_value=context)
+    if rename:
+        import_service.server_service.register_server.side_effect = [ServerNameConflictError("importserver", server_id="existing-id"), MagicMock()]
+    status = ImportStatus("server-import-team")
+
+    await import_service._process_entities(
+        mock_db,
+        entity_type="servers",
+        entity_list=[{"name": "importserver", "team_id": "untrusted-team", "owner_email": "other@example.com", "visibility": "public"}],
+        conflict_strategy=ConflictStrategy.RENAME,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by=actor,
+    )
+
+    assert status.created_entities == 1
+    assert status.failed_entities == 0, status.errors
+    calls = import_service.server_service.register_server.await_args_list
+    assert len(calls) == (2 if rename else 1)
+    for call in calls:
+        assert call.kwargs.get("team_id") == personal_team_id
+        assert call.kwargs.get("owner_email", actor) == actor
+        assert call.kwargs.get("visibility", "public") == ("team" if personal_team_id else "public")
+        assert call.kwargs["created_by"] == actor
+        assert call.args[1].team_id is None
+        assert call.args[1].owner_email is None
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio
