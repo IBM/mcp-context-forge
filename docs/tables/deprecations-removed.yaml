@@ -10,10 +10,10 @@
 - Interface: "Rust MCP and A2A runtime sidecars"
   Removed: "2026-10-29 (EPIC #5817)"
   Notes: >-
-    Deprecated on 2026-06-11. The runtime proxies, mode-selection settings,
-    Rust build jobs, MCP crate, and Cargo workspace are removed.
-    Use the Python MCP transport and Python A2A invocation path. Remove old
-    Rust runtime settings and sidecars from deployments. See
-    [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md).
-    Deployment cleanup remains tracked in
-    [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
+    Deprecated on 2026-06-11. Runtime proxies, configuration, crates, build
+    targets, and internal sidecar handlers are removed. Python affinity retains
+    `/_internal/mcp/rpc`, its HMAC, forwarded auth context, and authorization
+    checks. The external Rust dataplane, `DATAPLANE_PUBLISHER`, and
+    `/contextforge-rs` remain separate. See
+    [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md) and the
+    [removal notice](architecture/rust-mcp-runtime.md).
