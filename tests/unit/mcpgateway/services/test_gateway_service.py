@@ -2242,6 +2242,18 @@ class TestGatewayService:
         assert GatewayService._discovery_result_is_unusable(MagicMock(oauth_config=None), [], [], []) is False
 
     @pytest.mark.asyncio
+    async def test_discovery_result_is_unusable_covers_auth_code_short_circuit(self):
+        """An empty result from an authorization_code gateway never drives stale cleanup.
+
+        ``_initialize_gateway`` returns empty catalog lists for authorization_code
+        gateways unless ``oauth_auto_fetch_tool_flag`` is set, so an empty result
+        means "we did not ask", not "the upstream catalog is empty" (issue #7512).
+        """
+        auth_code_gateway = MagicMock(oauth_config={"grant_type": "authorization_code"})
+        assert GatewayService._discovery_result_is_unusable(auth_code_gateway, [], [], []) is True
+        assert GatewayService._discovery_result_is_unusable(auth_code_gateway, [MagicMock()], [], []) is False
+
+    @pytest.mark.asyncio
     async def test_update_gateway_token_exchange_description_only_keeps_tools(self, gateway_service, mock_gateway, test_db):
         """A description-only update of a token-exchange gateway keeps every discovered tool."""
         self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "token-exchange", "target_audience": "mcp", "token_url": "https://as.example.com/token"})
@@ -2254,6 +2266,33 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
 
         assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_authorization_code_description_only_keeps_tools(self, gateway_service, mock_gateway, test_db):
+        """An edit of a populated authorization_code gateway keeps its tools and virtual-server associations.
+
+        Regression test for #7512: ``_initialize_gateway`` short-circuits with empty
+        lists for authorization_code gateways (``oauth_auto_fetch_tool_flag`` defaults
+        to False), and the update reconciliation must not treat that empty result as an
+        authoritative empty catalog and prune the stored tools plus their
+        ``server_tool_association`` rows.
+        """
+        self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "authorization_code", "client_id": "cid", "authorization_url": "https://as.example.com/authorize", "token_url": "https://as.example.com/token", "redirect_uri": "https://app.example.com/oauth/callback"})
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)] + [Mock()] * 10)
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
+
+        assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
+        # A cosmetic edit whose discovery result is unusable must not delete catalog
+        # rows or sever virtual-server (server_tool_association) links.
+        deleted_tables = [getattr(stmt.table, "name", None) for stmt in (call.args[0] for call in test_db.execute.call_args_list if call.args) if isinstance(stmt, Delete)]
+        assert deleted_tables == []
         test_db.commit.assert_called_once()
 
     _TE_STORED = {"grant_type": "token-exchange", "client_id": "cid", "token_url": "https://as.example.com/token", "target_audience": "mcp"}

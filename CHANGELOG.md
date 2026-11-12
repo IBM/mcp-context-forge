@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- **Updating an OAuth authorization_code gateway keeps its tools** ([#7512](https://github.com/IBM/mcp-context-forge/issues/7512)) - Editing an authorization_code gateway no longer deletes its tools, resources, prompts, and their virtual-server associations. The update path re-initializes without `oauth_auto_fetch_tool_flag`, so initialization short-circuits with empty catalog lists for these gateways, and reconciliation pruned the stored catalog against that empty result. An empty result from an authorization_code gateway now always skips stale cleanup — it means "discovery was skipped or unauthorized", not "the upstream catalog is empty" — and the reactivation guard shares the same predicate so the reconciliation call sites cannot drift.
+
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
 
 - **Stale catalog lists after writes** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Resource, prompt, and server create, gateway update, delete, and ownership transfer, import team assignment, and gRPC service tool changes now invalidate the registry cache. Before, lists stayed stale for up to the cache TTL.
