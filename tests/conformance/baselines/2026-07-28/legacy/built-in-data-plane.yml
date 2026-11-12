@@ -31,3 +31,11 @@ findings:
   check: sep-2575-http-server-error-jsonrpc-id
   name: HttpServerErrorJsonrpcId
   status: FAILURE
+- scenario: server-stateless
+  check: sep-2575-server-sends-prompts-list-changed-on-subscription
+  name: ServerSendsPromptsListChangedOnSubscription
+  status: WARNING
+- scenario: server-stateless
+  check: sep-2575-server-sends-tools-list-changed-on-subscription
+  name: ServerSendsToolsListChangedOnSubscription
+  status: WARNING

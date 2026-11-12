@@ -138,7 +138,7 @@ make testing-down
 
 ## Host Tuning
 
-For 500+ concurrent users, tune the host OS first. See [Performance Testing](performance.md#host-tcp-tuning-for-load-testing) for TCP, file descriptor, and memory settings, or run:
+For 500+ concurrent users, tune the host OS first. See [Performance Testing](https://github.com/IBM/mcp-context-forge/blob/main/tests/performance/performance.md#-host-tcp-tuning-for-load-testing) for TCP, file descriptor, and memory settings, or run:
 
 ```bash
 sudo scripts/tune-loadtest.sh

@@ -14,20 +14,26 @@ This comprehensive guide covers all aspects of testing ContextForge, from unit t
 
 ## Quick Start
 
+Use `uv run rstest` or the Makefile test targets. `.python-version` selects Python 3.14.
+Use `uv run --python 3.12 rstest --python 3.12` to check the minimum supported interpreter.
+The runner preserves file order and groups startup-sensitive files before other tests on their worker.
+Tests marked `serial` run exclusively after the parallel phase.
+Coverage commands generate XML by default. Use `make htmlcov` to request an HTML report.
+
 ```bash
 # Complete test suite with coverage
-make doctest test htmlcov
+make doctest test coverage
 
 # Quick smoke test
 make smoketest
 
 # Full quality check pipeline
-make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
+make doctest test coverage smoketest lint-web bandit interrogate pylint verify
 ```
 
 ## Prerequisites
 
-- **Python 3.11+** (3.10 minimum)
+- **Python 3.14** by default; Python 3.12 and 3.13 remain supported
 - **uv** (recommended) or pip/virtualenv
 - **Docker/Podman** (for container tests)
 - **Make** (for automation)
@@ -55,10 +61,10 @@ Fast, isolated tests for individual components.
 make test
 
 # Run specific module tests
-pytest tests/unit/mcpgateway/test_config.py -v
+rstest tests/unit/mcpgateway/test_config.py -v
 
 # Run with coverage
-pytest --cov=mcpgateway --cov-report=term-missing tests/unit/
+rstest --cov=mcpgateway --cov-report=xml tests/unit/
 ```
 
 ### 2. Integration Tests (`tests/integration/`)
@@ -66,10 +72,10 @@ Tests for API endpoints and service interactions.
 
 ```bash
 # Run integration tests
-pytest tests/integration/ -v
+rstest tests/integration/ -v
 
 # Test specific endpoints
-pytest tests/integration/test_api.py::test_tools_endpoint -v
+rstest tests/integration/test_api.py::test_tools_endpoint -v
 ```
 
 ### 3. End-to-End Tests (`tests/e2e/`)
@@ -77,7 +83,7 @@ Complete workflow tests with real services.
 
 ```bash
 # Run E2E tests
-pytest tests/e2e/ -v
+rstest tests/e2e/ -v
 
 # Container-based smoke test
 make smoketest
@@ -88,7 +94,7 @@ Security validation and vulnerability testing.
 
 ```bash
 # Security test suite
-pytest tests/security/ -v
+rstest tests/security/ -v
 
 # Static security analysis
 make bandit
@@ -130,7 +136,7 @@ Asynchronous operation and WebSocket testing.
 
 ```bash
 # Run async tests
-pytest tests/async/ -v --async-mode=auto
+rstest tests/async/ -v --async-mode=auto
 ```
 
 ### 7. Fuzz Tests (`tests/fuzz/`)
@@ -138,10 +144,10 @@ Property-based and fuzz testing for robustness.
 
 ```bash
 # Run fuzz tests
-pytest tests/fuzz/ -v
+rstest tests/fuzz/ -v
 
 # With hypothesis settings
-pytest tests/fuzz/ --hypothesis-show-statistics
+rstest tests/fuzz/ --hypothesis-show-statistics
 ```
 
 ### 8. Migration Tests (`tests/migration/`)
@@ -149,10 +155,10 @@ Database migration and upgrade testing.
 
 ```bash
 # Test migrations
-pytest tests/migration/ -v
+rstest tests/migration/ -v
 
 # Test specific migration
-pytest tests/migration/test_v0_7_0_migration.py -v
+rstest tests/migration/test_v0_7_0_migration.py -v
 ```
 
 ## Running Tests
@@ -161,7 +167,7 @@ pytest tests/migration/test_v0_7_0_migration.py -v
 
 ```bash
 # Full test suite (recommended before commits)
-make doctest test htmlcov smoketest
+make doctest test coverage smoketest
 
 # Quick validation
 make test
@@ -193,17 +199,17 @@ make interrogate
 source ~/.venv/mcpgateway/bin/activate
 
 # Run tests matching a pattern
-pytest -k "test_auth" -v
+rstest -k "test_auth" -v
 
 # Run tests with specific markers
-pytest -m "asyncio" -v
-pytest -m "not slow" -v
+rstest -m "asyncio" -v
+rstest -m "not slow" -v
 
 # Run failed tests from last run
-pytest --lf -v
+rstest --lf -v
 
 # Run tests in parallel
-pytest -n auto tests/unit/
+rstest -n auto tests/unit/
 ```
 
 ### Testing Individual Files
@@ -211,14 +217,14 @@ pytest -n auto tests/unit/
 ```bash
 # Test a specific file with coverage
 . .venv/bin/activate
-pytest --cov-report=annotate tests/unit/mcpgateway/test_translate.py
+rstest --cov-report=xml tests/unit/mcpgateway/test_translate.py
 
 # Test with detailed output
-pytest -vvs tests/unit/mcpgateway/services/test_gateway_service.py
+rstest -vvs tests/unit/mcpgateway/services/test_gateway_service.py
 
 # Test specific class or method
-pytest tests/unit/mcpgateway/test_config.py::TestSettings -v
-pytest tests/unit/mcpgateway/test_auth.py::test_jwt_creation -v
+rstest tests/unit/mcpgateway/test_config.py::TestSettings -v
+rstest tests/unit/mcpgateway/test_auth.py::test_jwt_creation -v
 ```
 
 ## Coverage Reports
@@ -241,17 +247,17 @@ xdg-open docs/docs/coverage/index.html  # Linux
 make coverage
 
 # Detailed line-by-line coverage
-pytest --cov=mcpgateway --cov-report=term-missing tests/
+rstest --cov=mcpgateway --cov-report=xml tests/
 
 # Coverage for specific modules
-pytest --cov=mcpgateway.services --cov-report=term tests/unit/mcpgateway/services/
+rstest --cov=mcpgateway.services --cov-report=term tests/unit/mcpgateway/services/
 ```
 
 ### Coverage Thresholds
 
 ```bash
 # Enforce minimum coverage (fails if below 80%)
-pytest --cov=mcpgateway --cov-fail-under=80 tests/
+rstest --cov=mcpgateway --cov-fail-under=80 tests/
 
 # Check coverage trends
 coverage report --show-missing
@@ -355,7 +361,7 @@ def test_name_validation(name):
 make test
 
 # PostgreSQL
-DATABASE_URL=postgresql://user:pass@localhost/test_mcp make test
+DATABASE_URL=postgresql://user:pass@localhost/test_mcp make test # pragma: allowlist secret
 ```
 
 ### Testing with Different Configurations
@@ -384,11 +390,10 @@ hey -n 1000 -c 10 -H "Authorization: Bearer $TOKEN" http://localhost:4444/health
 
 ```bash
 # Run tests with profiling
-pytest --profile tests/unit/
+rstest --doctor tests/unit/
 
 # Generate profile report
-python -m cProfile -o profile.stats $(which pytest) tests/
-python -m pstats profile.stats
+rstest --doctor --doctor-json=profile.json tests/
 ```
 
 ## Continuous Integration
@@ -405,7 +410,7 @@ Tests run automatically on:
 - name: Run test suite
   run: |
     make venv install-dev
-    make doctest test htmlcov
+    make doctest test coverage
     make smoketest
 ```
 
@@ -428,13 +433,13 @@ git commit --no-verify
 
 ```bash
 # Maximum verbosity
-pytest -vvs tests/unit/
+rstest -vvs tests/unit/
 
 # Show print statements
-pytest -s tests/unit/
+rstest -s tests/unit/
 
 # Show local variables on failure
-pytest -l tests/unit/
+rstest -l tests/unit/
 ```
 
 ### Interactive Debugging
@@ -449,20 +454,20 @@ def test_complex_logic():
 
 ```bash
 # Run with pdb on failure
-pytest --pdb tests/unit/
+rstest --pdb tests/unit/
 
 # Run with ipdb (if installed)
-pytest --pdbcls=IPython.terminal.debugger:TerminalPdb tests/unit/
+rstest --pdbcls=IPython.terminal.debugger:TerminalPdb tests/unit/
 ```
 
 ### Test Logs
 
 ```bash
 # Capture logs during tests
-pytest --log-cli-level=DEBUG tests/unit/
+rstest --log-cli-level=DEBUG tests/unit/
 
 # Save logs to file
-pytest --log-file=test.log --log-file-level=DEBUG tests/unit/
+rstest --log-file=test.log --log-file-level=DEBUG tests/unit/
 ```
 
 ## Troubleshooting
@@ -485,7 +490,7 @@ rm -f test_mcp.db
 alembic upgrade head
 
 # Use in-memory database for tests
-DATABASE_URL=sqlite:///:memory: pytest tests/unit/
+DATABASE_URL=sqlite:///:memory: rstest tests/unit/
 ```
 
 #### 3. Async Test Issues
@@ -494,7 +499,7 @@ DATABASE_URL=sqlite:///:memory: pytest tests/unit/
 pip install pytest-asyncio pytest-aiohttp
 
 # Use proper event loop scope
-pytest --asyncio-mode=auto tests/async/
+rstest --asyncio-mode=auto tests/async/
 ```
 
 #### 4. Coverage Not Updating
@@ -518,14 +523,11 @@ BROWSER=firefox make test-ui
 ### Test Isolation
 
 ```bash
-# Run tests in random order to detect dependencies
-pytest --random-order tests/unit/
-
-# Run each test in a subprocess
-pytest --forked tests/unit/
+# Run selected files sequentially when debugging shared state
+rstest -n 0 tests/unit/
 
 # Clear cache between runs
-pytest --cache-clear tests/
+rstest --cache-clear tests/
 ```
 
 ## Best Practices

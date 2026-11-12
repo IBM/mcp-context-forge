@@ -415,8 +415,7 @@ as shown; it cannot be made certificate-aware from outside the image.
 
 The bundled nginx TLS profile terminates TLS at nginx and proxies **plain HTTP** to the gateway, so
 gateway-side `CA_CERTS` / `CERT_REQS` have no effect there and enabling them will break the nginx
-upstream. The same applies to the optional Rust MCP runtime, whose backend URL defaults to plain
-HTTP loopback. For enforced mTLS in front of the nginx stack, configure `ssl_client_certificate` and
+upstream. For enforced mTLS in front of the nginx stack, configure `ssl_client_certificate` and
 `ssl_verify_client` on nginx instead.
 
 !!! note "No revocation checking"

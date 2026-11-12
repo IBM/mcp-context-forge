@@ -44,6 +44,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -672,6 +673,11 @@ class ServerService(BaseService):
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
+            notify_dataplane()
+
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
@@ -698,10 +704,11 @@ class ServerService(BaseService):
                 action="create_server",
                 resource_type="server",
                 resource_id=db_server.id,
+                team_id=db_server.team_id,
                 details={
                     "server_name": db_server.name,
                     "visibility": visibility,
-                    "team_id": team_id,
+                    "team_id": db_server.team_id,
                     "associated_tools_count": len(db_server.tools),
                     "associated_resources_count": len(db_server.resources),
                     "associated_prompts_count": len(db_server.prompts),
@@ -1454,6 +1461,7 @@ class ServerService(BaseService):
 
             db.commit()
             db.refresh(server)
+            notify_dataplane()
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
@@ -1488,6 +1496,7 @@ class ServerService(BaseService):
                 action="update_server",
                 resource_type="server",
                 resource_id=server.id,
+                team_id=server.team_id,
                 details={
                     "server_name": server.name,
                     "changes": ", ".join(changes) if changes else "metadata only",
@@ -1649,6 +1658,7 @@ class ServerService(BaseService):
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
+                notify_dataplane()
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -1667,6 +1677,7 @@ class ServerService(BaseService):
                     action="activate_server" if activate else "deactivate_server",
                     resource_type="server",
                     resource_id=server.id,
+                    team_id=server.team_id,
                     details={
                         "server_name": server.name,
                         "new_status": "active" if activate else "inactive",
@@ -1764,12 +1775,14 @@ class ServerService(BaseService):
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
+            server_team_id = server.team_id
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
                     delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
                     delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
             db.delete(server)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
@@ -1795,6 +1808,7 @@ class ServerService(BaseService):
                 action="delete_server",
                 resource_type="server",
                 resource_id=server_info["id"],
+                team_id=server_team_id,
                 details={
                     "server_name": server_info["name"],
                 },

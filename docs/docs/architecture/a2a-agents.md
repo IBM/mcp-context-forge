@@ -21,6 +21,8 @@ Agents can be invoked via:
 - `/a2a/{agent_name}/invoke` - Invoke by name
 - `/a2a/agents/{agent_id}/invoke` - Invoke by ID
 
+`POST /v1/a2a/{agent_id}/test` sends a test message to an agent. `A2AAgentService.test_agent()` selects the test parameters and classifies the outcome as 404, 502, 422, or 500 with a fixed `error` message. The Admin UI test route calls the same method. See [A2A Integration](../using/agents/a2a.md#3-test-the-agent) for the error contract.
+
 ---
 
 ## Passthrough Headers

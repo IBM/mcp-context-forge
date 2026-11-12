@@ -54,6 +54,9 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 20
 
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
     # Build the package under multiple Python versions to catch ABI issues early
     strategy:
       matrix:

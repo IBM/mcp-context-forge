@@ -159,6 +159,15 @@ def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> s
     return resp.json()["access_token"]
 
 
+def _skip_if_keycloak_trusted_for_api_auth(admin_api: APIRequestContext) -> None:
+    """Skip when the gateway accepts Keycloak tokens on non-OAuth paths (SSO_API_TOKEN_AUTH_ENABLED plus a trusted keycloak provider, #7435)."""
+    if os.getenv("SSO_API_TOKEN_AUTH_ENABLED", "false").strip().lower() not in ("1", "true", "yes"):
+        return
+    resp = admin_api.get("/auth/sso/admin/providers/keycloak")
+    if resp.status == 200 and resp.json().get("trusted_for_api_auth"):
+        pytest.skip("Keycloak is trusted for API auth: trusted-provider tokens are accepted on non-OAuth paths (#7435)")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -321,14 +330,16 @@ class TestOAuthJWKSVerification:
         assert status != 403, "Valid Keycloak JWT should not be forbidden"
         logger.info("Valid Keycloak JWT accepted (status=%d)", status)
 
-    def test_non_oauth_server_rejects_keycloak_jwt(self, playwright: Playwright, non_oauth_server: dict, cf_test_user: str):
+    def test_non_oauth_server_rejects_keycloak_jwt(self, playwright: Playwright, admin_api: APIRequestContext, non_oauth_server: dict, cf_test_user: str):
         """Keycloak JWT on a server without oauth_enabled is rejected."""
+        _skip_if_keycloak_trusted_for_api_auth(admin_api)
         kc_token = _get_keycloak_token(cf_test_user)
         status = _mcp_request(playwright, non_oauth_server["id"], kc_token)
         assert status == 401, f"Non-OAuth server should reject IdP token, got {status}"
 
-    def test_wrong_issuer_rejected(self, playwright: Playwright, wrong_issuer_server: dict, cf_test_user: str):
+    def test_wrong_issuer_rejected(self, playwright: Playwright, admin_api: APIRequestContext, wrong_issuer_server: dict, cf_test_user: str):
         """Keycloak JWT is rejected when issuer is not in the server's allowlist."""
+        _skip_if_keycloak_trusted_for_api_auth(admin_api)
         kc_token = _get_keycloak_token(cf_test_user)
         status = _mcp_request(playwright, wrong_issuer_server["id"], kc_token)
         assert status == 401, f"Wrong issuer should be rejected, got {status}"

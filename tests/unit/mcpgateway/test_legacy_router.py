@@ -195,9 +195,10 @@ class TestBuildLegacyRouterGroupC:
         v = build_legacy_router(_settings(mcpgateway_a2a_enabled=True), **_required_kwargs())
         assert "/sentinel-a2a" in _route_paths(v)
 
-    def test_a2a_router_excluded_when_disabled(self):
+    def test_a2a_router_still_mounted_when_disabled(self):
+        """The router stays mounted so its dependency can answer with the typed a2a_disabled 404."""
         v = build_legacy_router(_settings(mcpgateway_a2a_enabled=False), **_required_kwargs())
-        assert "/sentinel-a2a" not in _route_paths(v)
+        assert "/sentinel-a2a" in _route_paths(v)
 
     def _observability_mock(self):
         """Fake observability module exposing both the gated router and the always-mounted metrics one."""

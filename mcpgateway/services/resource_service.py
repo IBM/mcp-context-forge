@@ -32,12 +32,13 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
 import httpx2
 from mcp import ClientSession
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
@@ -49,7 +50,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, without_progress_token
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
@@ -65,6 +66,7 @@ from mcpgateway.observability import create_span, set_span_attribute, set_span_e
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
@@ -76,6 +78,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.token_exchange_actor import invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -105,8 +108,40 @@ except ImportError:
     PLUGINS_AVAILABLE = False
 
 
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+
+# Each honored URI holds one upstream stream; bound what one listen request can open.
+MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
+
+
+def _standing_stream_can_reach(gateway: DbGateway) -> bool:
+    """Return whether a standing upstream stream reaches ``gateway`` with its stored headers alone.
+
+    SSE is legacy-only. OAuth needs a per-user token. Query-parameter auth, a private CA,
+    and mTLS need connection setup that the relay client does not perform.
+
+    Args:
+        gateway: Registered upstream server row.
+
+    Returns:
+        bool: True when the resource subscription relay can watch this upstream.
+
+    Examples:
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="bearer"))
+        True
+        >>> _standing_stream_can_reach(DbGateway(transport="SSE"))
+        False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", client_cert="pem"))
+        False
+    """
+    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param"):
+        return False
+    return not (gateway.ca_certificate or gateway.client_cert)
 
 
 def _get_registry_cache():
@@ -134,10 +169,19 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadResourceRequest":
-    """Build a ReadResourceRequest that carries _meta."""
+def _build_read_resource_request(uri: Any, meta_data: Optional[Dict[str, Any]] = None) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta when metadata is given.
+
+    Args:
+        uri: The resource URI to read.
+        meta_data: Optional metadata to place in the request ``_meta``.
+
+    Returns:
+        The request to send upstream.
+    """
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
-    _rp_dict["_meta"] = meta_data
+    if meta_data:
+        _rp_dict["_meta"] = meta_data
     return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
@@ -162,12 +206,26 @@ def set_upstream_cache_directive(result: Any) -> None:
     upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
-async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
-    """Dispatch read_resource and inject _meta when metadata is provided."""
-    if meta_data:
+async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]], progress_callback: ProgressFnT | None = None) -> Any:
+    """Dispatch read_resource, injecting _meta and relaying upstream progress when requested.
+
+    The client's progress token never goes upstream. When a callback is set, the SDK stamps its own token.
+
+    Args:
+        session: The upstream client session.
+        uri: The resource URI to read.
+        meta_data: Optional metadata to place in the request ``_meta``.
+        progress_callback: Optional callback that receives upstream progress notifications.
+
+    Returns:
+        The upstream ``ReadResourceResult``.
+    """
+    meta_data = without_progress_token(meta_data)
+    if meta_data or progress_callback:
         return await session.send_request(
             _build_read_resource_request(uri, meta_data),
             types.ReadResourceResult,
+            progress_callback=progress_callback,
         )
     return await session.read_resource(uri=uri)
 
@@ -713,6 +771,9 @@ class ResourceService(BaseService):
             db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
+            notify_dataplane()
+
+            await _get_registry_cache().invalidate_resources()
 
             # Notify subscribers
             await self._notify_resource_added(db_resource)
@@ -957,6 +1018,8 @@ class ResourceService(BaseService):
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
+        catalog_changed = False
+
         for chunk_start in range(0, len(resources), chunk_size):
             chunk = resources[chunk_start : chunk_start + chunk_size]
 
@@ -1137,8 +1200,16 @@ class ResourceService(BaseService):
                 if resources_to_add:
                     db.add_all(resources_to_add)
 
+                audit_counts: dict[str | None, dict[str, int]] = {}
+                for operation, db_resources in (("created", resources_to_add), ("updated", resources_to_update)):
+                    for db_resource in db_resources:
+                        counts = audit_counts.setdefault(db_resource.team_id, {"created": 0, "updated": 0})
+                        counts[operation] += 1
+
                 # Commit the chunk
                 db.commit()
+                notify_dataplane()
+                catalog_changed = catalog_changed or bool(resources_to_add or resources_to_update)
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
@@ -1146,21 +1217,20 @@ class ResourceService(BaseService):
                     # Notify subscribers
                     await self._notify_resource_added(db_resource)
 
-                # Log bulk audit trail entry
-                if resources_to_add or resources_to_update:
+                for audit_team_id, counts in audit_counts.items():
                     audit_trail.log_action(
                         user_id=created_by or "system",
-                        action="bulk_create_resources" if resources_to_add else "bulk_update_resources",
+                        action="bulk_create_resources" if counts["created"] else "bulk_update_resources",
                         resource_type="resource",
                         resource_id=import_batch_id or "bulk_operation",
-                        resource_name=f"Bulk operation: {len(resources_to_add)} created, {len(resources_to_update)} updated",
+                        resource_name=f"Bulk operation: {counts['created']} created, {counts['updated']} updated",
                         user_email=owner_email,
-                        team_id=team_id,
+                        team_id=audit_team_id,
                         client_ip=created_from_ip,
                         user_agent=created_user_agent,
                         new_values={
-                            "resources_created": len(resources_to_add),
-                            "resources_updated": len(resources_to_update),
+                            "resources_created": counts["created"],
+                            "resources_updated": counts["updated"],
                             "visibility": visibility,
                         },
                         context={
@@ -1179,6 +1249,9 @@ class ResourceService(BaseService):
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
+
+        if catalog_changed:
+            await _get_registry_cache().invalidate_resources()
 
         # Final structured logging
         structured_logger.log(
@@ -1778,6 +1851,7 @@ class ResourceService(BaseService):
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1821,6 +1895,8 @@ class ResourceService(BaseService):
             request_headers (Optional[Dict[str, str]]):
                 Inbound request headers. Required for token-exchange gateways to resolve
                 the RFC 8693 subject_token from the caller's Authorization bearer.
+            progress_callback (ProgressFnT | None):
+                Optional callback that receives upstream progress notifications for the read.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` when
@@ -2116,21 +2192,34 @@ class ResourceService(BaseService):
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Token exchange requires an authenticated user JWT")
-                                else:
-                                    try:
-                                        access_token = await self.oauth_manager.get_access_token(
-                                            gateway_oauth_config,
-                                            ca_certificate=gateway.ca_certificate,
-                                            client_cert=gateway.client_cert,
-                                            client_key=gateway.client_key,
-                                            subject_token=subject_token,
-                                        )
-                                        headers["Authorization"] = f"Bearer {access_token}"
-                                    except Exception as e:
-                                        logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
-                                        if span:
-                                            set_span_attribute(span, "health.status", "unhealthy")
-                                            set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+                                try:
+                                    # No negative cache here: an actor acquisition failure fails the read (fail closed).
+                                    actor_token, actor_token_type = await resolve_actor_token(
+                                        self.oauth_manager,
+                                        gateway_oauth_config,
+                                        gateway_id=gateway_id,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                    )
+                                    access_token = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                        subject_token=subject_token,
+                                        actor_token=actor_token,
+                                        actor_token_type=actor_token_type,
+                                    )
+                                except Exception as e:
+                                    logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
+                                    await invalidate_actor_token(gateway_id, gateway_oauth_config, e)
+                                    if span:
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+                                headers["Authorization"] = f"Bearer {access_token}"
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
@@ -2158,14 +2247,14 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity))
+                                headers.update(build_identity_headers(user_identity, gateway))
 
                         async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
-                                    resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None)
                                     set_upstream_cache_directive(resource_response)
                                     return _upstream_resource_content(resource_response)
                                 except Exception as exc:
@@ -2321,7 +2410,7 @@ class ResourceService(BaseService):
                                         timeout=settings.health_check_timeout,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as client:
-                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
                                         set_upstream_cache_directive(resource_response)
                                         return _upstream_resource_content(resource_response)
                             except Exception as e:
@@ -2383,6 +2472,7 @@ class ResourceService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
@@ -2401,6 +2491,7 @@ class ResourceService(BaseService):
             meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
             request_headers: Optional inbound request headers, forwarded to invoke_resource()
                 so token-exchange gateways can resolve the RFC 8693 subject_token.
+            progress_callback: Optional callback that receives upstream progress notifications, forwarded to invoke_resource().
 
         Returns:
             Resource content object
@@ -2657,7 +2748,7 @@ class ResourceService(BaseService):
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
-                                result = await _read_resource_with_meta(client.session, uri, meta_data)
+                                result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
                                 set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
@@ -2871,6 +2962,7 @@ class ResourceService(BaseService):
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
                             request_headers=request_headers,
+                            progress_callback=progress_callback,
                         )
                     except ResourceError:
                         if has_valid_cached_fallback:
@@ -3043,6 +3135,7 @@ class ResourceService(BaseService):
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -3184,6 +3277,54 @@ class ResourceService(BaseService):
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
+
+    async def resolve_subscription_targets(
+        self,
+        db: Session,
+        uris: Sequence[str],
+        *,
+        server_id: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, List["UpstreamResourceTarget"]]:
+        """Resolve which requested resource URIs a ``subscriptions/listen`` caller may watch.
+
+        A URI is honored when an enabled resource with that URI passes the caller's visibility check.
+        On a server-scoped path the resource must belong to that virtual server.
+        The resource must come from an enabled upstream server that a standing stream reaches with its stored headers alone.
+        Only the first ``MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN`` distinct requested URIs are considered.
+
+        Args:
+            db: Database session.
+            uris: Resource URIs from ``resourceSubscriptions``.
+            server_id: Virtual server ID for ``/servers/{id}/mcp``, or ``None``.
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
+
+        Returns:
+            Dict[str, List[UpstreamResourceTarget]]: Upstream targets per honored URI.
+        """
+        # First-Party
+        from mcpgateway.services.modern_listener_service import gateway_listen_headers  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+        wanted = list(dict.fromkeys(uris))[:MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN]
+        if not wanted:
+            return {}
+        query = select(DbResource).where(DbResource.uri.in_(wanted), DbResource.enabled.is_(True), DbResource.gateway_id.is_not(None))
+        if server_id:
+            query = query.join(server_resource_association, server_resource_association.c.resource_id == DbResource.id).where(server_resource_association.c.server_id == server_id)
+
+        targets: Dict[str, List[UpstreamResourceTarget]] = {}
+        for resource in db.execute(query).scalars().all():
+            gateway = resource.gateway
+            if gateway is None or not gateway.enabled or not _standing_stream_can_reach(gateway):
+                continue
+            if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
+                continue
+            headers = tuple(gateway_listen_headers(gateway).items())
+            targets.setdefault(resource.uri, []).append(UpstreamResourceTarget(gateway_id=gateway.id, url=gateway.url, uri=resource.uri, headers=headers))
+        return {uri: targets[uri] for uri in wanted if uri in targets}
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """
@@ -3466,6 +3607,7 @@ class ResourceService(BaseService):
                 resource.version = 1
             db.commit()
             db.refresh(resource)
+            notify_dataplane()
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -3731,6 +3873,7 @@ class ResourceService(BaseService):
 
             db.delete(resource)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()

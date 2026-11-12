@@ -40,6 +40,8 @@ def make_test_jwt(
     include_email_claim: bool = False,
     user_data: dict[str, Any] | None = None,
     extra_payload: dict[str, Any] | None = None,
+    token_use: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Create a standardized JWT for tests while preserving legacy helper semantics.
 
@@ -51,6 +53,10 @@ def make_test_jwt(
         payload["email"] = email
     if extra_payload:
         payload.update(extra_payload)
+    if token_use is not None:
+        payload["token_use"] = token_use
+    if user_id is not None:
+        payload["user_id"] = user_id
 
     # Auto-enable include_user_data when is_admin=True to ensure the claim is embedded
     if is_admin and not include_user_data and user_data is None:
