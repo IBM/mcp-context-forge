@@ -79,7 +79,6 @@ All container builds include a Node.js stage that compiles Tailwind CSS from sou
 |-------|-------|---------|
 | `frontend-builder` | `node:lts-alpine` | Builds the Admin UI Vite bundle (JS/CSS) |
 | `node-builder` | `ubi10/nodejs-24` | Compiles `tailwind.src.css` → `tailwind.min.css` |
-| `rust-builder` | `ubi10/ubi` | Builds optional Rust native extensions (`ENABLE_RUST=true`) |
 | `builder` | `ubi10/ubi` | Installs Python dependencies into a venv |
 | `runtime` | `ubi10-minimal` | Final runtime image |
 

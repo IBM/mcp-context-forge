@@ -778,6 +778,12 @@ export const editServer = async function (serverId) {
       descField.value = decodeHtml(server.description || "");
     }
 
+    const instructionsField = safeGetElement("edit-server-instructions");
+    if (instructionsField) {
+      instructionsField.value = server.instructions || "";
+      instructionsField.dataset.originalValue = instructionsField.value;
+    }
+
     const idField = safeGetElement("edit-server-id");
     if (idField) {
       idField.value = server.id || "";

@@ -45,8 +45,10 @@ from mcpgateway.config import settings
 from mcpgateway.main import app
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db, get_permission_service
 from mcpgateway.schemas import ToolAnnotations, ToolPreviewResponse, ToolPreviewTarget
+from mcpgateway.services.server_service import ServerNotFoundError
 from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError
 from mcpgateway.utils.verify_credentials import require_auth
+from tests.helpers.auth import make_test_jwt
 
 # ---------------------------------------------------------------------------
 # Local helpers
@@ -204,7 +206,8 @@ def _auth_client():
         app.dependency_overrides[rbac_get_db] = _override_get_db
 
         client = TestClient(app, raise_server_exceptions=False)
-        auth_headers = {"Authorization": "Bearer integration.test.token"}  # pragma: allowlist secret
+        token = make_test_jwt(email="integration-test-user@example.com", teams=None, is_admin=True)
+        auth_headers = {"Authorization": f"Bearer {token}"}
         yield client, auth_headers
 
         app.dependency_overrides.pop(require_auth, None)
@@ -274,6 +277,7 @@ class TestToolPreviewIntegration:
         assert response.status_code == 200
         call_kwargs = mock_preview.call_args.kwargs
         assert call_kwargs["arguments"] == {}
+        assert call_kwargs["server_id"] is None
 
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_empty_object_body_defaults_to_no_arguments(self, mock_preview, _auth_client):
@@ -285,6 +289,7 @@ class TestToolPreviewIntegration:
 
         assert response.status_code == 200
         assert mock_preview.call_args.kwargs["arguments"] == {}
+        assert mock_preview.call_args.kwargs["server_id"] is None
 
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_explicit_null_arguments_defaults_to_no_arguments(self, mock_preview, _auth_client):
@@ -297,6 +302,84 @@ class TestToolPreviewIntegration:
 
         assert response.status_code == 200
         assert mock_preview.call_args.kwargs["arguments"] == {}
+
+    @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_explicit_null_server_id_preserves_unscoped_preview(self, mock_preview, mock_ensure_server_access, _auth_client):
+        """An explicit null server_id preserves the existing unscoped behavior."""
+        client, auth_headers = _auth_client
+        mock_preview.return_value = _sample_local_response()
+
+        response = client.post(
+            "/tools/preview/get_weather",
+            json={"arguments": {"city": "London"}, "server_id": None},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert mock_preview.call_args.kwargs["server_id"] is None
+        mock_ensure_server_access.assert_not_awaited()
+
+    @pytest.mark.parametrize("server_id", ["", "   ", "a" * 37])
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_empty_server_id_returns_422(self, mock_preview, server_id, _auth_client):
+        """Empty, whitespace-only, and overlong IDs are rejected before service dispatch."""
+        client, auth_headers = _auth_client
+
+        response = client.post(
+            "/tools/preview/get_weather",
+            json={"arguments": {}, "server_id": server_id},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 422
+        mock_preview.assert_not_awaited()
+
+    @pytest.mark.parametrize("path", ["/tools/preview/get_weather", "/v1/tools/preview/get_weather"])
+    @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_scoped_preview_forwards_server_id_on_both_routes(
+        self,
+        mock_preview,
+        mock_ensure_server_access,
+        path,
+        _auth_client,
+    ):
+        """Both route prefixes verify and forward the requested virtual-server scope."""
+        client, auth_headers = _auth_client
+        mock_preview.return_value = _sample_local_response()
+
+        response = client.post(
+            path,
+            json={"arguments": {"city": "London"}, "server_id": "server-123"},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert mock_ensure_server_access.await_args.kwargs["server_id"] == "server-123"
+        assert mock_preview.await_args.kwargs["server_id"] == "server-123"
+
+    @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_unknown_or_inaccessible_server_returns_generic_404(
+        self,
+        mock_preview,
+        mock_ensure_server_access,
+        _auth_client,
+    ):
+        """Unknown and inaccessible servers share ServerService's generic 404 response."""
+        client, auth_headers = _auth_client
+        mock_ensure_server_access.side_effect = ServerNotFoundError("Server not found: server-hidden")
+
+        response = client.post(
+            "/tools/preview/get_weather",
+            json={"arguments": {}, "server_id": "server-hidden"},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Server not found: server-hidden"
+        mock_preview.assert_not_awaited()
 
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_tool_name_with_path_segments_preserved(self, mock_preview, _auth_client):
@@ -445,6 +528,250 @@ class TestToolPreviewIntegration:
 
         assert response.status_code == 404
         mock_preview.assert_not_awaited()
+
+
+class TestToolPreviewServerScopedRealDB:
+    """Real database tests for server-scoped tool preview resolution."""
+
+    @pytest.mark.parametrize("prefix", ["/tools", "/v1/tools"])
+    @pytest.mark.parametrize("server_kind", ["missing", "private", "wrong-team"])
+    def test_inaccessible_server_returns_generic_404(self, _auth_client, prefix, server_kind):
+        """Missing, another user's private, and wrong-team servers have the same error."""
+        client, auth_headers = _auth_client
+        server_id = uuid.uuid4().hex
+        session = db_mod.SessionLocal()
+        try:
+            tool = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name=f"preview-access-tool-{server_id}",
+                url="http://example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            session.add(tool)
+            if server_kind != "missing":
+                server = db_mod.Server(
+                    id=server_id,
+                    name=f"preview-hidden-server-{server_id}",
+                    owner_email="another-user@example.com",
+                    visibility="private" if server_kind == "private" else "team",
+                    team_id="team-a" if server_kind == "wrong-team" else None,
+                )
+                session.add(server)
+                session.flush()
+                session.execute(db_mod.server_tool_association.insert().values(server_id=server.id, tool_id=tool.id))
+            session.commit()
+
+            with (
+                patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("integration-test-user@example.com", ["team-b"])),
+                patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock) as preview,
+            ):
+                response = client.post(
+                    f"{prefix}/preview/{tool.name}",
+                    json={"arguments": {}, "server_id": server_id},
+                    headers=auth_headers,
+                )
+
+            assert response.status_code == 404
+            assert response.json() == {"detail": f"Server not found: {server_id}"}
+            preview.assert_not_awaited()
+        finally:
+            session.close()
+
+    def test_tool_attached_to_server_succeeds(self, _auth_client):
+        """A scoped preview resolves a tool attached to the requested server."""
+        client, auth_headers = _auth_client
+        session = db_mod.SessionLocal()
+        try:
+            server = db_mod.Server(
+                id=uuid.uuid4().hex,
+                name="preview-attached-server",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+            )
+            tool = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name="preview-attached-tool",
+                url="http://example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            session.add_all([server, tool])
+            session.flush()
+            session.execute(db_mod.server_tool_association.insert().values(server_id=server.id, tool_id=tool.id))
+            session.commit()
+
+            response = client.post(
+                f"/tools/preview/{tool.name}",
+                json={"arguments": {}, "server_id": server.id},
+                headers=auth_headers,
+            )
+
+            assert response.status_code == 200
+            assert response.json()["validated"] is True
+        finally:
+            session.close()
+
+    def test_tool_not_attached_to_requested_server_returns_404(self, _auth_client):
+        """A scoped preview cannot resolve a tool attached to another server."""
+        client, auth_headers = _auth_client
+        session = db_mod.SessionLocal()
+        try:
+            attached_server = db_mod.Server(
+                id=uuid.uuid4().hex,
+                name="preview-tool-server",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+            )
+            requested_server = db_mod.Server(
+                id=uuid.uuid4().hex,
+                name="preview-requested-server",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+            )
+            tool = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name="preview-detached-tool",
+                url="http://example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            session.add_all([attached_server, requested_server, tool])
+            session.flush()
+            session.execute(db_mod.server_tool_association.insert().values(server_id=attached_server.id, tool_id=tool.id))
+            session.commit()
+
+            response = client.post(
+                f"/tools/preview/{tool.name}",
+                json={"arguments": {}, "server_id": requested_server.id},
+                headers=auth_headers,
+            )
+
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"].lower()
+        finally:
+            session.close()
+
+    def test_duplicate_original_names_require_qualified_name(self, _auth_client):
+        """Two gateway tools with one upstream name are ambiguous within one server."""
+        client, auth_headers = _auth_client
+        session = db_mod.SessionLocal()
+        try:
+            server = db_mod.Server(
+                id=uuid.uuid4().hex,
+                name="preview-ambiguous-server",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+            )
+            gateway_one = db_mod.Gateway(
+                id=uuid.uuid4().hex,
+                name="preview-source-one",
+                slug="preview-source-one",
+                url="http://source-one.example.com/mcp",
+                description="First preview source",
+                transport="SSE",
+                capabilities={},
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                enabled=True,
+            )
+            gateway_two = db_mod.Gateway(
+                id=uuid.uuid4().hex,
+                name="preview-source-two",
+                slug="preview-source-two",
+                url="http://source-two.example.com/mcp",
+                description="Second preview source",
+                transport="SSE",
+                capabilities={},
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                enabled=True,
+            )
+            tool_one = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name="duplicate-preview-tool",
+                gateway=gateway_one,
+                url="http://source-one.example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            tool_two = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name="duplicate-preview-tool",
+                gateway=gateway_two,
+                url="http://source-two.example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            session.add_all([server, gateway_one, gateway_two, tool_one, tool_two])
+            session.flush()
+            session.execute(
+                db_mod.server_tool_association.insert(),
+                [
+                    {"server_id": server.id, "tool_id": tool_one.id},
+                    {"server_id": server.id, "tool_id": tool_two.id},
+                ],
+            )
+            session.commit()
+
+            unqualified_response = client.post(
+                "/tools/preview/duplicate-preview-tool",
+                json={"arguments": {}, "server_id": server.id},
+                headers=auth_headers,
+            )
+            assert unqualified_response.status_code == 400
+            assert "qualified tool name" in unqualified_response.json()["detail"].lower()
+
+            for tool, gateway in ((tool_one, gateway_one), (tool_two, gateway_two)):
+                qualified_response = client.post(
+                    f"/tools/preview/{tool.name}",
+                    json={"arguments": {}, "server_id": server.id},
+                    headers=auth_headers,
+                )
+                assert qualified_response.status_code == 200
+                assert qualified_response.json()["target"]["gatewayName"] == gateway.name
+        finally:
+            session.close()
 
 
 class TestToolPreviewWrongTeamIntegration:

@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.dcr_service import DcrError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 
 PUBLIC_TEST_IP = "93.184.216.34"
 
@@ -2033,5 +2033,92 @@ class TestUpdateClientRegistrationErrorPaths:
                 await dcr_service.update_client_registration(client_record, test_db)
 
 
+class TestValidateIssuerScopedEndpoint:
+    """Test the issuer-origin and URL-policy gate for endpoints read from AS metadata."""
+
+    ISSUER = "https://as.example.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("url", "issuer"),
+        [
+            pytest.param("https://evil.example.net/token", ISSUER, id="cross-origin"),
+            pytest.param("http://as.example.com/token", ISSUER, id="scheme-downgrade"),
+            pytest.param("https://as.example.com:8443/token", ISSUER, id="other-port"),
+            pytest.param(None, ISSUER, id="missing"),
+            pytest.param(["https://as.example.com/token"], ISSUER, id="non-string"),
+            pytest.param("https://as.example.com/token", "", id="empty-issuer"),
+        ],
+    )
+    async def test_rejects_endpoint_outside_issuer_origin(self, url, issuer):
+        """An endpoint that is absent, malformed, or on another origin is refused."""
+        with pytest.raises(DcrError, match="AS metadata token_endpoint must share the issuer origin"):
+            await validate_issuer_scoped_endpoint(url, issuer, "token_endpoint")
+
+    @pytest.mark.asyncio
+    async def test_rejects_endpoint_failing_url_policy(self):
+        """A same-origin endpoint that the URL policy blocks is refused with the policy error chained."""
+        policy_error = ValueError("blocked")
+        with patch("mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning", AsyncMock(side_effect=policy_error)):
+            with pytest.raises(DcrError, match="AS metadata token_endpoint blocked by URL policy") as exc_info:
+                await validate_issuer_scoped_endpoint("https://as.example.com/token", self.ISSUER, "token_endpoint")
+
+        assert exc_info.value.__cause__ is policy_error
+
+    @pytest.mark.asyncio
+    async def test_accepts_explicit_default_port(self):
+        """An explicit default port is the same origin as the issuer."""
+        assert await validate_issuer_scoped_endpoint("https://as.example.com:443/token", self.ISSUER, "token_endpoint") == "https://as.example.com:443/token"
+
+    @pytest.mark.asyncio
+    async def test_accepts_endpoint_under_issuer_path(self):
+        """An issuer with a path and trailing slash accepts endpoints on its origin."""
+        url = "https://as.example.com/realms/x/protocol/openid-connect/token"
+        assert await validate_issuer_scoped_endpoint(url, "https://as.example.com/realms/x/", "token_endpoint") == url
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestApplicationType:
+    """application_type in DCR requests (MCP 2026-07-28, OpenID Connect Dynamic Client Registration)."""
+
+    def test_auto_picks_native_for_loopback_and_web_otherwise(self):
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(dcr_application_type="auto")
+        assert dcr_service._application_type("http://localhost:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://127.0.0.1:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://127.1.2.3:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://[::1]:4444/oauth/callback") == "native"
+        assert dcr_service._application_type("http://gateway.localhost/oauth/callback") == "native"
+        assert dcr_service._application_type("https://gateway.example.com/oauth/callback") == "web"
+        assert dcr_service._application_type("http://10.0.0.5:4444/oauth/callback") == "web"
+
+    def test_configured_value_wins(self):
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(dcr_application_type="web")
+        assert dcr_service._application_type("http://localhost:4444/oauth/callback") == "web"
+
+    @pytest.mark.asyncio
+    async def test_register_client_sends_application_type(self, test_db):
+        dcr_service = DcrService()
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
+            mock_discover.return_value = mock_metadata
+            await dcr_service.register_client(
+                gateway_id="test-gw-application-type",
+                gateway_name="Test Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="https://gateway.example.com/oauth/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+        assert mock_client.post.call_args[1]["json"]["application_type"] == "web"

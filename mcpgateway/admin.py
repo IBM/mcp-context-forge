@@ -161,7 +161,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, a2a_enabled, raise_if_a2a_disabled
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -202,7 +202,7 @@ from mcpgateway.services.team_management_service import JoinRequestNotFoundError
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
-from mcpgateway.utils.error_formatter import ErrorFormatter, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
@@ -879,8 +879,8 @@ resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
 export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
-# Initialize A2A service only if A2A features are enabled
-a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+# Created only when A2A is enabled. A2A admin handlers call raise_if_a2a_disabled() first, so they treat it as present.
+a2a_service: A2AAgentService = typing_cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 # Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
 grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE and GrpcService is not None) else None
 
@@ -968,6 +968,163 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+def _tool_validation_policy_from_form(form: Any) -> Dict[str, Any]:
+    """Return the policy field only when the form submitted it.
+
+    A form that omits the field leaves the stored policy unchanged, because passing
+    None explicitly would land in ``model_fields_set`` and clear it. An empty
+    submitted field clears the policy, which the schema normalises to None.
+
+    Args:
+        form: The submitted form data.
+
+    Returns:
+        A kwargs dict with ``tool_validation_policy`` when present, else empty.
+
+    Examples:
+        >>> _tool_validation_policy_from_form({"name": "x"})
+        {}
+        >>> _tool_validation_policy_from_form({"tool_validation_policy": "true"})
+        {'tool_validation_policy': 'true'}
+    """
+    if "tool_validation_policy" not in form:
+        return {}
+    return {"tool_validation_policy": form.get("tool_validation_policy")}
+
+
+def _form_instructions(form: Any) -> Optional[str]:
+    """Extract the server ``instructions`` text from form data.
+
+    An empty or whitespace-only field maps to None, which clears the override.
+    The form cannot express the empty-string override; use the API for that.
+
+    Args:
+        form: The multipart form data object from the request.
+
+    Returns:
+        The submitted text, or None when the field is absent or blank.
+    """
+    raw = form.get("instructions")
+    if not raw or not str(raw).strip():
+        return None
+    return str(raw)
+
+
+_TOKEN_EXCHANGE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_target_audience": "target_audience",
+    "oauth_subject_token_type": "subject_token_type",
+    "oauth_requested_token_type": "requested_token_type",
+    "oauth_subject_token_source": "subject_token_source",
+    "oauth_token_endpoint_auth_method": "token_endpoint_auth_method",
+    "oauth_actor_token_source": "actor_token_source",
+    "oauth_actor_token_type": "actor_token_type",
+}
+
+_OAUTH_REGISTRATION_METHODS = ("auto", "cimd", "dcr")
+
+_DISCOVERY_OVERRIDE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_discovery_token_url": "token_url",
+    "oauth_discovery_client_id": "client_id",
+}
+
+
+async def _assemble_discovery_from_fields(fields: Any, *, encrypt_secret: bool) -> Optional[Dict[str, Any]]:
+    """Assemble the token-exchange ``discovery`` object from the Admin UI discovery fields.
+
+    Args:
+        fields: Mapping with ``.get()`` containing the ``oauth_discovery_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+
+    Returns:
+        The ``discovery`` dict, or ``None`` when the discovery checkbox is not set.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.run(_assemble_discovery_from_fields({"oauth_discovery_enabled": "on", "oauth_discovery_scopes": "mcp.discover"}, encrypt_secret=False))
+        {'grant_type': 'client_credentials', 'scopes': ['mcp.discover']}
+        >>> asyncio.run(_assemble_discovery_from_fields({"oauth_discovery_scopes": "mcp.discover"}, encrypt_secret=False)) is None
+        True
+    """
+    if not fields.get("oauth_discovery_enabled"):
+        return None
+    discovery: Dict[str, Any] = {"grant_type": "client_credentials"}
+    scopes = [s.strip() for s in str(fields.get("oauth_discovery_scopes", "")).replace(",", " ").split() if s.strip()]
+    if scopes:
+        discovery["scopes"] = scopes
+    for form_key, config_key in _DISCOVERY_OVERRIDE_FORM_FIELDS.items():
+        value = str(fields.get(form_key, "")).strip()
+        if value:
+            discovery[config_key] = value
+    secret = str(fields.get("oauth_discovery_client_secret", ""))
+    if secret == settings.masked_auth_value:
+        # Encryption downstream swaps the masked placeholder for the stored secret.
+        discovery["client_secret"] = secret
+    elif secret:
+        discovery["client_secret"] = await get_encryption_service(settings.auth_encryption_secret).encrypt_secret_async(secret) if encrypt_secret else secret
+    return discovery
+
+
+_ACTOR_OVERRIDE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_actor_client_id": "client_id",
+    "oauth_actor_token_url": "token_url",
+    "oauth_actor_token_endpoint_auth_method": "token_endpoint_auth_method",
+}
+
+
+async def _assemble_actor_from_fields(fields: Any, *, encrypt_secret: bool) -> Optional[Dict[str, Any]]:
+    """Assemble the token-exchange ``actor`` client override from the Admin UI actor fields.
+
+    Args:
+        fields: Mapping with ``.get()`` containing the ``oauth_actor_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+
+    Returns:
+        The ``actor`` dict, or ``None`` when the actor token source is not
+        ``client_credentials`` or the actor client ID is empty.
+
+    Examples:
+        >>> import asyncio
+        >>> fields = {"oauth_actor_token_source": "client_credentials", "oauth_actor_client_id": " contextforge ", "oauth_actor_token_url": ""}
+        >>> asyncio.run(_assemble_actor_from_fields(fields, encrypt_secret=False))
+        {'client_id': 'contextforge'}
+        >>> asyncio.run(_assemble_actor_from_fields({**fields, "oauth_actor_client_id": ""}, encrypt_secret=False)) is None
+        True
+        >>> asyncio.run(_assemble_actor_from_fields({**fields, "oauth_actor_token_source": "none"}, encrypt_secret=False)) is None
+        True
+    """
+    if str(fields.get("oauth_actor_token_source", "")).strip() != "client_credentials":
+        return None
+    actor: Dict[str, Any] = {}
+    for form_key, config_key in _ACTOR_OVERRIDE_FORM_FIELDS.items():
+        value = str(fields.get(form_key, "")).strip()
+        if value:
+            actor[config_key] = value
+    if "client_id" not in actor:
+        return None
+    secret = str(fields.get("oauth_actor_client_secret", ""))
+    if secret == settings.masked_auth_value:
+        # Encryption downstream swaps the masked placeholder for the stored secret.
+        actor["client_secret"] = secret
+    elif secret:
+        actor["client_secret"] = await get_encryption_service(settings.auth_encryption_secret).encrypt_secret_async(secret) if encrypt_secret else secret
+    return actor
+
+
+_CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
+    "oauth_issuer": "issuer",
+    "oauth_token_url": "token_url",
+    "oauth_authorization_url": "authorization_url",
+    "oauth_redirect_uri": "redirect_uri",
+    "redirect_uri_after_success": "redirect_uri_after_oauth",
+    "oauth_client_id": "client_id",
+    "oauth_username": "username",
+    "oauth_scopes": "scopes",
+    "oauth_audience": "audience",
+    "oauth_resource": "resource",
+    **_TOKEN_EXCHANGE_FORM_FIELDS,
+}
+
+
 async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
     """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
 
@@ -1008,7 +1165,9 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     oauth_password = str(fields.get("oauth_password", ""))
     oauth_scopes_str = str(fields.get("oauth_scopes", ""))
     oauth_audience = str(fields.get("oauth_audience", "")).strip()
+    oauth_registration_method = str(fields.get("oauth_registration_method", "")).strip()
     oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
+    token_exchange_values = {config_key: str(fields.get(form_key, "")).strip() for form_key, config_key in _TOKEN_EXCHANGE_FORM_FIELDS.items()} if oauth_grant_type == "token-exchange" else {}
 
     if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
         return None
@@ -1030,7 +1189,11 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["redirect_uri_after_oauth"] = oauth_redirect_uri_after_oauth
     if oauth_client_id:
         oauth_config["client_id"] = oauth_client_id
-    if oauth_client_secret:
+    if oauth_client_secret == settings.masked_auth_value:
+        if oauth_grant_type == "token-exchange":
+            # Encryption downstream swaps the masked placeholder for the stored secret.
+            oauth_config["client_secret"] = oauth_client_secret
+    elif oauth_client_secret:
         if encrypt_secret:
             encryption = get_encryption_service(settings.auth_encryption_secret)
             oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
@@ -1048,7 +1211,235 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
             oauth_config["scopes"] = scopes
     if oauth_resource:
         oauth_config["resource"] = oauth_resource
+    if oauth_registration_method in _OAUTH_REGISTRATION_METHODS:
+        oauth_config["registration_method"] = oauth_registration_method
+    oauth_config.update({key: value for key, value in token_exchange_values.items() if value})
+    if oauth_grant_type == "token-exchange":
+        discovery = await _assemble_discovery_from_fields(fields, encrypt_secret=encrypt_secret)
+        if discovery is not None:
+            oauth_config["discovery"] = discovery
+        actor = await _assemble_actor_from_fields(fields, encrypt_secret=encrypt_secret)
+        if actor is not None:
+            oauth_config["actor"] = actor
     return oauth_config
+
+
+def _require_token_exchange_client_secret(oauth_config: Any, existing_oauth_config: Any = None) -> None:
+    """Reject an Admin UI token-exchange config that has no usable client credential.
+
+    The REST API keeps accepting a token-exchange config without ``client_secret``;
+    this check applies only to the Admin UI form handlers.
+
+    Args:
+        oauth_config: Submitted oauth_config.
+        existing_oauth_config: Stored oauth_config on edit. Its secret counts only when it is also a token-exchange config.
+
+    Raises:
+        PublicValidationError: If ``client_secret`` is missing and the auth method needs one.
+
+    Examples:
+        >>> _require_token_exchange_client_secret({"grant_type": "client_credentials"})
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "private_key_jwt"})
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "token-exchange", "client_secret": "stored"})  # pragma: allowlist secret
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "client_credentials", "client_secret": "stored"})  # pragma: allowlist secret
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"})
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none
+    """
+    if not isinstance(oauth_config, dict) or oauth_config.get("grant_type") != "token-exchange":
+        return
+    if oauth_config.get("token_endpoint_auth_method") in ("private_key_jwt", "none"):
+        return
+    submitted = oauth_config.get("client_secret")
+    if submitted and submitted != settings.masked_auth_value:
+        return
+    if isinstance(existing_oauth_config, dict) and existing_oauth_config.get("grant_type") == "token-exchange" and existing_oauth_config.get("client_secret"):
+        return
+    raise PublicValidationError("client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none")
+
+
+def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: Any) -> Dict[str, Any]:
+    """Overlay a token-exchange edit-form submission onto the stored oauth_config.
+
+    The edit form renders only some oauth_config keys. When the stored and the
+    submitted grant are both ``token-exchange``, keys the form does not render
+    (for example ``private_key``) keep their stored value. A rendered text field
+    submitted blank clears its key. A blank secret field keeps the stored secret.
+    When the grant changes, a masked ``client_secret`` placeholder is dropped so
+    the secret of another grant is never kept.
+
+    Args:
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form, used to tell a blank rendered field from an absent one.
+
+    Returns:
+        The merged oauth_config, or ``submitted`` unchanged when the grant changes.
+
+    Examples:
+        >>> stored = {"grant_type": "token-exchange", "private_key": "enc", "audience": "old", "target_audience": "a"}  # pragma: allowlist secret
+        >>> form = {"oauth_grant_type": "token-exchange", "oauth_audience": "", "oauth_target_audience": "b"}
+        >>> sorted(_merge_token_exchange_edit({"grant_type": "token-exchange", "target_audience": "b"}, stored, form).items())
+        [('grant_type', 'token-exchange'), ('private_key', 'enc'), ('target_audience', 'b')]
+        >>> _merge_token_exchange_edit({"grant_type": "client_credentials"}, stored, form)
+        {'grant_type': 'client_credentials'}
+        >>> _merge_token_exchange_edit({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value}, {"grant_type": "client_credentials"}, form)
+        {'grant_type': 'token-exchange'}
+    """
+    if not isinstance(existing, dict) or existing.get("grant_type") != "token-exchange" or submitted.get("grant_type") != "token-exchange":
+        if submitted.get("client_secret") == settings.masked_auth_value:
+            return {key: value for key, value in submitted.items() if key != "client_secret"}
+        return submitted
+    merged = dict(existing)
+    merged.update(submitted)
+    for form_key, config_key in _CLEARABLE_OAUTH_FORM_FIELDS.items():
+        if form_key in form and not str(form.get(form_key) or "").strip() and config_key not in submitted:
+            merged.pop(config_key, None)
+    _merge_discovery_edit(merged, submitted, existing, form)
+    _merge_actor_edit(merged, submitted, existing, form)
+    return merged
+
+
+def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], existing: Dict[str, Any], form: Any) -> None:
+    """Merge the ``discovery`` object of a token-exchange edit one level deep, in place.
+
+    A form without the discovery field group keeps the stored object. A cleared
+    checkbox removes it. Keys the form does not render (for example
+    ``token_endpoint_auth_method``) keep their stored value, and a blank secret
+    keeps the stored secret. A rendered override submitted blank clears its key.
+    A stored secret is removed when the discovery identity changes without a new
+    secret (see ``_drop_stale_discovery_secret``).
+
+    Args:
+        merged: oauth_config being built from the stored and submitted configs.
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form.
+
+    Raises:
+        PublicValidationError: If a discovery ``client_id`` override changes and no new secret is submitted.
+
+    Examples:
+        >>> stored = {"discovery": {"grant_type": "client_credentials", "client_secret": "enc", "client_id": "svc", "token_endpoint_auth_method": "client_secret_post"}}  # pragma: allowlist secret
+        >>> merged = {"discovery": {"grant_type": "client_credentials"}}
+        >>> _merge_discovery_edit(merged, dict(merged), stored, {"oauth_discovery_present": "1", "oauth_discovery_enabled": "on", "oauth_discovery_client_id": ""})
+        >>> sorted(merged["discovery"].items())
+        [('grant_type', 'client_credentials'), ('token_endpoint_auth_method', 'client_secret_post')]
+        >>> merged = dict(stored)
+        >>> _merge_discovery_edit(merged, {}, stored, {"oauth_discovery_present": "1"})
+        >>> "discovery" in merged
+        False
+    """
+    if "oauth_discovery_present" not in form:
+        if isinstance(existing.get("discovery"), dict):
+            merged["discovery"] = existing["discovery"]
+        return
+    submitted_discovery = submitted.get("discovery")
+    if not isinstance(submitted_discovery, dict):
+        merged.pop("discovery", None)
+        return
+    stored_discovery = existing.get("discovery") if isinstance(existing.get("discovery"), dict) else {}
+    discovery = {**stored_discovery, **submitted_discovery}
+    for form_key, config_key in _DISCOVERY_OVERRIDE_FORM_FIELDS.items():
+        if form_key in form and config_key not in submitted_discovery:
+            discovery.pop(config_key, None)
+    if "scopes" not in submitted_discovery:
+        discovery.pop("scopes", None)
+    _drop_stale_discovery_secret(discovery, stored_discovery, submitted_discovery, merged)
+    merged["discovery"] = discovery
+
+
+def _drop_stale_discovery_secret(discovery: Dict[str, Any], stored_discovery: Dict[str, Any], submitted_discovery: Dict[str, Any], merged: Dict[str, Any]) -> None:
+    """Remove a stored discovery secret that no longer matches the discovery identity, in place.
+
+    The stored secret belongs to the stored ``client_id`` and ``token_url``. When either
+    override changes without a new secret, the stored secret is removed so discovery
+    inherits the parent secret together with the parent client ID. A remaining
+    ``client_id`` override then needs its own secret, unless the effective
+    ``token_endpoint_auth_method`` is ``private_key_jwt`` or ``none``.
+
+    Args:
+        discovery: Merged discovery object being built.
+        stored_discovery: Stored discovery object, or an empty dict.
+        submitted_discovery: Discovery object assembled from the edit form.
+        merged: Merged parent oauth_config, used for the inherited auth method.
+
+    Raises:
+        PublicValidationError: If a ``client_id`` override changes and no new secret is submitted.
+
+    Examples:
+        >>> stored = {"client_id": "svc", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> discovery = {"grant_type": "client_credentials", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"grant_type": "client_credentials"}, {})
+        >>> discovery
+        {'grant_type': 'client_credentials'}
+        >>> discovery = {"grant_type": "client_credentials", "client_id": "other", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"client_id": "other"}, {})
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: A discovery client_secret is required when the discovery client_id or token_url changes
+        >>> discovery = {"client_id": "svc", "token_url": "https://as/t", "client_secret": "enc"}  # pragma: allowlist secret
+        >>> _drop_stale_discovery_secret(discovery, stored, {"client_id": "svc"}, {})
+        >>> discovery["client_secret"]
+        'enc'
+    """
+    identity_changed = any(discovery.get(key) != stored_discovery.get(key) for key in ("client_id", "token_url"))
+    submitted_secret = submitted_discovery.get("client_secret")
+    has_new_secret = bool(submitted_secret) and submitted_secret != settings.masked_auth_value
+    if not identity_changed or has_new_secret:
+        return
+    discovery.pop("client_secret", None)
+    auth_method = discovery.get("token_endpoint_auth_method") or merged.get("token_endpoint_auth_method")
+    if discovery.get("client_id") and auth_method not in ("private_key_jwt", "none"):
+        raise PublicValidationError("A discovery client_secret is required when the discovery client_id or token_url changes")
+
+
+def _merge_actor_edit(merged: Dict[str, Any], submitted: Dict[str, Any], existing: Dict[str, Any], form: Any) -> None:
+    """Merge the ``actor`` client override of a token-exchange edit one level deep, in place.
+
+    A form without the actor field group keeps the stored object. A cleared
+    actor client ID removes it. A blank secret keeps the stored secret, and a
+    rendered override submitted blank clears its key.
+
+    Args:
+        merged: oauth_config being built from the stored and submitted configs.
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form.
+
+    Examples:
+        >>> stored = {"actor": {"client_id": "cf", "client_secret": "enc", "token_url": "https://as/token"}}  # pragma: allowlist secret
+        >>> merged = {"actor": {"client_id": "cf"}}
+        >>> _merge_actor_edit(merged, dict(merged), stored, {"oauth_actor_present": "1", "oauth_actor_token_url": ""})
+        >>> sorted(merged["actor"].items())
+        [('client_id', 'cf'), ('client_secret', 'enc')]
+        >>> merged = dict(stored)
+        >>> _merge_actor_edit(merged, {}, stored, {"oauth_actor_present": "1"})
+        >>> "actor" in merged
+        False
+        >>> merged = {}
+        >>> _merge_actor_edit(merged, {}, stored, {})
+        >>> merged["actor"]["client_id"]
+        'cf'
+    """
+    if "oauth_actor_present" not in form:
+        if isinstance(existing.get("actor"), dict):
+            merged["actor"] = existing["actor"]
+        return
+    submitted_actor = submitted.get("actor")
+    if not isinstance(submitted_actor, dict):
+        merged.pop("actor", None)
+        return
+    stored_actor = existing.get("actor") if isinstance(existing.get("actor"), dict) else {}
+    actor = {**stored_actor, **submitted_actor}
+    for form_key, config_key in _ACTOR_OVERRIDE_FORM_FIELDS.items():
+        if form_key in form and config_key not in submitted_actor:
+            actor.pop(config_key, None)
+    merged["actor"] = actor
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
@@ -3222,6 +3613,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
+            instructions=_form_instructions(form),
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
@@ -3379,21 +3771,27 @@ async def admin_edit_server(
                 oauth_enabled = False
                 oauth_config = None
 
-        server = ServerUpdate(
-            id=form.get("id"),
-            name=form.get("name"),
-            description=form.get("description"),
-            icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in associated_resources_list),
-            associated_prompts=",".join(str(x) for x in associated_prompts_list),
-            tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
-            oauth_enabled=oauth_enabled,
-            oauth_config=oauth_config,
-        )
+        server_kwargs: Dict[str, Any] = {
+            "id": form.get("id"),
+            "name": form.get("name"),
+            "description": form.get("description"),
+            "icon": form.get("icon"),
+            "associated_tools": ",".join(str(x) for x in associated_tools_list),
+            "associated_resources": ",".join(str(x) for x in associated_resources_list),
+            "associated_prompts": ",".join(str(x) for x in associated_prompts_list),
+            "tags": tags,
+            "visibility": visibility,
+            "team_id": team_id,
+            "owner_email": user_email,
+            "oauth_enabled": oauth_enabled,
+            "oauth_config": oauth_config,
+        }
+        # Only include instructions when the form field was submitted; omitting it leaves the
+        # stored override unchanged.  Passing None explicitly would land in model_fields_set
+        # and clear a previously saved override.
+        if "instructions" in form:
+            server_kwargs["instructions"] = _form_instructions(form)
+        server = ServerUpdate(**server_kwargs)
 
         await server_service.update_server(
             db,
@@ -4279,6 +4677,7 @@ async def admin_ui(
             "selected_team_id": selected_team_id,
             "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "ui_deprecation_notice_enabled": settings.mcpgateway_ui_deprecation_notice_enabled,
             "ui_hidden_sections": sorted(hidden_sections),
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
@@ -11253,6 +11652,7 @@ async def admin_a2a_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded a2a agent data when templates expect it.
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(
         f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
     )
@@ -11448,6 +11848,7 @@ async def admin_get_all_agent_ids(
             - "agent_ids": List[str] of accessible agent IDs.
             - "count": int number of IDs returned.
     """
+    raise_if_a2a_disabled()
     user_email = get_user_email(user)
     team_ids = await _get_user_team_ids(user, db)
 
@@ -11515,6 +11916,7 @@ async def admin_search_a2a_agents(
             - "agents": List[dict] where each dict has keys "id", "name", "description".
             - "count": int number of matched a2a agents returned.
     """
+    raise_if_a2a_disabled()
     user_email = get_user_email(user)
     search_query = _normalize_search_query(q)
     normalized_tags = _normalize_tags_query(tags)
@@ -12208,6 +12610,7 @@ async def admin_add_tool(
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
+        tool_data.update(_tool_validation_policy_from_form(form))
         tool = ToolCreate(**tool_data)
         LOGGER.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
 
@@ -12223,11 +12626,16 @@ async def admin_add_tool(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
         )
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_add_tool: {error_message}")
@@ -12359,6 +12767,7 @@ async def admin_edit_tool(
         tool_data["request_type"] = form.get("requestType")
     LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
+        tool_data.update(_tool_validation_policy_from_form(form))
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
 
         # Get current tool to extract current version
@@ -12685,7 +13094,7 @@ async def admin_discover_oauth(
         True
     """
     # First-Party
-    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint  # pylint: disable=import-outside-toplevel
 
     try:
         body = await request.json()
@@ -12739,11 +13148,28 @@ async def admin_discover_oauth(
             except ValueError:
                 return None
 
+        async def _issuer_scoped_endpoint(raw: str | None, name: str) -> str | None:
+            """Validate an OAuth endpoint URL against the issuer origin, or None if invalid.
+
+            Args:
+                raw: The raw endpoint URL string or None.
+                name: The name of the endpoint for validation error messages.
+
+            Returns:
+                The validated URL string if valid and on the issuer origin, None otherwise.
+            """
+            if not raw:
+                return None
+            try:
+                return await validate_issuer_scoped_endpoint(raw, issuer, name)
+            except DcrError:
+                return None
+
         return JSONResponse(
             {
                 "success": True,
-                "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
-                "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+                "token_endpoint": await _issuer_scoped_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+                "authorization_endpoint": await _issuer_scoped_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
                 "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
                 "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
                 "dcr_available": bool(metadata.get("registration_endpoint")),
@@ -12879,6 +13305,8 @@ async def admin_add_gateway(
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
+        _require_token_exchange_client_secret(gateway.oauth_config)
+
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
@@ -13268,7 +13696,8 @@ async def admin_edit_gateway(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields
-        if not oauth_config:
+        oauth_config_from_fields = not oauth_config
+        if oauth_config_from_fields:
             oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
@@ -13292,6 +13721,9 @@ async def admin_edit_gateway(
             existing_oauth: dict = existing_gateway.oauth_config or {}
             if "redirect_uri_after_success" not in form and "redirect_uri_after_oauth" not in oauth_config and "redirect_uri_after_oauth" in existing_oauth:
                 oauth_config["redirect_uri_after_oauth"] = existing_oauth["redirect_uri_after_oauth"]
+            if oauth_config_from_fields:
+                oauth_config = _merge_token_exchange_edit(oauth_config, existing_oauth, form)
+                _require_token_exchange_client_secret(oauth_config, existing_oauth)
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -13303,8 +13735,8 @@ async def admin_edit_gateway(
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
-            name=str(form.get("name")),
-            url=str(form["url"]),
+            name=form.get("name"),
+            url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
@@ -13324,6 +13756,7 @@ async def admin_edit_gateway(
             visibility=visibility,
             owner_email=user_email,
             team_id=team_id,
+            **_tool_validation_policy_from_form(form),
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
@@ -13580,17 +14013,19 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(uri_value, str) and "{" in uri_value and "}" in uri_value:
             template = uri_value
 
-        resource = ResourceCreate(
-            uri=str(form["uri"]),
-            name=str(form["name"]),
-            description=str(form.get("description", "")),
-            mime_type=str(form.get("mimeType", "")),
-            uri_template=template,
-            content=str(form["content"]),
-            tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
+        resource = ResourceCreate.model_validate(
+            {
+                "uri": form.get("uri"),
+                "name": form.get("name"),
+                "description": str(form.get("description", "")),
+                "mime_type": str(form.get("mimeType", "")),
+                "uri_template": template,
+                "content": form.get("content"),
+                "tags": tags,
+                "visibility": visibility,
+                "team_id": team_id,
+                "owner_email": user_email,
+            }
         )
 
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -13979,16 +14414,18 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     try:
         # Validate arguments JSON using prompt service
         arguments: List[Dict[str, Any]] = prompt_service.validate_arguments_json(args_value=form.get("arguments"), context="new prompt")
-        prompt = PromptCreate(
-            name=str(form["name"]),
-            display_name=str(form.get("display_name") or form["name"]),
-            description=str(form.get("description")),
-            template=str(form["template"]),
-            arguments=arguments,
-            tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
+        prompt = PromptCreate.model_validate(
+            {
+                "name": form.get("name"),
+                "display_name": form.get("display_name") or form.get("name"),
+                "description": str(form.get("description")),
+                "template": form.get("template"),
+                "arguments": arguments,
+                "tags": tags,
+                "visibility": visibility,
+                "team_id": team_id,
+                "owner_email": user_email,
+            }
         )
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -14087,6 +14524,10 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    template = form.get("template")
+    if not isinstance(template, str) or not template.strip():
+        LOGGER.warning("admin_edit_prompt rejected request with missing template")
+        return ORJSONResponse(content={"detail": "Prompt template is required."}, status_code=422)
     team_id = _form_team_id(form)
 
     visibility = str(form.get("visibility", "private"))
@@ -14117,7 +14558,7 @@ async def admin_edit_prompt(
             custom_name=str(form.get("customName") or form.get("name")),
             display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
             description=str(form.get("description")),
-            template=str(form["template"]),
+            template=template,
             arguments=arguments,
             tags=tags,
             visibility=visibility,
@@ -14825,6 +15266,9 @@ async def admin_test_gateway(
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
 
+    Raises:
+        HTTPException: 403 if the team is out of token scope or the caller may not use the stored credential.
+
     Examples:
         >>> callable(admin_test_gateway)
         True
@@ -14838,7 +15282,10 @@ async def admin_test_gateway(
         token_teams = user.get("token_teams") if isinstance(user, dict) else None
         if token_teams is not None and team_id not in token_teams:
             raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
-    return await test_gateway_connectivity(request, team_id, user, db)
+    try:
+        return await test_gateway_connectivity(request, team_id, user, db)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 # Event Streaming via SSE to the Admin UI
@@ -15252,10 +15699,20 @@ async def admin_import_tools(
 
         # Extract base metadata for bulk import
         base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
+        user_email = get_user_email(user)
+        token_teams = extract_token_team_ids(user)
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        team_id = None if is_public_only_token else (getattr(request.state, "team_id", None) or await TeamManagementService(db).verify_team_for_user(user_email) or None)
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
+                if is_public_only_token and (tool.visibility or "public") in ("team", "private"):
+                    errors.append(
+                        {"index": i, "name": name, "error": {"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."}}
+                    )
+                    continue
+                _check_public_visibility_allowed(tool.visibility or "public", team_id=team_id)
                 await tool_service.register_tool(
                     db,
                     tool,
@@ -15265,6 +15722,8 @@ async def admin_import_tools(
                     created_user_agent=base_metadata["created_user_agent"],
                     import_batch_id=import_batch_id,
                     federation_source=base_metadata["federation_source"],
+                    team_id=team_id,
+                    owner_email=user_email,
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
@@ -15285,6 +15744,8 @@ async def admin_import_tools(
                 errors.append({"index": i, "name": name, "error": formatted})
             except ToolError as ex:
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+            except HTTPException as ex:
+                errors.append({"index": i, "name": name, "error": {"message": str(ex.detail)}})
             except Exception as ex:
                 LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
                 errors.append({"index": i, "name": name, "error": {"message": unexpected_error_detail(ex)}})
@@ -16248,6 +16709,7 @@ async def admin_get_agent(
         >>> admin_get_agent.__name__
         'admin_get_agent'
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
     user_email = get_user_email(user)
     token_teams = get_token_teams_from_request(request)
@@ -16294,6 +16756,7 @@ async def admin_list_a2a_agents(
             - links: Pagination links (optional)
 
     Raises:
+        HTTPException (404): ``detail.error == "a2a_disabled"`` when A2A is disabled.
         HTTPException (500): If an error occurs while retrieving the agent list.
 
     Examples:
@@ -16302,15 +16765,7 @@ async def admin_list_a2a_agents(
         >>> admin_list_a2a_agents.__name__
         'admin_list_a2a_agents'
     """
-    if a2a_service is None:
-        LOGGER.warning("A2A features are disabled, returning empty paginated response")
-        # First-Party
-
-        return {
-            "data": [],
-            "pagination": PaginationMeta(page=page, per_page=per_page, total_items=0, total_pages=0, has_next=False, has_prev=False).model_dump(),
-            "links": None,
-        }
+    raise_if_a2a_disabled()
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
@@ -16356,12 +16811,7 @@ async def admin_add_a2a_agent(
     """
     LOGGER.info(f"A2A agent creation request from user {user}")
 
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        return ORJSONResponse(
-            content={"message": "A2A features are disabled!", "success": False},
-            status_code=403,
-        )
+    raise_if_a2a_disabled()
 
     form = await request.form()
     team_id = _form_team_id(form)
@@ -16441,33 +16891,35 @@ async def admin_add_a2a_agent(
         uaid_protocol = str(form.get("uaid_protocol", "a2a"))
         uaid_native_id_override = form.get("uaid_native_id_override") or None
 
-        agent_data = A2AAgentCreate(
-            name=form["name"],
-            description=form.get("description"),
-            endpoint_url=form["endpoint_url"],
-            agent_type=form.get("agent_type", "generic"),
-            protocol_version=str(form.get("protocol_version", "1.0")),
-            auth_type=auth_type_from_form,
-            auth_username=str(form.get("auth_username", "")),
-            auth_password=str(form.get("auth_password", "")),
-            auth_token=str(form.get("auth_token", "")),
-            auth_header_key=str(form.get("auth_header_key", "")),
-            auth_header_value=str(form.get("auth_header_value", "")),
-            auth_headers=auth_headers if auth_headers else None,
-            oauth_config=oauth_config,
-            auth_value=form.get("auth_value") if form.get("auth_value") else None,
-            auth_query_param_key=str(form.get("auth_query_param_key", "")) or None,
-            auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
-            tags=tags,
-            visibility=form.get("visibility", "private"),
-            team_id=team_id,
-            owner_email=user_email,
-            passthrough_headers=passthrough_headers,
-            # UAID fields for cross-gateway routing
-            generate_uaid=generate_uaid,
-            uaid_registry=uaid_registry if generate_uaid else None,
-            uaid_protocol=uaid_protocol if generate_uaid else None,
-            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
+        agent_data = A2AAgentCreate.model_validate(
+            {
+                "name": form.get("name"),
+                "description": form.get("description"),
+                "endpoint_url": form.get("endpoint_url"),
+                "agent_type": form.get("agent_type", "generic"),
+                "protocol_version": str(form.get("protocol_version", "1.0")),
+                "auth_type": auth_type_from_form,
+                "auth_username": str(form.get("auth_username", "")),
+                "auth_password": str(form.get("auth_password", "")),
+                "auth_token": str(form.get("auth_token", "")),
+                "auth_header_key": str(form.get("auth_header_key", "")),
+                "auth_header_value": str(form.get("auth_header_value", "")),
+                "auth_headers": auth_headers if auth_headers else None,
+                "oauth_config": oauth_config,
+                "auth_value": form.get("auth_value") if form.get("auth_value") else None,
+                "auth_query_param_key": str(form.get("auth_query_param_key", "")) or None,
+                "auth_query_param_value": str(form.get("auth_query_param_value", "")) or None,
+                "tags": tags,
+                "visibility": form.get("visibility", "private"),
+                "team_id": team_id,
+                "owner_email": user_email,
+                "passthrough_headers": passthrough_headers,
+                # UAID fields for cross-gateway routing
+                "generate_uaid": generate_uaid,
+                "uaid_registry": uaid_registry if generate_uaid else None,
+                "uaid_protocol": uaid_protocol if generate_uaid else None,
+                "uaid_native_id_override": uaid_native_id_override if generate_uaid else None,
+            }
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -16554,6 +17006,7 @@ async def admin_edit_a2a_agent(
         JSONResponse: A JSON response indicating success or failure.
 
     Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` if A2A is disabled.
         HTTPException: 422 when public visibility is disabled and request is team-scoped.
 
     Examples:
@@ -16562,6 +17015,7 @@ async def admin_edit_a2a_agent(
         >>> admin_edit_a2a_agent.__name__
         'admin_edit_a2a_agent'
     """
+    raise_if_a2a_disabled()
 
     try:
         form = await request.form()
@@ -16762,7 +17216,7 @@ async def admin_set_a2a_agent_state(
     Raises:
         HTTPException: If A2A features are disabled
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+    if not a2a_enabled():
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -16816,7 +17270,7 @@ async def admin_delete_a2a_agent(
     Raises:
         HTTPException: If A2A features are disabled
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+    if not a2a_enabled():
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -16882,83 +17336,43 @@ async def admin_test_a2a_agent(
         - agent_id: ID of the agent that was tested
 
     Raises:
-        HTTPException: If A2A features are disabled (403)
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` if A2A is disabled
 
     Note:
         Error messages are sanitized by a2a_service to prevent credential leakage.
         Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
+    raise_if_a2a_disabled()
 
+    user_email = get_user_email(user)
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    token_teams = user.get("token_teams") if isinstance(user, dict) else None
+    # Missing token_teams key for non-admin = public-only (per normalize_token_teams rules).
+    # Only admin users retain None (admin bypass); all others default to [].
+    if not is_admin and token_teams is None:
+        token_teams = []
+    # Admin users with unrestricted tokens get full bypass (both None);
+    # non-admin users pass their actual email and team scoping.
+    invoke_user_email = None if (is_admin and token_teams is None) else user_email
+
+    default_message = "Hello from ContextForge Admin UI test!"
     try:
-        user_email = get_user_email(user)
-        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
-        token_teams = user.get("token_teams") if isinstance(user, dict) else None
-        # Missing token_teams key for non-admin = public-only (per normalize_token_teams rules).
-        # Only admin users retain None (admin bypass); all others default to [].
-        if not is_admin and token_teams is None:
-            token_teams = []
-        # Admin users with unrestricted tokens get full bypass (both None);
-        # non-admin users pass their actual email and team scoping.
-        invoke_user_email = None if (is_admin and token_teams is None) else user_email
-        # Get the agent by ID
-        agent = await a2a_service.get_agent(db, agent_id, user_email=invoke_user_email, token_teams=token_teams)
+        body = await _read_request_json(request)
+        user_query = (body.get("query") if body else None) or default_message
+    except Exception:
+        user_query = default_message
 
-        # Parse request body to get user-provided query
-        default_message = "Hello from ContextForge Admin UI test!"
-        try:
-            body = await _read_request_json(request)
-            # Use 'or' to also handle empty string queries
-            user_query = (body.get("query") if body else None) or default_message
-        except Exception:
-            user_query = default_message
-
-        # Prepare test parameters based on agent type and endpoint
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # Let the A2A protocol helper choose v1 or legacy wire format from the agent record.
-            test_params = {"query": user_query}
-        else:
-            # Generic test format
-            test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
-
-        # Invoke the agent
-        result = await a2a_service.invoke_agent(
-            db,
-            agent.name,
-            test_params,
-            "admin_test",
-            user_email=invoke_user_email,
-            user_id=user_email,
-            token_teams=token_teams,
-        )
-
-        return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
-
-    except A2AAgentNotFoundError as e:
-        LOGGER.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id},
-            status_code=404,
-        )
-    except A2AAgentError as e:
-        LOGGER.error(f"A2A agent error for {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id},
-            status_code=502,
-        )
-    except ValidationError as e:
-        LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id},
-            status_code=422,
-        )
-    except Exception as e:
-        LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(
-            content={"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id},
-            status_code=500,
-        )
+    outcome = await a2a_service.test_agent(
+        db,
+        agent_id,
+        query=user_query,
+        interaction_type="admin_test",
+        user_email=invoke_user_email,
+        user_id=user_email,
+        token_teams=token_teams,
+        include_agent_error_detail=True,
+    )
+    return ORJSONResponse(content=outcome.body, status_code=outcome.status_code)
 
 
 # gRPC Service Management Endpoints
@@ -17049,6 +17463,9 @@ async def admin_create_grpc_service(
         _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
+        requested_team_id = getattr(service, "team_id", None)
+        if requested_team_id and await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id) != requested_team_id:
+            raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:
@@ -17570,6 +17987,7 @@ async def get_a2a_plugin_bindings_partial(
     Returns:
         HTMLResponse with rendered partial template.
     """
+    raise_if_a2a_disabled()
     LOGGER.debug(f"User {get_user_email(user)} requested A2A plugin bindings partial")
 
     try:
@@ -17619,6 +18037,7 @@ async def admin_create_a2a_plugin_binding(
 
     Returns the refreshed partial on success or an error HTML fragment.
     """
+    raise_if_a2a_disabled()
     try:
         form = await request.form()
         team_id = form.get("team_id", "")
@@ -17698,6 +18117,7 @@ async def admin_delete_a2a_plugin_binding(
     POST endpoint (HTMX-compatible) that deletes a binding and returns
     the refreshed partial.
     """
+    raise_if_a2a_disabled()
     try:
         # Validate that binding_id is a valid UUID
         try:
@@ -17996,7 +18416,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             },
         )
 
-        # Create audit trail for plugin access
+        # Plugins belong to the platform; NULL team_id preserves their platform audit scope.
         audit_service.log_audit(
             user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace"
         )

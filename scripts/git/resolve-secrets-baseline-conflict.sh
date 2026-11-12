@@ -33,7 +33,7 @@ output=${2:?"usage: $0 %O %A %B %P (invoked by git as a merge driver)"}
 
 UV_BIN=${UV_BIN:-$(type -p uv 2>/dev/null || echo "$HOME/.local/bin/uv")}
 DETECT_SECRETS_SPEC=${DETECT_SECRETS_SPEC:-git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976}
-DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |Cargo\.lock$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
+DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
 # Scan scope: files the branch changes relative to its upstream, mirroring
 # the Makefile's `git diff $(GIT_DIFF_TARGET)`. During a rebase, both
 # endpoints are recorded in the state dir (onto = upstream tip, orig-head =
@@ -184,6 +184,22 @@ fi
     --exclude-files "$DETECT_SECRETS_FILES_EXCLUDE" \
     $DETECT_SECRETS_PATH
 
+# Files this run scanned. A scanned file absent from the fresh results has no
+# findings left, so its old baseline entries must not survive the merge. With
+# no path arguments detect-secrets scans the whole tree. Excluded files are
+# never scanned and keep their old entries.
+scanned_all=false
+scanned_files=
+if [ -z "${DETECT_SECRETS_PATH:-}" ]; then
+    scanned_all=true
+else
+    for p in $DETECT_SECRETS_PATH; do
+        if [ -e "$p" ]; then
+            scanned_files+="$p"$'\n'
+        fi
+    done
+fi
+
 # Merge: keep worktree-baseline entries for files git no longer tracks,
 # take freshly scanned results for everything else.
 #
@@ -200,27 +216,39 @@ fi
 #    below are exact (the old `inside($gitfiles)` used substring semantics:
 #    a tracked config.py.bak would keep stale config.py entries alive)
 #
-#  (.[0].results | to_entries | [ .[]|select($gitfileset[.key]) ] | from_entries)
+#  (.[0].results | to_entries | [ .[]|select(tracked and not rescanned) ] | from_entries)
 #  ^ filters the original file to only include entries that are still in the
-#    repository, essentially removing any files that have been deleted over time
+#    repository, essentially removing any files that have been deleted over time,
+#    and files this run rescanned (their fresh results are in .[1]; a rescanned
+#    file with no findings left has no key there, so its old entries must go)
 #
 #  + .[1].results
 #  ^ merges in the results of the current baseline, overwriting changed line
 #    numbers, etc.
 #
+#  | to_entries | sort_by(.key) | from_entries
+#  ^ restores sorted file keys: the merge appends fresh results after the old
+#    ones, and detect-secrets itself writes the baseline sorted by filename
+#
 #  <(git ls-files | jq -R -s 'split("\n")[:-1]')
 #  ^ gets the current git files and transforms them into an array (the [:-1]
 #    drops the empty element produced by the trailing newline). <() allows the
 #    output to be passed like a file reference into jq
-jq --arg exclude "$DETECT_SECRETS_FILES_EXCLUDE" -s '
+jq --arg exclude "$DETECT_SECRETS_FILES_EXCLUDE" \
+    --arg scanned "$scanned_files" \
+    --argjson scanned_all "$scanned_all" -s '
     (.[2] | INDEX(.)) as $gitfileset |
+    ($scanned | split("\n") | map(select(length > 0)) | INDEX(.)) as $scannedset |
+    def rescanned($f):
+        ($f | test($exclude) | not) and ($scanned_all or ($scannedset[$f] != null));
     {
     exclude: { files: $exclude, lines: null },
     generated_at: .[1].generated_at,
     plugins_used: .[1].plugins_used,
     results: (
-        (.[0].results | to_entries | [ .[]|select($gitfileset[.key]) ] | from_entries)
-        + .[1].results),
+        (.[0].results | to_entries | [ .[]|select($gitfileset[.key] and (rescanned(.key) | not)) ] | from_entries)
+        + .[1].results
+        | to_entries | sort_by(.key) | from_entries),
     version: .[1].version,
     word_list: .[1].word_list
     }' \

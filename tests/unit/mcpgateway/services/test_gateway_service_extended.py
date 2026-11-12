@@ -82,7 +82,7 @@ class TestGatewayServiceExtended:
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -122,7 +122,7 @@ class TestGatewayServiceExtended:
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -860,6 +860,37 @@ class TestGatewayServiceExtended:
         assert new_resource.mime_type == "text/plain"
         assert new_resource.created_via == "test"
         assert new_resource.visibility == "team"
+        assert new_resource.team_id == "test-team"
+        assert new_resource.owner_email == "test@example.com"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_prompts_new_prompts_inherit_gateway_owner(self):
+        """Discovered prompts take the gateway team and owner instead of NULL."""
+        service = GatewayService()
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.name = "test-gateway"
+        mock_gateway.team_id = "test-team"
+        mock_gateway.owner_email = "test@example.com"
+        mock_gateway.visibility = "team"
+
+        mock_prompt = MagicMock()
+        mock_prompt.name = "p1"
+        mock_prompt.description = "d"
+        mock_prompt.template = "hi"
+        mock_prompt.arguments = []
+        mock_prompt.visibility = None
+
+        result = service._update_or_create_prompts(mock_db, [mock_prompt], mock_gateway, "test")
+
+        assert len(result) == 1
+        assert result[0].team_id == "test-team"
+        assert result[0].owner_email == "test@example.com"
 
     @pytest.mark.asyncio
     async def test_update_or_create_resources_existing_resources(self):
@@ -1796,7 +1827,7 @@ class TestGatewayServiceExtended:
                 patch.object(
                     service,
                     "_connect_to_sse_server_without_validation",
-                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [])),
+                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [], None)),
                 ),
                 patch.object(service, "_update_or_create_tools", return_value=[]),
                 patch.object(service, "_update_or_create_resources", return_value=[]),

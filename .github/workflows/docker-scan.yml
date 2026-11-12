@@ -180,6 +180,9 @@ jobs:
 
       - name: Upload SARIF to CodeQL
         if: always() && (github.event_name == 'merge_group' || github.event_name == 'push') && steps.scan-fedramp.outputs.sarif != ''
+        # A dequeued PR deletes its gh-readonly-queue ref mid-run, so the upload 404s.
+        # The Grype step already gates the build; push to main re-uploads SARIF.
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: "${{ steps.scan-fedramp.outputs.sarif }}"
@@ -256,6 +259,9 @@ jobs:
 
       - name: Upload SARIF to CodeQL
         if: always() && (github.event_name == 'merge_group' || github.event_name == 'push') && steps.scan.outputs.sarif != ''
+        # A dequeued PR deletes its gh-readonly-queue ref mid-run, so the upload 404s.
+        # The Grype step already gates the build; push to main re-uploads SARIF.
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: "${{ steps.scan.outputs.sarif }}"

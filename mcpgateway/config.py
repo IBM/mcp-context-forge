@@ -55,7 +55,7 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -592,6 +592,24 @@ class Settings(BaseSettings):
             "set true to require a valid Bearer token for all /mcp requests."
         ),
     )
+    mcp_listen_max_lifetime_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Maximum lifetime of a subscriptions/listen stream in seconds; a token expiry earlier than this ends the stream sooner",
+    )
+    mcp_listen_max_streams_per_principal: int = Field(
+        default=32,
+        ge=1,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams per authenticated principal on one worker",
+    )
+    mcp_listen_max_anonymous_streams: int = Field(
+        default=256,
+        ge=0,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams shared by all anonymous callers on one worker; 0 refuses anonymous streams",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -1017,6 +1035,9 @@ class Settings(BaseSettings):
     # Token endpoint auth method
     dcr_token_endpoint_auth_method: str = Field(default="client_secret_basic", description="Token endpoint auth method for DCR (client_secret_basic or client_secret_post)")
 
+    # Application type (OpenID Connect Dynamic Client Registration); MCP 2026-07-28 requires one
+    dcr_application_type: Literal["auto", "web", "native"] = Field(default="auto", description="application_type sent in DCR requests; auto picks native for a loopback redirect URI and web otherwise")
+
     # Metadata cache TTL
     dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
 
@@ -1028,6 +1049,89 @@ class Settings(BaseSettings):
         default=False,
         description="Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
     )
+
+    # ===================================
+    # Client ID Metadata Documents (CIMD) - Client Mode
+    # ===================================
+
+    cimd_enabled: bool = Field(
+        default=True,
+        description="Prefer Client ID Metadata Documents over Dynamic Client Registration when the authorization server advertises client_id_metadata_document_supported",
+    )
+
+    cimd_client_name: str = Field(default="ContextForge", description="client_name published in the gateway's Client ID Metadata Document")
+
+    cimd_client_metadata_url: Optional[str] = Field(
+        default=None,
+        description="Optional explicit URL of the gateway's Client ID Metadata Document, overriding the auto-derived URL when served behind a reverse proxy",
+    )
+
+    cimd_token_endpoint_auth_method: Literal["none", "private_key_jwt"] = Field(
+        default="none",
+        description="Preferred token endpoint authentication method for CIMD clients (none or private_key_jwt)",
+    )
+
+    cimd_private_key_path: str = Field(
+        default="",
+        description="Path to the dedicated PEM private key that signs CIMD private_key_jwt client assertions. Never the JWT signing key; required when cimd_token_endpoint_auth_method is private_key_jwt",
+    )
+
+    cimd_previous_public_key_path: str = Field(
+        default="",
+        description="Optional path to the previous CIMD public key PEM, published in the CIMD JWKS during key rotation",
+    )
+
+    cimd_key_id: str = Field(default="cimd-1", description="kid of the CIMD signing key, set in assertion headers and the CIMD JWKS")
+
+    cimd_previous_key_id: str = Field(
+        default="",
+        description="kid published for the previous CIMD public key during rotation. Set it to the former CIMD_KEY_ID so assertions signed before rotation still verify. Defaults to <CIMD_KEY_ID>-previous",
+    )
+
+    cimd_signing_alg: Literal["RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512"] = Field(
+        default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)"
+    )
+
+    cimd_document_cache_seconds: int = Field(
+        default=3600,
+        ge=0,
+        description="Cache-Control max-age in seconds for the Client ID Metadata Document public endpoint",
+    )
+
+    @field_validator("cimd_client_metadata_url")
+    @classmethod
+    def validate_cimd_client_metadata_url(cls, url: Optional[str]) -> Optional[str]:
+        """Require the override URL to end with the path the gateway serves the document at.
+
+        Args:
+            url: Configured ``CIMD_CLIENT_METADATA_URL`` value.
+
+        Returns:
+            The URL unchanged, or ``None`` when unset or blank.
+
+        Raises:
+            ValueError: If the URL has a query, a fragment, or a path other than ``/oauth/client-metadata.json``.
+        """
+        if not url:
+            return None
+        parsed = urlsplit(url)
+        if parsed.query or parsed.fragment or not parsed.path.endswith("/oauth/client-metadata.json"):
+            raise ValueError("CIMD_CLIENT_METADATA_URL must end with /oauth/client-metadata.json, the path the gateway serves, and carry no query or fragment")
+        return url
+
+    @model_validator(mode="after")
+    def validate_cimd_private_key_config(self) -> Self:
+        """Require a dedicated key when CIMD authenticates with ``private_key_jwt``.
+
+        Returns:
+            Self for chaining.
+
+        Raises:
+            ValueError: If ``private_key_jwt`` is selected without ``CIMD_PRIVATE_KEY_PATH``.
+        """
+        if self.cimd_enabled and self.cimd_token_endpoint_auth_method == "private_key_jwt" and not self.cimd_private_key_path:
+            raise ValueError("CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt requires CIMD_PRIVATE_KEY_PATH; the JWT signing key is never used")
+        return self
 
     # ===================================
     # OAuth Discovery (RFC 8414)
@@ -1132,6 +1236,7 @@ class Settings(BaseSettings):
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
+    mcpgateway_ui_deprecation_notice_enabled: bool = Field(default=True, description="Show the built-in Admin UI deprecation notice")
     mcpgateway_admin_api_enabled: bool = False
 
     # Migration runner ownership.
@@ -1244,7 +1349,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = Field(
         default=False,
         description="Skip SSL certificate verification for ALL outbound HTTPS requests "
-        "(federation, MCP servers, LLM providers, A2A agents). "
+        "(federation, MCP servers, LLM providers, A2A agents, SSO and OIDC discovery, JWKS key fetches). "
         "WARNING: Only enable in dev environments with self-signed certificates.",
     )
     cors_enabled: bool = True
@@ -2739,6 +2844,25 @@ class Settings(BaseSettings):
         description="Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
+    # CEL expression sandbox: operator-supplied policy expressions on gateway and tool records.
+    cel_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for CEL policy expressions. 'subprocess' runs each evaluation in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections; it exists only for platforms where fork is unavailable.",
+    )
+    cel_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=1.0,
+        description="Wall-clock limit for evaluating one CEL expression, at most 1.0. Exceeding it kills the worker and fails the evaluation. Default: 1.0 seconds.",
+    )
+    cel_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked CEL worker processes per gateway worker. Default: 2.",
+    )
+
     # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.
     regex_timeout_seconds: float = Field(
         default=1.0,
@@ -2911,7 +3035,13 @@ class Settings(BaseSettings):
     # Modern (2026-07-28) change-event listeners
     # When enabled, the gateway holds one standing subscriptions/listen stream per
     # server to get the list changed event
-    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
+    gateway_modern_listeners_enabled: bool = Field(
+        default=False,
+        description=(
+            "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; "
+            "runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster"
+        ),
+    )
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")

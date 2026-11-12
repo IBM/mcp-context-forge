@@ -63,10 +63,22 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke, validation_policy.manage |
 | `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, tools.preview, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, metrics:read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+
+!!! warning "Developer grants include write access"
+    The built-in `developer` role grants create, update, and delete permissions across gateways,
+    servers, tools, resources, prompts, and A2A agents.
+    It also grants tool execution, server use, LLM/A2A invocation, and token self-service.
+    Gateway write permissions allow upstream gateway registration, configuration updates, and deletion,
+    subject to resource visibility and configuration checks.
+
+    Use a custom role when users need fewer actions.
+    Review all applicable role assignments, including personal-team and global roles, when evaluating effective permissions.
+    Token scoping controls resource visibility; RBAC controls allowed actions.
+    Explicit token permission restrictions can further limit allowed actions.
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -369,8 +381,6 @@ These checks are aligned with equivalent REST endpoints.
 | JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
 | Utility SSE (`GET /sse`) | `servers.use` | Transport access. Tokens holding an MCP method permission (`tools.*`, `resources.*`, `prompts.*`) satisfy this implicitly — see [Token Scope Semantics](#token-scope-semantics). |
 | Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
-| `GET`/`PATCH /admin/runtime/mcp-mode` | `admin.system_config` | Runtime override of public `/mcp` ingress (`shadow ↔ edge`); see [Rust MCP Runtime](../architecture/rust-mcp-runtime.md#runtime-mode-override). |
-| `GET`/`PATCH /admin/runtime/a2a-mode` | `admin.system_config` | Runtime override of registered-A2A invocation path (`shadow ↔ edge`). |
 
 ---
 
@@ -484,6 +494,7 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Users** | users.create, users.read, users.update, users.delete, users.invite |
 | **Teams** | teams.create, teams.read, teams.update, teams.delete, teams.join, teams.manage_members |
 | **Tools** | tools.create, tools.read, tools.update, tools.delete, tools.execute, tools.preview |
+| **Validation policy** | validation_policy.manage |
 | **Plugins** | plugins.read |
 | **Resources** | resources.create, resources.read, resources.update, resources.delete, resources.share |
 | **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete |
@@ -494,6 +505,8 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
+
+`POST /a2a/fetch-card` needs `a2a.create`, because it makes the gateway read an Agent Card from a caller-chosen host before the agent is registered. See [Reading an Agent Card Before Registration](../using/agents/a2a.md#reading-an-agent-card-before-registration).
 
 `tools.preview` sits strictly below `tools.execute`: it authorizes `POST /tools/preview/{name}`,
 which validates and resolves a tool call without dispatching it (no REST/MCP/A2A/gRPC call, no

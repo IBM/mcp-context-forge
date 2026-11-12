@@ -316,6 +316,38 @@ describe("editServer", () => {
     consoleSpy.mockRestore();
   });
 
+  test.each([
+    ["Use the clock tools.", "Use the clock tools."],
+    [null, ""],
+    [undefined, ""],
+  ])("fills the instructions textarea from %s", async (instructions, expected) => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const form = document.createElement("form");
+    form.id = "edit-server-form";
+    document.body.appendChild(form);
+
+    const nameInput = document.createElement("input");
+    nameInput.id = "edit-server-name";
+    form.appendChild(nameInput);
+
+    const field = document.createElement("textarea");
+    field.id = "edit-server-instructions";
+    field.value = "stale";
+    form.appendChild(field);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "s1", name: "test-server", instructions }),
+    });
+
+    await editServer("s1");
+
+    expect(field.value).toBe(expected);
+    consoleSpy.mockRestore();
+  });
+
   test("handles visibility radio buttons", async () => {
     window.ROOT_PATH = "";
     window.ALLOW_PUBLIC_VISIBILITY = true;

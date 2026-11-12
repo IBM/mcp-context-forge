@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
-from mcp.types import ListToolsResult, Tool
+from mcp.types import Prompt, Resource, ResourceTemplate, Tool
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -878,7 +878,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         client_key=None,
     )
     service._prepare_gateway_connection_material = AsyncMock(return_value=connection_material)
-    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
     service._sync_gateway_catalog = Mock(return_value=SimpleNamespace())
     service._reconcile_gateway_catalog = Mock()
 
@@ -904,6 +904,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         client_cert=None,
         client_key=None,
         initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
+        gateway_id="gw-1",
     )
 
 
@@ -1085,7 +1086,7 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
         client_key=None,
     )
     service._prepare_gateway_connection_material = AsyncMock(return_value=connection_material)
-    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
     service._sync_gateway_catalog = Mock(return_value=SimpleNamespace())
     service._reconcile_gateway_catalog = Mock()
 
@@ -1177,6 +1178,19 @@ def test_finalize_pending_gateway_success_requires_matching_pending_claim():
     compiled_params = stmt.compile().params
     assert compiled_params["status"] == "active"
     assert compiled_params["lifecycle_claimed_by"] is None
+
+
+@pytest.mark.parametrize("instructions", ["Use the tools in order.", None])
+def test_finalize_pending_gateway_success_stores_upstream_instructions(instructions):
+    service = GatewayService()
+    gateway = SimpleNamespace(id="gw-1")
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(rowcount=1)
+
+    service._finalize_pending_gateway_success(db, gateway, {}, instructions)
+
+    compiled_params = db.execute.call_args.args[0].compile().params
+    assert compiled_params["upstream_instructions"] == instructions
 
 
 def test_finalize_pending_gateway_failure_requires_matching_pending_claim():
@@ -1398,7 +1412,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
 
     service = GatewayService()
     service._check_gateway_uniqueness = MagicMock(return_value=None)
-    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], [], [], None))
     service._notify_gateway_added = AsyncMock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_a, **_kw: None)
@@ -1560,69 +1574,77 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     assert decode_auth(existing.auth_value) == auth_dict
 
 
+def _pagination_item(method, identity, description="first"):
+    """Build an SDK object with the specified protocol identity."""
+    if method is MCPListMethod.TOOLS:
+        return Tool(name=identity, description=description, input_schema={"type": "object"})
+    if method is MCPListMethod.PROMPTS:
+        return Prompt(name=identity, description=description)
+    if method is MCPListMethod.RESOURCES:
+        return Resource(name="shared", uri=f"test://pagination/{identity}", description=description)
+    return ResourceTemplate(name="shared", uri_template=f"test://pagination/{identity}/{{id}}", description=description)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mcp_method", list(MCPListMethod))
-async def test_get_list_paginated_single_page(mcp_method):
-    """Return one page for each MCP list method."""
+@pytest.mark.parametrize("method", list(MCPListMethod))
+@pytest.mark.parametrize(
+    "layout,cursors,expected_keys,cycle",
+    [
+        (("ab",), (None,), "ab", False),
+        (("",), (None,), "", False),
+        (("a", "bc"), ("one", None), "abc", False),
+        (("a", "a"), ("one", "one"), "a", True),
+        (("a", "b"), ("one", "one"), "ab", True),
+        (("ab", "Bc"), ("one", "one"), "abc", True),
+        (("a", "b", "Ac"), ("one", "two", "one"), "abc", True),
+        (("aAb",), (None,), "ab", False),
+        (("a", "Ab"), ("one", None), "ab", False),
+        (("", "b"), ("one", None), "b", False),
+    ],
+)
+async def test_get_list_paginated_unique_identities(method, layout, cursors, expected_keys, cycle, caplog):
+    """Preserve unique objects and stop cursor cycles without losing results."""
+    suffix, attribute = method.value
+    objects = {key: _pagination_item(method, key) for key in "abc"}
+    objects.update({key.upper(): _pagination_item(method, key, "changed") for key in "ab"})
+    pages = [SimpleNamespace(**{attribute: [objects[key] for key in keys], "next_cursor": cursor}) for keys, cursor in zip(layout, cursors)]
+    originals = [list(getattr(page, attribute)) for page in pages]
     session = AsyncMock()
-    method_suffix, response_attribute = mcp_method.value
-    list_method = getattr(session, f"list_{method_suffix}")
-    list_method.return_value = SimpleNamespace(**{response_attribute: ["t1", "t2"], "next_cursor": None})
-    assert await get_list_paginated(session, mcp_method) == ["t1", "t2"]
+    list_method = getattr(session, f"list_{suffix}")
+    list_method.side_effect = pages
+
+    result = await get_list_paginated(session, method)
+
+    assert result == [objects[key] for key in expected_keys]
+    assert all(actual is objects[key] for actual, key in zip(result, expected_keys))
+    expected_calls = [call()] + [call(cursor=cursor) for cursor in cursors[:-1]]
+    assert list_method.await_args_list == expected_calls
+    assert [getattr(page, attribute) for page in pages] == originals
+    assert (f"Repeated pagination cursor from list_{suffix}" in caplog.text) is cycle
+    duplicate = sum(map(len, layout)) > len(expected_keys)
+    assert (f"Duplicate pagination items from list_{suffix}" in caplog.text) is duplicate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", list(MCPListMethod))
+async def test_get_list_paginated_missing_cursor(method):
+    """Return the first page when the response omits its cursor."""
+    suffix, attribute = method.value
+    item = _pagination_item(method, "a")
+    session = AsyncMock()
+    list_method = getattr(session, f"list_{suffix}")
+    list_method.return_value = SimpleNamespace(**{attribute: [item]})
+    assert await get_list_paginated(session, method) == [item]
     list_method.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
-async def test_get_list_paginated_empty_first_page():
-    """Return an empty list without requesting another page."""
+async def test_get_list_paginated_preserves_upstream_error():
+    """Propagate upstream errors after collecting the first page."""
     session = AsyncMock()
-    session.list_tools.return_value = ListToolsResult(tools=[], next_cursor=None)
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == []
-    session.list_tools.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_get_list_no_cursor():
-    session = AsyncMock()
-    session.list_tools.return_value = SimpleNamespace(tools=["t1", "t2"])
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1", "t2"]
-    session.list_tools.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "mcp_method,method_name,response_attribute",
-    [
-        (MCPListMethod.TOOLS, "list_tools", "tools"),
-        (MCPListMethod.PROMPTS, "list_prompts", "prompts"),
-        (MCPListMethod.RESOURCES, "list_resources", "resources"),
-        (MCPListMethod.RESOURCE_TEMPLATES, "list_resource_templates", "resource_templates"),
-    ],
-)
-async def test_get_list_paginated_multi_page(mcp_method, method_name, response_attribute):
-    session = AsyncMock()
-    list_method = getattr(session, method_name)
-    pages = [
-        SimpleNamespace(**{response_attribute: ["t1"], "next_cursor": "cur"}),
-        SimpleNamespace(**{response_attribute: ["t2", "t3"], "next_cursor": None}),
+    session.list_tools.side_effect = [
+        SimpleNamespace(tools=[_pagination_item(MCPListMethod.TOOLS, "a")], next_cursor="one"),
+        RuntimeError("upstream failed"),
     ]
-    list_method.side_effect = pages
-    assert await get_list_paginated(session, mcp_method) == ["t1", "t2", "t3"]
-    list_method.assert_awaited_with(cursor="cur")
-    assert getattr(pages[0], response_attribute) == ["t1"]
-    assert getattr(pages[1], response_attribute) == ["t2", "t3"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("cursors", [("cur", "cur"), ("first", "second", "first")])
-async def test_get_list_paginated_stops_at_cursor_cycles(cursors, caplog):
-    """Return collected results and warn when a cursor repeats."""
-    session = AsyncMock()
-    pages = [SimpleNamespace(tools=["t1"], next_cursor=cursor) for cursor in cursors]
-    session.list_tools.side_effect = pages
-
-    assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1"] * len(cursors)
-
-    assert session.list_tools.await_count == len(cursors)
-    assert all(page.tools == ["t1"] for page in pages)
-    assert "Repeated pagination cursor from list_tools" in caplog.text
+    with pytest.raises(RuntimeError, match="upstream failed"):
+        await get_list_paginated(session, MCPListMethod.TOOLS)

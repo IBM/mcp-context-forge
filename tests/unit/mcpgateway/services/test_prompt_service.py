@@ -43,6 +43,28 @@ from tests.helpers.admin_mocks import install_admin_user
 # ---------------------------------------------------------------------------
 
 
+def _assert_bulk_prompt_audits(audit, expected_counts, import_batch_id):
+    """Assert team groups preserve the bulk prompt audit payload contract."""
+    assert audit.call_count == len(expected_counts)
+    for audit_call in audit.call_args_list:
+        team_id = audit_call.kwargs["team_id"]
+        created, updated = expected_counts[team_id]
+        assert audit_call.kwargs == {
+            "user_id": "owner@example.com",
+            "action": "bulk_create_prompts" if created else "bulk_update_prompts",
+            "resource_type": "prompt",
+            "resource_id": import_batch_id or "bulk_operation",
+            "resource_name": f"Bulk operation: {created} created, {updated} updated",
+            "user_email": "owner@example.com",
+            "team_id": team_id,
+            "client_ip": "192.0.2.1",
+            "user_agent": "bulk-test",
+            "new_values": {"prompts_created": created, "prompts_updated": updated, "visibility": "public"},
+            "context": {"created_via": "import", "import_batch_id": import_batch_id, "federation_source": "source-gateway", "conflict_strategy": "update"},
+        }
+    assert {audit_call.kwargs["team_id"] for audit_call in audit.call_args_list} == set(expected_counts)
+
+
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
@@ -343,6 +365,45 @@ class TestPromptService:
         assert getattr(added, "gateway_name_cache") == "Gateway One"
 
     @pytest.mark.asyncio
+    async def test_register_prompt_ignores_nested_team_and_owner(self, prompt_service, test_db):
+        """Stored team and owner come from the parameters, never from the payload."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        prompt_service._notify_prompt_added = AsyncMock()
+        pc = PromptCreate(name="scoped", description="", template="X", arguments=[], team_id="team-other", owner_email="other@example.com")
+
+        await prompt_service.register_prompt(test_db, pc, created_by="alice@example.com", team_id="team-a", owner_email="alice@example.com")
+
+        added = test_db.add.call_args[0][0]
+        assert added.team_id == "team-a"
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_register_prompt_parameter_visibility_wins(self, prompt_service, test_db):
+        """The visibility parameter takes precedence over the payload value."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
+        prompt_service._notify_prompt_added = AsyncMock()
+        pc = PromptCreate(name="scoped", description="", template="X", arguments=[], visibility="public")
+
+        await prompt_service.register_prompt(test_db, pc, visibility="team", team_id="team-a")
+
+        assert test_db.add.call_args[0][0].visibility == "team"
+
+    @pytest.mark.asyncio
+    async def test_register_prompts_bulk_ignores_nested_team_and_owner(self, prompt_service):
+        """Bulk create stores the parameter scope, never the payload scope."""
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        pc = PromptCreate(name="bulk", description="", template="X", arguments=[], team_id="team-other", owner_email="other@example.com")
+
+        await prompt_service.register_prompts_bulk(db=db, prompts=[pc], created_by="alice@example.com", team_id=None, owner_email=None, visibility="public")
+
+        added = db.add_all.call_args[0][0][0]
+        assert added.team_id is None
+        assert added.owner_email == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_register_prompt_conflict(self, prompt_service, test_db):
         """Existing prompt with same name → PromptNameConflictError."""
         existing = _build_db_prompt()
@@ -544,10 +605,29 @@ class TestPromptService:
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
             meta_data=None,
+            progress_callback=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"
         assert result.messages[0].content.text == "Rendered prompt for America/New_York and Europe/Dublin"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_forwards_progress_callback_to_gateway_fetch(self, prompt_service, test_db):
+        """get_prompt hands progress_callback to _fetch_gateway_prompt_result."""
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        db_prompt = _build_db_prompt(name="remote-prompt", template="", desc="remote")
+        db_prompt.gateway_id = gateway.id
+        db_prompt.gateway = gateway
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        test_db.commit = Mock()
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(return_value=PromptResult(messages=[], description="remote"))
+        callback = AsyncMock()
+
+        await prompt_service.get_prompt(test_db, db_prompt.name, {"a": "b"}, user="user@test.com", progress_callback=callback)
+
+        assert prompt_service._fetch_gateway_prompt_result.await_args.kwargs["progress_callback"] is callback
 
     @pytest.mark.asyncio
     async def test_get_prompt_by_name(self, prompt_service, test_db):
@@ -1162,6 +1242,22 @@ class TestPromptService:
         prompt_service._notify_prompt_updated.assert_called_once()
         assert res["description"] == "new desc"
         assert res["template"] == "Hi, {{ name }}!"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_validates_foreign_team_before_name_conflict(self, prompt_service, test_db):
+        """A foreign target team fails before the name lookup, so a 409 never confirms a name in that team."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        existing = _build_db_prompt()
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", side_effect=[existing]) as lock,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.prompt_service._validate_prompt_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+        ):
+            with pytest.raises(Exception, match="membership"):
+                await prompt_service.update_prompt(test_db, 1, PromptUpdate(name="taken-name", visibility="team", team_id="foreign-team"), user_email="user@example.com")
+        assert lock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_update_prompt_team_id_rejects_nonexistent_team(self, prompt_service, test_db):
@@ -2120,13 +2216,88 @@ class TestPromptBulkRegistration:
     """Additional coverage for bulk prompt registration branches."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_team", [None, "team-a"])
+    @pytest.mark.parametrize("import_batch_id", [None, "batch-prompt-groups"])
+    async def test_register_prompts_bulk_audits_persisted_teams(self, prompt_service, mock_logging_services, creation_team, import_batch_id):
+        """Bulk audits group successful creates and authorized updates by actual teams."""
+        actor = "owner@example.com"
+        existing = [
+            DbPrompt(
+                name=prompt_service._compute_prompt_name(f"update-{index}"),
+                original_name=f"update-{index}",
+                custom_name=f"update-{index}",
+                template="Old",
+                team_id=team,
+                owner_email=actor,
+                version=1,
+            )
+            for index, team in enumerate(("team-a", "team-b", "team-b", "denied-team"))
+        ]
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = existing
+        prompt_service._notify_prompt_added = AsyncMock()
+        prompts = [PromptCreate(name=f"created-{index}", template="Safe", arguments=[], team_id=team) for index, team in enumerate(("team-a", "team-a", None))]
+        prompts.extend(PromptCreate(name=f"update-{index}", template="Updated", arguments=[], team_id="payload-team", owner_email="payload@example.com") for index in range(len(existing)))
+        audit = mock_logging_services["audit_trail"].log_action
+
+        def commit():
+            audit.assert_not_called()
+
+        db.commit.side_effect = commit
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(side_effect=[True, True, True, False])):
+            result = await prompt_service.register_prompts_bulk(
+                db=db,
+                prompts=prompts,
+                created_by=actor,
+                created_from_ip="192.0.2.1",
+                created_via="import",
+                created_user_agent="bulk-test",
+                import_batch_id=import_batch_id,
+                federation_source="source-gateway",
+                team_id=creation_team,
+                owner_email=actor,
+                conflict_strategy="update",
+                user_email=actor,
+            )
+
+        assert (result["created"], result["updated"], result["failed"]) == (3, 3, 1)
+        assert [(row.team_id, row.owner_email) for row in existing] == [(team, actor) for team in ("team-a", "team-b", "team-b", "denied-team")]
+        assert existing[-1].template == "Old"
+        assert db.refresh.call_count == 3
+        assert prompt_service._notify_prompt_added.await_count == 3
+        expected = {"team-a": (3 if creation_team else 0, 1), "team-b": (0, 2)}
+        if creation_team is None:
+            expected[None] = (3, 0)
+        _assert_bulk_prompt_audits(audit, expected, import_batch_id)
+
+    @pytest.mark.asyncio
+    async def test_register_prompts_bulk_commit_failure_emits_no_audits(self, prompt_service, mock_logging_services):
+        """A failed prompt commit emits no success audit or creation notification."""
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        db.commit.side_effect = RuntimeError("commit failed")
+        prompt_service._notify_prompt_added = AsyncMock()
+
+        result = await prompt_service.register_prompts_bulk(
+            db=db,
+            prompts=[PromptCreate(name="created", template="Safe", arguments=[], team_id="team-a")],
+            created_by="owner@example.com",
+        )
+
+        assert result["failed"] == 1
+        db.rollback.assert_called_once()
+        db.refresh.assert_not_called()
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
+        prompt_service._notify_prompt_added.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_register_prompts_bulk_empty_returns_zeroes(self, prompt_service):
         result = await prompt_service.register_prompts_bulk(db=MagicMock(), prompts=[])
 
         assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     @pytest.mark.asyncio
-    async def test_register_prompts_bulk_update_conflict_updates_existing(self, prompt_service):
+    async def test_register_prompts_bulk_update_conflict_updates_existing(self, prompt_service, mock_logging_services):
         existing = MagicMock(spec=DbPrompt)
         existing.name = prompt_service._compute_prompt_name("custom")
         existing.gateway_id = None
@@ -2137,6 +2308,8 @@ class TestPromptBulkRegistration:
         existing.custom_name = "old"
         existing.display_name = "old"
         existing.version = 1
+        existing.team_id = "existing-team"
+        existing.owner_email = "owner@example.com"
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
@@ -2162,6 +2335,7 @@ class TestPromptBulkRegistration:
                 created_by="tester",
                 conflict_strategy="update",
                 user_email="owner@example.com",
+                team_id="importer-team",
             )
 
         assert result["updated"] == 1
@@ -2174,6 +2348,9 @@ class TestPromptBulkRegistration:
         assert existing.version == 2
         assert existing.argument_schema["properties"]["name"]["description"] == "who"
         db.add_all.assert_not_called()
+        assert existing.team_id == "existing-team"
+        assert existing.owner_email == "owner@example.com"
+        assert mock_logging_services["audit_trail"].log_action.call_args.kwargs["team_id"] == "existing-team"
 
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_update_conflict_skips_custom_and_display_when_missing(self, prompt_service):
@@ -2219,7 +2396,7 @@ class TestPromptBulkRegistration:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
-    async def test_register_prompts_bulk_update_denied_for_non_owner(self, prompt_service, caller, owns):
+    async def test_register_prompts_bulk_update_denied_for_non_owner(self, prompt_service, mock_logging_services, caller, owns):
         """Bulk update never modifies a prompt the caller does not own, and fails closed without a caller."""
         existing = MagicMock(spec=DbPrompt)
         existing.name = prompt_service._compute_prompt_name("prompt")
@@ -2250,6 +2427,7 @@ class TestPromptBulkRegistration:
         assert existing.description == "Victim desc"
         assert existing.template == "Victim {{ name }}"
         assert existing.version == 1
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_update_database_backed_ownership(self, prompt_service, tmp_path):
@@ -2394,6 +2572,26 @@ class TestPromptBulkRegistration:
         added = db.add_all.call_args.args[0][0]
         assert added.gateway is gateway
         assert added.gateway_name_cache == "Gateway One"
+
+    @pytest.mark.asyncio
+    async def test_register_prompts_bulk_invalidates_prompts_once(self, prompt_service):
+        """A bulk call invalidates the prompts cache once, not per row."""
+        gateway_result = MagicMock()
+        gateway_result.scalars.return_value.all.return_value = []
+        prompts_result = MagicMock()
+        prompts_result.scalars.return_value.all.return_value = []
+        db = MagicMock()
+        db.execute.side_effect = [gateway_result, prompts_result]
+        prompt_service._notify_prompt_added = AsyncMock()
+        cache = MagicMock()
+        cache.invalidate_prompts = AsyncMock()
+
+        prompts = [PromptCreate(name=f"p{i}", template="Hello!", arguments=[]) for i in range(3)]
+        with patch("mcpgateway.services.prompt_service._get_registry_cache", return_value=cache):
+            result = await prompt_service.register_prompts_bulk(db=db, prompts=prompts, created_by="tester", conflict_strategy="skip")
+
+        assert result["created"] == 3
+        cache.invalidate_prompts.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_fail_conflict_records_error(self, prompt_service):
@@ -4213,3 +4411,106 @@ class TestFetchGatewayPromptRegistryPath:
         get_prompt_mock.assert_awaited_once()
         assert get_prompt_mock.await_args.args[0] is sentinel_session
         assert result.description == "from sse fallback"
+
+
+class TestGetPromptWithMetaProgress:
+    """_get_prompt_with_meta relays upstream progress and never forwards the client token."""
+
+    @staticmethod
+    def _session():
+        session = MagicMock()
+        session.send_request = AsyncMock(return_value="result")
+        session.get_prompt = AsyncMock(return_value="plain")
+        return session
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_passes_progress_callback(self):
+        """A callback alone selects send_request and is handed to it."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session, cb = self._session(), AsyncMock()
+        assert await _get_prompt_with_meta(session, "p", {"a": "b"}, None, cb) == "result"
+        assert session.send_request.await_args.kwargs["progress_callback"] is cb
+        wire = session.send_request.await_args.args[0].model_dump(by_alias=True)["params"]
+        assert wire["name"] == "p" and wire["arguments"] == {"a": "b"} and wire.get("_meta") is None
+        session.get_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_keeps_other_meta(self):
+        """Non-progress _meta survives next to a callback."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        await _get_prompt_with_meta(session, "p", None, {"traceparent": "00-a-b-01"}, AsyncMock())
+        request = session.send_request.await_args.args[0]
+        assert request.model_dump(by_alias=True)["params"]["_meta"]["traceparent"] == "00-a-b-01"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_strips_client_token(self):
+        """The client's progress token never goes upstream when no callback is set."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        await _get_prompt_with_meta(session, "p", None, {"progress_token": 7, "traceparent": "t"}, None)
+        meta = session.send_request.await_args.args[0].model_dump(by_alias=True)["params"]["_meta"]
+        assert "progressToken" not in meta and "progress_token" not in meta
+        assert meta["traceparent"] == "t"
+        assert session.send_request.await_args.kwargs["progress_callback"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_token_only_meta_takes_plain_path(self):
+        """Meta holding only a client token reduces to nothing and uses get_prompt."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        assert await _get_prompt_with_meta(session, "p", None, {"progressToken": "x"}, None) == "plain"
+        session.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_meta_plain_path_unchanged(self):
+        """No meta and no callback keeps the plain SDK call."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _get_prompt_with_meta
+
+        session = self._session()
+        assert await _get_prompt_with_meta(session, "p", {"a": "b"}, None, None) == "plain"
+        session.get_prompt.assert_awaited_once_with("p", arguments={"a": "b"})
+        session.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_result_threads_progress_callback(self):
+        """progress_callback reaches _get_prompt_with_meta on the streamable HTTP arm."""
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        gateway = SimpleNamespace(id="gw", url="http://gw/mcp", transport="streamable_http", auth_type=None, auth_value=None, auth_query_params=None, ca_certificate=None)
+        prompt = SimpleNamespace(name="p", original_name="p", description="d", gateway=gateway, gateway_id="gw", template="")
+        remote = SimpleNamespace(messages=[], description="x")
+        sentinel_session = object()
+
+        class _Client:
+            session = sentinel_session
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        callback = AsyncMock()
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+            patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=_Client()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote) as get_mock,
+        ):
+            await PromptService()._fetch_gateway_prompt_result(prompt, None, meta_data=None, progress_callback=callback)
+
+        assert get_mock.await_args.args[0] is sentinel_session
+        assert get_mock.await_args.args[-1] is callback

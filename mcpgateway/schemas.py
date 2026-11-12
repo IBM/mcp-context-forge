@@ -24,13 +24,28 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import (
+    AliasChoices,
+    AnyHttpUrl,
+    BaseModel,
+    computed_field,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+    model_validator,
+    SecretStr,
+    StringConstraints,
+    ValidationInfo,
+)
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -39,10 +54,18 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
+from mcpgateway.common.oauth import (
+    ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS,
+    ACTOR_TOKEN_SOURCES,
+    normalize_token_endpoint_auth_method,
+    OAUTH_SENSITIVE_KEYS,
+    SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
+    SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+)
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
+from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRESSION_LENGTH
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -50,10 +73,11 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+_POLICY_SAMPLE_VARIABLES = {"description": "", "tool_name": ""}
 
-# ============================================================================
-# Shared validation helpers
-# ============================================================================
+
+# =====================================================================# Shared validation helpers
+# =====================================================================
 
 
 def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
@@ -91,10 +115,8 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
     return v
 
 
-# ============================================================================
-# Precompiled regex patterns (compiled once at module load for performance)
-# ============================================================================
-# Note: Only truly static patterns are precompiled here. Settings-based patterns
+# =====================================================================# Precompiled regex patterns (compiled once at module load for performance)
+# =====================================================================# Note: Only truly static patterns are precompiled here. Settings-based patterns
 # (e.g., from settings.* or SecurityValidator.*) are NOT precompiled because tests
 # override class/settings attributes at runtime via monkeypatch.
 _HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
@@ -174,6 +196,147 @@ def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
             raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
 
 
+OAUTH_DISCOVERY_GRANT_TYPES = ("client_credentials",)
+
+
+def _validate_oauth_discovery(discovery: Any) -> None:
+    """Validate the optional ``discovery`` object structurally, including its ``token_url`` override.
+
+    Args:
+        discovery: The ``oauth_config["discovery"]`` value, or ``None``.
+
+    Raises:
+        ValueError: If ``discovery`` is not an object, names an unsupported grant, or its ``token_url`` is not a string or fails validation.
+    """
+    if discovery is None:
+        return
+    if not isinstance(discovery, dict):
+        raise ValueError("oauth_config.discovery must be an object")
+    if discovery.get("grant_type") not in OAUTH_DISCOVERY_GRANT_TYPES:
+        raise ValueError(f"oauth_config.discovery.grant_type must be one of: {', '.join(OAUTH_DISCOVERY_GRANT_TYPES)}")
+    raw_value = discovery.get("token_url")
+    if raw_value in (None, ""):
+        return
+    if not isinstance(raw_value, str):
+        raise ValueError("oauth_config.discovery.token_url must be a string URL")
+    validate_core_url(raw_value, "OAuth config discovery.token_url")
+
+
+TOKEN_EXCHANGE_ONLY_OAUTH_KEYS = ("discovery", "actor_token_source", "actor_token_type", "actor")
+_RFC8693_TOKEN_TYPE_PREFIX = "urn:ietf:params:oauth:token-type:"  # nosec B105 - RFC 8693 URI prefix
+
+
+def _validate_oauth_actor_token(v: Dict[str, Any]) -> None:
+    """Validate the RFC 8693 delegation keys structurally.
+
+    Defaults and the ``client_assertion`` key requirement are applied in
+    ``GatewayService._validate_token_exchange_config``, which can read the stored config.
+
+    Args:
+        v: OAuth configuration dict.
+
+    Raises:
+        ValueError: If ``actor_token_source`` is not a supported value, ``actor_token_type`` is not an RFC 8693 token type URI,
+            or the ``actor`` override is invalid.
+
+    Examples:
+        >>> _validate_oauth_actor_token({"actor_token_source": "client_credentials"})
+        >>> _validate_oauth_actor_token({"actor_token_source": "password"})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor_token_source must be one of: none, client_credentials, client_assertion
+    """
+    source = v.get("actor_token_source")
+    if source is not None and source not in ACTOR_TOKEN_SOURCES:
+        raise ValueError(f"oauth_config.actor_token_source must be one of: {', '.join(ACTOR_TOKEN_SOURCES)}")
+    token_type = v.get("actor_token_type")
+    if token_type not in (None, "") and (not isinstance(token_type, str) or not token_type.startswith(_RFC8693_TOKEN_TYPE_PREFIX)):
+        raise ValueError(f"oauth_config.actor_token_type must be an RFC 8693 token type URI starting with '{_RFC8693_TOKEN_TYPE_PREFIX}'")
+    _validate_oauth_actor_override(v.get("actor"), source)
+
+
+def _validate_oauth_actor_override(actor: Any, source: Any) -> None:
+    """Validate the optional ``actor`` client override structurally.
+
+    Args:
+        actor: The ``oauth_config["actor"]`` value, or ``None``.
+        source: The raw ``actor_token_source`` value.
+
+    Raises:
+        ValueError: If ``actor`` is not an object, has no ``client_id``, names an unsupported
+            auth method, carries an invalid ``token_url``, or is used with a source other than ``client_credentials``.
+
+    Examples:
+        >>> _validate_oauth_actor_override(None, "none")
+        >>> _validate_oauth_actor_override({"client_id": "cf", "client_secret": "s"}, "client_credentials")
+        >>> _validate_oauth_actor_override("cf", "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor must be an object
+        >>> _validate_oauth_actor_override({"client_secret": "s"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.client_id is required
+        >>> _validate_oauth_actor_override({"client_id": "cf", "token_endpoint_auth_method": "tls"}, "client_credentials")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: client_secret_basic, client_secret_post, none, private_key_jwt
+        >>> _validate_oauth_actor_override({"client_id": "cf"}, "client_assertion")
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor is only supported with actor_token_source client_credentials
+    """
+    if actor is None:
+        return
+    if not isinstance(actor, dict):
+        raise ValueError("oauth_config.actor must be an object")
+    client_id = actor.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("oauth_config.actor.client_id is required")
+    raw_method = actor.get("token_endpoint_auth_method")
+    if raw_method is not None and normalize_token_endpoint_auth_method(raw_method) not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.actor.token_endpoint_auth_method is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+    token_url = actor.get("token_url")
+    if token_url not in (None, ""):
+        if not isinstance(token_url, str):
+            raise ValueError("oauth_config.actor.token_url must be a string URL")
+        validate_core_url(token_url, "OAuth config actor.token_url")
+    if source != ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS:
+        raise ValueError(f"oauth_config.actor is only supported with actor_token_source {ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS}")
+
+
+def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject token-exchange-only keys (``discovery`` and the delegation keys) on any other grant.
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original value when valid.
+
+    Raises:
+        ValueError: If a key in ``TOKEN_EXCHANGE_ONLY_OAUTH_KEYS`` is present and ``grant_type`` is not ``token-exchange``.
+
+    Examples:
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "token-exchange", "discovery": {}})
+        {'grant_type': 'token-exchange', 'discovery': {}}
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "client_credentials", "discovery": {}})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.discovery is only supported for the token-exchange grant type
+        >>> _reject_token_exchange_keys_outside_token_exchange({"grant_type": "client_credentials", "actor_token_source": "none"})
+        Traceback (most recent call last):
+        ...
+        ValueError: oauth_config.actor_token_source is only supported for the token-exchange grant type
+    """
+    if not isinstance(v, dict) or v.get("grant_type") == "token-exchange":
+        return v
+    for key in TOKEN_EXCHANGE_ONLY_OAUTH_KEYS:
+        if v.get(key) is not None:
+            raise ValueError(f"oauth_config.{key} is only supported for the token-exchange grant type")
+    return v
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -202,6 +365,8 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    _validate_oauth_discovery(v.get("discovery"))
+    _validate_oauth_actor_token(v)
     if "redirect_uri_after_oauth" in v:
         redirect_after_oauth = v["redirect_uri_after_oauth"]
         if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
@@ -574,6 +739,75 @@ class AuthenticationValues(BaseModelWithConfigDict):
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
 
 
+_GATEWAY_ID_ALIAS = AliasChoices("gateway_id", "mcp_server_id")
+_GATEWAY_ID_CAMEL_ALIAS = AliasChoices("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id")
+
+
+class McpServerIdResponseMixin(BaseModelWithConfigDict):
+    """Response mixin that emits ``mcp_server_id`` next to a nullable ``gateway_id``.
+
+    ``mcp_server_id`` is the product-terminology alias of ``gateway_id``. Both keys
+    carry the same value until the legacy name is removed. The subclass declares
+    ``gateway_id``.
+    """
+
+    @computed_field(description="Product-terminology alias of gateway_id")  # type: ignore[prop-decorator]
+    @property
+    def mcp_server_id(self) -> Optional[str]:
+        """Return the value of ``gateway_id`` under its product-terminology name.
+
+        Returns:
+            Optional[str]: The gateway ID, or None when the record has no gateway.
+        """
+        return getattr(self, "gateway_id", None)
+
+
+class RequiredMcpServerIdResponseMixin(BaseModelWithConfigDict):
+    """Response mixin that emits ``mcp_server_id`` next to a required ``gateway_id``.
+
+    The alias is non-null, so the OpenAPI type of ``mcpServerId`` matches ``gatewayId``.
+    The subclass declares ``gateway_id`` as ``str``.
+    """
+
+    @computed_field(description="Product-terminology alias of gateway_id")  # type: ignore[prop-decorator]
+    @property
+    def mcp_server_id(self) -> str:
+        """Return the value of ``gateway_id`` under its product-terminology name.
+
+        Returns:
+            str: The gateway ID.
+        """
+        return str(getattr(self, "gateway_id"))
+
+
+def _reject_conflicting_aliases(data: Any, *spellings: str) -> Any:
+    """Reject a request body that sends several spellings of one field with different values.
+
+    Args:
+        data: Raw input before field validation.
+        *spellings: Accepted input keys for the same field.
+
+    Returns:
+        Any: ``data`` unchanged.
+
+    Raises:
+        ValueError: If two spellings are present with different values.
+
+    Examples:
+        >>> _reject_conflicting_aliases({"gateway_id": "a", "mcp_server_id": "a"}, "gateway_id", "mcp_server_id")["gateway_id"]
+        'a'
+        >>> _reject_conflicting_aliases({"gateway_id": "a", "mcp_server_id": "b"}, "gateway_id", "mcp_server_id")
+        Traceback (most recent call last):
+            ...
+        ValueError: Conflicting values for gateway_id, mcp_server_id
+    """
+    if isinstance(data, dict):
+        present = [data[key] for key in spellings if key in data]
+        if len(present) > 1 and any(value != present[0] for value in present[1:]):
+            raise ValueError(f"Conflicting values for {', '.join(spellings)}")
+    return data
+
+
 def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
     if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
@@ -812,6 +1046,31 @@ def _validate_jsonpath_filter_value(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def check_tool_validation_policy(value: Optional[str]) -> Optional[str]:
+    """Normalise a CEL tool-validation policy and prove it can run.
+
+    Args:
+        value: The policy text, or None.
+
+    Returns:
+        The stripped policy, or None when the value is empty.
+
+    Raises:
+        ValueError: If the expression cannot be evaluated to a boolean.
+    """
+    if value is None:
+        return None
+    policy = value.strip()
+    if not policy:
+        return None
+    try:
+        evaluate_expression(policy, _POLICY_SAMPLE_VARIABLES)
+    except CelError as exc:
+        logger.info("Rejected tool_validation_policy %r: %s", policy, exc)
+        raise ValueError(f"tool_validation_policy is not a valid policy expression: {exc}") from exc
+    return policy
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -840,6 +1099,12 @@ class ToolCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether this tool may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the gateway policy, then the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
@@ -854,7 +1119,21 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
-    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
@@ -930,6 +1209,19 @@ class ToolCreate(BaseModel):
             return v
         return validate_core_url(v, "Tool URL")
 
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -964,21 +1256,6 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-
-        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions.
-        # When VALIDATION_STRICT=false these patterns produce a warning only so
-        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
-        # "< input", "cmd | grep") can register without error.
-        if settings.tool_description_forbidden_patterns_enabled:
-            for pat in settings.tool_description_forbidden_patterns:
-                if not pat or not pat.strip():
-                    continue
-                if pat in v:
-                    if settings.validation_strict:
-                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1442,6 +1719,12 @@ class ToolUpdate(BaseModelWithConfigDict):
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether this tool may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the gateway policy, then the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
@@ -1453,7 +1736,21 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
-    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
@@ -1523,6 +1820,19 @@ class ToolUpdate(BaseModelWithConfigDict):
             return v
         return validate_core_url(v, "Tool URL")
 
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -1557,21 +1867,6 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-
-        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions.
-        # When VALIDATION_STRICT=false these patterns produce a warning only so
-        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
-        # "< input", "cmd | grep") can be updated without error.
-        if settings.tool_description_forbidden_patterns_enabled:
-            for pat in settings.tool_description_forbidden_patterns:
-                if not pat or not pat.strip():
-                    continue
-                if pat in v:
-                    if settings.validation_strict:
-                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1893,7 +2188,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         return _validate_header_mapping_targets(v)
 
 
-class ToolRead(BaseModelWithConfigDict):
+class ToolRead(McpServerIdResponseMixin):
     """Schema for reading tool information.
 
     Includes all tool fields plus:
@@ -1911,6 +2206,8 @@ class ToolRead(BaseModelWithConfigDict):
     original_name: str
     url: Optional[str]
     description: Optional[str]
+    tool_validation_policy: Optional[str] = Field(None, description="CEL tool-validation policy; null inherits")
+    validation_refusal: Optional[str] = Field(None, description="Why the validation policy disabled this tool; null when it was not refused")
     original_description: Optional[str] = None
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
@@ -2156,6 +2453,9 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+        server_id (Optional[str]): Optional virtual server ID for server-scoped tool resolution.
+                                   When provided, only tools attached to this server are considered.
+                                   Missing or null preserves global preview behavior.
 
     Examples:
         >>> ToolPreviewRequest().arguments
@@ -2169,6 +2469,7 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+    server_id: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]] = Field(None, description="Optional virtual server ID for server-scoped tool resolution")
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -2273,7 +2574,20 @@ class ResourceCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
-    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
 
     @field_validator("tags")
     @classmethod
@@ -2549,7 +2863,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
         return v
 
 
-class ResourceRead(BaseModelWithConfigDict):
+class ResourceRead(McpServerIdResponseMixin):
     """Schema for reading resource information.
 
     Includes all resource fields plus:
@@ -2855,7 +3169,20 @@ class PromptCreate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
-    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
 
     @field_validator("tags")
     @classmethod
@@ -3144,7 +3471,7 @@ class PromptUpdate(BaseModelWithConfigDict):
         return v
 
 
-class PromptRead(BaseModelWithConfigDict):
+class PromptRead(McpServerIdResponseMixin):
     """Schema for reading prompt information.
 
     Includes all prompt fields plus:
@@ -3305,6 +3632,12 @@ class GatewayCreate(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether a tool from this gateway may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
@@ -3335,6 +3668,19 @@ class GatewayCreate(BaseModelWithConfigDict):
         None,
         description="Query parameter value (API key). Stored encrypted.",
     )
+
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
 
     @field_validator("auth_query_param_key")
     @classmethod
@@ -3465,7 +3811,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         new MCP server registrations. Existing records keep working via
         ``GatewayUpdate`` (backwards compatibility).
         """
-        v = _validate_oauth_config_urls(v)
+        v = _reject_token_exchange_keys_outside_token_exchange(_validate_oauth_config_urls(v))
         if isinstance(v, dict) and v.get("grant_type") == "password":
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
@@ -3674,6 +4020,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(
+        None,
+        max_length=MAX_EXPRESSION_LENGTH,
+        description="CEL expression that decides whether a tool from this gateway may be registered or updated. Variables: description, tool_name. Must evaluate to a boolean; true allows. "
+        "Null inherits the global TOOL_DESCRIPTION_FORBIDDEN_PATTERNS settings.",
+    )
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -3689,6 +4041,19 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    @field_validator("tool_validation_policy")
+    @classmethod
+    def validate_tool_validation_policy(cls, v: Optional[str]) -> Optional[str]:
+        """Reject a policy expression that cannot evaluate to a boolean.
+
+        Args:
+            v: The policy text, or None.
+
+        Returns:
+            The normalised policy, or None when empty.
+        """
+        return check_tool_validation_policy(v)
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -3838,8 +4203,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing OAuth configuration entries and reject token-exchange-only keys on other grants."""
+        return _reject_token_exchange_keys_outside_token_exchange(_validate_oauth_config_urls(v))
 
     @field_validator("description", mode="before")
     @classmethod
@@ -4002,6 +4367,28 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_auth_type_required_for_credential_rotation(self) -> "GatewayUpdate":
+        """Require `auth_type` when rotating a single-value credential field.
+
+        `auth_value` is only computed by `create_auth_value` when `auth_type` is present
+        in the request. Submitting `auth_token`/`auth_password`/`auth_header_value`
+        without `auth_type` left `GatewayService.update_gateway` unable to distinguish
+        "rotate the credential" from "leave it alone" and silently wiped the existing
+        credential to an empty value (issue #6704 follow-up). Reject the ambiguous
+        request instead of guessing.
+
+        Returns:
+            GatewayUpdate: The validated instance.
+
+        Raises:
+            ValueError: If a single-value credential field is set without `auth_type`.
+        """
+        submitted = [name for name in ("auth_token", "auth_password", "auth_header_value") if getattr(self, name)]
+        if self.auth_type is None and submitted:
+            raise ValueError(f"auth_type is required when setting {', '.join(submitted)}.")
+        return self
+
 
 class GatewayOwnershipTransferRequest(BaseModel):
     """Request to transfer gateway ownership to another user."""
@@ -4064,6 +4451,7 @@ class GatewayRead(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    tool_validation_policy: Optional[str] = Field(None, description="CEL tool-validation policy; null inherits")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
@@ -4096,6 +4484,11 @@ class GatewayRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
         None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
+
+    registration_method: Optional[str] = Field(
+        None,
+        description="How the gateway registered as an OAuth client: auto, cimd, or dcr. Mirrors oauth_config.registration_method; null when none is recorded",
     )
 
     # Query Parameter Authentication (masked for security)
@@ -4217,6 +4610,17 @@ class GatewayRead(BaseModelWithConfigDict):
                 return data_dict
         return data
 
+    @model_validator(mode="after")
+    def _populate_registration_method(self) -> Self:
+        """Mirror ``oauth_config.registration_method`` into the top-level read field.
+
+        Returns:
+            Self: The instance with ``registration_method`` set from ``oauth_config``.
+        """
+        method = self.oauth_config.get("registration_method") if isinstance(self.oauth_config, dict) else None
+        self.registration_method = method if isinstance(method, str) else None
+        return self
+
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
     def _populate_auth(self) -> Self:
@@ -4232,6 +4636,14 @@ class GatewayRead(BaseModelWithConfigDict):
         - basic: Extracts username and password from Authorization header
         - bearer: Extracts token from Bearer Authorization header
         - authheaders: Extracts custom header key/value pair
+
+        Security (issue #6704): this validator intentionally decodes the real credential.
+        It never returns this instance to an API caller directly. Call `masked()` first.
+        `GatewayService.convert_gateway_to_read()` calls `masked()` on every path that
+        returns a gateway through `gateways.read`, so a caller holding only
+        `gateways.read` never receives a usable credential. `A2AAgentRead` repeats this
+        same contract for A2A agents; see `A2AAgentRead._populate_auth` and
+        `A2AAgentRead.masked`.
 
         Returns:
             Self: The instance with populated authentication fields:
@@ -4390,7 +4802,7 @@ class GatewayRead(BaseModelWithConfigDict):
         return GatewayRead.model_validate(masked_data)
 
 
-class GatewayRefreshResponse(BaseModelWithConfigDict):
+class GatewayRefreshResponse(RequiredMcpServerIdResponseMixin):
     """Response schema for manual gateway refresh API.
 
     Contains counts of added, updated, and removed items for tools, resources, and prompts,
@@ -4421,7 +4833,7 @@ class GatewayImpactServer(BaseModelWithConfigDict):
     name: str = Field(..., description="Name of the affected virtual server")
 
 
-class GatewayImpactPreview(BaseModelWithConfigDict):
+class GatewayImpactPreview(RequiredMcpServerIdResponseMixin):
     """Layer-1-scoped preview of virtual servers affected by gateway deletion."""
 
     gateway_id: str = Field(..., description="ID of the gateway being evaluated")
@@ -4677,6 +5089,35 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
+def _validate_instructions_length(value: Optional[str]) -> Optional[str]:
+    """Reject operator instructions that exceed the description length limit.
+
+    Instructions are text for a model. The validator keeps the text as given and does not sanitize it.
+
+    Args:
+        value: The instructions text, or None.
+
+    Returns:
+        Optional[str]: The unchanged text.
+
+    Raises:
+        ValueError: When the text is longer than ``SecurityValidator.MAX_DESCRIPTION_LENGTH``.
+
+    Examples:
+        >>> _validate_instructions_length(None) is None
+        True
+        >>> _validate_instructions_length("")
+        ''
+        >>> _validate_instructions_length("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))
+        Traceback (most recent call last):
+            ...
+        ValueError: Instructions must be at most ... characters
+    """
+    if value is not None and len(value) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+        raise ValueError(f"Instructions must be at most {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters")
+    return value
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -4725,15 +5166,6 @@ class ServerCreate(BaseModel):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerCreate
-            >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerCreate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
@@ -4752,6 +5184,21 @@ class ServerCreate(BaseModel):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    instructions: Optional[str] = Field(None, description="Instructions text sent to MCP clients. Empty string: send no instructions. Absent: use the upstream server's text when there is one")
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the instructions length.
+
+        Args:
+            v: Value to validate.
+
+        Returns:
+            Optional[str]: The unchanged text.
+        """
+        return _validate_instructions_length(v)
 
     @field_validator("name")
     @classmethod
@@ -4846,6 +5293,47 @@ class ServerCreate(BaseModel):
         return v
 
 
+def _server_create_request_schema_extra(schema: Dict[str, Any]) -> None:
+    """Document that either ``server`` or ``virtual_server`` satisfies the request body.
+
+    Args:
+        schema: The generated JSON schema, modified in place.
+    """
+    schema.pop("required", None)
+    schema["anyOf"] = [{"required": ["server"]}, {"required": ["virtual_server"]}]
+    properties = schema.setdefault("properties", {})
+    server_schema = properties.get("server", {})
+    properties["virtual_server"] = {**server_schema, "description": "Product-terminology alias of server"}
+
+
+class ServerCreateRequest(BaseModel):
+    """Request body for ``POST /servers`` and ``POST /v1/virtual-servers``.
+
+    Binds the new server's data and the sibling ``team_id`` and ``visibility``
+    fields in one model. The server data may arrive under ``server`` or the
+    alias ``virtual_server``.
+    """
+
+    model_config = ConfigDict(json_schema_extra=_server_create_request_schema_extra)
+
+    server: ServerCreate = Field(..., validation_alias=AliasChoices("server", "virtual_server"), description="The data for the new virtual server; also accepted as virtual_server")
+    team_id: Optional[str] = Field(None, description="Team ID to assign server to")
+    visibility: Optional[str] = Field(None, description="Server visibility: private, team, public")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_server_keys(cls, data: Any) -> Any:
+        """Reject a body that sends both ``server`` and ``virtual_server`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, "server", "virtual_server")
+
+
 class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
@@ -4866,6 +5354,21 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    instructions: Optional[str] = Field(None, description="Instructions text sent to MCP clients. Null clears the text. Empty string: send no instructions. Absent: no change")
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the instructions length.
+
+        Args:
+            v: Value to validate.
+
+        Returns:
+            Optional[str]: The unchanged text.
+        """
+        return _validate_instructions_length(v)
 
     @field_validator("tags")
     @classmethod
@@ -4893,15 +5396,6 @@ class ServerUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
-
-        Examples:
-            >>> from mcpgateway.schemas import ServerUpdate
-            >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
-            >>> ServerUpdate.validate_id('invalid-uuid')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
         """
         if v is None:
             return v
@@ -5050,6 +5544,8 @@ class ServerRead(BaseModelWithConfigDict):
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    instructions: Optional[str] = Field(None, description="Operator-set instructions text. Null: not set. Empty string: send no instructions")
+
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
@@ -5128,6 +5624,9 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
 
 
+GatewayValidationStage = Literal["gateway", "token", "negotiation", "tools_list"]
+
+
 class GatewayHandshakeRequest(BaseModelWithConfigDict):
     """Request to run an MCP handshake test against a server URL."""
 
@@ -5136,7 +5635,33 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
     gateway_id: Optional[str] = Field(
         None,
-        description=("Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied"),
+        description=(
+            "Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied. Also accepted as mcp_server_id"
+        ),
+        validation_alias=_GATEWAY_ID_CAMEL_ALIAS,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_conflicting_gateway_id(cls, data: Any) -> Any:
+        """Reject a body that sends several spellings of ``gateway_id`` with different values.
+
+        Args:
+            data: Raw request body.
+
+        Returns:
+            Any: ``data`` unchanged.
+        """
+        return _reject_conflicting_aliases(data, *("gatewayId", "gateway_id", "mcpServerId", "mcp_server_id"))
+
+    validation_mode: Literal["handshake", "post_authorization"] = Field(
+        "handshake",
+        description=(
+            "'handshake' preserves existing negotiation success semantics. "
+            "'post_authorization' requires an exact enabled OAuth authorization_code gateway, gateways.read and gateways.update, "
+            "and the caller's stored token without refresh. A live tools/list must succeed within ten seconds. "
+            "No tokens or registered components are changed. Legacy Vault records without an exact gateway binding require authorization again."
+        ),
     )
     credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
         "stored_with_override",
@@ -5148,15 +5673,20 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     )
 
     @model_validator(mode="after")
-    def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":
-        """Require exact gateway selection for candidate-only validation.
+    def validate_credential_contract(self) -> "GatewayHandshakeRequest":
+        """Require exact gateway selection and compatible validation credentials.
 
         Returns:
             The validated request.
 
         Raises:
-            ValueError: If candidate-only validation omits the gateway ID.
+            ValueError: If the mode omits its gateway ID or accepts incompatible credential overrides.
         """
+        if self.validation_mode == "post_authorization":
+            if not self.gateway_id:
+                raise ValueError("gateway_id is required for post_authorization validation")
+            if self.credential_mode != "stored_with_override" or self.headers:
+                raise ValueError("post_authorization validation requires stored credentials and does not accept header overrides")
         if self.credential_mode == "candidate_only" and not self.gateway_id:
             raise ValueError("gateway_id is required when credential_mode is candidate_only")
         return self
@@ -5196,6 +5726,21 @@ class GatewayHandshakeResponse(BaseModelWithConfigDict):
     failure_class: Optional[Literal["transport", "protocol", "auth", "invalid_response"]] = None
     error: Optional[str] = None
     raw_preview: Optional[str] = Field(None, description="Size-capped JSON preview of the final handshake payload")
+
+    stages: Optional[Dict[Literal["token", "negotiation", "tools_list"], Literal["ok", "failed", "skipped", "unsupported"]]] = Field(
+        None, description="Post-authorization stage outcomes. Skipped or unsupported listing never proves live tools access."
+    )
+    failed_stage: Optional[GatewayValidationStage] = None
+    error_code: Optional[str] = Field(
+        None,
+        description=(
+            "Stable post-authorization codes: gateway_unavailable, permission_denied, unsupported_auth, authorization_missing, token_expired, "
+            "invalid_token, token_storage_unavailable, insufficient_scope, tools_unsupported, tools_list_failed, "
+            "mcp_handshake_failed, timeout, blocked, validation_failed. Callback codes also include redirect_uri_mismatch, "
+            "token_exchange_failed, token_url_unreachable, invalid_client, oauth_error."
+        ),
+    )
+    reauthorization_required: bool = Field(False, description="Whether the caller must authorize this gateway again")
 
 
 class ServerHandshakeRequest(BaseModelWithConfigDict):
@@ -5270,6 +5815,243 @@ class TopPerformer(BaseModelWithConfigDict):
 # --- A2A Agent Schemas ---
 
 
+MAX_A2A_AGENT_SKILLS = 100
+MAX_A2A_SKILL_TAGS = 50
+
+
+class A2AAgentSkill(BaseModel):
+    """A skill an A2A agent advertises on its Agent Card.
+
+    Attributes:
+        id (str): Unique skill identifier.
+        name (str): Human-readable skill name.
+        description (str): What the skill does.
+        tags (List[str]): Keywords describing the skill.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(..., min_length=1, max_length=SecurityValidator.MAX_NAME_LENGTH, description="Unique skill identifier")
+    name: str = Field(..., min_length=1, max_length=SecurityValidator.MAX_NAME_LENGTH, description="Human-readable skill name")
+    description: str = Field(..., max_length=SecurityValidator.MAX_DESCRIPTION_LENGTH, description="What the skill does")
+    tags: List[str] = Field(..., max_length=MAX_A2A_SKILL_TAGS, description="Keywords describing the skill")
+
+    @field_validator("id", "name")
+    @classmethod
+    def validate_display_text(cls, v: str, info: ValidationInfo) -> str:
+        """Reject markup in skill identifiers and names.
+
+        Args:
+            v (str): Value to validate.
+            info (ValidationInfo): Field context.
+
+        Returns:
+            str: Sanitized value.
+
+        Examples:
+            >>> A2AAgentSkill(id="a", name="Summarize", description="d", tags=[]).name
+            'Summarize'
+            >>> try:
+            ...     A2AAgentSkill(id="a", name="<script>alert(1)</script>", description="d", tags=[])
+            ... except ValueError as e:
+            ...     "HTML tags" in str(e)
+            True
+        """
+        return SecurityValidator.sanitize_display_text(v, f"Skill {info.field_name}")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: str) -> str:
+        """Reject markup in the skill description.
+
+        Args:
+            v (str): Value to validate.
+
+        Returns:
+            str: Sanitized value.
+        """
+        return SecurityValidator.sanitize_display_text(v, "Skill description")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: List[str]) -> List[str]:
+        """Reject markup and oversized entries in skill tags.
+
+        Args:
+            v (List[str]): Value to validate.
+
+        Returns:
+            List[str]: Sanitized tags.
+
+        Raises:
+            ValueError: When a tag exceeds the name length limit.
+        """
+        for tag in v:
+            if len(tag) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Skill tag exceeds {SecurityValidator.MAX_NAME_LENGTH} characters")
+        return [SecurityValidator.sanitize_display_text(tag, "Skill tag") for tag in v]
+
+    @model_validator(mode="after")
+    def validate_extra_depth(self) -> "A2AAgentSkill":
+        """Limit the nesting depth of extra skill fields.
+
+        Returns:
+            A2AAgentSkill: The validated skill.
+        """
+        SecurityValidator.validate_json_depth(self.model_extra or {})
+        return self
+
+
+def validate_a2a_skills(skills: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+    """Validate the size and uniqueness of an agent skill list.
+
+    Args:
+        skills: Skills submitted with an agent create or update request.
+
+    Returns:
+        The skills unchanged.
+
+    Raises:
+        ValueError: When the list is too long or repeats a skill ``id``.
+
+    Examples:
+        >>> validate_a2a_skills(None) is None
+        True
+        >>> dup = [A2AAgentSkill(id="a", name="n", description="d", tags=[])] * 2
+        >>> validate_a2a_skills(dup)
+        Traceback (most recent call last):
+            ...
+        ValueError: Duplicate skill id: a
+    """
+    if skills is None:
+        return None
+    if len(skills) > MAX_A2A_AGENT_SKILLS:
+        raise ValueError(f"An agent can advertise at most {MAX_A2A_AGENT_SKILLS} skills")
+    seen: set[str] = set()
+    for skill in skills:
+        if skill.id in seen:
+            raise ValueError(f"Duplicate skill id: {skill.id}")
+        seen.add(skill.id)
+    return skills
+
+
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_A2A_CARD_PATH_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@/-]*$")
+_A2A_FETCH_BLOCKED_HEADERS = frozenset({"content-length", "transfer-encoding", "connection", "upgrade", "te", "trailer", "keep-alive", "expect", "accept-encoding"})
+_A2A_FETCH_MAX_HEADERS = 20
+_A2A_FETCH_MAX_HEADER_BYTES = 8192
+
+
+def validate_a2a_card_path(path: str) -> str:
+    """Validate a caller-supplied Agent Card path.
+
+    Args:
+        path: Path appended to the base URL.
+
+    Returns:
+        The unchanged path.
+
+    Raises:
+        ValueError: If the path contains a query, fragment, percent-encoding, traversal or unsafe character.
+
+    Examples:
+        >>> validate_a2a_card_path("/x/card.json")
+        '/x/card.json'
+        >>> validate_a2a_card_path("/%2e%2e/etc")
+        Traceback (most recent call last):
+            ...
+        ValueError: Card path is not allowed
+    """
+    if not _A2A_CARD_PATH_RE.match(path) or any(segment in ("..", ".") for segment in path.split("/")):
+        raise ValueError("Card path is not allowed")
+    return path
+
+
+class A2AFetchCardRequest(BaseModelWithConfigDict):
+    """Request to fetch an A2A Agent Card from an endpoint that is not yet registered."""
+
+    base_url: AnyHttpUrl = Field(..., description="Agent base endpoint, or a direct URL to the card document")
+    path: Optional[str] = Field(None, description="Card path appended to the base URL; defaults to the well-known locations")
+    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers, for example credentials for an authenticated card")
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: AnyHttpUrl) -> AnyHttpUrl:
+        """Reject a base URL that carries userinfo, a query or a fragment.
+
+        Args:
+            v: Parsed base URL.
+
+        Returns:
+            The validated URL.
+
+        Raises:
+            ValueError: If the URL has userinfo, a query or a fragment.
+        """
+        if v.username or v.password or v.query or v.fragment:
+            raise ValueError("Base URL must not include credentials, a query or a fragment")
+        return v
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: Optional[str]) -> Optional[str]:
+        """Reject an unsafe card path.
+
+        Args:
+            v: Optional card path.
+
+        Returns:
+            The validated path.
+        """
+        return validate_a2a_card_path(v) if v else v
+
+    @field_validator("headers")
+    @classmethod
+    def validate_headers(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Reject malformed header names, header injection, framing headers and oversized sets.
+
+        Args:
+            v: Optional header mapping.
+
+        Returns:
+            The validated mapping.
+
+        Raises:
+            ValueError: If a header name or value is unsafe.
+        """
+        if len(v or {}) > _A2A_FETCH_MAX_HEADERS or sum(len(name) + len(value) for name, value in (v or {}).items()) > _A2A_FETCH_MAX_HEADER_BYTES:
+            raise ValueError("Too many or too large headers")
+        for name, value in (v or {}).items():
+            lowered = name.lower()
+            if not _HEADER_NAME_RE.match(name) or lowered == "host" or lowered in _A2A_FETCH_BLOCKED_HEADERS or lowered.startswith("proxy-"):
+                raise ValueError("Invalid header name")
+            if any(char in value for char in ("\r", "\n", "\x00")):
+                raise ValueError("Invalid header value")
+        return v
+
+
+class A2AFetchCardResponse(BaseModelWithConfigDict):
+    """Result of fetching an Agent Card.
+
+    ``card`` is the card normalized to the A2A 1.0 shape, ``raw_card`` is the document as
+    fetched when it differs from ``card``, and ``suggested_agent`` maps the card onto ``A2AAgentCreate`` fields without
+    credential values, team, visibility or tags.
+    """
+
+    found: bool = Field(..., description="Whether a valid A2A Agent Card was found")
+    outcome: Literal["found", "no_card", "auth_required", "unreachable"] = Field(
+        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, or host blocked or unreachable"
+    )
+    reason: Optional[str] = Field(None, description="Fixed explanation when no card was found")
+    auth_scheme: Optional[str] = Field(None, description="Scheme name from the WWW-Authenticate header when outcome is auth_required")
+    source_url: Optional[str] = Field(None, description="URL the card was fetched from")
+    detected_version: Optional[Literal["1.0", "0.3"]] = Field(None, description="Card format version detected: 1.0 or 0.3")
+    card: Optional[Dict[str, Any]] = Field(None, description="Card normalized to the A2A 1.0 shape")
+    raw_card: Optional[Dict[str, Any]] = Field(None, description="Card as fetched; omitted when identical to card")
+    suggested_agent: Optional[Dict[str, Any]] = Field(None, description="Suggested A2AAgentCreate fields derived from the card")
+    warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
+
+
 class A2AAgentCreate(BaseModel):
     """
     Schema for creating a new A2A (Agent-to-Agent) compatible agent.
@@ -5305,6 +6087,7 @@ class A2AAgentCreate(BaseModel):
     agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
+    skills: Optional[List[A2AAgentSkill]] = Field(default=None, description="Skills the agent advertises on its Agent Card")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
@@ -5465,6 +6248,19 @@ class A2AAgentCreate(BaseModel):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("skills")
+    @classmethod
+    def validate_skills(cls, v: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+        """Validate skill list size and id uniqueness.
+
+        Args:
+            v (Optional[List[A2AAgentSkill]]): Value to validate
+
+        Returns:
+            Optional[List[A2AAgentSkill]]: Value if validated as safe
+        """
+        return validate_a2a_skills(v)
 
     @field_validator("capabilities", "config")
     @classmethod
@@ -5647,6 +6443,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     agent_type: Optional[str] = Field(None, description="Type of agent")
     protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
+    skills: Optional[List[A2AAgentSkill]] = Field(None, description="Skills the agent advertises on its Agent Card")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
@@ -5807,6 +6604,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("skills")
+    @classmethod
+    def validate_skills(cls, v: Optional[List[A2AAgentSkill]]) -> Optional[List[A2AAgentSkill]]:
+        """Validate skill list size and id uniqueness.
+
+        Args:
+            v (Optional[List[A2AAgentSkill]]): Value to validate
+
+        Returns:
+            Optional[List[A2AAgentSkill]]: Value if validated as safe
+        """
+        return validate_a2a_skills(v)
+
     @field_validator("capabilities", "config")
     @classmethod
     def validate_json_fields(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -5965,6 +6775,28 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_auth_type_required_for_credential_rotation(self) -> "A2AAgentUpdate":
+        """Require `auth_type` when rotating a single-value credential field.
+
+        `auth_value` is only computed by `create_auth_value` when `auth_type` is present
+        in the request. Submitting `auth_token`/`auth_password`/`auth_header_value`
+        without `auth_type` left `A2AAgentService.update_agent` unable to distinguish
+        "rotate the credential" from "leave it alone" and silently kept the old
+        credential active with no error (issue #6704 follow-up). Reject the ambiguous
+        request instead of guessing.
+
+        Returns:
+            A2AAgentUpdate: The validated instance.
+
+        Raises:
+            ValueError: If a single-value credential field is set without `auth_type`.
+        """
+        submitted = [name for name in ("auth_token", "auth_password", "auth_header_value") if getattr(self, name)]
+        if self.auth_type is None and submitted:
+            raise ValueError(f"auth_type is required when setting {', '.join(submitted)}.")
+        return self
+
 
 class A2AAgentRead(BaseModelWithConfigDict):
     """Schema for reading A2A agent information.
@@ -5998,6 +6830,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     agent_type: str
     protocol_version: str
     capabilities: Dict[str, Any]
+    skills: Optional[List[Dict[str, Any]]] = Field(default=None, description="Skills the agent advertises; falls back to capabilities.skills for older agents")
     config: Dict[str, Any]
     enabled: bool
     reachable: bool
@@ -6119,6 +6952,13 @@ class A2AAgentRead(BaseModelWithConfigDict):
         - basic: Extracts username and password from Authorization header
         - bearer: Extracts token from Bearer Authorization header
         - authheaders: Extracts custom header key/value pair
+
+        Security (issue #6704): this validator intentionally decodes the real credential.
+        It never returns this instance to an API caller directly. Call `masked()` first.
+        `A2AAgentService.convert_agent_to_read()` calls `masked()` on every path that
+        returns an A2A agent through `a2a.read`, so a caller holding only `a2a.read`
+        never receives a usable credential. `GatewayRead` repeats this same contract
+        for registered gateways; see `GatewayRead._populate_auth` and `GatewayRead.masked`.
 
         Returns:
             Self: The instance with populated authentication fields:
@@ -6309,6 +7149,28 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         return v
 
 
+class AgentCard(BaseModel):
+    """Schema for ``GET /v1/a2a/{agent_id}/card``.
+
+    Describes an A2A v1 AgentCard built from a standalone agent or from a
+    virtual server that exposes an A2A interface. Extra keys stay on the wire
+    so the card can grow without a schema change.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(description="Agent or virtual server name")
+    description: str = Field(default="", description="Agent description")
+    url: Optional[str] = Field(default=None, description="Endpoint URL of the agent")
+    version: str = Field(description="Agent version")
+    protocolVersion: Optional[str] = Field(default=None, description="A2A protocol version")  # pylint: disable=invalid-name
+    defaultInputModes: List[str] = Field(default_factory=list, description="Default input modes")  # pylint: disable=invalid-name
+    defaultOutputModes: List[str] = Field(default_factory=list, description="Default output modes")  # pylint: disable=invalid-name
+    capabilities: Dict[str, Any] = Field(default_factory=dict, description="Declared agent capabilities")
+    skills: List[Dict[str, Any]] = Field(default_factory=list, description="Skills the agent advertises")
+    supportsAuthenticatedExtendedCard: bool = Field(default=True, description="Whether an extended card exists")  # pylint: disable=invalid-name
+
+
 class A2AInvocationResponse(BaseModel):
     """Schema for the body returned by the A2A invocation routes.
 
@@ -6339,6 +7201,38 @@ class A2AInvocationResponse(BaseModel):
     result: Any = Field(default=None, description="Result payload forwarded from the agent")
     error: Any = Field(default=None, description="Error forwarded from the agent")
     id: Any = Field(default=None, description="Request id this response correlates to, omitted for notifications")
+
+
+class A2ATestRequest(BaseModel):
+    """Schema for the optional body of ``POST /v1/a2a/{agent_id}/test``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: Optional[str] = Field(None, max_length=4096, description="Test message. A neutral default is used when omitted or empty.")
+
+
+class A2ATestResponse(BaseModel):
+    """Schema for a successful ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    success: bool = Field(True, description="Always true on success")
+    result: Any = Field(..., description="Agent response")
+    agent_name: str = Field(..., description="Name of the tested agent")
+    test_timestamp: float = Field(..., description="Unix timestamp of the test")
+
+
+class A2ATestError(BaseModel):
+    """Schema for the ``detail`` of a failed ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    success: bool = Field(False, description="Always false on failure")
+    error: str = Field(..., description="Sanitized error message")
+    error_type: Literal["not_found", "agent_error", "agent_disabled", "validation_error", "internal_error"] = Field(..., description="Error classification")
+    agent_id: str = Field(..., description="ID of the agent that was tested")
+
+
+class A2ATestErrorResponse(BaseModel):
+    """Schema for the wire body of a failed ``POST /v1/a2a/{agent_id}/test`` response."""
+
+    detail: A2ATestError = Field(..., description="Failure envelope")
 
 
 class A2AInvokeResponse(A2AInvocationResponse):
@@ -6509,6 +7403,74 @@ class A2APushNotificationConfigCreate(BaseModel):
     def validate_webhook_url(cls, v: str) -> str:
         """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
         return validate_core_url(v, "Webhook URL")
+
+
+class A2APushNotificationConfigRequest(BaseModel):
+    """Schema for the client-facing push notification config body.
+
+    The agent and task identifiers come from the URL path, not the body.
+    """
+
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
+        return validate_core_url(v, "Webhook URL")
+
+
+MAX_A2A_TASK_MESSAGE_PARTS = 50
+MAX_A2A_TASK_MESSAGE_TEXT = 65536
+_A2A_TASK_MESSAGE_FIELDS = frozenset({"parts", "metadata", "extensions", "referenceTaskIds", "messageId", "role", "taskId", "contextId", "kind"})
+
+
+class A2ATaskMessageRequest(BaseModel):
+    """Schema for a follow-up message sent to an existing A2A task.
+
+    Send either ``message`` (an A2A message object, in the 0.3 or 1.0 shape) or
+    ``text`` (shorthand for a single text part). The gateway binds the message to the
+    task from the URL path and converts it to the agent's protocol version.
+    """
+
+    message: Optional[Dict[str, Any]] = None
+    text: Optional[str] = Field(default=None, min_length=1, max_length=MAX_A2A_TASK_MESSAGE_TEXT)
+
+    @model_validator(mode="after")
+    def validate_exactly_one_payload(self) -> "A2ATaskMessageRequest":
+        """Require exactly one of ``message`` and ``text``, and a bounded message.
+
+        Returns:
+            A2ATaskMessageRequest: The validated request.
+
+        Raises:
+            ValueError: If both or neither payload is set, ``message`` holds an unknown field,
+                ``parts`` is empty or too long, or a text part exceeds the size limit.
+        """
+        if (self.message is None) == (self.text is None):
+            raise ValueError("Provide exactly one of 'message' or 'text'")
+        if self.message is None:
+            return self
+        unknown = sorted(set(self.message) - _A2A_TASK_MESSAGE_FIELDS)
+        if unknown:
+            raise ValueError(f"message has unsupported fields: {', '.join(unknown)}")
+        parts = self.message.get("parts")
+        if not (isinstance(parts, list) and parts):
+            raise ValueError("message.parts must be a non-empty list")
+        if len(parts) > MAX_A2A_TASK_MESSAGE_PARTS:
+            raise ValueError(f"message.parts holds at most {MAX_A2A_TASK_MESSAGE_PARTS} parts")
+        if any(isinstance(part, dict) and isinstance(part.get("text"), str) and len(part["text"]) > MAX_A2A_TASK_MESSAGE_TEXT for part in parts):
+            raise ValueError(f"A text part holds at most {MAX_A2A_TASK_MESSAGE_TEXT} characters")
+        return self
+
+    def to_message(self) -> Dict[str, Any]:
+        """Return the A2A message object, expanding ``text`` into a single text part."""
+        if self.message is not None:
+            return dict(self.message)
+        return {"parts": [{"text": self.text}]}
 
 
 class A2APushNotificationConfigRead(BaseModel):
@@ -6827,6 +7789,28 @@ class EmailUserResponse(BaseModel):
             locked_until=locked_until,
             is_locked=is_locked,
         )
+
+
+class FeatureFlags(BaseModel):
+    """Deployment feature flags readable by any authenticated user.
+
+    Attributes:
+        a2a: Whether A2A is enabled on this gateway.
+    """
+
+    a2a: bool = Field(description="Whether A2A is enabled on this gateway")
+
+
+class CurrentUserResponse(EmailUserResponse):
+    """Response schema for ``GET /auth/email/me``.
+
+    Adds deployment feature flags that any authenticated user may read.
+
+    Attributes:
+        features: Deployment feature flags.
+    """
+
+    features: FeatureFlags = Field(description="Deployment feature flags readable by any authenticated user")
 
 
 class AuthenticationResponse(BaseModel):
@@ -8272,9 +9256,8 @@ class PermissionListResponse(BaseModel):
     total_count: int = Field(..., description="Total number of permissions")
 
 
-# ==============================================================================
-# SSO Authentication Schemas
-# ==============================================================================
+# =======================================================================# SSO Authentication Schemas
+# =======================================================================
 
 
 class SSOProviderResponse(BaseModelWithConfigDict):
@@ -8862,9 +9845,8 @@ class CatalogBulkRegisterResponse(BaseModel):
     total_successful: int = Field(..., description="Total successful registrations")
 
 
-# ===================================
-# Pagination Schemas
-# ===================================
+# ============================# Pagination Schemas
+# ============================
 
 
 class PaginationMeta(BaseModel):
@@ -8965,9 +9947,8 @@ class PaginatedResponse(BaseModel):
     links: Optional[PaginationLinks] = Field(None, description="Navigation links")
 
 
-# ============================================================================
-# Cursor Pagination Response Schemas (for main API endpoints)
-# ============================================================================
+# =====================================================================# Cursor Pagination Response Schemas (for main API endpoints)
+# =====================================================================
 
 
 class CursorPaginatedToolsResponse(BaseModel):
@@ -9026,9 +10007,8 @@ class CursorPaginatedUsersResponse(BaseModel):
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 
-# ============================================================================
-# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
-# ============================================================================
+# =====================================================================# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
+# =====================================================================
 
 
 class ObservabilityTraceBase(BaseModel):

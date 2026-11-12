@@ -94,7 +94,6 @@ RL_RUN_TIME = _cfg("RL_RUN_TIME", "120s")
 RL_REQS_PER_SECOND = float(_cfg("RL_REQS_PER_SECOND", "0.25"))
 RL_LIMIT_PER_MIN = int(_cfg("RL_LIMIT_PER_MIN", "30"))
 RL_PROMPT_ID = _cfg("RL_PROMPT_ID", "")
-RL_FORCE_PYTHON = _cfg("RATE_LIMITER_FORCE_PYTHON", "").strip().lower() in ("1", "true", "yes")
 
 DOCKER_GATEWAY_PATTERN = _cfg("DOCKER_GATEWAY_PATTERN", "mcp-context-forge-gateway")
 DOCKER_REDIS_CONTAINER = _cfg("DOCKER_REDIS_CONTAINER", "mcp-context-forge-redis-1")
@@ -487,15 +486,12 @@ def on_test_start(environment, **kwargs):
     if isinstance(environment.runner, WorkerRunner):
         return
 
-    engine_label = "Python (RATE_LIMITER_FORCE_PYTHON=1)" if RL_FORCE_PYTHON else "Rust (default)"
-
     print("\n" + "=" * 90)
     print("RATE LIMITER REDIS CAPACITY TEST")
     print("=" * 90)
     print(f"  Host:              {host}")
     print("  Topology:          nginx -> 3 gateways -> shared Redis")
     print("  Path:              REST /prompts/{id}  (prompt_pre_fetch)")
-    print(f"  Engine:            {engine_label}")
     print(f"  Prompt:            {(_prompt_target.name if _prompt_target else '(none)')} [{(_prompt_target.prompt_id if _prompt_target else '')}]")
     print(f"  Required args:     {len(_prompt_target.required_arguments) if _prompt_target else 0}")
     print(f"  Valid users:       {_valid_users}/{RL_USERS}")
@@ -529,12 +525,9 @@ def on_test_stop(environment, **kwargs):
     semantic_total = allowed_count + blocked_count
     blocked_pct = (blocked_count / semantic_total * 100) if semantic_total else 0.0
 
-    engine_label = "Python (RATE_LIMITER_FORCE_PYTHON=1)" if RL_FORCE_PYTHON else "Rust (default)"
-
     print("\n" + "=" * 90)
     print("RATE LIMITER REDIS CAPACITY RESULTS")
     print("=" * 90)
-    print(f"  Engine:                    {engine_label}")
     print(f"  Prompt target:             {(_prompt_target.name if _prompt_target else '(none)')}")
     print(f"  HTTP requests observed:    {total_http:>10,}")
     print(f"  Semantic prompt calls:     {semantic_total:>10,}")

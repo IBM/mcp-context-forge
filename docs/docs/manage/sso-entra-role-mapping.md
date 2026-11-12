@@ -33,13 +33,16 @@ ContextForge includes a comprehensive RBAC system with the following default rol
 
 3. **`developer`** (team scope)
 
-   - Permissions: Tool execution, resource access, prompts
-   - Can execute tools and access resources
+   - Permissions: Resource CRUD, gateway management, tool execution, LLM/A2A invocation, and token self-service
+   - Can register, update, and delete upstream gateways and manage tools, servers, resources, prompts, and A2A agents
 
 4. **`viewer`** (team scope)
 
    - Permissions: Read access to tools, resources, prompts; tool execution within team scope
    - Cannot modify resources
+
+Review the [complete built-in permission table](rbac.md#built-in-rbac-roles) before mapping groups or app roles.
+Use a custom role when users need fewer actions than the built-in `developer` role grants.
 
 ### Implementation Components
 

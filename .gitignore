@@ -92,6 +92,7 @@ coverage.xml
 *,cover
 .hypothesis/
 .pytest_cache/
+.rstest_cache/
 mutants
 .mutmut-cache
 test-results/
@@ -243,7 +244,7 @@ celerybeat-schedule
 # ========================================
 # Python Version Management
 # ========================================
-.python-version
+# .python-version is tracked to select the default development interpreter.
 
 # ========================================
 # uv Package Manager
@@ -252,7 +253,6 @@ uv.lock
 .uv-cache/
 .uv-tmp/
 
-*.rs.bk
 
 # ========================================
 # Project-Specific (ContextForge)
@@ -350,12 +350,6 @@ docs/docs/test/license-check-report.json
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
-
-# Rust MCP runtime profiling artifacts
-tools_rust/mcp_runtime/profiles/
-tools_rust/mcp_runtime/flamegraph*.svg
-tools_rust/mcp_runtime/flamegraph*.html
-tools_rust/mcp_runtime/perf.data*
 
 # OCP deployment secrets (never commit)
 *-secrets.yaml
