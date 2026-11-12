@@ -19,7 +19,7 @@ import logging
 import re
 import secrets
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import parse_qsl, quote, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 
 # Third-Party
 import httpx
@@ -410,15 +410,20 @@ class OAuthManager:
             raise OAuthError(f"Token endpoint blocked by URL policy: {exc}") from exc
 
         extensions = pinned_target.extensions
+        body: Dict[str, Any] = {"data": data}
+        if isinstance(data, (list, tuple)):
+            # httpx reads a list as a byte stream and fails on an async client. Encode repeated keys (RFC 8707 resource) as the form body.
+            body = {"content": urlencode(data)}
+            pinned_headers = {**pinned_headers, "Content-Type": "application/x-www-form-urlencoded"}
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+                return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions, **body)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
         async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
+            return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions, **body)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
@@ -875,8 +880,10 @@ class OAuthManager:
 
         resource = runtime_credentials.get("resource")
         if send_resource and resource and self._should_include_resource_parameter(runtime_credentials, scopes):
-            resources = resource if isinstance(resource, list) else [resource]
-            token_data = list(token_data.items()) + [("resource", item) for item in resources if item]  # type: ignore[assignment]
+            if isinstance(resource, list):
+                token_data = list(token_data.items()) + [("resource", item) for item in resource if item]  # type: ignore[assignment]
+            else:
+                token_data["resource"] = resource
 
         # Fetch token with retries
         for attempt in range(self.max_retries):
@@ -2173,9 +2180,6 @@ class OAuthManager:
         Returns:
             Authorization URL string with PKCE parameters
         """
-        # Standard
-        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
-
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]
         authorization_url = credentials["authorization_url"]

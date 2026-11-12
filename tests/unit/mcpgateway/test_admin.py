@@ -20134,7 +20134,7 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",
@@ -20410,7 +20410,7 @@ async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",

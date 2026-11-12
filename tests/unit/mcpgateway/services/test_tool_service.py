@@ -502,6 +502,7 @@ class TestToolServiceA2A:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
+            id="a2a-agent-id",
             name="a2a-agent",
             endpoint_url="https://example.com/",
             agent_type="generic",
@@ -509,6 +510,7 @@ class TestToolServiceA2A:
             auth_type=None,
             auth_value=None,
             auth_query_params=None,
+            oauth_config=None,
         )
 
         result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
@@ -5909,9 +5911,9 @@ class TestToolService:
             patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
-            patch("mcpgateway.services.tool_service.resolve_a2a_oauth_headers", resolve),
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", resolve),
         ):
-            with pytest.raises(Exception, match="token refused"):
+            with pytest.raises(ToolInvocationError, match="token refused"):
                 await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None)
 
         resolve.assert_awaited_once_with("agent-1", "agent-one", "http://agent.example/a2a", oauth_config)

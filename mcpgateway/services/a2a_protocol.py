@@ -524,7 +524,7 @@ def prepare_a2a_invocation(
             else:
                 configured_headers.update({str(key): str(value) for key, value in auth_value.items()})
 
-    if auth_type == "oauth" and oauth_headers:
+    if oauth_headers:
         configured_headers.update({str(key): str(value) for key, value in oauth_headers.items()})
 
     auth_query_params_decrypted: Dict[str, str] = {}

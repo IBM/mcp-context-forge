@@ -250,7 +250,7 @@ class TestA2AAgentService:
             config={},
             auth_type="oauth",
             oauth_config={
-                "grant_type": "password",
+                "grant_type": "client_credentials",
                 "client_id": "cid",
                 "client_secret": "super-secret",  # pragma: allowlist secret
                 "password": "pw",  # pragma: allowlist secret
@@ -267,7 +267,7 @@ class TestA2AAgentService:
         encryption = get_encryption_service(settings.auth_encryption_secret)
         assert encryption.is_encrypted(captured_agent.oauth_config["client_secret"])
         assert encryption.is_encrypted(captured_agent.oauth_config["password"])
-        assert captured_agent.oauth_config["grant_type"] == "password"
+        assert captured_agent.oauth_config["grant_type"] == "client_credentials"
 
     async def test_register_agent_name_conflict(self, service, mock_db, sample_agent_create):
         """Test agent registration with name conflict."""
@@ -487,7 +487,7 @@ class TestA2AAgentService:
             with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
                 update_data = A2AAgentUpdate(
                     oauth_config={
-                        "grant_type": "password",
+                        "grant_type": "client_credentials",
                         "client_id": "cid",
                         "client_secret": "new-secret",  # pragma: allowlist secret
                         "password": "new-pw",  # pragma: allowlist secret
@@ -499,7 +499,7 @@ class TestA2AAgentService:
         encryption = get_encryption_service(settings.auth_encryption_secret)
         assert encryption.is_encrypted(sample_db_agent.oauth_config["client_secret"])
         assert encryption.is_encrypted(sample_db_agent.oauth_config["password"])
-        assert sample_db_agent.oauth_config["grant_type"] == "password"
+        assert sample_db_agent.oauth_config["grant_type"] == "client_credentials"
 
     async def test_update_agent_oauth_masked_placeholder_preserves_existing_secret(self, service, mock_db, sample_db_agent):
         """Masked oauth secret placeholders preserve existing encrypted values."""
@@ -521,6 +521,20 @@ class TestA2AAgentService:
                 await service.update_agent(mock_db, sample_db_agent.id, update_data)
 
         assert sample_db_agent.oauth_config["client_secret"] == existing_secret
+
+    async def test_update_agent_oauth_clearing_resource_removes_stored_value(self, service, mock_db, sample_db_agent):
+        """An update without Resource removes the stored resource, so the audience is derived again."""
+        sample_db_agent.version = 1
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_id": "cid", "resource": "https://api.example.com"}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "client_id": "cid"})
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert "resource" not in sample_db_agent.oauth_config
 
     async def test_update_agent_masked_auth_headers_preserves_existing_values(self, service, mock_db, sample_db_agent):
         """Masked auth_headers placeholders preserve existing encrypted header values (issue #3637)."""
@@ -732,6 +746,25 @@ class TestA2AAgentService:
         # Verify
         mock_db.delete.assert_called_once_with(sample_db_agent)
         mock_db.commit.assert_called_once()
+
+    async def test_delete_agent_evicts_cached_oauth_token(self, service, mock_db, sample_db_agent):
+        """Deleting an agent removes its cached OAuth token."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        cache = MagicMock()
+        cache.invalidate = AsyncMock()
+        with patch("mcpgateway.services.a2a_service.get_service_token_cache", return_value=cache):
+            await service.delete_agent(mock_db, sample_db_agent.id)
+        cache.invalidate.assert_awaited_once_with(sample_db_agent.id, "a2a")
+
+    async def test_set_agent_state_evicts_cached_oauth_token(self, service, mock_db, sample_db_agent):
+        """Disabling or enabling an agent removes its cached OAuth token."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        service.convert_agent_to_read = MagicMock(return_value=MagicMock())
+        cache = MagicMock()
+        cache.invalidate = AsyncMock()
+        with patch("mcpgateway.services.a2a_service.get_service_token_cache", return_value=cache):
+            await service.set_agent_state(mock_db, sample_db_agent.id, False)
+        cache.invalidate.assert_awaited_once_with(sample_db_agent.id, "a2a")
 
     async def test_delete_agent_purge_metrics(self, service, mock_db, sample_db_agent):
         """Test agent deletion with metric purge."""

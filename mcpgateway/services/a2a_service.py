@@ -44,10 +44,12 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
-from mcpgateway.services.a2a_oauth import A2AOAuthError, resolve_a2a_oauth_headers
+from mcpgateway.services.a2a_errors import A2AAgentError
+from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.gateway_service_token_cache import get_service_token_cache
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -338,81 +340,6 @@ def raise_if_a2a_disabled() -> None:
     if not a2a_enabled():
         logger.warning("A2A request rejected because A2A is disabled")
         raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
-
-
-# Client-credentials tokens for OAuth-protected agents, keyed by agent id + config fingerprint
-# so a changed oauth_config never reuses a token minted for the old one. Value: (token, monotonic expiry).
-_A2A_OAUTH_TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
-_A2A_OAUTH_ACQUIRE_LOCKS: Dict[str, asyncio.Lock] = {}
-_A2A_OAUTH_EXPIRY_SKEW_SECONDS = 30
-
-
-async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_config: Optional[Dict[str, Any]]) -> str:
-    """Return an ``Authorization`` header value for an OAuth-protected A2A agent.
-
-    Only the client_credentials grant is supported. Tokens are cached until shortly
-    before their ``expires_in``; a token without a reported lifetime is not cached.
-    Concurrent callers with the same cache key share one token request.
-
-    Args:
-        agent_id: Agent identifier, used to scope the token cache.
-        agent_name: Agent name, used in error messages.
-        oauth_config: The agent's stored OAuth configuration.
-
-    Returns:
-        The ``Bearer <token>`` header value.
-
-    Raises:
-        A2AAgentError: If the OAuth configuration is missing or unsupported, or token acquisition fails.
-    """
-    if not oauth_config:
-        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth but has no OAuth configuration")
-    grant_type = oauth_config.get("grant_type", "client_credentials")
-    if grant_type != "client_credentials":
-        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth grant type '{grant_type}', which is not supported for agent invocation (only client_credentials)")
-
-    fingerprint = hashlib.sha256(json.dumps(oauth_config, sort_keys=True, default=str).encode()).hexdigest()
-    cache_key = f"{agent_id}:{fingerprint}"
-    cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
-    if cached and cached[1] > time.monotonic():
-        return f"Bearer {cached[0]}"
-
-    lock = _A2A_OAUTH_ACQUIRE_LOCKS.setdefault(cache_key, asyncio.Lock())
-    try:
-        async with lock:
-            cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
-            if cached and cached[1] > time.monotonic():
-                return f"Bearer {cached[0]}"
-            try:
-                manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
-                token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
-            except Exception as e:
-                raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e
-
-            _A2A_OAUTH_TOKEN_CACHE.pop(cache_key, None)
-            if expires_in and expires_in > _A2A_OAUTH_EXPIRY_SKEW_SECONDS:
-                _A2A_OAUTH_TOKEN_CACHE[cache_key] = (token, time.monotonic() + expires_in - _A2A_OAUTH_EXPIRY_SKEW_SECONDS)
-            return f"Bearer {token}"
-    finally:
-        if not lock.locked():
-            _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
-
-
-class A2AAgentError(Exception):
-    """Base class for A2A agent-related errors.
-
-    Examples:
-        >>> try:
-        ...     raise A2AAgentError("Agent operation failed")
-        ... except A2AAgentError as e:
-        ...     str(e)
-        'Agent operation failed'
-        >>> try:
-        ...     raise A2AAgentError("Connection error")
-        ... except Exception as e:
-        ...     isinstance(e, A2AAgentError)
-        True
-    """
 
 
 class A2AAgentNotFoundError(A2AAgentError):
@@ -2179,6 +2106,7 @@ class A2AAgentService(BaseService):
                 a2a_stats_cache.invalidate()
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
+                await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
 
                 # Cascade: update associated tool's enabled status to match agent.
                 # This mirrors gateway_service.set_gateway_state() which lets cascade
@@ -2289,6 +2217,7 @@ class A2AAgentService(BaseService):
                 a2a_stats_cache.invalidate()
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
+                await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
                 # Also invalidate tags cache since agent tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2712,12 +2641,7 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
         correlation_id = get_correlation_id()
-        oauth_headers: Dict[str, str] = {}
-        if agent_auth_type == "oauth":
-            try:
-                oauth_headers = await resolve_a2a_oauth_headers(agent_id, agent_name, agent_endpoint_url, agent_oauth_config)
-            except A2AOAuthError as e:
-                raise A2AAgentError(str(e)) from e
+        oauth_headers = await resolve_a2a_agent_oauth_headers(agent_id, agent_name, agent_endpoint_url, agent_auth_type, agent_oauth_config)
 
         try:
             prepared = prepare_a2a_invocation(
