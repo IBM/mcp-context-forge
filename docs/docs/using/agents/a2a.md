@@ -426,6 +426,45 @@ Set the skills an agent advertises with the top-level `skills` field on `POST /a
 - Cards read the `skills` field first. An agent without the field publishes `capabilities["skills"]`.
 - An explicit `"skills": []` is authoritative. The agent publishes no skills and the `capabilities["skills"]` fallback does not apply.
 
+## Reading an Agent Card Before Registration
+
+`POST /v1/a2a/fetch-card` (also `/a2a/fetch-card`) reads the Agent Card of an agent that is not registered yet. The response
+carries the card in the A2A 1.0 shape and a suggested set of `A2AAgentCreate` fields, so a client can pre-fill a registration form.
+The route stores nothing. It needs `a2a.create`, the permission that registering the agent needs, because it makes the gateway
+send an outbound request to a caller-chosen host.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"baseUrl": "https://agent.example.com"}' \
+  http://localhost:4444/v1/a2a/fetch-card
+```
+
+| Request field | Meaning |
+|---------------|---------|
+| `baseUrl` | Agent endpoint, or a direct URL ending in `.json`. Userinfo, a query and a fragment are rejected with 422. |
+| `path` | Optional card path appended to `baseUrl`. Traversal, percent-encoding, a query and a fragment are rejected with 422. |
+| `headers` | Optional headers, for example `Authorization` for a protected card. Framing headers (`Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `Proxy-*`), `Host` and `Accept-Encoding` are rejected. Send credentials over HTTPS only. |
+
+Without `path`, the gateway tries `/.well-known/agent-card.json` and then `/.well-known/agent.json`.
+
+| `outcome` | `found` | Meaning |
+|-----------|---------|---------|
+| `found` | `true` | A valid card. `card` is normalized to 1.0, `rawCard` is the document as fetched (omitted when identical), `suggestedAgent` maps the card, `warnings` lists what could not be mapped. |
+| `no_card` | `false` | The host answered, but no valid card exists at the tried locations. A card with wrongly typed fields also reports `no_card`, for example a `streaming` that is not a boolean, or required scopes that are not a list of strings. |
+| `auth_required` | `false` | The card endpoint answered 401 or 403. `authScheme` holds the `WWW-Authenticate` scheme name. Retry with `headers`. |
+| `unreachable` | `false` | The outbound URL policy refused the address, the connection failed, or the search took longer than `FEDERATION_TIMEOUT`. All causes return the same response. |
+
+Notes on the suggested mapping:
+
+- ContextForge stores one `auth_type`. Alternative security requirements are reported in `warnings`. Schemes that one requirement lists together cannot be represented and are skipped with a warning.
+- OAuth `scopes` hold only the scopes the requirement names. A requirement with no scopes requests none.
+- The suggestion never contains credential values, team, visibility or tags.
+- `tokenUrl` and `authorizationUrl` come from the remote card. A warning appears when either points to a host other than the agent host, or does not use `https`. Verify the URL before entering a client secret.
+- A requirement that only a skill declares cannot be mapped, because ContextForge stores one authentication configuration per agent. A warning names up to three such skills. Configure their authentication manually.
+
+The fetch applies the SSRF settings (`SSRF_ALLOW_LOCALHOST`, `SSRF_ALLOW_PRIVATE_NETWORKS`, `SSRF_BLOCKED_NETWORKS`, `SSRF_ALLOWED_NETWORKS`), does not follow redirects,
+pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends after `FEDERATION_TIMEOUT` seconds in total, including DNS resolution and every candidate URL.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents
@@ -583,6 +622,7 @@ the `a2a.read` role.
 | `/a2a/{agent_id}` | GET | `a2a.read` |
 | `/a2a/{agent_id}/card` | GET | `a2a.read` |
 | `/a2a` | POST | `a2a.create` |
+| `/a2a/fetch-card` | POST | `a2a.create` |
 | `/a2a/{agent_id}` | PUT | `a2a.update` |
 | `/a2a/{agent_id}/state` | POST | `a2a.update` |
 | `/a2a/{agent_id}/toggle` | POST | `a2a.update` (deprecated, use `/state`) |

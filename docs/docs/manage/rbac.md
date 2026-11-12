@@ -506,6 +506,8 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
 
+`POST /a2a/fetch-card` needs `a2a.create`, because it makes the gateway read an Agent Card from a caller-chosen host before the agent is registered. See [Reading an Agent Card Before Registration](../using/agents/a2a.md#reading-an-agent-card-before-registration).
+
 `tools.preview` sits strictly below `tools.execute`: it authorizes `POST /tools/preview/{name}`,
 which validates and resolves a tool call without dispatching it (no REST/MCP/A2A/gRPC call, no
 `TOOL_POST_INVOKE` hook). A role granted `tools.preview` but not `tools.execute` can validate a
