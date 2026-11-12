@@ -413,7 +413,7 @@ repos:
         description: Ensures mcpgateway/ and tests/ .py files have the correct license header.
         entry: >-
           bash -c '
-          uv run .github/tools/fix_file_headers.py --fix-all "$@";
+          uv run --no-project .github/tools/fix_file_headers.py --fix-all "$@";
           ' --
         language: system
         types: [python]

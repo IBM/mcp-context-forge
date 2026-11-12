@@ -6,7 +6,7 @@
 # and no socket is opened. Assertions are made against the "Command:" line the
 # script prints immediately before exec, plus the exit status and error text.
 #
-# This suite is self-contained: the helpers in test_helper/helpers.bash are
+# This suite is self-contained: the helpers in git/test_helper/helpers.bash are
 # git-fixture utilities for the secrets merge driver and do not apply here.
 
 setup() {
