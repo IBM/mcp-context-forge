@@ -5487,7 +5487,7 @@ class TestToolService:
                 "team_id": None,
                 "gateway_id": "gw-cache-1",
             },
-            "gateway": {"id": "gw-cache-1", "name": "cached-gw", "url": "http://example.com/gateway", "auth_type": None, "passthrough_headers": []},
+            "gateway": {"id": "gw-cache-1", "name": "cached-gw", "url": "http://example.com/gateway", "auth_type": None, "passthrough_headers": [], "requires_user_credentials": False},  # pragma: allowlist secret
         }
         lookup_cache = SimpleNamespace(enabled=True, get=AsyncMock(return_value=cached_payload), set=AsyncMock(), set_negative=AsyncMock())
 
