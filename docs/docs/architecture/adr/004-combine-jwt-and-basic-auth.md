@@ -209,7 +209,7 @@ Basic authentication for API endpoints is now **disabled by default** to improve
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `API_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for API endpoints (`/api/metrics/*`). Disabled by default for security. |
+| `API_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for API endpoints (e.g., `/health/security`). Disabled by default for security. Does not grant access to global-record admin routes (`/api/metrics/*`, `/api/logs/*`), which additionally require an unrestricted platform-admin bearer or session token — see [Global-record routes](../../manage/rbac.md#global-record-routes). |
 | `DOCS_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for documentation endpoints (`/docs`, `/redoc`). Independent of API setting. |
 
 ### Behavior Changes
@@ -227,7 +227,7 @@ Basic authentication for API endpoints is now **disabled by default** to improve
 ```bash
 # Recommended: Use JWT tokens
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+    --username admin@example.com --admin --exp 10080 --secret $JWT_SECRET_KEY)
 
 # If Basic auth is required (development only):
 export API_ALLOW_BASIC_AUTH=true

@@ -10,7 +10,7 @@ Tests for toolops_altk_service.
 import importlib.util
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -19,6 +19,13 @@ import pytest
 
 # First-Party
 import mcpgateway.toolops.toolops_altk_service as svc
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite calls handlers directly with no request."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 class DummyTool:

@@ -134,7 +134,7 @@ except Exception:  # noqa: BLE001 - best-effort cache clear
 
 # Third-Party
 from cpex.framework import PluginError, PluginViolationError, ResourceHookType, ToolHookType  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 import httpx  # noqa: E402
@@ -174,6 +174,7 @@ from mcpgateway.plugins import (  # noqa: E402
     shutdown_plugin_manager_factory,
 )
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
+import mcpgateway.routers.observability as observability_mod  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
@@ -181,6 +182,7 @@ from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
 
 # Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt  # noqa: E402
+from tests.helpers.observability import drain_span_writer_queue  # noqa: E402
 from tests.utils.rbac_mocks import create_mock_email_user, create_mock_user_context, MockPermissionService  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -292,7 +294,12 @@ async def traced_app(monkeypatch, tmp_path):
     # mcpgateway/routers/observability.py defines its own local get_db() bound to a
     # module-level `SessionLocal` name captured at import time -- patch it directly too,
     # otherwise GET /observability/traces/{trace_id} reads from the wrong (schema-less) DB.
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     try:
         monkeypatch.setattr("mcpgateway.middleware.auth_middleware.SessionLocal", TestSessionLocal, raising=False)
     except Exception:  # noqa: BLE001
@@ -348,6 +355,28 @@ async def traced_app(monkeypatch, tmp_path):
     # instance hosting them is dedicated to this test.
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-plugin-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -372,7 +401,7 @@ async def traced_app(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -406,6 +435,7 @@ async def traced_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -451,7 +481,12 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     try:
         monkeypatch.setattr("mcpgateway.middleware.auth_middleware.SessionLocal", TestSessionLocal, raising=False)
     except Exception:  # noqa: BLE001
@@ -501,6 +536,28 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-secrets-detection-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -525,7 +582,7 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -559,6 +616,7 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -606,7 +664,12 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
         "mcpgateway.services.security_logger.SessionLocal",
@@ -651,6 +714,28 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
     observability_service = ObservabilityService()
     test_app = FastAPI(title=app_title)
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -675,7 +760,7 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -706,6 +791,7 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -805,7 +891,12 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
         "mcpgateway.services.security_logger.SessionLocal",
@@ -857,6 +948,28 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
 
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-url-reputation-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(resource_router)  # real POST /resources, GET /resources/{resource_id}
     test_app.include_router(observability_router)  # real GET /observability/traces/{trace_id}
@@ -879,7 +992,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -901,6 +1014,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
     # monkeypatch has now reverted settings.observability_include_paths to the shipped
     # default; clear the caches again so path_filter functions recompute against it instead
@@ -910,7 +1024,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
 
 def _auth_headers() -> dict:
     """Mint a real admin JWT via tests/helpers/auth.make_test_jwt and build a Bearer header."""
-    token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
+    token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
     return make_auth_headers(token)
 
 

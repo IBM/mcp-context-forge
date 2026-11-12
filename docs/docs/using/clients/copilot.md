@@ -47,7 +47,7 @@ Copilot supports both **SSE** streams and **Streamable HTTP** out-of-the-box.
 > **Tip - generate a token**
 
 ```bash
-python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 ## 🔗 Option 2 - Streamable HTTP (best for prod / remote)
@@ -90,7 +90,7 @@ Copilot routes the call → Gateway → tool, and prints the reply.
 * **Use SSE for production**, stdio for local/offline.
 * You can manage servers, tools and prompts from the Gateway **Admin UI** (`/admin`).
 * Need a bearer quickly?
-  `export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)`
+  `export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --admin --secret my-test-key-but-now-longer-than-32-bytes)`
 
 ---
 

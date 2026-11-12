@@ -124,7 +124,7 @@ curl https://your-app-name.fly.dev/health
 # Protected endpoints (require auth)
 export JWT_SECRET_KEY="same-value-you-set-in-fly-secrets"
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com \
+  --username admin@example.com --admin \
   --exp 10080 \
   --secret "$JWT_SECRET_KEY" 2>/dev/null | head -1)
 curl -H "Authorization: Bearer $TOKEN" https://your-app-name.fly.dev/docs

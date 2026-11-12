@@ -221,7 +221,7 @@ docker run -d \
 # Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret your-secret-key
+  --username admin@example.com --admin --exp 10080 --secret your-secret-key
 ```
 
 Access ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).

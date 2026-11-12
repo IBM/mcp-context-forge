@@ -57,7 +57,7 @@ under **Tools ▸ MCP Servers** in the Continue sidebar.
 *Generate a token to paste above*:
 
 ```bash
-python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes
+python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --admin --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 The `--secret` value must match the Gateway's `JWT_SECRET_KEY`, otherwise the Gateway

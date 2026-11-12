@@ -79,7 +79,7 @@ except Exception:  # noqa: BLE001
 
 # Third-Party
 from cpex.framework import PluginError, PluginViolationError, ToolHookType  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 import httpx  # noqa: E402
@@ -116,6 +116,7 @@ from mcpgateway.plugins import (  # noqa: E402
     shutdown_plugin_manager_factory,
 )
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
+import mcpgateway.routers.observability as observability_mod  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
@@ -123,6 +124,7 @@ from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
 
 # Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt  # noqa: E402
+from tests.helpers.observability import drain_span_writer_queue  # noqa: E402
 from tests.utils.rbac_mocks import MockPermissionService, create_mock_email_user, create_mock_user_context  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -148,10 +150,14 @@ def _new_traceparent() -> tuple[str, str]:
 def _auth_headers() -> dict:
     """Mint a real admin JWT and build an Authorization Bearer header.
 
+    teams=None mints an unrestricted (not claim-less) admin token. A
+    claim-less token now resolves to public-only scope and is correctly
+    denied on the observability routes this suite reads back (issue #6134).
+
     Returns:
         Dict with Authorization header.
     """
-    token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
+    token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
     return make_auth_headers(token)
 
 
@@ -222,7 +228,12 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     # Patch control_telemetry's SessionLocal so _emit_db_spans writes to the same DB
     monkeypatch.setattr("mcpgateway.plugins.control_telemetry.SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
@@ -265,6 +276,28 @@ async def control_telemetry_app(monkeypatch, tmp_path):
 
     observability_service = ObservabilityService()
     test_app = FastAPI(title="control-telemetry-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)
     test_app.include_router(utility_router)
@@ -288,7 +321,7 @@ async def control_telemetry_app(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -319,6 +352,7 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -646,7 +680,12 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.plugins.control_telemetry.SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
@@ -690,6 +729,28 @@ async def denying_plugin_app(monkeypatch, tmp_path):
 
     observability_service = ObservabilityService()
     test_app = FastAPI(title="denying-plugin-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)
     test_app.include_router(utility_router)
@@ -713,7 +774,7 @@ async def denying_plugin_app(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -744,6 +805,7 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
