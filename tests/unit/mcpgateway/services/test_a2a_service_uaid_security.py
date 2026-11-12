@@ -1010,6 +1010,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "https://example.com/a2a/path"
@@ -1045,6 +1046,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "https://example.com?foo=bar"
@@ -1077,6 +1079,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "https://example.com#frag"
@@ -1109,6 +1112,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "https://example.com"
@@ -1149,6 +1153,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "https://example.com"
@@ -1192,6 +1197,7 @@ class TestNativeIdPathRejection:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
 
         agent_data = MagicMock()
+        agent_data.card_url = None
         agent_data.name = "test-agent"
         agent_data.slug = "test-agent"
         agent_data.endpoint_url = "example.com/a2a/path"
