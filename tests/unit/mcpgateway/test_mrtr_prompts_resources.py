@@ -132,6 +132,25 @@ async def test_prompt_fetch_relays_a_question_on_the_sse_branch(in_process_proxy
 
 
 @pytest.mark.asyncio
+async def test_prompt_get_records_a_relayed_question_as_a_success(in_process_proxy, monkeypatch):
+    """A question round is a successful call, so the prompt metric must not record a failure."""
+    service = PromptService()
+    prompt = _gateway_prompt()
+    prompt.id, prompt.gateway_id, prompt.template, prompt.argument_schema = "p-1", "gw-1", "", None
+    monkeypatch.setattr(service, "_get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_apply_access_control", AsyncMock(side_effect=lambda query, *_a, **_k: query))
+    monkeypatch.setattr(service, "_find_prompt_by_name_or_id", lambda *_a: prompt)
+    metrics = MagicMock()
+    monkeypatch.setattr(ps, "metrics_buffer", metrics)
+
+    with pytest.raises(PromptInputRequired):
+        await service.get_prompt(MagicMock(), "p-1", {})
+
+    metrics.record_prompt_metric.assert_called_once()
+    assert metrics.record_prompt_metric.call_args.kwargs["success"] is True
+
+
+@pytest.mark.asyncio
 async def test_prompt_fetch_threads_retry_fields_on_the_pooled_branch(monkeypatch):
     """The pooled-session branch passes the answers and state to the upstream helper."""
     captured = {}
@@ -368,6 +387,30 @@ async def test_resource_invoke_relays_the_question_and_serves_after_the_answer(r
         MagicMock(), "res-1", "vault://bob", resource_obj=resource, gateway_obj=gateway, input_responses={"pin": _answer(pin="4242")}, request_state=signal.value.result.request_state
     )
     assert served == "secret for bob: 4242"
+
+
+@pytest.mark.asyncio
+async def test_resource_read_relays_the_question_instead_of_serving_the_cached_copy(in_process_proxy, monkeypatch):
+    """A valid cached copy must not mask an upstream question, and the round is a success, not a failure."""
+    service = rs.ResourceService()
+    resource, gateway = _gateway_resource("streamablehttp")
+    resource.uri, resource.enabled, resource.uri_template, resource.gateway, resource.extension_metadata = "vault://bob", True, None, gateway, None
+    # read_resource hands the stored text to invoke_resource as the URI to refresh from, so keep it a real URI.
+    resource.text_content, resource.binary_content = "vault://bob", None
+    resource.content = rs.ResourceContent(type="resource", id="res-1", uri="vault://bob", text="vault://bob")
+    db = MagicMock()
+    db.get.return_value = resource
+    monkeypatch.setattr(service, "_get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_check_resource_access", AsyncMock(return_value=True))
+    metrics = MagicMock()
+    monkeypatch.setattr(rs, "metrics_buffer", metrics)
+
+    with pytest.raises(ResourceInputRequired) as signal:
+        await service.read_resource(db, resource_id="res-1")
+
+    assert set(signal.value.result.input_requests) == {"pin"}
+    metrics.record_resource_metric.assert_called_once()
+    assert metrics.record_resource_metric.call_args.kwargs["success"] is True
 
 
 def test_mrtr_intake_passes_a_non_elicitation_answer_through_raw():
