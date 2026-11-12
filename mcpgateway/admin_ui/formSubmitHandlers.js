@@ -480,12 +480,12 @@ export const handleServerFormSubmit = async function (e) {
 
     formData.set("visibility", formData.get("visibility"));
     const teamId = new URL(window.location.href).searchParams.get("team_id");
-    // The team select is disabled outside team visibility, so resolve the
-    // team explicitly: an explicit pick wins, then the page's scoped team.
+    // The selector applies only to team visibility (#5791); other saves keep the page-scoped team.
     const teamSelect = form.querySelector("select[name='team_id']");
+    const usePicker = formData.get("visibility") === "team" && teamSelect;
     formData.set(
       "team_id",
-      teamSelect ? resolveFormTeamId(teamSelect) : teamId || ""
+      usePicker ? resolveFormTeamId(teamSelect) : teamId || ""
     );
 
     // Build tools selection from Map (includes selections across pagination + search)
