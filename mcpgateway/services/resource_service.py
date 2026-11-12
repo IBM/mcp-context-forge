@@ -2502,6 +2502,10 @@ class ResourceService(BaseService):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_content}))
                         success = True  # Mark as successful before returning
                         return resource_content
+                    except ResourceInputRequired:
+                        # An upstream question is one round of a successful read, not a failure.
+                        success = True
+                        raise
                     except Exception as e:
                         success = False
                         error_message = str(e)
@@ -3104,6 +3108,10 @@ class ResourceService(BaseService):
 
                 success = True
                 return content
+            except ResourceInputRequired:
+                # An upstream question is one round of a successful read, not a failure.
+                success = True
+                raise
             except Exception as e:
                 success = False
                 error_message = str(e)

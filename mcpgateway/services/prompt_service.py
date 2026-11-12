@@ -2358,6 +2358,10 @@ class PromptService(BaseService):
                 logger.info("Retrieved prompt: %s successfully", prompt.id)
                 return result
 
+            except PromptInputRequired:
+                # An upstream question is one round of a successful call, not a failure.
+                success = True
+                raise
             except Exception as e:
                 success = False
                 error_message = str(e)
