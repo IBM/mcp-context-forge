@@ -565,6 +565,7 @@ ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks
 | GET | `/v1/a2a/{agent_id}/tasks` | `a2a.read` |
 | GET | `/v1/a2a/{agent_id}/tasks/{task_id}` | `a2a.read` |
 | POST | `/v1/a2a/{agent_id}/tasks/{task_id}/cancel` | `a2a.invoke` |
+| POST | `/v1/a2a/{agent_id}/tasks/{task_id}/messages` | `a2a.invoke` |
 | POST, GET | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs` | `a2a.update`, `a2a.read` |
 | GET, DELETE | `/v1/a2a/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}` | `a2a.read`, `a2a.update` |
 
@@ -574,7 +575,30 @@ ContextForge stores A2A task state and serves it under `/v1/a2a/{agent_id}/tasks
 - The `state` filter accepts the A2A task states: `submitted`, `working`, `input-required`, `auth-required`, `completed`, `canceled`, `failed`, `rejected`.
 - The cancel route changes the task state in the gateway only. It does not signal the remote agent. A task in a terminal state is returned unchanged.
 - Creating a push notification config returns `201`. Posting the same `webhook_url` again updates the config and returns `200`. Responses never include `auth_token`.
-- Cancel and push config writes create audit trail entries.
+- Cancel, follow-up message, and push config writes create audit trail entries. The follow-up entry holds IDs only.
+
+### Follow-up Messages
+
+`POST /v1/a2a/{agent_id}/tasks/{task_id}/messages` sends a follow-up message to an existing task, for example the answer to an `input-required` or `auth-required` task. The caller must own the agent, as on the cancel route.
+
+```json
+{"text": "Yes, proceed."}
+```
+
+Send either `text` (one text part) or `message` (an A2A message object in the 0.3 or 1.0 shape). Send exactly one of them.
+
+- The gateway sets `taskId` and `contextId` from the stored task, sets `role` to the user role, and generates `messageId`. It converts the message for 0.3 and 1.0 agents.
+- `message` accepts only `parts`, `metadata`, `extensions`, `referenceTaskIds`, and the identity fields `messageId`, `role`, `taskId`, `contextId` and `kind`. A message holds at most 50 parts. A text part and `text` hold at most 65536 characters.
+- The `task_continued` event stores the message ID and the kind and length of each part. It never stores the content.
+- Two follow-ups sent at the same moment can both pass the state check.
+
+| Status | Cause |
+|--------|-------|
+| 200 | The agent response, unchanged. The stored task takes the state from the response. |
+| 400 | `taskId` or `contextId` differs from the stored task, `role` is not the user role, or the agent call fails |
+| 404 | The agent or task does not exist, or the caller does not own the agent |
+| 409 | The task is in a terminal state |
+| 422 | The body is invalid, has unsupported `message` fields, or exceeds the size limits |
 
 ## Lifecycle Management
 

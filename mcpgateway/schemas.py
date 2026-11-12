@@ -7423,6 +7423,56 @@ class A2APushNotificationConfigRequest(BaseModel):
         return validate_core_url(v, "Webhook URL")
 
 
+MAX_A2A_TASK_MESSAGE_PARTS = 50
+MAX_A2A_TASK_MESSAGE_TEXT = 65536
+_A2A_TASK_MESSAGE_FIELDS = frozenset({"parts", "metadata", "extensions", "referenceTaskIds", "messageId", "role", "taskId", "contextId", "kind"})
+
+
+class A2ATaskMessageRequest(BaseModel):
+    """Schema for a follow-up message sent to an existing A2A task.
+
+    Send either ``message`` (an A2A message object, in the 0.3 or 1.0 shape) or
+    ``text`` (shorthand for a single text part). The gateway binds the message to the
+    task from the URL path and converts it to the agent's protocol version.
+    """
+
+    message: Optional[Dict[str, Any]] = None
+    text: Optional[str] = Field(default=None, min_length=1, max_length=MAX_A2A_TASK_MESSAGE_TEXT)
+
+    @model_validator(mode="after")
+    def validate_exactly_one_payload(self) -> "A2ATaskMessageRequest":
+        """Require exactly one of ``message`` and ``text``, and a bounded message.
+
+        Returns:
+            A2ATaskMessageRequest: The validated request.
+
+        Raises:
+            ValueError: If both or neither payload is set, ``message`` holds an unknown field,
+                ``parts`` is empty or too long, or a text part exceeds the size limit.
+        """
+        if (self.message is None) == (self.text is None):
+            raise ValueError("Provide exactly one of 'message' or 'text'")
+        if self.message is None:
+            return self
+        unknown = sorted(set(self.message) - _A2A_TASK_MESSAGE_FIELDS)
+        if unknown:
+            raise ValueError(f"message has unsupported fields: {', '.join(unknown)}")
+        parts = self.message.get("parts")
+        if not (isinstance(parts, list) and parts):
+            raise ValueError("message.parts must be a non-empty list")
+        if len(parts) > MAX_A2A_TASK_MESSAGE_PARTS:
+            raise ValueError(f"message.parts holds at most {MAX_A2A_TASK_MESSAGE_PARTS} parts")
+        if any(isinstance(part, dict) and isinstance(part.get("text"), str) and len(part["text"]) > MAX_A2A_TASK_MESSAGE_TEXT for part in parts):
+            raise ValueError(f"A text part holds at most {MAX_A2A_TASK_MESSAGE_TEXT} characters")
+        return self
+
+    def to_message(self) -> Dict[str, Any]:
+        """Return the A2A message object, expanding ``text`` into a single text part."""
+        if self.message is not None:
+            return dict(self.message)
+        return {"parts": [{"text": self.text}]}
+
+
 class A2APushNotificationConfigRead(BaseModel):
     """Schema for reading a push notification webhook configuration."""
 

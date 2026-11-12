@@ -35,6 +35,7 @@ A2A_ROUTES = [
     ("GET", "/v1/a2a/agent-1/card"),
     ("POST", "/v1/a2a/agent-1/invoke"),
     ("GET", "/v1/a2a/agent-1/tasks"),
+    ("POST", "/v1/a2a/agent-1/tasks/task-1/messages"),
     ("GET", "/admin/a2a"),
     ("GET", "/admin/a2a/agent-1"),
     ("GET", "/admin/a2a/ids"),
