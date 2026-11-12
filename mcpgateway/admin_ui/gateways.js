@@ -28,6 +28,7 @@ import {
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
+  getPickerTeamId,
   handleFetchError,
   isAdminUser,
   isInactiveChecked,
@@ -994,7 +995,7 @@ export const initGatewaySelect = function (
         // Fetch all gateway IDs from the server.
         // Respect View Public checkbox: keep team_id, add include_public when checked.
         // Use the correct checkbox for the active modal context.
-        const selectedTeamId = getCurrentTeamId();
+        const selectedTeamId = getPickerTeamId(container);
         const vpCbId = selectId.includes("Edit")
           ? "edit-server-view-public"
           : "add-server-view-public";

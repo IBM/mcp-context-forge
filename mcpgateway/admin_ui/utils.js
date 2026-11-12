@@ -528,6 +528,21 @@ export const getCurrentTeamId = function () {
 };
 
 /**
+ * Get the team scope for an association picker container.
+ * Re-scoped server forms stamp data-team-scope on their picker containers
+ * so every picker fetch follows the form's effective team. Other pickers
+ * keep the page team context.
+ * @param {HTMLElement} container - Picker container element
+ * @returns {string|null} Team id to scope picker fetches
+ */
+export const getPickerTeamId = function (container) {
+  if (container && container.hasAttribute("data-team-scope")) {
+    return container.getAttribute("data-team-scope") || null;
+  }
+  return getCurrentTeamId();
+};
+
+/**
  * Get the currently selected team name from Alpine.js team selector
  * @returns {string|null} Team name or null if not found
  */

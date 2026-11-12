@@ -3096,6 +3096,25 @@
               </div>
             </div>
 
+            <!-- Team Selection (shown when Team visibility is selected) -->
+            <div class="mt-4 hidden" data-team-select data-visibility-prefix="server-visibility" data-rescope="associatedGateways,associatedTools,associatedResources,associatedPrompts">
+              <label
+                for="add-server-team-id"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Team</label
+              >
+              <select
+                id="add-server-team-id"
+                name="team_id"
+                class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              >
+                <option value="">Personal team</option>
+              </select>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Team that owns this server. Required when visibility is Team.
+              </p>
+            </div>
+
             {% if selected_team_id %}
             <!-- View Public toggle for team-scoped server creation -->
             <div class="mt-4" id="add-server-view-public-container">
@@ -11658,6 +11677,24 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >
                         </div>
                       </div>
+                    </div>
+                    <!-- Team Selection (shown when Team visibility is selected) -->
+                    <div class="mt-4 hidden" data-team-select data-visibility-prefix="edit-server-visibility" data-rescope="associatedEditGateways,edit-server-tools,edit-server-resources,edit-server-prompts">
+                      <label
+                        for="edit-server-team-id"
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Team</label
+                      >
+                      <select
+                        id="edit-server-team-id"
+                        name="team_id"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      >
+                        <option value="">Personal team</option>
+                      </select>
+                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Team that owns this server. Required when visibility is Team.
+                      </p>
                     </div>
                   </div>
                   {% if selected_team_id %}

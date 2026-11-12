@@ -19,6 +19,7 @@ import {
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
+  getPickerTeamId,
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
@@ -1306,7 +1307,7 @@ export const initToolSelect = function (
           const selectedGatewayIds = getSelectedGatewayIds
             ? getSelectedGatewayIds()
             : [];
-          const selectedTeamId = getCurrentTeamId();
+          const selectedTeamId = getPickerTeamId(container);
           const searchInputId =
             selectId === "edit-server-tools"
               ? "searchEditTools"
