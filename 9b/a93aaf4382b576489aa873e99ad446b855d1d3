@@ -1,0 +1,13 @@
+{"id":"fa969105-107f-4fcc-a443-98bb7815b4b6","ts":"2026-05-18T10:13:29.761Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/utils/csrf.py","version":"1.0.0","taskID":"33d29d16-c86b-4d79-be87-355186ca515b"}
+
+{"id":"3dd8d031-4267-4efc-9ed5-bc9d7bfc2c88","ts":"2026-05-15T14:55:46.388Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/routers/test_app.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"b165642f-f543-4d29-bc25-fc5bf16ba04f","ts":"2026-05-15T14:56:00.304Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"4cd4d3dc-c6c4-46e3-82e6-5c46cf33c146","ts":"2026-05-15T14:59:35.830Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"68e96ae6-a134-42ec-9bd5-9a36c6fd89e5","ts":"2026-05-15T14:59:57.194Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"d513623a-3c42-432b-8a4d-1e50dccbdd0c","ts":"2026-05-15T15:00:26.317Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"2b87f2d3-5102-4fe9-9ff1-f7068b82da39","ts":"2026-05-15T15:00:48.608Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+
+{"id":"e241f578-2cc3-4953-90ed-91011fe8f2c1","ts":"2026-05-15T13:40:12.856Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/config.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"4947d050-d6bd-450c-9d8f-272e95a020af","ts":"2026-05-15T14:02:59.540Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/routers/app.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"8533d244-ce36-4a33-ae61-ee04b749822d","ts":"2026-05-15T14:12:45.584Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/utils/csrf.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
+{"id":"dd641c20-ff59-46b0-ba3c-5e7c5058f6fa","ts":"2026-05-15T14:17:35.290Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/middleware/rbac.py","version":"1.0.0","taskID":"f658f2ec-8ded-4cb4-b1d9-13ae39d33d8d"}
