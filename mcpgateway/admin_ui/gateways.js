@@ -571,6 +571,7 @@ export const editGateway = async function (gatewayId) {
       "oauth-redirect-after-success-gw-edit"
     );
     const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
+    const oauthTokenIssuerField = safeGetElement("oauth-token-issuer-gw-edit");
     const oauthRegistrationMethodField = safeGetElement(
       "oauth-registration-method-gw-edit",
       true,
@@ -678,6 +679,9 @@ export const editGateway = async function (gatewayId) {
           const config = gateway.oauthConfig;
           if (oauthIssuerField) {
             oauthIssuerField.value = config.issuer || "";
+          }
+          if (oauthTokenIssuerField) {
+            oauthTokenIssuerField.value = [].concat(config.token_issuer || []).join(", ");
           }
           if (oauthRegistrationMethodField) {
             oauthRegistrationMethodField.value =

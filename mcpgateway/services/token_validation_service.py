@@ -143,6 +143,32 @@ def _derive_issuer_from_token_url(token_url: str) -> Optional[str]:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def resolve_expected_token_issuers(oauth_config: Dict[str, Any]) -> set[str]:
+    """Return the configured ``iss`` values accepted on access tokens.
+
+    ``token_issuer`` (string or list) names the signing IdP when it differs from the
+    authorization server; otherwise ``issuer`` is used. ``issuer`` stays the AS identity
+    for CIMD/DCR, discovery and the RFC 9207 check, so it is never overwritten here.
+
+    Args:
+        oauth_config: Gateway OAuth configuration.
+
+    Returns:
+        Issuers with trailing slashes removed; empty when none is configured.
+
+    Examples:
+        >>> sorted(resolve_expected_token_issuers({"issuer": "https://as.example.com/"}))
+        ['https://as.example.com']
+        >>> sorted(resolve_expected_token_issuers({"issuer": "https://as.example.com", "token_issuer": ["https://a.example.com/", "https://b.example.com"]}))
+        ['https://a.example.com', 'https://b.example.com']
+        >>> resolve_expected_token_issuers({})
+        set()
+    """
+    configured = oauth_config.get("token_issuer") or oauth_config.get("issuer")
+    values = configured if isinstance(configured, list) else [configured]
+    return {value.rstrip("/") for value in values if isinstance(value, str) and value}
+
+
 def _normalize_scope(scope_input: Any) -> set[str]:
     """Normalize a scope string or list by stripping resource URI prefixes.
 
@@ -303,8 +329,11 @@ def _validate_issuer(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
         gateway_name: Gateway name for log messages.
         result: Validation result to update in-place.
     """
-    expected_issuer = oauth_config.get("issuer") or _derive_issuer_from_token_url(oauth_config.get("token_url", ""))
-    if not expected_issuer:
+    expected_issuers = resolve_expected_token_issuers(oauth_config)
+    if not expected_issuers:
+        derived = _derive_issuer_from_token_url(oauth_config.get("token_url", ""))
+        expected_issuers = {derived.rstrip("/")} if derived else set()
+    if not expected_issuers:
         return
 
     token_iss = claims.get("iss")
@@ -312,12 +341,12 @@ def _validate_issuer(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
         logger.debug("OAuth token for gateway %s has no 'iss' claim", gateway_name)
         return
 
-    if token_iss.rstrip("/") == expected_issuer.rstrip("/"):
+    if token_iss.rstrip("/") in expected_issuers:
         result.issuer_match = True
     else:
         result.issuer_match = False
         safe_iss = str(token_iss)[:80]
-        safe_expected = str(expected_issuer)[:80]
+        safe_expected = ", ".join(sorted(expected_issuers))[:80]
         result.warnings.append(f"Token issuer mismatch: token iss='{safe_iss}', expected '{safe_expected}'")
 
 

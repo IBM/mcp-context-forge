@@ -46,6 +46,7 @@ from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, Dc
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
+from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
@@ -1515,9 +1516,9 @@ class OAuthManager:
         # audience for the wrong IdP.  Passing None to store_tokens leaves any
         # previously-learned value for this user intact (it only overwrites on
         # non-None).  The check is skipped when no issuer is configured.
-        configured_issuer = credentials.get("issuer")
-        if configured_issuer and token_aud is not None:
-            if not isinstance(token_iss, str) or token_iss.rstrip("/") != str(configured_issuer).rstrip("/"):
+        expected_issuers = resolve_expected_token_issuers(credentials)
+        if expected_issuers and token_aud is not None:
+            if not isinstance(token_iss, str) or token_iss.rstrip("/") not in expected_issuers:
                 logger.debug(
                     "Skipping learned audience persistence for gateway %s: token iss does not match configured issuer",
                     gateway_id,

@@ -1112,6 +1112,7 @@ async def _assemble_actor_from_fields(fields: Any, *, encrypt_secret: bool) -> O
 
 _CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
     "oauth_issuer": "issuer",
+    "oauth_token_issuer": "token_issuer",
     "oauth_token_url": "token_url",
     "oauth_authorization_url": "authorization_url",
     "oauth_redirect_uri": "redirect_uri",
@@ -1155,6 +1156,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     """
     oauth_grant_type = str(fields.get("oauth_grant_type", ""))
     oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_issuers = str(fields.get("oauth_token_issuer", "")).replace(",", " ").split()
     oauth_token_url = str(fields.get("oauth_token_url", ""))
     oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
     oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
@@ -1177,6 +1179,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["grant_type"] = oauth_grant_type
     if oauth_issuer:
         oauth_config["issuer"] = oauth_issuer
+    if oauth_token_issuers:
+        oauth_config["token_issuer"] = oauth_token_issuers[0] if len(oauth_token_issuers) == 1 else oauth_token_issuers
     if oauth_token_url:
         oauth_config["token_url"] = oauth_token_url
     if oauth_authorization_url:
