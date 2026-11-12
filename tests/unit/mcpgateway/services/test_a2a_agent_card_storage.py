@@ -194,3 +194,60 @@ class TestStoredCardRoute:
             await main.get_a2a_agent_stored_card("agent-1", MagicMock(), db=MagicMock(), user={"email": "u@example.com", "db": MagicMock()})
         assert exc_info.value.status_code == 403
         service.get_stored_card.assert_not_awaited()
+
+    @pytest.fixture
+    def permitted(self, monkeypatch):
+        """Grant a2a.read and install a service double."""
+        permission_service = MagicMock()
+        permission_service.check_permission = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: permission_service)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+        service = MagicMock()
+        service.get_stored_card = AsyncMock()
+        monkeypatch.setattr(main, "a2a_service", service)
+        return service
+
+    async def _call(self):
+        """Call the route as an authenticated caller."""
+        return await main.get_a2a_agent_stored_card("agent-1", MagicMock(), db=MagicMock(), user={"email": "u@example.com", "db": MagicMock()})
+
+    async def test_returns_stored_card(self, permitted):
+        """A permitted caller receives the stored card."""
+        permitted.get_stored_card.return_value = "card"
+        assert await self._call() == "card"
+
+    async def test_invisible_agent_is_404(self, permitted):
+        """An agent the caller cannot see gives 404."""
+        permitted.get_stored_card.side_effect = A2AAgentNotFoundError("nope")
+        with pytest.raises(HTTPException) as exc_info:
+            await self._call()
+        assert exc_info.value.status_code == 404
+
+    async def test_agent_without_card_is_404(self, permitted):
+        """A visible agent with no stored card gives 404."""
+        permitted.get_stored_card.return_value = None
+        with pytest.raises(HTTPException) as exc_info:
+            await self._call()
+        assert exc_info.value.status_code == 404
+
+    async def test_missing_service_is_503(self, permitted, monkeypatch):
+        """A disabled service gives 503."""
+        monkeypatch.setattr(main, "a2a_service", None)
+        with pytest.raises(HTTPException) as exc_info:
+            await self._call()
+        assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_registration_stores_the_fetched_card(service, monkeypatch):
+    """register_agent stores the card fetched for the agent after the agent commit."""
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    fetched = _fetched()
+    monkeypatch.setattr(service, "_fetch_registration_card", AsyncMock(return_value=fetched))
+    store = MagicMock()
+    monkeypatch.setattr(service, "_store_agent_card", store)
+    monkeypatch.setattr(service, "convert_agent_to_read", MagicMock(return_value=MagicMock()))
+    await service.register_agent(db, A2AAgentCreate(name="a", endpoint_url="https://agent.example.com/rpc", card_url="https://agent.example.com"))
+    store.assert_called_once()
+    assert store.call_args.args[2] is fetched
