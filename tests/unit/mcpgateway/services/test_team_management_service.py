@@ -16,12 +16,15 @@ from uuid import uuid4
 # Third-Party
 import orjson
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
+from mcpgateway.db import Base, EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members, validate_team_assignment
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 
 class TestGetEffectiveMaxMembers:
@@ -2314,22 +2317,38 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_verify_team_for_user_team_id_not_member(self, service, mock_db):
-        """verify_team_for_user returns empty list when user is not member of team."""
+        """verify_team_for_user raises PermissionError when user is not member of team."""
         team = MagicMock()
         team.id = "team-other"
         team.is_personal = False
         mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [team]
         mock_db.commit = MagicMock()
-        result = await service.verify_team_for_user("user@test.com", team_id="team-1")
-        assert result == []
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            await service.verify_team_for_user("user@test.com", team_id="team-1")
 
     @pytest.mark.asyncio
     async def test_verify_team_for_user_db_error(self, service, mock_db):
-        """verify_team_for_user returns [] on DB error."""
+        """verify_team_for_user degrades to None on DB error when no team_id is given."""
         mock_db.query.side_effect = Exception("db error")
         mock_db.rollback = MagicMock()
         result = await service.verify_team_for_user("user@test.com")
-        assert result == []
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_admin_bypass_skips_membership_lookup(self, service, mock_db, monkeypatch):
+        """verify_team_for_user returns team_id for platform admins without a membership lookup."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_user_admin", lambda db, email: True)
+        mock_db.query.side_effect = AssertionError("membership lookup must not run for platform admins")
+        result = await service.verify_team_for_user("admin@test.com", team_id="team-1")
+        assert result == "team-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_db_error_with_team_id_raises_public_validation(self, service, mock_db):
+        """verify_team_for_user raises PublicValidationError on lookup failure when team_id is given."""
+        mock_db.query.side_effect = Exception("db error")
+        mock_db.rollback = MagicMock()
+        with pytest.raises(PublicValidationError, match="Unable to verify team membership for the requested team"):
+            await service.verify_team_for_user("user@test.com", team_id="team-1")
 
     # ---- get_user_teams cache paths ---- #
     @pytest.mark.asyncio
@@ -3017,3 +3036,76 @@ class TestTransientTeamFromDict:
         assert rebuilt.is_active is True
         assert rebuilt.created_at is not None
         assert rebuilt.updated_at is not None
+
+
+_GATE_TEAM_ID = "team-gate-1"
+
+
+@pytest.fixture(scope="module")
+def gate_db():
+    """Real SQLite session with one team and one user per authorization scenario."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    db.add(EmailUser(email="creator@example.test", password_hash="not-a-real-hash", full_name="Creator", is_admin=False, is_active=True))
+    db.flush()
+    db.add(EmailTeam(id=_GATE_TEAM_ID, name="Gate Team", slug="gate-team", created_by="creator@example.test", is_personal=False))
+    for email, role, is_active in (
+        ("owner@example.test", "owner", True),
+        ("member@example.test", "member", True),
+        ("inactive-owner@example.test", "owner", False),
+    ):
+        db.add(EmailUser(email=email, password_hash="not-a-real-hash", full_name=email, is_admin=False, is_active=True))
+        db.flush()
+        db.add(EmailTeamMember(team_id=_GATE_TEAM_ID, user_email=email, role=role, is_active=is_active))
+    db.add(EmailUser(email="admin@example.test", password_hash="not-a-real-hash", full_name="Admin", is_admin=True, is_active=True))
+    db.add(EmailUser(email="outsider@example.test", password_hash="not-a-real-hash", full_name="Outsider", is_admin=False, is_active=True))
+    db.commit()
+    yield db
+    db.close()
+
+
+class TestValidateTeamAssignment:
+    """Deny-path coverage for the shared team-assignment gate.
+
+    The owner-role requirement lives in the membership query itself, so these
+    tests run against a real SQLite session to pin the query semantics.
+    """
+
+    def test_active_owner_member_passes(self, gate_db):
+        """An active owner-role member may take the assignment."""
+        assert validate_team_assignment(gate_db, "owner@example.test", _GATE_TEAM_ID) is None
+
+    def test_member_without_owner_role_is_denied(self, gate_db):
+        """A member without the owner role does not satisfy the owner-role query."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "member@example.test", _GATE_TEAM_ID)
+
+    def test_non_member_is_denied(self, gate_db):
+        """A user with no membership row is denied."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "outsider@example.test", _GATE_TEAM_ID)
+
+    def test_inactive_owner_member_is_denied(self, gate_db):
+        """An inactive membership does not authorize the assignment."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "inactive-owner@example.test", _GATE_TEAM_ID)
+
+    def test_platform_admin_bypasses_membership_check(self, gate_db):
+        """A platform admin may take the assignment without a membership row."""
+        assert validate_team_assignment(gate_db, "admin@example.test", _GATE_TEAM_ID) is None
+
+    def test_missing_team_id_raises_public_validation(self, gate_db):
+        """A team assignment without a team_id fails validation before any lookup."""
+        with pytest.raises(PublicValidationError, match="Cannot set visibility to 'team' without a team_id"):
+            validate_team_assignment(gate_db, "owner@example.test", None)
+
+    def test_unknown_team_raises_public_validation(self, gate_db):
+        """A team_id that resolves to no team fails validation."""
+        with pytest.raises(PublicValidationError, match="Team team-ghost not found"):
+            validate_team_assignment(gate_db, "owner@example.test", "team-ghost")
+
+    def test_missing_user_email_skips_membership_check(self, gate_db):
+        """System and internal paths that omit user_email skip the membership check."""
+        assert validate_team_assignment(gate_db, None, _GATE_TEAM_ID) is None

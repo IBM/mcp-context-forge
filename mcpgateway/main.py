@@ -4405,6 +4405,10 @@ async def create_server(
         return result
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except PublicValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
@@ -4462,6 +4466,8 @@ async def update_server(
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except PublicValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerNameConflictError as e:
