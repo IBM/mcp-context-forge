@@ -5867,23 +5867,27 @@ async def send_a2a_task_message(
         db: Database session.
         user: Authenticated user.
 
+    Tasks have no owner of their own, so the caller must own the agent, like on the cancel route.
+
     Returns:
         The agent response, unchanged.
 
     Raises:
-        HTTPException: 503 if A2A is unavailable, 404 if the task does not exist or is not visible,
+        HTTPException: 404 if the caller does not own the agent or the task does not exist or is not visible,
             409 if the task is in a terminal state, 400 if the message names a different task or the agent fails.
     """
-    if a2a_service is None:
-        raise HTTPException(status_code=503, detail="A2A service not available")
+    service = _require_a2a_service()
+    await _require_manageable_a2a_agent(service, db, request, user, agent_id)
     try:
-        return await a2a_service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2ATaskStateError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_task_action(request, user, "continue_a2a_task", agent_id, task_id)
+    return response
 
 
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent

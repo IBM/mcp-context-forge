@@ -3864,7 +3864,11 @@ class A2AAgentService(BaseService):
         The message carries ``taskId`` and ``contextId`` in both A2A 0.3 and 1.0, so
         the agent receives it as part of the stored task. ``invoke_agent`` persists the
         task state from the agent response, and a ``task_continued`` event records the
-        continuation.
+        continuation. The event keeps the message ID and the kind and size of each part, never the
+        content, because a reply to an ``auth-required`` task can carry credentials.
+
+        Two concurrent follow-ups to one task can both pass the state check, and
+        ``_record_task_event`` can then assign the same sequence number to both events.
 
         Args:
             db: Database session.
@@ -3913,11 +3917,40 @@ class A2AAgentService(BaseService):
 
         try:
             updated = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
-            self._record_task_event(db, agent_id, task_id, "task_continued", {"message": follow_up, "previous_state": previous_state, "state": updated["status"]["state"] if updated else None})
+            self._record_task_event(
+                db,
+                agent_id,
+                task_id,
+                "task_continued",
+                {"message_id": follow_up["messageId"], "parts": self._summarize_message_parts(follow_up), "previous_state": previous_state, "state": updated["status"]["state"] if updated else None},
+            )
         except Exception:
             db.rollback()
             logger.warning("Failed to record task_continued event for task_id=%s", task_id, exc_info=True)
         return response
+
+    @staticmethod
+    def _summarize_message_parts(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Describe each part of a message by kind and size, without its content.
+
+        Args:
+            message: A2A message object.
+
+        Returns:
+            One ``{"kind", "length"}`` entry per part.
+
+        Examples:
+            >>> A2AAgentService._summarize_message_parts({"parts": [{"text": "secret"}, {"kind": "data", "data": {"a": 1}}, "odd"]})
+            [{'kind': 'text', 'length': 6}, {'kind': 'data', 'length': 8}, {'kind': 'unknown', 'length': 0}]
+        """
+        summary: List[Dict[str, Any]] = []
+        for part in message.get("parts") or []:
+            if not isinstance(part, dict):
+                summary.append({"kind": "unknown", "length": 0})
+                continue
+            kind = part.get("kind") or next((key for key in ("text", "raw", "url", "data", "file") if key in part), "unknown")
+            summary.append({"kind": kind, "length": len(str(part.get(kind, "")))})
+        return summary
 
     @staticmethod
     def _bind_follow_up_message(task: Dict[str, Any], task_id: str, message: Dict[str, Any]) -> Dict[str, Any]:

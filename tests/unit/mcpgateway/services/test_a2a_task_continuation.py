@@ -80,7 +80,17 @@ class TestContinueTask:
         await service.continue_task(MagicMock(), "agent-1", "t1", {"messageId": "attacker-id", "parts": [{"text": "x"}]})
         message = service.invoke_agent.call_args.args[2]["message"]
         assert message["messageId"] != "attacker-id" and message["messageId"].startswith("contextforge-")
-        assert service._record_task_event.call_args.args[4]["message"]["messageId"] == message["messageId"]
+        assert service._record_task_event.call_args.args[4]["message_id"] == message["messageId"]
+
+    @pytest.mark.asyncio
+    async def test_event_keeps_part_kinds_and_sizes_but_no_content(self, service):
+        """The task_continued event never stores message content."""
+        parts = [{"text": "my-password-is-hunter2"}, {"kind": "data", "data": {"code": "oauth-code"}}]
+        await service.continue_task(MagicMock(), "agent-1", "t1", {"parts": parts})
+        payload = service._record_task_event.call_args.args[4]
+        assert payload["parts"] == [{"kind": "text", "length": 22}, {"kind": "data", "length": 22}]
+        assert "hunter2" not in str(payload) and "oauth-code" not in str(payload)
+        assert "message" not in payload
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("role", ["user", "ROLE_USER", "Role_User"])

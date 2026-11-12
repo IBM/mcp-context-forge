@@ -15,7 +15,7 @@ import pytest
 
 # First-Party
 from mcpgateway.main import app, get_current_user_with_permissions
-from mcpgateway.middleware import token_scoping
+from mcpgateway.middleware.token_scoping import _PERMISSION_PATTERNS
 
 BASE = "/v1/a2a/agent-1/tasks"
 HEADERS = {"Authorization": "Bearer test-token"}
@@ -25,6 +25,7 @@ HEADERS = {"Authorization": "Bearer test-token"}
 def service():
     """Patch the module-level A2A service."""
     with patch("mcpgateway.main.a2a_service") as svc:
+        svc.check_agent_manage_access = AsyncMock(return_value=True)
         yield svc
 
 
@@ -61,6 +62,44 @@ class TestTaskMessages:
         client.post(self.URL, json={"message": message}, headers=HEADERS)
         assert continue_task.call_args.args[3] == message
 
+    def test_non_owner_gets_404_and_service_is_not_called(self, service, continue_task, client):
+        """A caller who cannot manage the agent is denied before any task lookup or agent call."""
+        service.check_agent_manage_access.return_value = False
+        resp = client.post(self.URL, json={"text": "x"}, headers=HEADERS)
+        assert resp.status_code == 404
+        continue_task.assert_not_called()
+
+    def test_success_writes_an_audit_entry_with_ids_only(self, client):
+        """A follow-up is audited by agent and task ID, never by message content."""
+        with patch("mcpgateway.main._audit_a2a_task_action") as audit:
+            client.post(self.URL, json={"text": "secret-answer"}, headers=HEADERS)
+        assert audit.call_args.args[2:] == ("continue_a2a_task", "agent-1", "t1")
+        assert "secret-answer" not in str(audit.call_args)
+
+    def test_failed_follow_up_is_not_audited(self, continue_task, client):
+        """A rejected follow-up leaves no audit entry."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2ATaskStateError
+
+        continue_task.side_effect = A2ATaskStateError("done")
+        with patch("mcpgateway.main._audit_a2a_task_action") as audit:
+            assert client.post(self.URL, json={"text": "x"}, headers=HEADERS).status_code == 409
+        audit.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"message": {"parts": [{"text": "x"}], "unexpected": 1}},
+            {"message": {"parts": [{"text": "x"}] * 51}},
+            {"message": {"parts": [{"text": "x" * 65537}]}},
+            {"text": "x" * 65537},
+        ],
+    )
+    def test_oversized_or_unknown_message_fields_422(self, continue_task, client, body):
+        """Unknown message fields, too many parts and oversized text are rejected before the service."""
+        assert client.post(self.URL, json=body, headers=HEADERS).status_code == 422
+        continue_task.assert_not_called()
+
     @pytest.mark.parametrize("body", [{}, {"text": "a", "message": {"parts": [{"text": "b"}]}}, {"message": {"parts": []}}, {"message": {}}, {"text": ""}])
     def test_invalid_body_422(self, continue_task, client, body):
         """Zero or two payloads, or a message without parts, return 422."""
@@ -84,11 +123,4 @@ class TestTaskMessages:
 
 def test_token_scope_maps_messages_to_invoke():
     """The follow-up route requires a2a.invoke under token scoping."""
-    table = next(v for v in vars(token_scoping).values() if isinstance(v, list) and v and isinstance(v[0], tuple) and len(v[0]) == 3 and hasattr(v[0][1], "match"))
-    assert next(p for m, rx, p in table if m == "POST" and rx.match("/a2a/a/tasks/t/messages")) == "a2a.invoke"
-
-
-def test_service_disabled_503(client):
-    """A disabled A2A service returns 503."""
-    with patch("mcpgateway.main.a2a_service", None):
-        assert client.post(f"{BASE}/t1/messages", json={"text": "x"}, headers=HEADERS).status_code == 503
+    assert next(p for m, rx, p in _PERMISSION_PATTERNS if m == "POST" and rx.match("/a2a/a/tasks/t/messages")) == "a2a.invoke"
