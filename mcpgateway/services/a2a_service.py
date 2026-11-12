@@ -1224,7 +1224,7 @@ class A2AAgentService(BaseService):
         Args:
             db: Database session.
             agent: The registered agent row.
-            fetched: The fetched card, with ``raw_card`` and ``source_url`` set.
+            fetched: The fetched card. ``raw_card`` is ``None`` for a card already in the 1.0 shape, so ``card`` is the document as fetched.
         """
         try:
             latest = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent.id)).scalar()
@@ -1232,7 +1232,7 @@ class A2AAgentService(BaseService):
                 A2AAgentCard(
                     a2a_agent_id=agent.id,
                     version=(latest or 0) + 1,
-                    card=fetched.raw_card,
+                    card=fetched.raw_card if fetched.raw_card is not None else fetched.card,
                     detected_version=fetched.detected_version,
                     source_url=fetched.source_url,
                     etag=fetched.etag,

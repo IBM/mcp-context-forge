@@ -7,6 +7,7 @@ Unit tests for storing and reading an A2A Agent Card as fetched (#4734).
 """
 
 # Standard
+import copy
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -20,16 +21,33 @@ from mcpgateway import main
 from mcpgateway.db import A2AAgent, A2AAgentCard, Base
 from mcpgateway.schemas import A2AAgentCreate, A2AFetchCardResponse
 from mcpgateway.services import a2a_service as a2a_service_module
+from mcpgateway.services.a2a_card_import import _build_found_response
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError, A2AAgentService
 
-RAW_CARD = {"name": "weather", "supportedInterfaces": [{"url": "https://agent.example.com/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}], "futureField": {"kept": True}}
+SOURCE_URL = "https://agent.example.com/.well-known/agent-card.json"
+V1_CARD = {
+    "name": "weather",
+    "version": "2.1.0",
+    "supportedInterfaces": [{"url": "https://agent.example.com/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}],
+    "futureField": {"kept": True},
+}
+LEGACY_CARD = {
+    "name": "legacy",
+    "url": "https://old.example.com/a2a",
+    "version": "1.2.0",
+    "protocolVersion": "0.3.0",
+    "capabilities": {"streaming": True},
+    "skills": [],
+    "futureField": {"kept": True},
+}
+RAW_CARD = V1_CARD
 
 
-def _fetched(**overrides) -> A2AFetchCardResponse:
-    """Build a successful fetch result."""
-    values = dict(found=True, outcome="found", source_url="https://agent.example.com/.well-known/agent-card.json", detected_version="1.0", card=RAW_CARD, raw_card=RAW_CARD, etag='"v1"', max_age=300)
-    values.update(overrides)
-    return A2AFetchCardResponse(**values)
+def _fetched(document=None, **overrides) -> A2AFetchCardResponse:
+    """Build the fetch result the fetcher produces for ``document``, as ``fetch_agent_card`` does."""
+    found = _build_found_response(SOURCE_URL, copy.deepcopy(document or V1_CARD), etag=overrides.pop("etag", '"v1"'), max_age=overrides.pop("max_age", 300))
+    assert found is not None
+    return found.model_copy(update=overrides)
 
 
 @pytest.fixture
@@ -64,6 +82,28 @@ class TestStoreCard:
         assert (row.version, row.detected_version, row.etag, row.max_age) == (1, "1.0", '"v1"', 300)
         assert row.source_url.endswith("agent-card.json")
         assert agent.name == "weather-local" and row.card["name"] == "weather"
+
+    def test_a1_0_card_is_stored_as_fetched_not_null(self, db, service):
+        """A card already in the 1.0 shape has no separate raw copy, so the card itself is stored."""
+        fetched = _fetched()
+        assert fetched.raw_card is None
+        agent = db.get(A2AAgent, "agent-1")
+        service._store_agent_card(db, agent, fetched)  # pylint: disable=protected-access
+
+        row = db.query(A2AAgentCard).one()
+        assert row.card == V1_CARD
+        assert row.detected_version == "1.0"
+
+    def test_legacy_card_stores_the_document_not_the_normalized_card(self, db, service):
+        """A 0.3 card keeps its original fields, not the 1.0 normalization."""
+        fetched = _fetched(LEGACY_CARD)
+        assert fetched.raw_card is not None and fetched.card != fetched.raw_card
+        agent = db.get(A2AAgent, "agent-1")
+        service._store_agent_card(db, agent, fetched)  # pylint: disable=protected-access
+
+        row = db.query(A2AAgentCard).one()
+        assert row.card == LEGACY_CARD
+        assert row.detected_version == "0.3"
 
     def test_next_store_adds_a_version_and_keeps_history(self, db, service):
         """A second store appends version 2 and keeps version 1."""
@@ -103,7 +143,7 @@ class TestRegistrationFetch:
     async def test_found_card_is_returned(self, service, monkeypatch):
         """A found card is passed on for storage."""
         monkeypatch.setattr(a2a_service_module, "fetch_agent_card", AsyncMock(return_value=_fetched()))
-        assert (await service._fetch_registration_card("https://agent.example.com")).raw_card == RAW_CARD  # pylint: disable=protected-access
+        assert (await service._fetch_registration_card("https://agent.example.com")).card["name"] == "weather"  # pylint: disable=protected-access
 
     async def test_missing_card_fails_before_any_write(self, service, monkeypatch):
         """A card URL with no card fails registration with a generic error."""
@@ -164,6 +204,13 @@ class TestReadStoredCard:
         service._store_agent_card(db, agent, _fetched(etag='"v2"'))  # pylint: disable=protected-access
         card = await service.get_stored_card(db, "agent-1")
         assert (card.version, card.etag, card.card) == (2, '"v2"', RAW_CARD)
+
+    async def test_stored_1_0_card_reads_back(self, db, service, monkeypatch):
+        """A card stored from a 1.0 fetch validates on read, so the route cannot fail with 500."""
+        monkeypatch.setattr(service, "get_agent", AsyncMock())
+        service._store_agent_card(db, db.get(A2AAgent, "agent-1"), _fetched())  # pylint: disable=protected-access
+        card = await service.get_stored_card(db, "agent-1")
+        assert card.card == V1_CARD
 
     async def test_agent_without_card_returns_none(self, db, service, monkeypatch):
         """A hand-registered agent has no stored card."""
@@ -239,15 +286,19 @@ class TestStoredCardRoute:
 
 
 @pytest.mark.asyncio
-async def test_registration_stores_the_fetched_card(service, monkeypatch):
-    """register_agent stores the card fetched for the agent after the agent commit."""
-    db = MagicMock()
-    db.execute.return_value.scalar_one_or_none.return_value = None
-    fetched = _fetched()
-    monkeypatch.setattr(service, "_fetch_registration_card", AsyncMock(return_value=fetched))
-    store = MagicMock()
-    monkeypatch.setattr(service, "_store_agent_card", store)
+@pytest.mark.parametrize("document, detected", [(V1_CARD, "1.0"), (LEGACY_CARD, "0.3")], ids=["1.0", "0.3"])
+async def test_registration_stores_the_card_in_the_database(service, monkeypatch, document, detected):
+    """register_agent writes the fetched card as a row, for both card shapes."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    monkeypatch.setattr(service, "_fetch_registration_card", AsyncMock(return_value=_fetched(document)))
     monkeypatch.setattr(service, "convert_agent_to_read", MagicMock(return_value=MagicMock()))
+
     await service.register_agent(db, A2AAgentCreate(name="a", endpoint_url="https://agent.example.com/rpc", card_url="https://agent.example.com"))
-    store.assert_called_once()
-    assert store.call_args.args[2] is fetched
+
+    row = db.query(A2AAgentCard).one()
+    assert row.card == document
+    assert (row.version, row.detected_version, row.etag, row.max_age) == (1, detected, '"v1"', 300)
+    assert row.a2a_agent_id == db.query(A2AAgent).one().id
+    db.close()
