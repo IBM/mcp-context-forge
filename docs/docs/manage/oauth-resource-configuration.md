@@ -61,7 +61,9 @@ ContextForge will send multiple `resource` parameters in the OAuth request. Duri
 
 An A2A agent with `auth_type: oauth` uses one agent-level token from the `client_credentials` grant. The gateway does not store a token per user for A2A agents, so there is no learned audience. Other grant types fail at invocation with an error.
 
-On each token request the gateway sends the `resource` parameter. The value is `oauth_config.resource` if set, else the origin of the agent endpoint URL. The gateway caches the token per agent until it expires.
+On each token request the gateway sends the `resource` parameter. The value is `oauth_config.resource` if set, else the origin of the agent endpoint URL. The gateway caches the token per agent until it expires. All callers of one agent share that token. The gateway removes the cached token when the agent is deleted, disabled, or enabled, and a change to `resource`, `audience`, or the client credentials selects a new cache entry. After a failed token request the gateway fails every call for that agent for 10 seconds without a new request.
+
+The agent create and update APIs accept only `grant_type: client_credentials` and check `token_url` against the outbound URL policy. They return `422` otherwise.
 
 Before the gateway forwards the token to the agent, it validates the token claims with the same rules as gateways:
 

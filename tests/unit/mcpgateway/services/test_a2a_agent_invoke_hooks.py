@@ -1053,7 +1053,7 @@ class TestA2AInvokeOAuth:
 
         with (
             patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
-            patch("mcpgateway.services.a2a_service.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
         ):
             with pytest.raises(A2AAgentError, match="token refused"):
                 await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
@@ -1076,7 +1076,7 @@ class TestA2AInvokeOAuth:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
         resolve = AsyncMock(return_value={"Authorization": "Bearer agent-token"})
 
-        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)), patch("mcpgateway.services.a2a_service.resolve_a2a_oauth_headers", resolve):
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)), patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", resolve):
             result = await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
 
         assert result["result"] == "ok"
