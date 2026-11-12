@@ -515,7 +515,7 @@ For agents that expect standard JSONRPC format:
 |-----------|-------------|---------|
 | `api_key` | API key in Authorization header | `Authorization: Bearer your-key` |
 | `bearer` | Bearer token authentication | `Authorization: Bearer your-token` |
-| `oauth` | OAuth 2.0 flow (stored tokens) | Handled automatically |
+| `oauth` | OAuth 2.0 client credentials | The gateway gets a token from `oauth_config.token_url` and sends it as `Authorization: Bearer`. It caches the token until 30 seconds before it expires. A token with no `expires_in`, or with `expires_in` of 30 seconds or less, is not cached. The authorization-code grant is not supported. A missing `oauth_config`, an unsupported grant, or a token failure fails the invocation with an error that names the agent. |
 | `none` | No authentication required | - |
 
 When `auth_type` is `api_key`, the configured API key is sent as the outbound `Authorization` header. If a base or passthrough request header also contains `Authorization`, the configured A2A agent API key takes precedence for the outbound agent call.

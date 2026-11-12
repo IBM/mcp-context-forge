@@ -12,10 +12,12 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import asyncio
 import base64
 import binascii
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
@@ -48,6 +50,7 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -334,6 +337,64 @@ def raise_if_a2a_disabled() -> None:
     if not a2a_enabled():
         logger.warning("A2A request rejected because A2A is disabled")
         raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+
+
+# Client-credentials tokens for OAuth-protected agents, keyed by agent id + config fingerprint
+# so a changed oauth_config never reuses a token minted for the old one. Value: (token, monotonic expiry).
+_A2A_OAUTH_TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
+_A2A_OAUTH_ACQUIRE_LOCKS: Dict[str, asyncio.Lock] = {}
+_A2A_OAUTH_EXPIRY_SKEW_SECONDS = 30
+
+
+async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_config: Optional[Dict[str, Any]]) -> str:
+    """Return an ``Authorization`` header value for an OAuth-protected A2A agent.
+
+    Only the client_credentials grant is supported. Tokens are cached until shortly
+    before their ``expires_in``; a token without a reported lifetime is not cached.
+    Concurrent callers with the same cache key share one token request.
+
+    Args:
+        agent_id: Agent identifier, used to scope the token cache.
+        agent_name: Agent name, used in error messages.
+        oauth_config: The agent's stored OAuth configuration.
+
+    Returns:
+        The ``Bearer <token>`` header value.
+
+    Raises:
+        A2AAgentError: If the OAuth configuration is missing or unsupported, or token acquisition fails.
+    """
+    if not oauth_config:
+        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth but has no OAuth configuration")
+    grant_type = oauth_config.get("grant_type", "client_credentials")
+    if grant_type != "client_credentials":
+        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth grant type '{grant_type}', which is not supported for agent invocation (only client_credentials)")
+
+    fingerprint = hashlib.sha256(json.dumps(oauth_config, sort_keys=True, default=str).encode()).hexdigest()
+    cache_key = f"{agent_id}:{fingerprint}"
+    cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
+    if cached and cached[1] > time.monotonic():
+        return f"Bearer {cached[0]}"
+
+    lock = _A2A_OAUTH_ACQUIRE_LOCKS.setdefault(cache_key, asyncio.Lock())
+    try:
+        async with lock:
+            cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
+            if cached and cached[1] > time.monotonic():
+                return f"Bearer {cached[0]}"
+            try:
+                manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
+                token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
+            except Exception as e:
+                raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e
+
+            _A2A_OAUTH_TOKEN_CACHE.pop(cache_key, None)
+            if expires_in and expires_in > _A2A_OAUTH_EXPIRY_SKEW_SECONDS:
+                _A2A_OAUTH_TOKEN_CACHE[cache_key] = (token, time.monotonic() + expires_in - _A2A_OAUTH_EXPIRY_SKEW_SECONDS)
+            return f"Bearer {token}"
+    finally:
+        if not lock.locked():
+            _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
 
 
 class A2AAgentError(Exception):
@@ -1027,9 +1088,6 @@ class A2AAgentService(BaseService):
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
                 except RuntimeError:
@@ -2025,9 +2083,6 @@ class A2AAgentService(BaseService):
             await admin_stats_cache.invalidate_tags()
 
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 loop = asyncio.get_running_loop()
                 loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
             except RuntimeError:
@@ -2240,9 +2295,6 @@ class A2AAgentService(BaseService):
                 await admin_stats_cache.invalidate_tags()
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
                 except RuntimeError:
@@ -2659,6 +2711,12 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
         correlation_id = get_correlation_id()
+        if agent_auth_type == "oauth":
+            # Resolve the credential here so prepare_a2a_invocation stays synchronous. The configured
+            # OAuth credential replaces any caller-supplied Authorization header.
+            oauth_authorization = await resolve_a2a_oauth_authorization(agent_id, agent_name, agent_oauth_config)
+            downstream_headers = {key: value for key, value in (downstream_headers or {}).items() if key.lower() != "authorization"}
+            downstream_headers["Authorization"] = oauth_authorization
         try:
             prepared = prepare_a2a_invocation(
                 agent_type=agent_type,

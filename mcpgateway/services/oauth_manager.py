@@ -815,6 +815,18 @@ class OAuthManager:
         token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         return token_response["access_token"]
 
+    async def get_client_credentials_token(self, credentials: Dict[str, Any]) -> Tuple[str, Optional[int]]:
+        """Fetch a client-credentials access token together with its lifetime.
+
+        Args:
+            credentials: Stored OAuth configuration (``grant_type`` must be ``client_credentials``).
+
+        Returns:
+            Tuple of the access token and ``expires_in`` seconds (``None`` when the provider omitted it).
+        """
+        token_response = await self.get_client_credentials_token_response(credentials)
+        return token_response["access_token"], parse_expires_in(token_response)
+
     async def get_client_credentials_token_response(
         self,
         credentials: Dict[str, Any],
