@@ -46,6 +46,28 @@ from tests.helpers.admin_mocks import install_admin_user
 # --------------------------------------------------------------------------- #
 
 
+def _assert_bulk_resource_audits(audit, expected_counts, import_batch_id):
+    """Assert team groups preserve the bulk resource audit payload contract."""
+    assert audit.call_count == len(expected_counts)
+    for audit_call in audit.call_args_list:
+        team_id = audit_call.kwargs["team_id"]
+        created, updated = expected_counts[team_id]
+        assert audit_call.kwargs == {
+            "user_id": "owner@example.com",
+            "action": "bulk_create_resources" if created else "bulk_update_resources",
+            "resource_type": "resource",
+            "resource_id": import_batch_id or "bulk_operation",
+            "resource_name": f"Bulk operation: {created} created, {updated} updated",
+            "user_email": "owner@example.com",
+            "team_id": team_id,
+            "client_ip": "192.0.2.1",
+            "user_agent": "bulk-test",
+            "new_values": {"resources_created": created, "resources_updated": updated, "visibility": "public"},
+            "context": {"created_via": "import", "import_batch_id": import_batch_id, "federation_source": "source-gateway", "conflict_strategy": "update"},
+        }
+    assert {audit_call.kwargs["team_id"] for audit_call in audit.call_args_list} == set(expected_counts)
+
+
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
@@ -3645,13 +3667,78 @@ class TestResourceBulkRegistration:
     """Targeted coverage for bulk resource registration conflict strategies."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_team", [None, "team-a"])
+    @pytest.mark.parametrize("import_batch_id", [None, "batch-resource-groups"])
+    async def test_register_resources_bulk_audits_persisted_teams(self, resource_service, mock_db, mock_logging_services, creation_team, import_batch_id):
+        """Bulk audits group successful creates and authorized updates by actual teams."""
+        actor = "owner@example.com"
+        existing = [
+            DbResource(uri=f"file:///update-{index}.txt", name=f"existing-{index}", team_id=team, owner_email=actor, version=1)
+            for index, team in enumerate(("team-a", "team-b", "team-b", "denied-team"))
+        ]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = existing
+        resource_service._notify_resource_added = AsyncMock()
+        resources = [ResourceCreate(name=f"created-{index}", uri=f"file:///create-{index}.txt", content="safe", team_id=team) for index, team in enumerate(("team-a", "team-a", None))]
+        resources.extend(ResourceCreate(name=f"updated-{index}", uri=row.uri, content="safe", team_id="payload-team", owner_email="payload@example.com") for index, row in enumerate(existing))
+        audit = mock_logging_services["audit_trail"].log_action
+
+        def commit():
+            audit.assert_not_called()
+
+        mock_db.commit.side_effect = commit
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(side_effect=[True, True, True, False])):
+            result = await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by=actor,
+                created_from_ip="192.0.2.1",
+                created_via="import",
+                created_user_agent="bulk-test",
+                import_batch_id=import_batch_id,
+                federation_source="source-gateway",
+                team_id=creation_team,
+                owner_email=actor,
+                conflict_strategy="update",
+                user_email=actor,
+            )
+
+        assert (result["created"], result["updated"], result["failed"]) == (3, 3, 1)
+        assert [(row.team_id, row.owner_email) for row in existing] == [(team, actor) for team in ("team-a", "team-b", "team-b", "denied-team")]
+        assert existing[-1].name == "existing-3"
+        assert mock_db.refresh.call_count == 3
+        assert resource_service._notify_resource_added.await_count == 3
+        expected = {"team-a": (3 if creation_team else 0, 1), "team-b": (0, 2)}
+        if creation_team is None:
+            expected[None] = (3, 0)
+        _assert_bulk_resource_audits(audit, expected, import_batch_id)
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_commit_failure_emits_no_audits(self, resource_service, mock_db, mock_logging_services):
+        """A failed resource commit emits no success audit or creation notification."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.commit.side_effect = RuntimeError("commit failed")
+        resource_service._notify_resource_added = AsyncMock()
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=[ResourceCreate(name="created", uri="file:///created.txt", content="safe", team_id="team-a")],
+            created_by="owner@example.com",
+        )
+
+        assert result["failed"] == 1
+        mock_db.rollback.assert_called_once()
+        mock_db.refresh.assert_not_called()
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
+        resource_service._notify_resource_added.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_register_resources_bulk_empty_returns_zeroes(self, resource_service, mock_db):
         result = await resource_service.register_resources_bulk(db=mock_db, resources=[])
 
         assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     @pytest.mark.asyncio
-    async def test_register_resources_bulk_update_conflict_updates_existing(self, resource_service, mock_db):
+    async def test_register_resources_bulk_update_conflict_updates_existing(self, resource_service, mock_db, mock_logging_services):
         existing = MagicMock(spec=DbResource)
         existing.uri = "file:///dup.txt"
         existing.gateway_id = None
@@ -3662,6 +3749,8 @@ class TestResourceBulkRegistration:
         existing.uri_template = None
         existing.tags = ["old"]
         existing.version = 1
+        existing.team_id = "existing-team"
+        existing.owner_email = "owner@example.com"
 
         mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
         mock_db.add_all = MagicMock()
@@ -3687,6 +3776,7 @@ class TestResourceBulkRegistration:
                 created_by="tester",
                 conflict_strategy="update",
                 user_email="owner@example.com",
+                team_id="importer-team",
             )
 
         assert result["updated"] == 1
@@ -3697,6 +3787,9 @@ class TestResourceBulkRegistration:
         assert existing.tags[0]["label"] == "updated"
         assert existing.version == 2
         mock_db.add_all.assert_not_called()
+        assert existing.team_id == "existing-team"
+        assert existing.owner_email == "owner@example.com"
+        assert mock_logging_services["audit_trail"].log_action.call_args.kwargs["team_id"] == "existing-team"
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_invalidates_resources_once(self, resource_service, mock_db):
@@ -3714,7 +3807,7 @@ class TestResourceBulkRegistration:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
-    async def test_register_resources_bulk_update_denied_for_non_owner(self, resource_service, mock_db, caller, owns):
+    async def test_register_resources_bulk_update_denied_for_non_owner(self, resource_service, mock_db, mock_logging_services, caller, owns):
         """Bulk update never modifies a resource the caller does not own, and fails closed without a caller."""
         existing = MagicMock(spec=DbResource)
         existing.uri = "file:///victim.txt"
@@ -3743,6 +3836,7 @@ class TestResourceBulkRegistration:
         assert existing.name == "Victim"
         assert existing.description == "Victim desc"
         assert existing.version == 1
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_update_database_backed_ownership(self, resource_service, tmp_path):

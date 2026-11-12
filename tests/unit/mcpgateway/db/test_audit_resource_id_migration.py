@@ -34,7 +34,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 
 MODULE_NAME = "mcpgateway.alembic.versions.4a7d9e2c6b18_allow_nullable_audit_resource_id"
 REVISION = "4a7d9e2c6b18"  # pragma: allowlist secret
-DOWN_REVISION = "c7e91a2b4d60"  # pragma: allowlist secret
+DOWN_REVISION = "e5a1c7b9d3f2"  # pragma: allowlist secret
 ACTOR = "audit-migration@example.com"
 TEAM_ID = "00000000000040008000000000000001"
 

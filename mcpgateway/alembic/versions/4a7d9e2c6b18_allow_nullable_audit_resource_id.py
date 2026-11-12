@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 Allow aggregate audit rows without individual resource IDs.
 
 Revision ID: 4a7d9e2c6b18
-Revises: c7e91a2b4d60
+Revises: e5a1c7b9d3f2
 """
 
 # Standard
@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "4a7d9e2c6b18"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "c7e91a2b4d60"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e5a1c7b9d3f2"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

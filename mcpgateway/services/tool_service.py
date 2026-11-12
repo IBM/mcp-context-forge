@@ -2948,6 +2948,12 @@ class ToolService(BaseService):
             if tools_to_add:
                 db.add_all(tools_to_add)
 
+            audit_counts: dict[str | None, dict[str, int]] = {}
+            for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
+                for db_tool in tools:
+                    counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
+                    counts[operation] += 1
+
             # Commit the chunk
             db.commit()
             notify_dataplane()
@@ -2956,12 +2962,6 @@ class ToolService(BaseService):
             for db_tool in tools_to_add:
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
-
-            audit_counts: dict[str | None, dict[str, int]] = {}
-            for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
-                for db_tool in tools:
-                    counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
-                    counts[operation] += 1
 
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(

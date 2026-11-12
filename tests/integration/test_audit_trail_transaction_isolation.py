@@ -16,24 +16,65 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import AuditTrail, Base, EmailTeam, EmailTeamMember, EmailUser, Gateway, Resource, Server, Tool
+from mcpgateway.db import AuditTrail, Base, EmailTeam, EmailTeamMember, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.routers import log_search
-from mcpgateway.schemas import ResourceCreate, ServerCreate, ServerUpdate, ToolCreate
+from mcpgateway.schemas import PromptCreate, ResourceCreate, ServerCreate, ServerUpdate, ToolCreate
 from mcpgateway.services.audit_trail_service import AuditTrailService
 from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.services.import_service import ImportService
+from mcpgateway.services.import_service import ConflictStrategy, ImportService
+from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.tool_service import ToolService
 
 TEAM_A = "00000000000040008000000000000001"
 TEAM_B = "00000000000040008000000000000002"
+
+
+def _import_entity(entity_type, name):
+    """Build a configuration entity for an audit regression.
+
+    Args:
+        entity_type: Imported entity collection name.
+        name: Unique resource name.
+
+    Returns:
+        Import payload without ownership fields.
+    """
+    entity = {"name": name, "description": "Imported resource"}
+    if entity_type == "tools":
+        entity.update(url="http://example.com/tool", integration_type="REST", jsonpath_filter="")
+    elif entity_type == "resources":
+        entity.update(uri=f"resource://audit/{name}", content="hello", mime_type="text/plain")
+    elif entity_type == "prompts":
+        entity.update(template="Hello", arguments=[])
+    return entity
+
+
+def _existing_bulk_resource(entity_type, name, owner, team):
+    """Build an existing public resource with explicit persisted ownership.
+
+    Args:
+        entity_type: Bulk resource collection name.
+        name: Unique resource name.
+        owner: Persisted owner email.
+        team: Persisted team ID or None.
+
+    Returns:
+        Resource ORM instance with stable ownership and import metadata.
+    """
+    values = {"name": name, "description": "Before import", "owner_email": owner, "team_id": team, "visibility": "public", "created_by": owner, "created_via": "api"}
+    if entity_type == "tools":
+        return Tool(**values, original_name=name, url="http://example.com/tool", input_schema={"type": "object"}, integration_type="REST")
+    if entity_type == "resources":
+        return Resource(**values, uri=f"resource://audit/{name}", mime_type="text/plain")
+    return Prompt(**values, original_name=name, template="Hello", argument_schema={"type": "object", "properties": {}})
 
 
 @pytest.fixture
@@ -542,7 +583,7 @@ class TestCrossServiceAuditBehavior:
         finally:
             fresh_session.close()
 
-    @pytest.mark.parametrize(("schema_team", "request_team", "expected_team"), [(None, None, None), (None, TEAM_A, TEAM_A), (TEAM_A, None, TEAM_A), (TEAM_A, TEAM_B, TEAM_A)])
+    @pytest.mark.parametrize(("schema_team", "request_team", "expected_team"), [(None, None, None), (None, TEAM_A, TEAM_A), (TEAM_A, None, None), (TEAM_A, TEAM_B, TEAM_B)])
     async def test_server_lifecycle_audits_persisted_team(self, test_db_engine, test_db_session, audit_actor, server_service, schema_team, request_team, expected_team):
         """Server lifecycle audits use persisted teams before and after reassignment."""
         result = await server_service.register_server(
@@ -585,7 +626,7 @@ class TestCrossServiceAuditBehavior:
 
         with sessionmaker(bind=test_db_engine)() as fresh:
             tools = fresh.execute(select(Tool)).scalars().all()
-            expected_counts = Counter(request_team if request_team is not None else team_id for team_id in schema_teams)
+            expected_counts = Counter([request_team] * len(schema_teams))
             assert Counter(tool.team_id for tool in tools) == expected_counts
             rows = fresh.execute(select(AuditTrail).where(AuditTrail.action == "bulk_create_tools")).scalars().all()
             assert len(rows) == len(expected_counts)
@@ -603,7 +644,7 @@ class TestCrossServiceAuditBehavior:
         test_db_session.commit()
         payloads = [ToolCreate(name=name, url="http://example.com/updated", team_id=TEAM_B) for name in ("existinga", "existingb", "existingnull", "newb")]
         stats = await ToolService().register_tools_bulk(
-            test_db_session, payloads, created_by=audit_actor, owner_email=audit_actor, team_id=TEAM_B, conflict_strategy="update", import_batch_id="audit-batch-mixed"
+            test_db_session, payloads, created_by=audit_actor, owner_email=audit_actor, team_id=TEAM_B, conflict_strategy="update", import_batch_id="audit-batch-mixed", user_email=audit_actor
         )
         assert (stats["created"], stats["updated"], stats["failed"]) == (1, 3, 0), stats["errors"]
 
@@ -629,75 +670,228 @@ class TestCrossServiceAuditBehavior:
             assert row.team_id == expected_team
 
     @pytest.mark.parametrize("has_personal_team", [True, False])
-    async def test_configuration_import_audits_trusted_personal_team(self, test_db_engine, test_db_session, audit_actor, has_personal_team):
+    @pytest.mark.parametrize(("entity_type", "model"), [("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("servers", Server)])
+    async def test_configuration_import_audits_trusted_personal_team(self, test_db_engine, test_db_session, audit_actor, server_service, has_personal_team, entity_type, model):
         """Configuration imports stamp the trusted personal team before post-import assignment and ignore payload ownership."""
         if has_personal_team:
             test_db_session.get(EmailTeam, TEAM_A).is_personal = True
             test_db_session.commit()
+        entity = {**_import_entity(entity_type, "importresource"), "team_id": TEAM_B, "owner_email": "audit-target@example.com", "visibility": "public"}
         payload = {
             "version": "2025-03-26",
             "exported_at": "2025-01-01T00:00:00Z",
-            "entities": {
-                "tools": [
-                    {"name": f"importtool{index}", "url": "http://example.com/tool", "integration_type": "REST", "team_id": TEAM_B, "owner_email": "audit-target@example.com", "visibility": "public"}
-                    for index in range(2)
-                ]
-            },
+            "entities": {entity_type: [entity]},
         }
         service = ImportService()
-        service.tool_service = ToolService()
+        service.server_service = server_service
         status = await service.import_configuration(test_db_session, payload, imported_by=audit_actor)
-        assert status.created_entities == 2
+        assert status.created_entities == 1
         assert status.failed_entities == 0, status.errors
 
         with sessionmaker(bind=test_db_engine)() as fresh:
             expected_team = TEAM_A if has_personal_team else None
-            tools = fresh.execute(select(Tool)).scalars().all()
-            assert len(tools) == 2
-            assert all(tool.team_id == expected_team for tool in tools)
-            assert all(tool.owner_email == audit_actor for tool in tools)
-            assert all(tool.visibility == ("team" if has_personal_team else "public") for tool in tools)
-            row = fresh.execute(select(AuditTrail).where(AuditTrail.action == "bulk_create_tools")).scalar_one()
+            resource = fresh.execute(select(model)).scalar_one()
+            assert resource.team_id == expected_team
+            assert resource.owner_email == audit_actor
+            assert resource.visibility == ("team" if has_personal_team else "public")
+            action = "create_server" if entity_type == "servers" else f"bulk_create_{entity_type}"
+            row = fresh.execute(select(AuditTrail).where(AuditTrail.action == action)).scalar_one()
             assert row.team_id == expected_team
-            assert row.context["details"]["count"] == 2
-            assert row.context["details"]["import_batch_id"]
+            if entity_type == "tools":
+                assert row.context["details"]["count"] == 1
+                assert row.context["details"]["import_batch_id"]
 
-    async def test_configuration_import_updates_audit_existing_team(self, test_db_engine, test_db_session, audit_actor):
+    @pytest.mark.parametrize(("entity_type", "model"), [("tools", Tool), ("resources", Resource), ("prompts", Prompt)])
+    async def test_configuration_import_updates_audit_existing_team(self, test_db_engine, test_db_session, audit_actor, entity_type, model):
         """Configuration imports retain the existing resource team when the importer has a different personal team."""
         test_db_session.get(EmailTeam, TEAM_A).is_personal = True
-        test_db_session.add(
-            Tool(
-                name="existingimport",
-                original_name="existingimport",
-                url="http://example.com/tool",
-                input_schema={"type": "object"},
-                integration_type="REST",
-                team_id=TEAM_B,
-                owner_email=audit_actor,
-                visibility="public",
-                created_by=audit_actor,
-                created_via="api",
-            )
-        )
+        test_db_session.add(_existing_bulk_resource(entity_type, "existingimport", audit_actor, TEAM_B))
         test_db_session.commit()
         service = ImportService()
-        service.tool_service = ToolService()
         status = await service.import_configuration(
             test_db_session,
             {
                 "version": "2025-03-26",
                 "exported_at": "2025-01-01T00:00:00Z",
-                "entities": {"tools": [{"name": "existingimport", "url": "http://example.com/updated", "integration_type": "REST", "jsonpath_filter": ""}]},
+                "entities": {entity_type: [_import_entity(entity_type, "existingimport")]},
             },
             imported_by=audit_actor,
         )
         assert (status.updated_entities, status.failed_entities) == (1, 0), status.errors
 
         with sessionmaker(bind=test_db_engine)() as fresh:
-            assert fresh.execute(select(Tool)).scalar_one().team_id == TEAM_B
-            row = fresh.execute(select(AuditTrail).where(AuditTrail.action == "bulk_update_tools")).scalar_one()
+            resource = fresh.execute(select(model)).scalar_one()
+            assert resource.team_id == TEAM_B
+            assert resource.owner_email == audit_actor
+            assert resource.description == "Imported resource"
+            row = fresh.execute(select(AuditTrail).where(AuditTrail.action == f"bulk_update_{entity_type}")).scalar_one()
             assert row.team_id == TEAM_B
-            assert row.context["details"]["count"] == 1
+
+    @pytest.mark.parametrize(("entity_type", "model", "schema", "service_type"), [("resources", Resource, ResourceCreate, ResourceService), ("prompts", Prompt, PromptCreate, PromptService)])
+    async def test_mixed_bulk_resource_audits_use_group_local_counts(self, test_db_engine, test_db_session, audit_actor, entity_type, model, schema, service_type):
+        """Resource and prompt audits separate new ownership from existing teams without changing payload conventions."""
+        existing = [("existinga", TEAM_A), ("existingb", TEAM_B), ("existingnull", None)]
+        test_db_session.add_all([_existing_bulk_resource(entity_type, name, audit_actor, team) for name, team in existing])
+        test_db_session.commit()
+        payloads = [schema(**_import_entity(entity_type, name)) for name in ("existinga", "existingb", "existingnull", "newa")]
+
+        stats = await getattr(service_type(), f"register_{entity_type}_bulk")(
+            test_db_session, payloads, created_by=audit_actor, owner_email=audit_actor, user_email=audit_actor, team_id=TEAM_A, conflict_strategy="update", import_batch_id="mixed-batch"
+        )
+
+        assert (stats["created"], stats["updated"], stats["failed"]) == (1, 3, 0), stats["errors"]
+        with sessionmaker(bind=test_db_engine)() as fresh:
+            assert {resource.name: resource.team_id for resource in fresh.execute(select(model)).scalars()} == {**dict(existing), "newa": TEAM_A}
+            rows = fresh.execute(select(AuditTrail)).scalars().all()
+            assert len(rows) == 3
+            assert {row.team_id: (row.action, row.new_values[f"{entity_type}_created"], row.new_values[f"{entity_type}_updated"]) for row in rows} == {
+                TEAM_A: (f"bulk_create_{entity_type}", 1, 1),
+                TEAM_B: (f"bulk_update_{entity_type}", 0, 1),
+                None: (f"bulk_update_{entity_type}", 0, 1),
+            }
+            assert all(row.resource_id == "mixed-batch" and row.context["import_batch_id"] == "mixed-batch" for row in rows)
+
+    @pytest.mark.parametrize(
+        ("entity_type", "model", "schema", "service_type"),
+        [("tools", Tool, ToolCreate, ToolService), ("resources", Resource, ResourceCreate, ResourceService), ("prompts", Prompt, PromptCreate, PromptService)],
+    )
+    @pytest.mark.parametrize("has_identity", [True, False])
+    async def test_bulk_audits_exclude_denied_updates(self, test_db_engine, test_db_session, audit_actor, entity_type, model, schema, service_type, has_identity):
+        """Foreign-owner and identity-less updates leave persisted resources unchanged and emit no success audit."""
+        test_db_session.add(_existing_bulk_resource(entity_type, "foreignresource", "audit-target@example.com", TEAM_B))
+        test_db_session.commit()
+
+        stats = await getattr(service_type(), f"register_{entity_type}_bulk")(
+            test_db_session,
+            [schema(**_import_entity(entity_type, "foreignresource"))],
+            created_by=audit_actor,
+            user_email=audit_actor if has_identity else None,
+            team_id=TEAM_A,
+            conflict_strategy="update",
+        )
+
+        assert (stats["created"], stats["updated"], stats["failed"]) == (0, 0, 1), stats["errors"]
+        with sessionmaker(bind=test_db_engine)() as fresh:
+            resource = fresh.execute(select(model)).scalar_one()
+            assert (resource.description, resource.owner_email, resource.team_id) == ("Before import", "audit-target@example.com", TEAM_B)
+            assert fresh.execute(select(AuditTrail)).scalars().all() == []
+
+    @pytest.mark.parametrize(("entity_type", "model"), [("resources", Resource), ("prompts", Prompt)])
+    async def test_configuration_import_rename_audits_new_team(self, test_db_engine, test_db_session, audit_actor, entity_type, model):
+        """Conflict renames audit the new personal-team resource and preserve existing ownership."""
+        test_db_session.get(EmailTeam, TEAM_A).is_personal = True
+        existing = _existing_bulk_resource(entity_type, "renamedimport", audit_actor, TEAM_B)
+        test_db_session.add(existing)
+        test_db_session.commit()
+        existing_id = existing.id
+        payload = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {entity_type: [_import_entity(entity_type, "renamedimport")]}}
+
+        status = await ImportService().import_configuration(test_db_session, payload, conflict_strategy=ConflictStrategy.RENAME, imported_by=audit_actor)
+
+        assert (status.created_entities, status.updated_entities, status.failed_entities) == (1, 0, 0), status.errors
+        with sessionmaker(bind=test_db_engine)() as fresh:
+            original = fresh.get(model, existing_id)
+            assert (original.description, original.team_id, original.owner_email) == ("Before import", TEAM_B, audit_actor)
+            renamed = fresh.execute(select(model).where(model.id != existing_id)).scalar_one()
+            assert (renamed.team_id, renamed.owner_email, renamed.visibility) == (TEAM_A, audit_actor, "team")
+            row = fresh.execute(select(AuditTrail).where(AuditTrail.action == f"bulk_create_{entity_type}")).scalar_one()
+            assert row.team_id == TEAM_A
+            assert row.new_values[f"{entity_type}_created"] == 1
+            assert row.new_values[f"{entity_type}_updated"] == 0
+
+    @pytest.mark.parametrize("strategy", list(ConflictStrategy))
+    @pytest.mark.parametrize(("same_owner", "same_team"), [(True, False), (False, True), (False, False)])
+    @pytest.mark.parametrize("has_owned", [True, False])
+    async def test_server_import_conflicts_preserve_scope(self, test_db_engine, test_db_session, audit_actor, server_service, strategy, same_owner, same_team, has_owned):
+        """Server imports resolve same-scope conflicts without modifying same-name foreign resources."""
+        test_db_session.get(EmailTeam, TEAM_A).is_personal = True
+        test_db_session.commit()
+        owned = None
+        if has_owned:
+            owned = await server_service.register_server(test_db_session, ServerCreate(name="conflictserver", description="Before import"), created_by=audit_actor, team_id=TEAM_A, visibility="team")
+        foreign = await server_service.register_server(
+            test_db_session,
+            ServerCreate(name="conflictserver", description="Foreign resource"),
+            created_by=audit_actor if same_owner else "audit-target@example.com",
+            team_id=TEAM_A if same_team else TEAM_B,
+            visibility="team",
+        )
+        service = ImportService()
+        service.server_service = server_service
+        payload = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [_import_entity("servers", "conflictserver")]}}
+
+        status = await service.import_configuration(test_db_session, payload, conflict_strategy=strategy, imported_by=audit_actor)
+
+        with sessionmaker(bind=test_db_engine)() as fresh:
+            assert fresh.get(Server, foreign.id).description == "Foreign resource"
+            if not has_owned:
+                assert (status.created_entities, status.updated_entities, status.failed_entities) == (1, 0, 0), status.errors
+                created = fresh.execute(select(Server).where(Server.id != foreign.id)).scalar_one()
+                assert (created.team_id, created.owner_email, created.visibility) == (TEAM_A, audit_actor, "team")
+                row = fresh.execute(select(AuditTrail).where(AuditTrail.resource_id == created.id, AuditTrail.action == "create_server")).scalar_one()
+                assert row.team_id == TEAM_A
+                return
+            assert fresh.get(Server, owned.id).team_id == TEAM_A
+            assert fresh.get(Server, owned.id).owner_email == audit_actor
+            expected = "Imported resource" if strategy == ConflictStrategy.UPDATE else "Before import"
+            assert fresh.get(Server, owned.id).description == expected
+            if strategy == ConflictStrategy.RENAME:
+                assert status.created_entities == 1
+                renamed = fresh.execute(select(Server).where(Server.name.like("conflictserver_imported_%"))).scalar_one()
+                assert (renamed.team_id, renamed.owner_email, renamed.visibility) == (TEAM_A, audit_actor, "team")
+                row = fresh.execute(select(AuditTrail).where(AuditTrail.resource_id == renamed.id, AuditTrail.action == "create_server")).scalar_one()
+                assert row.team_id == TEAM_A
+            elif strategy == ConflictStrategy.UPDATE:
+                assert status.updated_entities == 1
+                row = fresh.execute(select(AuditTrail).where(AuditTrail.resource_id == owned.id, AuditTrail.action == "update_server")).scalar_one()
+                assert row.team_id == TEAM_A
+            elif strategy == ConflictStrategy.SKIP:
+                assert status.skipped_entities == 1
+            else:
+                assert status.failed_entities == 1
+
+    @pytest.mark.parametrize("entity_type", ["tools", "resources", "prompts"])
+    @pytest.mark.parametrize("expire_on_commit", [False, True])
+    async def test_bulk_update_audit_query_budget(self, test_db_engine, test_db_session, audit_actor, entity_type, expire_on_commit):
+        """Audit grouping adds no per-updated-resource SELECTs under either session expiry mode."""
+        services = {"tools": ToolService, "resources": ResourceService, "prompts": PromptService}
+        schemas = {"tools": ToolCreate, "resources": ResourceCreate, "prompts": PromptCreate}
+        counts = []
+        for size in (1, 8):
+            names = [f"budget{size}resource{index}" for index in range(size)]
+            test_db_session.add_all([_existing_bulk_resource(entity_type, name, audit_actor, TEAM_B) for name in names])
+            test_db_session.commit()
+            selects = []
+
+            def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+                normalized = " ".join(statement.lower().split())
+                if normalized.startswith("select") and f"from {entity_type}" in normalized:
+                    selects.append(statement)
+
+            event.listen(test_db_engine, "before_cursor_execute", capture)
+            try:
+                with sessionmaker(bind=test_db_engine, expire_on_commit=expire_on_commit)() as session:
+                    service = services[entity_type]()
+                    stats = await getattr(service, f"register_{entity_type}_bulk")(
+                        session,
+                        [schemas[entity_type](**_import_entity(entity_type, name)) for name in names],
+                        created_by=audit_actor,
+                        owner_email=audit_actor,
+                        user_email=audit_actor,
+                        team_id=TEAM_A,
+                        conflict_strategy="update",
+                        import_batch_id=f"query-budget-{size}",
+                    )
+                assert (stats["updated"], stats["failed"]) == (size, 0), stats["errors"]
+                counts.append(len(selects))
+            finally:
+                event.remove(test_db_engine, "before_cursor_execute", capture)
+        assert counts[0] == counts[1], counts
+        assert counts[1] <= 2, counts
+        with sessionmaker(bind=test_db_engine)() as fresh:
+            rows = fresh.execute(select(AuditTrail).where(AuditTrail.action == f"bulk_update_{entity_type}")).scalars().all()
+            assert len(rows) == 2
+            assert all(row.team_id == TEAM_B for row in rows)
 
     async def test_actor_feed_scopes_persisted_server_and_bulk_rows(self, test_db_engine, test_db_session, audit_actor, server_service, audit_service, monkeypatch):
         """One actor sees matching-team audits and its platform rows across differently scoped tokens."""
@@ -705,14 +899,16 @@ class TestCrossServiceAuditBehavior:
         for team_id in (TEAM_A, TEAM_B):
             result = await server_service.register_server(test_db_session, ServerCreate(name=f"audit-{team_id}"), team_id=team_id, owner_email=audit_actor, created_by=audit_actor)
             server_ids[team_id] = result.id
-        stats = await ToolService().register_tools_bulk(
-            test_db_session,
-            [ToolCreate(name=f"feed_tool_{index}", url="http://example.com/tool", team_id=team_id) for index, team_id in enumerate((TEAM_A, TEAM_B))],
-            created_by=audit_actor,
-            owner_email=audit_actor,
-            import_batch_id="audit-feed-batch",
-        )
-        assert stats["failed"] == 0, stats["errors"]
+        for index, team_id in enumerate((TEAM_A, TEAM_B)):
+            stats = await ToolService().register_tools_bulk(
+                test_db_session,
+                [ToolCreate(name=f"feed_tool_{index}", url="http://example.com/tool")],
+                created_by=audit_actor,
+                owner_email=audit_actor,
+                team_id=team_id,
+                import_batch_id="audit-feed-batch",
+            )
+            assert stats["failed"] == 0, stats["errors"]
         audit_service.log_audit(user_id=audit_actor, user_email=audit_actor, resource_type="plugin", resource_id="platform-plugin", action="view")
         audit_service.log_audit(user_id="audit-target@example.com", user_email="audit-target@example.com", resource_type="plugin", resource_id="foreign-plugin", action="view")
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService.check_permission", AsyncMock(return_value=True))

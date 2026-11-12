@@ -87,10 +87,10 @@ class TestServerAuditNoDb:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("schema_team", "request_team", "expected_team"),
-        [(None, None, None), (None, _TEAM_A, _TEAM_A), (_TEAM_B, None, _TEAM_B), (_TEAM_B, _TEAM_A, _TEAM_B)],
+        [(None, None, None), (None, _TEAM_A, _TEAM_A), (_TEAM_B, None, None), (_TEAM_B, _TEAM_A, _TEAM_A)],
     )
     async def test_register_server(self, server_service, db, schema_team, request_team, expected_team):
-        """Server creation audits the persisted team, including schema-derived ownership."""
+        """Server creation audits trusted service ownership and ignores schema-supplied teams."""
         server_service._audit_trail.log_action = MagicMock(return_value=None)
         db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=None)])
         db.add = Mock()
