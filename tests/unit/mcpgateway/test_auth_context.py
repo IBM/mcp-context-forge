@@ -26,7 +26,7 @@ import pytest
 
 # First-Party
 from mcpgateway import auth_context
-from mcpgateway.auth_context import get_request_identity, get_rpc_filter_context, get_scoped_resource_access_context
+from mcpgateway.auth_context import get_request_identity, get_rpc_filter_context, get_scoped_resource_access_context, get_user_id
 
 
 def _request(*, jwt_payload=None, token_teams=None, token_use=None):
@@ -223,3 +223,40 @@ class TestRequestScopedMemoization:
         assert len(calls) == 2
         assert real_caller[0] == "caller@example.com"
         assert forwarded[0] == "forwarded@example.com"
+
+
+class TestGetUserId:
+    """Canonical user-ID extraction: explicit ``user_id`` first, e-mail next."""
+
+    def test_dict_with_user_id_and_email_prefers_user_id(self):
+        assert get_user_id({"user_id": "u-1", "email": "e@x"}) == "u-1"
+
+    def test_dict_with_email_only_returns_email(self):
+        assert get_user_id({"email": "e@x"}) == "e@x"
+
+    def test_dict_with_sub_only_returns_sub(self):
+        assert get_user_id({"sub": "e@x"}) == "e@x"
+
+    def test_empty_dict_returns_unknown(self):
+        assert get_user_id({}) == "unknown"
+
+    def test_none_returns_unknown(self):
+        assert get_user_id(None) == "unknown"
+
+    def test_object_with_user_id_and_email_prefers_user_id(self):
+        user = MagicMock()
+        user.user_id = "u-1"
+        user.email = "e@x"
+        assert get_user_id(user) == "u-1"
+
+    def test_object_with_email_only_returns_email(self):
+        user = MagicMock()
+        user.user_id = None
+        user.email = "e@x"
+        assert get_user_id(user) == "e@x"
+
+    def test_legacy_string_returns_itself(self):
+        assert get_user_id("legacy_user") == "legacy_user"
+
+    def test_empty_string_returns_unknown(self):
+        assert get_user_id("") == "unknown"

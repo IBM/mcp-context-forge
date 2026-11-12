@@ -5935,6 +5935,123 @@ def validate_a2a_skills(skills: Optional[List[A2AAgentSkill]]) -> Optional[List[
     return skills
 
 
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_A2A_CARD_PATH_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@/-]*$")
+_A2A_FETCH_BLOCKED_HEADERS = frozenset({"content-length", "transfer-encoding", "connection", "upgrade", "te", "trailer", "keep-alive", "expect", "accept-encoding"})
+_A2A_FETCH_MAX_HEADERS = 20
+_A2A_FETCH_MAX_HEADER_BYTES = 8192
+
+
+def validate_a2a_card_path(path: str) -> str:
+    """Validate a caller-supplied Agent Card path.
+
+    Args:
+        path: Path appended to the base URL.
+
+    Returns:
+        The unchanged path.
+
+    Raises:
+        ValueError: If the path contains a query, fragment, percent-encoding, traversal or unsafe character.
+
+    Examples:
+        >>> validate_a2a_card_path("/x/card.json")
+        '/x/card.json'
+        >>> validate_a2a_card_path("/%2e%2e/etc")
+        Traceback (most recent call last):
+            ...
+        ValueError: Card path is not allowed
+    """
+    if not _A2A_CARD_PATH_RE.match(path) or any(segment in ("..", ".") for segment in path.split("/")):
+        raise ValueError("Card path is not allowed")
+    return path
+
+
+class A2AFetchCardRequest(BaseModelWithConfigDict):
+    """Request to fetch an A2A Agent Card from an endpoint that is not yet registered."""
+
+    base_url: AnyHttpUrl = Field(..., description="Agent base endpoint, or a direct URL to the card document")
+    path: Optional[str] = Field(None, description="Card path appended to the base URL; defaults to the well-known locations")
+    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers, for example credentials for an authenticated card")
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: AnyHttpUrl) -> AnyHttpUrl:
+        """Reject a base URL that carries userinfo, a query or a fragment.
+
+        Args:
+            v: Parsed base URL.
+
+        Returns:
+            The validated URL.
+
+        Raises:
+            ValueError: If the URL has userinfo, a query or a fragment.
+        """
+        if v.username or v.password or v.query or v.fragment:
+            raise ValueError("Base URL must not include credentials, a query or a fragment")
+        return v
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: Optional[str]) -> Optional[str]:
+        """Reject an unsafe card path.
+
+        Args:
+            v: Optional card path.
+
+        Returns:
+            The validated path.
+        """
+        return validate_a2a_card_path(v) if v else v
+
+    @field_validator("headers")
+    @classmethod
+    def validate_headers(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Reject malformed header names, header injection, framing headers and oversized sets.
+
+        Args:
+            v: Optional header mapping.
+
+        Returns:
+            The validated mapping.
+
+        Raises:
+            ValueError: If a header name or value is unsafe.
+        """
+        if len(v or {}) > _A2A_FETCH_MAX_HEADERS or sum(len(name) + len(value) for name, value in (v or {}).items()) > _A2A_FETCH_MAX_HEADER_BYTES:
+            raise ValueError("Too many or too large headers")
+        for name, value in (v or {}).items():
+            lowered = name.lower()
+            if not _HEADER_NAME_RE.match(name) or lowered == "host" or lowered in _A2A_FETCH_BLOCKED_HEADERS or lowered.startswith("proxy-"):
+                raise ValueError("Invalid header name")
+            if any(char in value for char in ("\r", "\n", "\x00")):
+                raise ValueError("Invalid header value")
+        return v
+
+
+class A2AFetchCardResponse(BaseModelWithConfigDict):
+    """Result of fetching an Agent Card.
+
+    ``card`` is the card normalized to the A2A 1.0 shape, ``raw_card`` is the document as
+    fetched when it differs from ``card``, and ``suggested_agent`` maps the card onto ``A2AAgentCreate`` fields without
+    credential values, team, visibility or tags.
+    """
+
+    found: bool = Field(..., description="Whether a valid A2A Agent Card was found")
+    outcome: Literal["found", "no_card", "auth_required", "unreachable"] = Field(
+        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, or host blocked or unreachable"
+    )
+    reason: Optional[str] = Field(None, description="Fixed explanation when no card was found")
+    auth_scheme: Optional[str] = Field(None, description="Scheme name from the WWW-Authenticate header when outcome is auth_required")
+    source_url: Optional[str] = Field(None, description="URL the card was fetched from")
+    detected_version: Optional[Literal["1.0", "0.3"]] = Field(None, description="Card format version detected: 1.0 or 0.3")
+    card: Optional[Dict[str, Any]] = Field(None, description="Card normalized to the A2A 1.0 shape")
+    raw_card: Optional[Dict[str, Any]] = Field(None, description="Card as fetched; omitted when identical to card")
+    suggested_agent: Optional[Dict[str, Any]] = Field(None, description="Suggested A2AAgentCreate fields derived from the card")
+    warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
+
+
 class A2AAgentCreate(BaseModel):
     """
     Schema for creating a new A2A (Agent-to-Agent) compatible agent.
@@ -7304,6 +7421,56 @@ class A2APushNotificationConfigRequest(BaseModel):
     def validate_webhook_url(cls, v: str) -> str:
         """Validate webhook URL for scheme, SSRF, and dangerous patterns."""
         return validate_core_url(v, "Webhook URL")
+
+
+MAX_A2A_TASK_MESSAGE_PARTS = 50
+MAX_A2A_TASK_MESSAGE_TEXT = 65536
+_A2A_TASK_MESSAGE_FIELDS = frozenset({"parts", "metadata", "extensions", "referenceTaskIds", "messageId", "role", "taskId", "contextId", "kind"})
+
+
+class A2ATaskMessageRequest(BaseModel):
+    """Schema for a follow-up message sent to an existing A2A task.
+
+    Send either ``message`` (an A2A message object, in the 0.3 or 1.0 shape) or
+    ``text`` (shorthand for a single text part). The gateway binds the message to the
+    task from the URL path and converts it to the agent's protocol version.
+    """
+
+    message: Optional[Dict[str, Any]] = None
+    text: Optional[str] = Field(default=None, min_length=1, max_length=MAX_A2A_TASK_MESSAGE_TEXT)
+
+    @model_validator(mode="after")
+    def validate_exactly_one_payload(self) -> "A2ATaskMessageRequest":
+        """Require exactly one of ``message`` and ``text``, and a bounded message.
+
+        Returns:
+            A2ATaskMessageRequest: The validated request.
+
+        Raises:
+            ValueError: If both or neither payload is set, ``message`` holds an unknown field,
+                ``parts`` is empty or too long, or a text part exceeds the size limit.
+        """
+        if (self.message is None) == (self.text is None):
+            raise ValueError("Provide exactly one of 'message' or 'text'")
+        if self.message is None:
+            return self
+        unknown = sorted(set(self.message) - _A2A_TASK_MESSAGE_FIELDS)
+        if unknown:
+            raise ValueError(f"message has unsupported fields: {', '.join(unknown)}")
+        parts = self.message.get("parts")
+        if not (isinstance(parts, list) and parts):
+            raise ValueError("message.parts must be a non-empty list")
+        if len(parts) > MAX_A2A_TASK_MESSAGE_PARTS:
+            raise ValueError(f"message.parts holds at most {MAX_A2A_TASK_MESSAGE_PARTS} parts")
+        if any(isinstance(part, dict) and isinstance(part.get("text"), str) and len(part["text"]) > MAX_A2A_TASK_MESSAGE_TEXT for part in parts):
+            raise ValueError(f"A text part holds at most {MAX_A2A_TASK_MESSAGE_TEXT} characters")
+        return self
+
+    def to_message(self) -> Dict[str, Any]:
+        """Return the A2A message object, expanding ``text`` into a single text part."""
+        if self.message is not None:
+            return dict(self.message)
+        return {"parts": [{"text": self.text}]}
 
 
 class A2APushNotificationConfigRead(BaseModel):

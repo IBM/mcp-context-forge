@@ -691,10 +691,11 @@ class ServerService(BaseService):
                 action="create_server",
                 resource_type="server",
                 resource_id=db_server.id,
+                team_id=db_server.team_id,
                 details={
                     "server_name": db_server.name,
                     "visibility": visibility,
-                    "team_id": team_id,
+                    "team_id": db_server.team_id,
                     "associated_tools_count": len(db_server.tools),
                     "associated_resources_count": len(db_server.resources),
                     "associated_prompts_count": len(db_server.prompts),
@@ -1488,6 +1489,7 @@ class ServerService(BaseService):
                 action="update_server",
                 resource_type="server",
                 resource_id=server.id,
+                team_id=server.team_id,
                 details={
                     "server_name": server.name,
                     "changes": ", ".join(changes) if changes else "metadata only",
@@ -1685,6 +1687,7 @@ class ServerService(BaseService):
                     action="activate_server" if activate else "deactivate_server",
                     resource_type="server",
                     resource_id=server.id,
+                    team_id=server.team_id,
                     details={
                         "server_name": server.name,
                         "new_status": "active" if activate else "inactive",
@@ -1782,6 +1785,7 @@ class ServerService(BaseService):
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
+            server_team_id = server.team_id
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
                     delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
@@ -1814,6 +1818,7 @@ class ServerService(BaseService):
                 action="delete_server",
                 resource_type="server",
                 resource_id=server_info["id"],
+                team_id=server_team_id,
                 details={
                     "server_name": server_info["name"],
                 },

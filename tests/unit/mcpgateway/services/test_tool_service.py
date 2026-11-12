@@ -9654,7 +9654,7 @@ class TestToolServiceBulkImport:
     def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_chunk")
-        db_tool = SimpleNamespace(id="tool-1")
+        db_tool = SimpleNamespace(id="tool-1", team_id=None)
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9692,11 +9692,13 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_create_tools"
         assert audit_kwargs["details"]["count"] == 1  # 1 added, 1 skipped — only adds counted
+        assert audit_kwargs["team_id"] is None
+        assert "db" not in audit_kwargs
 
     def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_update_only")
-        db_tool = SimpleNamespace(id="tool-2")
+        db_tool = SimpleNamespace(id="tool-2", team_id="team-1")
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9728,6 +9730,104 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_update_tools"
         assert audit_kwargs["details"]["count"] == 1
+        assert audit_kwargs["team_id"] == "team-1"
+        assert "db" not in audit_kwargs
+
+    def test_process_tool_chunk_audits_persisted_teams_with_group_counts(self, mock_logging_services):
+        """Mixed chunks audit successful resources by team with group-local counts and a shared batch ID."""
+        service = ToolService()
+        results = [
+            {"status": operation, "tool": SimpleNamespace(id=f"tool-{index}", name=f"chunk-tool-{index}", team_id=team_id)}
+            for index, (operation, team_id) in enumerate([("add", "team-a"), ("add", "team-a"), ("update", "team-a"), ("update", "team-b"), ("update", "team-b"), ("add", None)])
+        ]
+        results.extend([{"status": "skip"}, {"status": "fail", "error": "invalid tool"}])
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=results):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=f"chunk-tool-{index}") for index in range(len(results))],
+                conflict_strategy="update",
+                visibility="public",
+                team_id="request-team",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-team-groups",
+                federation_source=None,
+            )
+
+        assert (stats["created"], stats["updated"], stats["skipped"], stats["failed"]) == (3, 3, 1, 1)
+        db.commit.assert_called_once()
+        audit_calls = mock_logging_services["audit_trail"].log_action.call_args_list
+        assert len(audit_calls) == 3
+        assert {audit_call.kwargs["team_id"]: (audit_call.kwargs["action"], audit_call.kwargs["details"]["count"]) for audit_call in audit_calls} == {
+            "team-a": ("bulk_create_tools", 3),
+            "team-b": ("bulk_update_tools", 2),
+            None: ("bulk_create_tools", 1),
+        }
+        for audit_call in audit_calls:
+            assert audit_call.kwargs["details"]["import_batch_id"] == "batch-team-groups"
+            assert "db" not in audit_call.kwargs
+
+    def test_process_tool_chunk_commit_failure_emits_no_audit(self, mock_logging_services):
+        """A failed tool commit emits no success audit and rolls back the resource session."""
+        db = MagicMock()
+        db.commit.side_effect = RuntimeError("commit failed")
+        stats = ToolService()._process_tool_chunk(
+            db=db,
+            chunk=[_make_bulk_tool_create(name="commitfailure", team_id="team-a")],
+            conflict_strategy="skip",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="owner@example.com",
+            created_from_ip=None,
+            created_via="import",
+            created_user_agent=None,
+            import_batch_id="failed-batch",
+            federation_source=None,
+            existing_tools_map={},
+        )
+        assert stats["failed"] == 1
+        db.rollback.assert_called_once()
+        db.refresh.assert_not_called()
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
+
+    def test_process_tool_chunk_excludes_late_collisions_from_audit_groups(self, mock_logging_services):
+        """Late collisions cannot contribute rejected tools to successful team audit counts."""
+        service = ToolService()
+        rejected = SimpleNamespace(name="collision", team_id="team-a")
+        accepted = SimpleNamespace(name="accepted", team_id="team-b")
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [rejected]
+        audit = mock_logging_services["audit_trail"].log_action
+        db.commit.side_effect = audit.assert_not_called
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=[{"status": "add", "tool": rejected}, {"status": "add", "tool": accepted}]):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=name) for name in ("collision", "accepted")],
+                conflict_strategy="update",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="owner@example.com",
+                created_from_ip=None,
+                created_via="import",
+                created_user_agent=None,
+                import_batch_id="late-collision-batch",
+                federation_source=None,
+                existing_tools_map={},
+            )
+        assert (stats["created"], stats["failed"]) == (1, 1)
+        db.add_all.assert_called_once_with([accepted])
+        db.execute.assert_called_once()
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["team_id"] == "team-b"
+        assert audit.call_args.kwargs["details"] == {"count": 1, "import_batch_id": "late-collision-batch"}
+        assert "db" not in audit.call_args.kwargs
 
     def test_process_tool_chunk_private_exception_rolls_back(self):
         service = ToolService()
@@ -10011,6 +10111,7 @@ class TestToolServiceBulkImport:
         tool = _make_bulk_tool_create(name="owned-tool")
         existing_tool = SimpleNamespace(
             name=tool.name,
+            team_id="owner-team",
             url="https://old",
             headers={},
             version=1,

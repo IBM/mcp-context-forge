@@ -1200,6 +1200,12 @@ class ResourceService(BaseService):
                 if resources_to_add:
                     db.add_all(resources_to_add)
 
+                audit_counts: dict[str | None, dict[str, int]] = {}
+                for operation, db_resources in (("created", resources_to_add), ("updated", resources_to_update)):
+                    for db_resource in db_resources:
+                        counts = audit_counts.setdefault(db_resource.team_id, {"created": 0, "updated": 0})
+                        counts[operation] += 1
+
                 # Commit the chunk
                 db.commit()
                 notify_dataplane()
@@ -1211,21 +1217,20 @@ class ResourceService(BaseService):
                     # Notify subscribers
                     await self._notify_resource_added(db_resource)
 
-                # Log bulk audit trail entry
-                if resources_to_add or resources_to_update:
+                for audit_team_id, counts in audit_counts.items():
                     audit_trail.log_action(
                         user_id=created_by or "system",
-                        action="bulk_create_resources" if resources_to_add else "bulk_update_resources",
+                        action="bulk_create_resources" if counts["created"] else "bulk_update_resources",
                         resource_type="resource",
                         resource_id=import_batch_id or "bulk_operation",
-                        resource_name=f"Bulk operation: {len(resources_to_add)} created, {len(resources_to_update)} updated",
+                        resource_name=f"Bulk operation: {counts['created']} created, {counts['updated']} updated",
                         user_email=owner_email,
-                        team_id=team_id,
+                        team_id=audit_team_id,
                         client_ip=created_from_ip,
                         user_agent=created_user_agent,
                         new_values={
-                            "resources_created": len(resources_to_add),
-                            "resources_updated": len(resources_to_update),
+                            "resources_created": counts["created"],
+                            "resources_updated": counts["updated"],
                             "visibility": visibility,
                         },
                         context={

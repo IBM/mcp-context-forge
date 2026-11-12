@@ -12,14 +12,17 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import asyncio
 import base64
 import binascii
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
+import uuid
 
 # Third-Party
 from fastapi import HTTPException
@@ -41,12 +44,13 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATestError
-from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -335,6 +339,64 @@ def raise_if_a2a_disabled() -> None:
         raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
 
 
+# Client-credentials tokens for OAuth-protected agents, keyed by agent id + config fingerprint
+# so a changed oauth_config never reuses a token minted for the old one. Value: (token, monotonic expiry).
+_A2A_OAUTH_TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
+_A2A_OAUTH_ACQUIRE_LOCKS: Dict[str, asyncio.Lock] = {}
+_A2A_OAUTH_EXPIRY_SKEW_SECONDS = 30
+
+
+async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_config: Optional[Dict[str, Any]]) -> str:
+    """Return an ``Authorization`` header value for an OAuth-protected A2A agent.
+
+    Only the client_credentials grant is supported. Tokens are cached until shortly
+    before their ``expires_in``; a token without a reported lifetime is not cached.
+    Concurrent callers with the same cache key share one token request.
+
+    Args:
+        agent_id: Agent identifier, used to scope the token cache.
+        agent_name: Agent name, used in error messages.
+        oauth_config: The agent's stored OAuth configuration.
+
+    Returns:
+        The ``Bearer <token>`` header value.
+
+    Raises:
+        A2AAgentError: If the OAuth configuration is missing or unsupported, or token acquisition fails.
+    """
+    if not oauth_config:
+        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth but has no OAuth configuration")
+    grant_type = oauth_config.get("grant_type", "client_credentials")
+    if grant_type != "client_credentials":
+        raise A2AAgentError(f"A2A Agent '{agent_name}' uses OAuth grant type '{grant_type}', which is not supported for agent invocation (only client_credentials)")
+
+    fingerprint = hashlib.sha256(json.dumps(oauth_config, sort_keys=True, default=str).encode()).hexdigest()
+    cache_key = f"{agent_id}:{fingerprint}"
+    cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
+    if cached and cached[1] > time.monotonic():
+        return f"Bearer {cached[0]}"
+
+    lock = _A2A_OAUTH_ACQUIRE_LOCKS.setdefault(cache_key, asyncio.Lock())
+    try:
+        async with lock:
+            cached = _A2A_OAUTH_TOKEN_CACHE.get(cache_key)
+            if cached and cached[1] > time.monotonic():
+                return f"Bearer {cached[0]}"
+            try:
+                manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
+                token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
+            except Exception as e:
+                raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e
+
+            _A2A_OAUTH_TOKEN_CACHE.pop(cache_key, None)
+            if expires_in and expires_in > _A2A_OAUTH_EXPIRY_SKEW_SECONDS:
+                _A2A_OAUTH_TOKEN_CACHE[cache_key] = (token, time.monotonic() + expires_in - _A2A_OAUTH_EXPIRY_SKEW_SECONDS)
+            return f"Bearer {token}"
+    finally:
+        if not lock.locked():
+            _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
+
+
 class A2AAgentError(Exception):
     """Base class for A2A agent-related errors.
 
@@ -392,6 +454,10 @@ class A2ATestOutcome:
 
     status_code: int
     body: Dict[str, Any]
+
+
+class A2ATaskStateError(A2AAgentError):
+    """Raised when an A2A task is in a state that does not allow the requested operation."""
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -1022,9 +1088,6 @@ class A2AAgentService(BaseService):
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
                 except RuntimeError:
@@ -2020,9 +2083,6 @@ class A2AAgentService(BaseService):
             await admin_stats_cache.invalidate_tags()
 
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 loop = asyncio.get_running_loop()
                 loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
             except RuntimeError:
@@ -2235,9 +2295,6 @@ class A2AAgentService(BaseService):
                 await admin_stats_cache.invalidate_tags()
 
                 try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
                     loop = asyncio.get_running_loop()
                     loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
                 except RuntimeError:
@@ -2654,6 +2711,12 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
         correlation_id = get_correlation_id()
+        if agent_auth_type == "oauth":
+            # Resolve the credential here so prepare_a2a_invocation stays synchronous. The configured
+            # OAuth credential replaces any caller-supplied Authorization header.
+            oauth_authorization = await resolve_a2a_oauth_authorization(agent_id, agent_name, agent_oauth_config)
+            downstream_headers = {key: value for key, value in (downstream_headers or {}).items() if key.lower() != "authorization"}
+            downstream_headers["Authorization"] = oauth_authorization
         try:
             prepared = prepare_a2a_invocation(
                 agent_type=agent_type,
@@ -3767,7 +3830,7 @@ class A2AAgentService(BaseService):
             task.payload = payload
         if last_error is not None:
             task.last_error = last_error
-        if state in ("completed", "failed", "canceled"):
+        if is_terminal_task_state(state):
             task.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(task)
@@ -3831,13 +3894,165 @@ class A2AAgentService(BaseService):
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
         if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
-        if task.state in ("completed", "failed", "canceled"):
+        if is_terminal_task_state(task.state):
             return self._task_to_wire(task)
         task.state = "canceled"
         task.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(task)
         return self._task_to_wire(task)
+
+    async def continue_task(
+        self,
+        db: Session,
+        agent_id: str,
+        task_id: str,
+        message: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Send a follow-up message that belongs to an existing task.
+
+        The message carries ``taskId`` and ``contextId`` in both A2A 0.3 and 1.0, so
+        the agent receives it as part of the stored task. ``invoke_agent`` persists the
+        task state from the agent response, and a ``task_continued`` event records the
+        continuation. The event keeps the message ID and the kind and size of each part, never the
+        content, because a reply to an ``auth-required`` task can carry credentials.
+
+        Two concurrent follow-ups to one task can both pass the state check, and
+        ``_record_task_event`` can then assign the same sequence number to both events.
+
+        Args:
+            db: Database session.
+            agent_id: ID of the agent that owns the task.
+            task_id: Agent-side task ID.
+            message: A2A message object. The gateway sets ``taskId``, ``contextId``, ``role`` and ``messageId``.
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
+            token_teams: Caller's teams for visibility scoping.
+            hop_count: Federation hop counter from the inbound request.
+            bearer_token: Bearer token to forward for cross-gateway RBAC.
+            content_type: Content-Type of the inbound request.
+            request_headers: Inbound request headers for plugin context.
+
+        Returns:
+            The agent response.
+
+        Raises:
+            A2AAgentNotFoundError: If the task does not exist or is not visible.
+            A2ATaskStateError: If the task is in a terminal state.
+            A2AAgentError: If ``message.taskId`` or ``message.contextId`` differs from the stored task,
+                or ``message.role`` is not a user role.
+        """
+        task = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            raise A2AAgentNotFoundError(f"Task '{task_id}' not found")
+        previous_state = task["status"]["state"]
+        if is_terminal_task_state(previous_state):
+            raise A2ATaskStateError(f"Task '{task_id}' is in terminal state '{previous_state}' and cannot accept follow-up messages")
+        follow_up = self._bind_follow_up_message(task, task_id, message)
+
+        response = await self.invoke_agent(
+            db,
+            "",
+            {"message": follow_up, "taskId": task_id},
+            "query",
+            agent_id=agent_id,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        )
+
+        try:
+            updated = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+            self._record_task_event(
+                db,
+                agent_id,
+                task_id,
+                "task_continued",
+                {"message_id": follow_up["messageId"], "parts": self._summarize_message_parts(follow_up), "previous_state": previous_state, "state": updated["status"]["state"] if updated else None},
+            )
+        except Exception:
+            db.rollback()
+            logger.warning("Failed to record task_continued event for task_id=%s", task_id, exc_info=True)
+        return response
+
+    @staticmethod
+    def _summarize_message_parts(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Describe each part of a message by kind and size, without its content.
+
+        Args:
+            message: A2A message object.
+
+        Returns:
+            One ``{"kind", "length"}`` entry per part.
+
+        Examples:
+            >>> A2AAgentService._summarize_message_parts({"parts": [{"text": "secret"}, {"kind": "data", "data": {"a": 1}}, "odd"]})
+            [{'kind': 'text', 'length': 6}, {'kind': 'data', 'length': 8}, {'kind': 'unknown', 'length': 0}]
+        """
+        summary: List[Dict[str, Any]] = []
+        for part in message.get("parts") or []:
+            if not isinstance(part, dict):
+                summary.append({"kind": "unknown", "length": 0})
+                continue
+            kind = part.get("kind") or next((key for key in ("text", "raw", "url", "data", "file") if key in part), "unknown")
+            summary.append({"kind": kind, "length": len(str(part.get(kind, "")))})
+        return summary
+
+    @staticmethod
+    def _bind_follow_up_message(task: Dict[str, Any], task_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the follow-up message from the caller's message and the stored task.
+
+        The gateway owns the identity fields. The stored task supplies ``taskId`` and ``contextId``,
+        the gateway generates ``messageId``, and ``role`` is always the user role. A caller value
+        for ``taskId`` or ``contextId`` that differs from the stored task, or a ``role`` other than
+        the user role, is rejected. A caller ``messageId`` is replaced.
+
+        Args:
+            task: The stored task in wire format.
+            task_id: Agent-side task ID from the request path.
+            message: A2A message object from the caller.
+
+        Returns:
+            The message to send to the agent.
+
+        Raises:
+            A2AAgentError: If a caller value contradicts the stored task or the user role.
+        """
+        context_id = task.get("contextId")
+        for field, expected in (("taskId", task_id), ("contextId", context_id)):
+            supplied = message.get(field)
+            if supplied is not None and supplied != expected:
+                raise A2AAgentError(f"message.{field} does not match task '{task_id}'")
+        role = message.get("role")
+        if role is not None and str(role).strip().lower().removeprefix("role_") != "user":
+            raise A2AAgentError("message.role must be the user role")
+
+        follow_up = {**message, "messageId": f"contextforge-{uuid.uuid4().hex}", "role": "user", "taskId": task_id}
+        if context_id:
+            follow_up["contextId"] = context_id
+        return follow_up
+
+    @staticmethod
+    def _record_task_event(db: Session, agent_id: str, task_id: str, event_type: str, payload: Dict[str, Any]) -> None:
+        """Append an event to the task log with the next sequence number."""
+        # First-Party
+        from mcpgateway.db import A2ATaskEvent  # pylint: disable=import-outside-toplevel
+
+        last_sequence = db.query(func.max(A2ATaskEvent.sequence)).filter(A2ATaskEvent.task_id == task_id, A2ATaskEvent.a2a_agent_id == agent_id).scalar()
+        db.add(A2ATaskEvent(a2a_agent_id=agent_id, task_id=task_id, event_id=str(uuid.uuid4()), sequence=(last_sequence or 0) + 1, event_type=event_type, payload=payload))
+        db.commit()
 
     @staticmethod
     def _resolve_unique_task(db: Session, task_id: str, agent_id: Optional[str]) -> Optional[A2ATask]:
