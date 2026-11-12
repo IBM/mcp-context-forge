@@ -378,7 +378,7 @@ class TestInitiateAuthorizationCodeFlowWithPKCE:
             mock_store.return_value = None
             mock_create_url.return_value = "https://as.example.com/authorize?..."
 
-            await manager.initiate_authorization_code_flow(gateway_id, credentials)
+            await manager.initiate_authorization_code_flow(gateway_id, credentials, browser_binding="test-browser-binding")
 
         # Verify PKCE was generated
         mock_pkce.assert_called_once()
@@ -412,11 +412,13 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
             patch.object(manager, "_exchange_code_for_tokens") as mock_exchange,
             patch.object(manager, "_extract_user_id") as mock_extract,
         ):
-            mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "verifier-xyz", "expires_at": "2025-12-31T23:59:59+00:00"}
+            mock_validate.side_effect = AssertionError("Completion must not consume state")
             mock_exchange.return_value = {"access_token": "token", "expires_in": 3600}
             mock_extract.return_value = "user-123"
 
-            await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+            await manager.complete_authorization_code_flow(
+                gateway_id, code, state, credentials, validated_state={"state": state, "gateway_id": gateway_id, "code_verifier": "verifier-xyz", "expires_at": "2025-12-31T23:59:59+00:00"}
+            )
 
         # Verify code_verifier was passed to token exchange
         mock_exchange.assert_called_once()
@@ -434,10 +436,10 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
         credentials = {"client_id": "test"}
 
         with patch.object(manager, "_validate_and_retrieve_state") as mock_validate:
-            mock_validate.return_value = None  # Invalid state
+            mock_validate.side_effect = AssertionError("Completion must not consume state")
 
-            with pytest.raises(OAuthError, match="Invalid or expired state"):
-                await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+            with pytest.raises(OAuthError, match="Invalid authorization transaction"):
+                await manager.complete_authorization_code_flow(gateway_id, code, state, credentials, validated_state={})
 
 
 class TestPKCESecurityProperties:
@@ -1201,7 +1203,7 @@ class TestInitiateFlowNoStorage:
             manager = OAuthManager(token_storage=None)
             credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": ["read"]}
 
-            result = await manager.initiate_authorization_code_flow("gw1", credentials, app_user_email="user@example.com")
+            result = await manager.initiate_authorization_code_flow("gw1", credentials, app_user_email="user@example.com", browser_binding="test-browser-binding")
             assert "authorization_url" in result
             assert "state" in result
             assert result["gateway_id"] == "gw1"
@@ -1232,11 +1234,11 @@ class TestCompleteFlowHMACBranches:
             state = base64.urlsafe_b64encode(state_bytes + bad_signature).decode()
 
             with (
-                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_validate_and_retrieve_state", side_effect=AssertionError("Completion must not consume state")),
                 patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
                 patch.object(manager, "_extract_user_id", return_value="user1"),
             ):
-                result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+                result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
                 assert result["success"] is True
 
     @pytest.mark.asyncio
@@ -1268,12 +1270,12 @@ class TestCompleteFlowHMACBranches:
             state = base64.urlsafe_b64encode(state_bytes + sig).decode()
 
             with (
-                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_validate_and_retrieve_state", side_effect=AssertionError("Completion must not consume state")),
                 patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
                 patch.object(manager, "_extract_user_id", return_value="user1"),
             ):
                 with pytest.raises(OAuthError, match="gateway mismatch"):
-                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
     @pytest.mark.asyncio
     async def test_no_email_with_storage_raises(self):
@@ -1296,12 +1298,12 @@ class TestCompleteFlowHMACBranches:
             state = base64.urlsafe_b64encode(b"invalid_data_for_parsing").decode()
 
             with (
-                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_validate_and_retrieve_state", side_effect=AssertionError("Completion must not consume state")),
                 patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
                 patch.object(manager, "_extract_user_id", return_value="user1"),
             ):
                 with pytest.raises(OAuthError, match="User context required"):
-                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
 
 @pytest.mark.asyncio
@@ -1314,16 +1316,13 @@ async def test_complete_flow_uses_server_side_user_context_without_state_decodin
         patch.object(
             manager,
             "_validate_and_retrieve_state",
-            return_value={"code_verifier": "v", "app_user_email": "user@test.com"},
+            side_effect=AssertionError("Completion must not consume state"),
         ),
         patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok", "expires_in": 3600}),
         patch.object(manager, "_extract_user_id", return_value="user-1"),
     ):
         result = await manager.complete_authorization_code_flow(
-            "gw1",
-            "code",
-            "opaque-state-token",
-            {"client_id": "cid"},
+            "gw1", "code", "opaque-state-token", {"client_id": "cid"}, validated_state={"code_verifier": "v", "app_user_email": "user@test.com", "gateway_id": "gw1", "state": "opaque-state-token"}
         )
 
     assert result["success"] is True
@@ -1793,12 +1792,13 @@ class TestValidateAndRetrieveStateDatabasePath:
         mock_state.used = False
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 1
         mock_db.query.return_value.filter.return_value.first.return_value = mock_state
         mock_db_gen = MagicMock()
         mock_db_gen.__next__ = MagicMock(return_value=mock_db)
         mock_db_gen.close = MagicMock()
 
-        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen):
             result = await manager._validate_and_retrieve_state("gw", "s")
             assert result is not None
             assert result["code_verifier"] == "v"
@@ -1810,12 +1810,13 @@ class TestValidateAndRetrieveStateDatabasePath:
         monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 1
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db_gen = MagicMock()
         mock_db_gen.__next__ = MagicMock(return_value=mock_db)
         mock_db_gen.close = MagicMock()
 
-        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen):
             assert await manager._validate_and_retrieve_state("gw", "s") is None
 
     @pytest.mark.asyncio
@@ -1831,14 +1832,16 @@ class TestValidateAndRetrieveStateDatabasePath:
         mock_state.used = False
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 0
         mock_db.query.return_value.filter.return_value.first.return_value = mock_state
         mock_db_gen = MagicMock()
         mock_db_gen.__next__ = MagicMock(return_value=mock_db)
         mock_db_gen.close = MagicMock()
 
-        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen):
             assert await manager._validate_and_retrieve_state("gw", "s") is None
-            mock_db.delete.assert_called_once()
+            mock_db.delete.assert_not_called()
+            mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_database_used(self, monkeypatch):
@@ -1853,12 +1856,13 @@ class TestValidateAndRetrieveStateDatabasePath:
         mock_state.used = True
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 0
         mock_db.query.return_value.filter.return_value.first.return_value = mock_state
         mock_db_gen = MagicMock()
         mock_db_gen.__next__ = MagicMock(return_value=mock_db)
         mock_db_gen.close = MagicMock()
 
-        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen):
             assert await manager._validate_and_retrieve_state("gw", "s") is None
 
     @pytest.mark.asyncio
@@ -1877,12 +1881,13 @@ class TestValidateAndRetrieveStateDatabasePath:
         mock_state.used = False
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.update.return_value = 1
         mock_db.query.return_value.filter.return_value.first.return_value = mock_state
         mock_db_gen = MagicMock()
         mock_db_gen.__next__ = MagicMock(return_value=mock_db)
         mock_db_gen.close = MagicMock()
 
-        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen):
             result = await manager._validate_and_retrieve_state("gw", "s")
             assert result is not None
 
@@ -1894,7 +1899,7 @@ class TestValidateAndRetrieveStateDatabasePath:
         manager = OAuthManager()
         monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
 
-        with patch("mcpgateway.db.get_db", side_effect=RuntimeError("db error")), patch("mcpgateway.db.OAuthState", MagicMock()):
+        with patch("mcpgateway.db.get_db", side_effect=RuntimeError("db error")):
             om._oauth_states.clear()
             assert await manager._validate_and_retrieve_state("gw", "s") is None
 
@@ -2370,12 +2375,7 @@ class TestCWE287DenyPathRegressions:
 
         with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
             with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1",
-                    "code",
-                    "state-tok",
-                    {"client_id": "cid"},
-                )
+                await manager.complete_authorization_code_flow("gw1", "code", "state-tok", {"client_id": "cid"}, validated_state={"gateway_id": "gw1", "state": "state-tok", "code_verifier": "v"})
         manager.token_storage.store_tokens.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -2384,15 +2384,12 @@ class TestCWE287DenyPathRegressions:
         manager = OAuthManager(token_storage=None)
 
         with (
-            patch.object(manager, "_validate_and_retrieve_state", return_value=self._state_without_email()),
+            patch.object(manager, "_validate_and_retrieve_state", side_effect=AssertionError("Completion must not consume state")),
             patch.object(manager, "_exchange_code_for_tokens", return_value=self._token_response()),
             patch.object(manager, "_extract_user_id", return_value="user-1"),
         ):
             result = await manager.complete_authorization_code_flow(
-                "gw1",
-                "code",
-                "state-tok",
-                {"client_id": "cid"},
+                "gw1", "code", "state-tok", {"client_id": "cid"}, validated_state={**self._state_without_email(), "gateway_id": "gw1", "state": "state-tok"}
             )
         assert result["success"] is True
         assert result["expires_at"] is None
@@ -2425,15 +2422,10 @@ class TestLegacyStateGatewayMismatch:
         with patch.object(
             manager,
             "_validate_and_retrieve_state",
-            return_value={"code_verifier": "v"},  # no app_user_email
+            side_effect=AssertionError("Completion must not consume state"),  # no app_user_email
         ):
             with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
-                await manager.complete_authorization_code_flow(
-                    "gw1",
-                    "code",
-                    state,
-                    {"client_id": "cid"},
-                )
+                await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
     @pytest.mark.asyncio
     async def test_underscore_legacy_state_gateway_mismatch_raises(self):
@@ -2446,15 +2438,10 @@ class TestLegacyStateGatewayMismatch:
         with patch.object(
             manager,
             "_validate_and_retrieve_state",
-            return_value={"code_verifier": "v"},  # no app_user_email
+            side_effect=AssertionError("Completion must not consume state"),  # no app_user_email
         ):
             with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
-                await manager.complete_authorization_code_flow(
-                    "gw1",
-                    "code",
-                    state,
-                    {"client_id": "cid"},
-                )
+                await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
     @pytest.mark.asyncio
     async def test_matching_gateway_id_does_not_raise_mismatch(self):
@@ -2478,16 +2465,11 @@ class TestLegacyStateGatewayMismatch:
         with patch.object(
             manager,
             "_validate_and_retrieve_state",
-            return_value={"code_verifier": "v"},  # no app_user_email
+            side_effect=AssertionError("Completion must not consume state"),  # no app_user_email
         ):
             # Should NOT raise "gateway mismatch"; should raise "User context required" instead
             with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1",
-                    "code",
-                    state,
-                    {"client_id": "cid"},
-                )
+                await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
 
 class TestLegacyStatePayloadStripsIdentity:
@@ -2565,7 +2547,7 @@ class TestLegacyStatePayloadStripsIdentity:
             patch.object(
                 manager,
                 "_validate_and_retrieve_state",
-                return_value={"code_verifier": "v"},
+                side_effect=AssertionError("Completion must not consume state"),
             ),
             patch.object(
                 manager,
@@ -2577,12 +2559,7 @@ class TestLegacyStatePayloadStripsIdentity:
             # With token_storage set, missing app_user_email should raise,
             # proving the forged email was NOT accepted.
             with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1",
-                    "code",
-                    state,
-                    {"client_id": "cid"},
-                )
+                await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"}, validated_state={"code_verifier": "v", "gateway_id": "gw1", "state": state})
 
 
 if __name__ == "__main__":

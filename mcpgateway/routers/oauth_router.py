@@ -13,6 +13,8 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 import asyncio
+from functools import wraps
+import hashlib
 from html import escape
 import json
 import logging
@@ -41,14 +43,14 @@ from mcpgateway.services.cimd_service import CimdService
 from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, STATE_TTL_SECONDS
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.oauth_errors import oauth_failure
+from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -58,6 +60,46 @@ logger = logging.getLogger(__name__)
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
+
+
+def _binding_cookie_name(state: str) -> str:
+    """Return the transaction-specific cookie name."""
+    return "oauth_bind_" + hashlib.sha256(state.encode()).hexdigest()
+
+
+def _binding_cookie_options(request: Request) -> dict:
+    """Return host-only cookie attributes shared by creation and deletion."""
+    return {"path": resolve_root_path(request).rstrip("/") + "/oauth/callback", "httponly": True, "secure": settings.environment == "production" or settings.secure_cookies, "samesite": "lax"}
+
+
+def _set_binding_cookie(response, request: Request, state: str, binding: str):
+    """Attach the browser transaction secret to the initiating response."""
+    response.set_cookie(_binding_cookie_name(state), binding, max_age=STATE_TTL_SECONDS, **_binding_cookie_options(request))
+    return response
+
+
+def _cleanup_binding_cookie(handler):
+    """Delete the transaction cookie from the final callback response."""
+
+    @wraps(handler)
+    async def wrapped(request: Request, *args, **kwargs):
+        """Return the callback response after transaction-cookie cleanup.
+
+        Args:
+            request: Callback request containing transaction cookies.
+            args: Positional callback arguments.
+            kwargs: Named callback arguments.
+
+        Returns:
+            Callback response with the transaction cookie removed.
+        """
+        response = await handler(request, *args, **kwargs)
+        state = kwargs.get("state") or request.query_params.get("state")
+        if isinstance(state, str) and state:
+            response.delete_cookie(_binding_cookie_name(state), **_binding_cookie_options(request))
+        return response
+
+    return wrapped
 
 
 def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
@@ -899,12 +941,13 @@ async def initiate_oauth_flow(
         user_context = _build_user_context(current_user, db=db)
 
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db, user_context))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
+        binding = secrets.token_urlsafe(32)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup, browser_binding=binding)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
         # Redirect user to OAuth provider
-        return RedirectResponse(url=auth_data["authorization_url"])
+        return _set_binding_cookie(RedirectResponse(url=auth_data["authorization_url"]), request, auth_data["state"], binding)
 
     except HTTPException:
         raise
@@ -927,6 +970,7 @@ async def initiate_oauth_flow(
         }
     },
 )
+@_cleanup_binding_cookie
 async def oauth_callback(
     request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
@@ -984,20 +1028,41 @@ async def oauth_callback(
         root_path = resolve_root_path(request) if request else ""
         safe_root_path = escape(str(root_path), quote=True)
 
-        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
-        # Resolve the gateway behind the state without consuming it. The error branch needs it
-        # for the issuer check and the code exchange below reuses it.
-        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False) if state else None
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+        def _invalid_state_response() -> HTMLResponse:
+            """Return an HTML error page for invalid or missing OAuth state.
 
-        if error:
-            if gateway and gateway.oauth_config:
-                try:
-                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
-                except OAuthError:
-                    # RFC 9207: discard provider errors when the response issuer does not match.
-                    error = "issuer_mismatch"
-            failure = oauth_failure(error)
+            Returns:
+                HTMLResponse: A 400 error page describing the invalid state.
+            """
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
+                )
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p>Error: Invalid OAuth state parameter.</p>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
+
+        def _authorization_error_response(provider_error: str) -> HTMLResponse:
+            """Return safe provider-error guidance for the callback.
+
+            Args:
+                provider_error: Provider or internal error code.
+
+            Returns:
+                Popup or HTML response with fixed corrective guidance.
+            """
+            failure = oauth_failure(provider_error)
             error_text = escape(failure.code)
             description_text = escape(failure.message)
             logger.warning("OAuth provider callback failed: %s", failure.code)
@@ -1031,6 +1096,41 @@ async def oauth_callback(
                 status_code=400,
             )
 
+        if not state:
+            if error:
+                return _authorization_error_response(error)
+            logger.warning("OAuth callback missing state parameter")
+            return _invalid_state_response()
+
+        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        # Resolve the gateway behind the state without consuming it. The error branch needs it
+        # for the issuer check and the code exchange below reuses it.
+        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return _invalid_state_response()
+
+        if not gateway:
+            logger.warning("OAuth callback state resolved to unknown gateway id")
+            return _invalid_state_response()
+
+        if not gateway.oauth_config:
+            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
+            return _invalid_state_response()
+
+        state_data = await OAuthManager(token_storage=None).consume_and_validate_authorization_state(gateway_id, state, request.cookies.get(_binding_cookie_name(state)))
+
+        if error:
+            if gateway and gateway.oauth_config:
+                try:
+                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
+                except OAuthError:
+                    # RFC 9207: discard provider errors when the response issuer does not match.
+                    error = "issuer_mismatch"
+            return _authorization_error_response(error)
+
         if not code:
             logger.warning("OAuth callback missing authorization code")
             if is_popup:
@@ -1052,52 +1152,7 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        def _invalid_state_response() -> HTMLResponse:
-            """Return an HTML error page for invalid or missing OAuth state.
-
-            Returns:
-                HTMLResponse: A 400 error page describing the invalid state.
-            """
-            if is_popup:
-                return _popup_callback_response(
-                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
-                )
-            return HTMLResponse(
-                content=f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>OAuth Authorization Failed</title></head>
-                <body>
-                    <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Invalid OAuth state parameter.</p>
-                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
-                </body>
-                </html>
-                """,
-                status_code=400,
-            )
-
-        if not state:
-            logger.warning("OAuth callback missing state parameter")
-            return _invalid_state_response()
-
-        # The state was only resolved above, not consumed: complete_authorization_code_flow
-        # validates and consumes it atomically and returns state_data.
-        if not gateway_id:
-            logger.warning("OAuth callback received invalid or unknown state token")
-            return _invalid_state_response()
-
-        if not gateway:
-            logger.warning("OAuth callback state resolved to unknown gateway id")
-            return _invalid_state_response()
-
-        if not gateway.oauth_config:
-            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
-            return _invalid_state_response()
-
-        # SECURITY FIX (TOCTOU): Complete OAuth code exchange WITHOUT token storage first
-        # This atomically consumes state and returns state_data, eliminating the TOCTOU race
-        # from the previous _peek_state_data() approach
+        # Store tokens only after the exchange uses the validated transaction context.
         no_storage_oauth_manager = OAuthManager(token_storage=None)
 
         oauth_config_with_resource = gateway.oauth_config.copy()
@@ -1113,7 +1168,7 @@ async def oauth_callback(
             if origin:
                 oauth_config_with_resource["resource"] = origin
 
-        # Complete flow WITHOUT storing tokens (atomically returns state_data + token_response).
+        # Complete the exchange with the previously consumed transaction context.
         # Pass default_redirect_uri so complete_authorization_code_flow can fall back to it
         # when no redirect_uri was pinned in state (e.g. state stored before pinning existed).
         result = await no_storage_oauth_manager.complete_authorization_code_flow(
@@ -1126,9 +1181,10 @@ async def oauth_callback(
             client_key=gateway.client_key,
             default_redirect_uri=_default_redirect_uri(request),
             iss=iss,
+            validated_state=state_data,
         )
 
-        # Extract state_data from result (was atomically consumed and returned)
+        # Extract the transaction context returned with the token response.
         state_data = result.get("state_data", {})
         app_user_email = state_data.get("app_user_email")
         team_id = state_data.get("team_id")
@@ -1164,6 +1220,7 @@ async def oauth_callback(
         # OAuthManager.complete_authorization_code_flow and
         # token_validation_service._validate_audience for the full trust model.
         if app_user_email and result.get("success"):
+            # First-Party
             from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
 
             token_response = result.get("token_response", {})
@@ -1398,7 +1455,7 @@ async def oauth_callback(
         # Provider exception text can contain tokens or unsafe response bodies.
         failure = oauth_failure(e.error_code)
         logger.error("OAuth callback failed: %s", failure.code)
-        _oauth_user_msg = failure.message
+        _oauth_user_msg = "Invalid OAuth state parameter. Restart authorization." if e.error_code == "invalid_state" else failure.message
         if is_popup:
             return _popup_callback_response(
                 csp_nonce,
