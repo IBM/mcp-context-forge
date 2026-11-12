@@ -137,7 +137,7 @@ def _audit_rows(connection: Connection) -> list[dict]:
 
 
 def test_revision_extends_single_repository_head(migration: ModuleType) -> None:
-    """The migration extends the verified parent and the repository keeps exactly one head."""
+    """The migration extends the verified parent, and the repository keeps one head that includes it."""
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
     assert migration.branch_labels is None
