@@ -458,8 +458,8 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
         if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
-        if auth_context.get("email"):
-            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
+        if auth_context.get("email") or auth_context.get("user_id"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: identity not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -508,6 +508,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     )
 
     return {
+        "user_id": auth_context.get("user_id") or auth_context.get("email"),
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
@@ -553,6 +554,7 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     scoped_server_id = scopes.get("server_id")
 
     context: Dict[str, Any] = {
+        "user_id": email,
         "email": email,
         # Authenticated callers keep their token teams (None == admin bypass); public-only
         # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.

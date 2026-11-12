@@ -2727,8 +2727,9 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
-    canonical ``{email, teams, is_admin, is_authenticated, token_use}`` dict that MCP
-    handlers expect.  This mirrors the normalization performed by
+    canonical ``{email, user_id, teams, is_admin, is_authenticated, token_use}`` dict that MCP
+    handlers expect.  ``user_id`` is the canonical identity; its phase-1 value equals the e-mail.
+    This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
 
@@ -2736,7 +2737,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
-        Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
+        Canonical user context dict with keys email, user_id, teams, is_admin, is_authenticated, token_use.
     """
     email = await _resolve_jwt_user_email_for_streamable(payload)
     jwt_is_admin = payload.get("is_admin", False)
@@ -2851,6 +2852,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                                 user=(
                                     {
                                         "email": getattr(user_record, "email", email),
+                                        "user_id": getattr(user_record, "email", email),  # canonical user_id, phase-1 value = e-mail
                                         "password_hash": getattr(user_record, "password_hash", ""),
                                         "full_name": getattr(user_record, "full_name", None),
                                         "is_admin": bool(getattr(user_record, "is_admin", False)),
@@ -2900,6 +2902,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     user_ctx: dict[str, Any] = {
         "email": email,
+        "user_id": email,  # canonical user_id, phase-1 value = e-mail
         "teams": final_teams,
         "is_admin": effective_is_admin,
         "is_authenticated": True,
@@ -6150,11 +6153,14 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
     # Standard
     from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
 
+    # First-Party
+    from mcpgateway.auth_context import get_user_id  # pylint: disable=import-outside-toplevel
+
     email = ctx.get("email")
     if email:
         user_identity_var.set(
             UserContext(
-                user_id=email,
+                user_id=get_user_id(ctx),
                 email=email,
                 is_admin=ctx.get("is_admin", False),
                 teams=ctx.get("teams"),
@@ -6215,6 +6221,7 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 
         # Trusted proxy auth is DB/header-derived, not JWT-derived, so there is no token exp claim to clamp.
         _proxy_ctx: dict[str, Any] = {
+            "user_id": proxy_user,
             "email": proxy_user,
             "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
             "is_authenticated": True,
@@ -6248,6 +6255,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
 
     forwarded: dict[str, Any] = {}
     for key in (
+        "user_id",
         "email",
         "teams",
         "team_name",
@@ -6432,6 +6440,7 @@ class _StreamableHttpAuthHandler:
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {
+                "user_id": None,
                 "email": None,
                 "teams": [],  # Empty list = public-only access
                 "is_authenticated": False,
@@ -6599,6 +6608,7 @@ class _StreamableHttpAuthHandler:
                                     user=(
                                         {
                                             "email": user_record.email,
+                                            "user_id": user_record.email,  # canonical user_id, phase-1 value = e-mail
                                             "password_hash": user_record.password_hash,
                                             "full_name": user_record.full_name,
                                             "is_admin": bool(user_record.is_admin),
@@ -6670,6 +6680,7 @@ class _StreamableHttpAuthHandler:
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
             auth_user_ctx: dict[str, Any] = {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
@@ -6970,6 +6981,7 @@ class _StreamableHttpAuthHandler:
         # auth_method distinguishes the origin for audit/logging.
         user_context_var.set(
             {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
