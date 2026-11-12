@@ -12715,6 +12715,7 @@ class TestMtlsWithoutCustomCa:
 
         class DummyClient:
             server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {})
+            instructions = None
 
             async def list_tools(self):
                 return SimpleNamespace(tools=[])

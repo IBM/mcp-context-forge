@@ -141,17 +141,12 @@ def _make_recording_handler(expected_candidate: str) -> tuple[type[BaseHTTPReque
 # isolated_gateway fixture  (mirrors test_rest_non_json_output_schema_e2e.py)
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def gateway_environment() -> dict[str, str]:
-    """Return additional settings for an isolated gateway subprocess."""
-    return {}
-
-
-@pytest.fixture
-def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest, gateway_environment: dict[str, str]) -> Iterator[_GatewayFixture]:
+def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[_GatewayFixture]:
     """Start a private, single-tenant gateway subprocess for this test module.
 
     Uses SQLite + a random port so no compose stack is required. Indirect
     parametrization may pass a dict of environment overrides as ``request.param``.
+    A module may also define a ``gateway_environment`` fixture that returns overrides.
 
     Yields:
         A tuple of ``(httpx.Client, admin_token_str, base_url, signing_key)``.
@@ -196,7 +191,10 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest, gateway_env
         **getattr(request, "param", {}),
     }
 
-    env.update(gateway_environment)
+    try:
+        env.update(request.getfixturevalue("gateway_environment"))
+    except pytest.FixtureLookupError:
+        pass
 
     token = make_test_jwt(
         "admin@example.com",
