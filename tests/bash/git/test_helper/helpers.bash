@@ -6,8 +6,12 @@
 # nothing touches the real repo's hooks, config, or worktree.
 
 HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HELPER_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$HELPER_DIR/../../../.." && pwd)"
 DRIVER_SCRIPT="$REPO_ROOT/scripts/git/resolve-secrets-baseline-conflict.sh"
+HOOK_SCRIPT="$REPO_ROOT/scripts/git/post-rewrite-secrets-refresh.sh"
+
+# Same pinned spec the driver, the hook, and the Makefile use.
+DETECT_SECRETS_TEST_SPEC='git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976'
 
 # A value detect-secrets flags under --use-all-plugins (Secret Keyword +
 # Base64 High Entropy String). Verified against the pinned DETECT_SECRETS_SPEC.
@@ -69,4 +73,19 @@ teardown_repo() {
     if [ -n "${REPO:-}" ] && [ -d "$REPO" ]; then
         rm -rf "$REPO"
     fi
+}
+
+# rescan_baseline [path...]: refresh .secrets.baseline with the pinned
+# detect-secrets, limited to the given paths.
+rescan_baseline() {
+    uv tool run --from "$DETECT_SECRETS_TEST_SPEC" detect-secrets scan \
+        --update .secrets.baseline --use-all-plugins "$@" >/dev/null
+}
+
+# set_baseline_verdict <true|false>: mark every baseline entry with the given
+# is_secret verdict (what `make detect-secrets-audit` would record).
+set_baseline_verdict() {
+    jq ".results |= with_entries(.value |= map(. + {is_secret: $1}))" \
+        .secrets.baseline > .secrets.baseline.new
+    mv .secrets.baseline.new .secrets.baseline
 }
