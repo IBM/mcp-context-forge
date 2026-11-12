@@ -106,7 +106,7 @@ def card_gateway(tmp_path_factory):
                         "name": OAUTH_AGENT,
                         "protocol_version": "1.0",
                         "auth_type": "oauth",
-                        "oauth_config": {"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "client_id": "cid", "client_secret": CLIENT_SECRET, "scopes": ["read"]},
+                        "oauth_config": {"grant_type": "client_credentials", "token_url": "http://127.0.0.1:9/token", "client_id": "cid", "client_secret": CLIENT_SECRET, "scopes": ["read"]},
                     },
                 ]
                 for agent in agents:
@@ -188,7 +188,7 @@ def test_oauth_agent_card_exposes_scheme_without_credentials(card_gateway):
     assert response.status_code == 200, response.text
     card = response.json()
     flows = card["securitySchemes"]["oauth2Auth"]["oauth2SecurityScheme"]["flows"]
-    assert flows["clientCredentials"]["tokenUrl"] == "https://auth.example.com/token"
+    assert flows["clientCredentials"]["tokenUrl"] == "http://127.0.0.1:9/token"
     assert card["securityRequirements"] == [{"schemes": {"oauth2Auth": {}}}]
     assert CLIENT_SECRET not in response.text
 

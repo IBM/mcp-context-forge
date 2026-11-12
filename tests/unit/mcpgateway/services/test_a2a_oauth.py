@@ -289,3 +289,21 @@ async def test_repeated_resource_is_sent_as_an_encoded_form_body(monkeypatch):
     assert sent["content"] == "grant_type=client_credentials&resource=https%3A%2F%2Fa&resource=https%3A%2F%2Fb"
     assert sent["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
     assert "data" not in sent
+
+
+@pytest.mark.asyncio
+async def test_client_credentials_sends_every_listed_resource():
+    # First-Party
+    from mcpgateway.services.oauth_manager import OAuthManager
+
+    manager = OAuthManager()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"access_token": "t"})
+    response.headers = {"content-type": "application/json"}
+    response.text = '{"access_token": "t"}'
+    manager._post_token_request = AsyncMock(return_value=response)
+    cfg = {**CONFIG, "resource": ["https://a.example.com", "", "https://b.example.com"]}
+    await manager.get_client_credentials_token_response(cfg, send_resource=True)
+    pairs = manager._post_token_request.call_args.args[1]
+    assert [value for key, value in pairs if key == "resource"] == ["https://a.example.com", "https://b.example.com"]
