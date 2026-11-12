@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **Outbound DNS address fallback** ([#7407](https://github.com/IBM/mcp-context-forge/issues/7407)) - OAuth token requests, LLM completions, cross-gateway A2A calls, and SSE health checks try all validated addresses after connection failures. Each attempt preserves the validated Host header and TLS hostname. Certificate verification failures stop immediately. Streaming requests retry connection setup only, without replaying caller, response-read, or cleanup failures. Each helper requires a client isolated to one validated hostname. A2A invocation through `a2a_protocol.py`, dynamic client registration, OpenAPI fetching, and REST tool invocation remain single-address paths. `PinnedTarget.pin()` now emits `DeprecationWarning`.
+
 - **A2A and gateway credential masking** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` mask stored credentials on every `a2a.read` and `gateways.read` path. Regression tests cover basic, bearer, and authheaders auth types.
 
 - **A2A agent credential rotation** - `PUT /a2a/{agent_id}` now persists a new basic, bearer, or custom-header credential. The update path ignored these values before.

@@ -32,6 +32,7 @@ Specific subsuites need additional services on top:
 |---|---|---|
 | `e2e/` | gateway with MCP transports and Playwright | `make testing-up` (default profile) |
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
+| `mcp/test_oauth_dual_stack_live.py` | self-contained gateway and IPv4-only OAuth provider; requires IPv6-first dual-stack `localhost` | `pytest -o addopts="" tests/live_gateway/mcp/test_oauth_dual_stack_live.py` |
 | `mcp/test_oauth_status_live.py` | Postgres reachable at `localhost:5433` (the compose default) | `make testing-up` |
 | `mcp/test_private_key_jwt_e2e.py` | stub AS and upstream reachable via `host.docker.internal` (the compose default) | `make testing-up` |
 | `mcp/test_legacy_instana_e2e.py` | self-contained: boots its own gateway under legacy Instana AutoTrace; set `LEGACY_INSTANA_E2E=1` to fail instead of skip | `LEGACY_INSTANA_E2E=1 uv run --extra observability --with "instana==3.11.1" pytest tests/live_gateway/mcp/test_legacy_instana_e2e.py` |

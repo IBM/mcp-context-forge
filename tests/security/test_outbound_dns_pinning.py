@@ -163,7 +163,8 @@ async def test_resolve_pinned_target_returns_validated_address(fake_resolver):
     assert target.is_pinned is True
     assert target.resolved_ips == ("93.184.216.34",)
     assert target.hostname == "example.com"
-    assert target.pin("https://example.com:8443/mcp?x=1") == "https://93.184.216.34:8443/mcp?x=1"
+    with pytest.warns(DeprecationWarning, match="PinnedTarget.pin"):
+        assert target.pin("https://example.com:8443/mcp?x=1") == "https://93.184.216.34:8443/mcp?x=1"
     assert target.extensions == {"sni_hostname": "example.com"}
 
 
@@ -200,7 +201,8 @@ async def test_no_pinning_when_protection_disabled(fake_resolver):
         target = await resolve_pinned_target("https://example.com/mcp", "Gateway URL")
 
     assert target.is_pinned is False
-    assert target.pin("https://example.com/mcp") == "https://example.com/mcp"
+    with pytest.warns(DeprecationWarning, match="PinnedTarget.pin"):
+        assert target.pin("https://example.com/mcp") == "https://example.com/mcp"
     assert target.extensions == {}
     assert target.apply_headers({"X-Keep": "1"}) == {"X-Keep": "1"}
 
@@ -1135,7 +1137,7 @@ def _mcp_db_execute(tool, gateway):
         ("StreamableHTTP", "STREAMABLEHTTP"),
     ],
 )
-async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):
+async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):  # noqa: F811 - pytest fixture re-export
     fake_resolver(["93.184.216.34"])
     gateway = _mcp_gateway("http://fake-mcp:8080/mcp", gateway_transport)
     tool = _wire_mcp_tool(mock_tool, gateway, tool_request_type)
@@ -1169,7 +1171,7 @@ async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeyp
         ("StreamableHTTP", "STREAMABLEHTTP"),
     ],
 )
-async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):
+async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):  # noqa: F811 - pytest fixture re-export
     fake_resolver(["169.254.169.254"])
     gateway = _mcp_gateway("http://fake-mcp:8080/mcp", gateway_transport)
     tool = _wire_mcp_tool(mock_tool, gateway, tool_request_type)
@@ -1427,14 +1429,13 @@ async def test_transport_restores_the_request_url_while_a_stream_is_still_open(m
     assert request.url.host == "example.com", "reading the still-open stream must not re-pin the request url"
 
 
-async def test_pinned_addresses_expose_every_validated_address(fake_resolver):
+async def test_resolved_ips_retain_every_validated_address(fake_resolver):
     """Every policy-checked address stays a dial target; none is hidden from callers."""
     fake_resolver(["::1", "127.0.0.1"])
 
     target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
 
-    assert target.pinned_addresses == ("::1", "127.0.0.1")
-    assert sorted(target.pinned_addresses) == sorted(target.resolved_ips)
+    assert target.resolved_ips == ("::1", "127.0.0.1")
 
 
 async def test_connect_async_falls_back_to_ipv6_when_ipv4_refuses(fake_resolver):
@@ -1580,11 +1581,12 @@ async def test_connect_async_does_not_retry_a_tls_failure(fake_resolver):
     assert len(attempts) == 1, "a TLS failure must not be retried against another address"
 
 
-async def test_connect_async_reaches_a_hostname_only_tls_peer():
-    """End-to-end TLS: a certificate issued for the hostname verifies while dialling the IP.
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_helpers_reach_a_hostname_only_tls_peer(streaming):
+    """Verify a hostname-only certificate while dialing an IP through either helper.
 
-    This is the case MockTransport cannot cover, and the one the reviewer flagged: without
-    sni_hostname, verification fails with an IP-address mismatch.
+    Args:
+        streaming: Whether to use the streaming helper.
     """
     cert_dir = tempfile.mkdtemp()
     cert, key = pathlib.Path(cert_dir, "c.pem"), pathlib.Path(cert_dir, "k.pem")
@@ -1618,7 +1620,11 @@ async def test_connect_async_reaches_a_hostname_only_tls_peer():
         target = PinnedTarget(validated_url=target.validated_url, hostname=target.hostname, original_authority=target.original_authority, resolved_ips=("127.0.0.1",))
 
         async with httpx.AsyncClient(verify=ssl.create_default_context(cafile=str(cert))) as client:
-            response = await target.connect_async(client, "POST", f"https://localhost:{port}/token", data={"a": "b"})
+            if streaming:
+                async with target.stream_async(client, "POST", f"https://localhost:{port}/token", data={"a": "b"}) as response:
+                    await response.aread()
+            else:
+                response = await target.connect_async(client, "POST", f"https://localhost:{port}/token", data={"a": "b"})
 
         assert response.status_code == 200
         assert response.text == "ok"
@@ -1626,3 +1632,152 @@ async def test_connect_async_reaches_a_hostname_only_tls_peer():
         server.shutdown()
         server.server_close()
         shutil.rmtree(cert_dir, ignore_errors=True)
+
+
+@pytest.mark.parametrize("addresses", [("127.0.0.1", "::1"), ("::1", "127.0.0.1")])
+@pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_stream_async_retries_connection_setup(fake_resolver, addresses, error_type):
+    """Retry connection setup while preserving the validated Host and TLS hostname."""
+    fake_resolver(addresses)
+    url = "http://localhost:8034/token"
+    target = await resolve_pinned_target(url, "OAuth token URL")
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            raise error_type("unreachable", request=request)
+        return httpx.Response(200, content=b"ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with target.stream_async(client, "POST", url, headers={"host": "untrusted.example", "X-Keep": "1"}, data={"grant_type": "authorization_code"}) as response:
+            assert await response.aread() == b"ok"
+        assert response.is_closed
+
+    assert [request.url.host for request in requests] == list(addresses)
+    assert all(request.headers["host"] == "localhost:8034" for request in requests)
+    assert all(request.headers["x-keep"] == "1" for request in requests)
+    assert all(request.extensions["sni_hostname"] == "localhost" for request in requests)
+    assert all(request.content == b"grant_type=authorization_code" for request in requests)
+
+
+@pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_stream_async_raises_final_connection_error(fake_resolver, error_type):
+    """Try every validated address and propagate the final connection error."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    errors = []
+
+    async def handle(request):
+        error = error_type("unreachable", request=request)
+        errors.append(error)
+        raise error
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(error_type) as caught:
+            async with target.stream_async(client, "POST", target.validated_url):
+                pytest.fail("No address accepts the connection")
+
+    assert len(errors) == 2
+    assert caught.value is errors[-1]
+
+
+async def test_stream_async_does_not_retry_certificate_failure(fake_resolver):
+    """Reject certificate verification failure without trying another address."""
+    fake_resolver(["93.184.216.34", "93.184.216.35"])
+    target = await resolve_pinned_target("https://example.com/token", "OAuth token URL")
+    requests = []
+    error = httpx.ConnectError("certificate verification failed")
+    error.__cause__ = ssl.SSLCertVerificationError("hostname mismatch")
+
+    async def handle(request):
+        requests.append(request)
+        raise error
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(httpx.ConnectError) as caught:
+            async with target.stream_async(client, "POST", target.validated_url):
+                pytest.fail("An invalid certificate must reject the connection")
+
+    assert caught.value is error
+    assert len(requests) == 1
+    assert requests[0].extensions["sni_hostname"] == "example.com"
+
+
+async def test_stream_async_without_pinning_passes_through():
+    """Preserve the logical URL, headers, extensions, and timeout when unpinned."""
+    url = "https://example.com/token"
+    target = PinnedTarget(validated_url=url, hostname="", original_authority="", resolved_ips=())
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, content=b"ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with target.stream_async(client, "POST", url, headers={"X-Keep": "1"}, extensions={"custom": "value"}, timeout=3, content=b"payload") as response:
+            assert await response.aread() == b"ok"
+        assert response.is_closed
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.url) == url
+    assert request.headers["host"] == "example.com"
+    assert request.headers["x-keep"] == "1"
+    assert request.extensions["custom"] == "value"
+    assert "sni_hostname" not in request.extensions
+    assert request.extensions["timeout"]["connect"] == 3
+    assert request.content == b"payload"
+
+
+@pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ConnectTimeout])
+@pytest.mark.parametrize("failure_site", ["caller", "read", "close"])
+async def test_stream_async_never_retries_after_headers(fake_resolver, error_type, failure_site):
+    """Propagate caller, read, and cleanup errors without replaying the request."""
+    fake_resolver(["::1", "127.0.0.1"])
+    target = await resolve_pinned_target("http://localhost:8034/token", "OAuth token URL")
+    error = error_type("failure after headers")
+    requests = []
+    closed = []
+
+    class ResponseStream(httpx.AsyncByteStream):
+        """Record stream cleanup and inject failures after connection setup."""
+
+        async def __aiter__(self):
+            """Yield response bytes or propagate the injected read error."""
+            if failure_site == "read":
+                raise error
+            yield b"ok"
+
+        async def aclose(self):
+            """Record cleanup and propagate the injected cleanup error."""
+            closed.append(True)
+            if failure_site == "close":
+                raise error
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, stream=ResponseStream())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(error_type) as caught:
+            async with target.stream_async(client, "POST", target.validated_url) as response:
+                if failure_site == "caller":
+                    raise error
+                await response.aread()
+
+    assert caught.value is error
+    assert len(requests) == 1
+    assert closed == [True]
+    assert response.is_closed
+
+
+async def test_connect_async_dispatches_methods_without_verb_helpers():
+    """Forward methods without dedicated client helpers through client.request()."""
+    target = PinnedTarget(validated_url="https://example.com", hostname="", original_authority="", resolved_ips=())
+    client = SimpleNamespace(request=AsyncMock(return_value=httpx.Response(200)))
+
+    response = await target.connect_async(client, "OPTIONS", target.validated_url)
+
+    assert response.status_code == 200
+    client.request.assert_awaited_once_with("OPTIONS", target.validated_url, headers={})
