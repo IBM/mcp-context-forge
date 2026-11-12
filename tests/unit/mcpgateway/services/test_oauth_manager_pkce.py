@@ -15,6 +15,7 @@ Tests will FAIL until implementation is complete.
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qsl
 
 # Third-Party
 import httpx
@@ -22,6 +23,14 @@ import pytest
 
 # First-Party
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+
+def _form_pairs(call_args):
+    """Return the form fields of a token POST: the mapping for a single value, ordered pairs for repeated keys."""
+    kwargs = call_args[1]
+    if "content" in kwargs:
+        return parse_qsl(kwargs["content"])
+    return kwargs["data"]
 
 
 def _isolated_client(mock_client, captured_kwargs=None):
@@ -512,7 +521,7 @@ class TestRFC8707MultipleResources:
             call_args = mock_client.post.call_args
 
             # When resource is a list, data should be list of tuples
-            form_data = call_args[1]["data"]
+            form_data = _form_pairs(call_args)
             assert isinstance(form_data, list), "Form data should be list of tuples for multiple resources"
 
             # Count resource entries
@@ -547,7 +556,7 @@ class TestRFC8707MultipleResources:
             call_args = mock_client.post.call_args
 
             # When resource is a list, data should be list of tuples
-            form_data = call_args[1]["data"]
+            form_data = _form_pairs(call_args)
             assert isinstance(form_data, list), "Form data should be list of tuples for multiple resources"
 
             # Count resource entries
@@ -674,7 +683,7 @@ class TestOAuthManagerClientCredentialsFlow:
 
         token = await manager._client_credentials_flow(credentials)
         assert token == "abc"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert call_data["client_secret"] == "decrypted"
 
     @pytest.mark.asyncio
@@ -1009,7 +1018,7 @@ class TestOAuthManagerRefreshToken:
         with pytest.raises(OAuthError, match="Failed to refresh token"):
             await manager.refresh_token("refresh", credentials)
 
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert isinstance(call_data, list)
 
         client.post = AsyncMock(side_effect=httpx.HTTPError("boom"))
@@ -1986,7 +1995,7 @@ class TestExchangeCodeForTokensEdgeCases:
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
         # Verify no client_secret in request
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert "client_secret" not in call_data
 
     @pytest.mark.asyncio
@@ -2008,7 +2017,7 @@ class TestExchangeCodeForTokensEdgeCases:
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert call_data["resource"] == "https://api.example.com"
 
     @pytest.mark.asyncio
@@ -2030,7 +2039,7 @@ class TestExchangeCodeForTokensEdgeCases:
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
         # Only 2 resources should be added (empty string skipped)
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         resource_entries = [entry for entry in call_data if entry[0] == "resource"]
         assert len(resource_entries) == 2
 
@@ -2124,7 +2133,7 @@ class TestRefreshTokenEdgeCases:
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert call_data["resource"] == "https://api.example.com"
 
     @pytest.mark.asyncio
@@ -2184,7 +2193,7 @@ class TestRefreshTokenEdgeCases:
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         resource_entries = [entry for entry in call_data if entry[0] == "resource"]
         assert len(resource_entries) == 2
 
@@ -2201,7 +2210,7 @@ class TestRefreshTokenEdgeCases:
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert "client_secret" not in call_data
 
 
@@ -2280,7 +2289,7 @@ class TestExchangeCodeNoClientSecret:
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
-        call_data = client.post.call_args[1]["data"]
+        call_data = _form_pairs(client.post.call_args)
         assert "client_secret" not in call_data
 
 
