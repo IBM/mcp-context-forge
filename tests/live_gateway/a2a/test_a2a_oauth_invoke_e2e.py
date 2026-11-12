@@ -321,4 +321,3 @@ def test_other_users_private_agent_acquires_no_token(gateway, servers):
 
     assert response.status_code in (403, 404)
     assert recorder.token_requests == [] and recorder.agent_requests == []
-
