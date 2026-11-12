@@ -786,8 +786,6 @@ class Settings(  # pylint: disable=too-many-ancestors
             # Link-local (often used for cloud metadata)
             "169.254.0.0/16",  # Full link-local IPv4 range
             "fe80::/10",  # IPv6 link-local
-            # Shared/internal address space not classified as private by ipaddress
-            "100.64.0.0/10",  # RFC 6598 carrier-grade NAT
         ],
         description=(
             "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
@@ -816,7 +814,11 @@ class Settings(  # pylint: disable=too-many-ancestors
 
     ssrf_allowed_networks: List[str] = Field(
         default_factory=list,
-        description=("Optional CIDR allowlist for internal/private destinations. Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
+        description=(
+            "Optional CIDR allowlist for internal/private destinations. Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges. "
+            "It is also the only SSRF setting that allows RFC 6598 shared address space (100.64.0.0/10, e.g. Tailscale), which stays blocked otherwise: "
+            "SSRF_ALLOW_PRIVATE_NETWORKS does not cover it, and SSRF_BLOCKED_NETWORKS still wins over this list."
+        ),
     )
 
     ssrf_dns_fail_closed: bool = Field(

@@ -11,7 +11,8 @@ exception handler, the admin handler and the response serializer all take part:
 
 1. ``POST /gateways`` rejects a malformed URL with ``422``.
 2. ``POST /gateways`` keeps destination reason codes out of the response body.
-3. ``POST /admin/gateways`` returns the same status and the same exposure for a
+3. ``POST /gateways`` rejects a CGNAT (RFC 6598) destination that is not allowlisted.
+4. ``POST /admin/gateways`` returns the same status and the same exposure for a
    form submission, so API and admin registration stay equivalent.
 """
 
@@ -41,6 +42,9 @@ PUBLIC_REASON_CODES = {"url_invalid_syntax", "url_scheme_not_allowed"}
 
 # Always blocked by SSRF policy, independent of SSRF_ALLOW_PRIVATE_NETWORKS: cloud metadata.
 BLOCKED_DESTINATION = "http://169.254.169.254/mcp"
+
+# RFC 6598 shared address space; blocked unless SSRF_ALLOWED_NETWORKS lists it.
+CGNAT_DESTINATION = "http://100.101.102.103/mcp"
 
 # Codes that must stay in the logs: echoing them tells the caller whether a submitted
 # host resolved into a blocked internal range.
@@ -124,6 +128,18 @@ def test_blocked_destination_reason_code_stays_out_of_the_api_response(auth_head
 
     for code in LOG_ONLY_REASON_CODES:
         assert code not in resp.text, f"Log-only reason code {code} leaked into the response body: {resp.text}"
+
+
+@skip_no_gateway
+def test_cgnat_destination_rejected_without_allowlist_entry(auth_headers: dict[str, str]):
+    """An RFC 6598 (CGNAT) destination is rejected unless the operator allowlists it."""
+    resp = httpx.post(
+        f"{BASE_URL}/gateways",
+        json={"name": _gateway_name(), "url": CGNAT_DESTINATION, "transport": "STREAMABLEHTTP"},
+        headers=auth_headers,
+        timeout=15,
+    )
+    assert resp.status_code == 422, f"Expected 422 for CGNAT destination, got {resp.status_code}: {resp.text}"
 
 
 @skip_no_gateway

@@ -946,7 +946,7 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 | `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
 | `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `false` | bool    |
 | `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `false` | bool    |
-| `SSRF_ALLOWED_NETWORKS`     | Optional private CIDR allowlist when private networks are blocked | `[]`  | JSON array |
+| `SSRF_ALLOWED_NETWORKS`     | Optional CIDR allowlist for private ranges and CGNAT (100.64.0.0/10) | `[]`  | JSON array |
 | `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `true`  | bool    |
 | `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
 | `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
@@ -992,6 +992,14 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
+
+    **Tailscale / CGNAT destinations** (RFC 6598 shared address space, `100.64.0.0/10`):
+    ```bash
+    SSRF_ALLOWED_NETWORKS='["100.101.102.103/32"]'
+    ```
+    CGNAT addresses are blocked unless `SSRF_ALLOWED_NETWORKS` lists them. `SSRF_ALLOW_PRIVATE_NETWORKS=true`
+    does not allow them, and an `SSRF_BLOCKED_NETWORKS` entry overrides the allowlist. Prefer individual `/32`
+    entries over the whole `/10`.
 
 #### Helm/Kubernetes registration examples
 

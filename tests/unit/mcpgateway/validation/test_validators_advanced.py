@@ -1567,6 +1567,63 @@ class TestValidateSsrf:
             with pytest.raises(ValueError, match="shared address space"):
                 SecurityValidator._validate_ssrf("100.64.0.1", "URL")
 
+    def test_cgnat_blocked_under_default_blocklist_without_allowlist(self, ssrf_settings):
+        """The shipped SSRF_BLOCKED_NETWORKS default still leaves CGNAT blocked when nothing allowlists it."""
+        # First-Party
+        from mcpgateway.config import Settings
+
+        ssrf_settings.ssrf_blocked_networks = Settings.model_fields["ssrf_blocked_networks"].default
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(UrlPolicyError, match="shared address space") as excinfo:
+                SecurityValidator._validate_ssrf("100.101.102.103", "URL")
+
+        assert excinfo.value.reason_code == "url_private_network_blocked"
+
+    def test_cgnat_allowed_when_in_allowlist_and_not_blocked(self, ssrf_settings):
+        """An explicit SSRF_ALLOWED_NETWORKS entry admits a CGNAT destination such as a Tailscale node."""
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_allowed_networks = ["100.101.102.103/32"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("100.101.102.103", "URL")  # Should not raise
+
+    @pytest.mark.parametrize(
+        "allowed_networks",
+        [[], ["100.101.102.104/32"], ["10.0.0.0/8"], ["not-a-cidr"]],
+    )
+    def test_cgnat_blocked_without_matching_allowlist_entry(self, ssrf_settings, allowed_networks):
+        """CGNAT stays blocked unless an allowlist entry covers the exact destination."""
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_allowed_networks = allowed_networks
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(UrlPolicyError, match="shared address space") as excinfo:
+                SecurityValidator._validate_ssrf("100.101.102.103", "URL")
+
+        assert excinfo.value.reason_code == "url_private_network_blocked"
+
+    def test_cgnat_blocked_network_wins_over_allowlist(self, ssrf_settings):
+        """SSRF_BLOCKED_NETWORKS still rejects a CGNAT address that the allowlist also lists."""
+        ssrf_settings.ssrf_blocked_networks = ["100.64.0.0/10"]
+        ssrf_settings.ssrf_allowed_networks = ["100.101.102.103/32"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(UrlPolicyError) as excinfo:
+                SecurityValidator._validate_ssrf("100.101.102.103", "URL")
+
+        assert excinfo.value.reason_code == "url_destination_blocked"
+
+    def test_cgnat_rejected_when_any_dns_answer_is_not_allowlisted(self, ssrf_settings):
+        """A hostname resolving to an allowlisted and a non-allowlisted CGNAT address is rejected."""
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_allowed_networks = ["100.101.102.103/32"]
+        answers = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.101.102.103", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.101.102.104", 443)),
+        ]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", return_value=answers):
+                with pytest.raises(ValueError, match="shared address space"):
+                    SecurityValidator._validate_ssrf("node.tailnet.example", "URL")
+
     def test_dns_fail_closed(self, ssrf_settings):
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             with patch("socket.getaddrinfo", side_effect=socket.gaierror):
@@ -2524,6 +2581,21 @@ class TestOutboundUrlConnectionPinningValidation:
         with patch("mcpgateway.common.validators.settings", self._settings(ssrf_allow_private_networks=True, ssrf_blocked_networks=[])):
             with pytest.raises(ValueError, match="shared address space"):
                 await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_allows_allowlisted_cgnat_dns_answer(self, monkeypatch):
+        """Registration and pinning both admit an allowlisted CGNAT node, such as a Tailscale host."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.101.102.103", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        settings = self._settings(ssrf_allow_private_networks=True, ssrf_blocked_networks=[], ssrf_allowed_networks=["100.101.102.103/32"])
+        with patch("mcpgateway.common.validators.settings", settings):
+            result = await SecurityValidator.validate_url_for_connection_pinning("http://node.tailnet.example:8080/mcp", "Gateway URL")
+
+        assert result["resolved_ips"] == ["100.101.102.103"]
 
     @pytest.mark.asyncio
     async def test_validate_url_for_connection_pinning_allows_private_when_policy_disabled(self, monkeypatch):

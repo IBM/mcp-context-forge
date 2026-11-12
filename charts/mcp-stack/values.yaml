@@ -457,7 +457,7 @@ mcpContextForge:
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
     SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
     SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
-    SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
+    SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist for private ranges and CGNAT (100.64.0.0/10)
     SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
     # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
     # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
