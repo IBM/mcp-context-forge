@@ -1009,7 +1009,7 @@ async def test_server_conflict_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}, "metadata": {"entity_counts": {"servers": 1}}}
 
     # Setup conflict and existing server
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server", server_id="server_id")
     import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "update_server"
@@ -1022,6 +1022,8 @@ async def test_server_conflict_update_success(import_service, mock_db):
     # Should update the server
     assert status.updated_entities == 1
     import_service.server_service.update_server.assert_called_once()
+    assert import_service.server_service.update_server.await_args.args[1] == "server_id"
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1041,6 +1043,8 @@ async def test_server_conflict_update_not_found(import_service, mock_db):
     # Should skip the server and add warning
     assert status.skipped_entities == 1
     assert any("Could not find existing server to update" in warning for warning in status.warnings)
+    import_service.server_service.update_server.assert_not_called()
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1051,7 +1055,7 @@ async def test_server_conflict_update_exception(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}, "metadata": {"entity_counts": {"servers": 1}}}
 
     # Setup conflict, existing server, but update fails
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("error_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("error_server", server_id="server_id")
     import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "error_server"
@@ -2290,7 +2294,7 @@ async def test_process_server_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}}
 
     import_service.tool_service.list_tools.return_value = ([], None)
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("existing_server")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("existing_server", server_id="srv-1")
     mock_server = MagicMock()
     mock_server.name = "existing_server"
     mock_server.id = "srv-1"
@@ -2309,8 +2313,8 @@ async def test_process_server_update_exception(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}}
 
     import_service.tool_service.list_tools.return_value = ([], None)
-    import_service.server_service.register_server.side_effect = ServerNameConflictError("err_server")
-    import_service.server_service.list_servers.side_effect = Exception("DB error")
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("err_server", server_id="srv-1")
+    import_service.server_service.update_server.side_effect = Exception("DB error")
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -2970,6 +2974,92 @@ async def test_process_tools_bulk_restores_original_description(import_service, 
     call_kwargs = import_service.tool_service.register_tools_bulk.call_args[1]
     assert call_kwargs["import_batch_id"] is not None
     assert call_kwargs["created_via"] == "import"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("personal_team_id", [None, "trusted-personal-team"])
+@pytest.mark.parametrize(
+    ("entity_type", "service_name", "method_name", "entity"),
+    [
+        ("tools", "tool_service", "register_tools_bulk", {"name": "importtool", "url": "https://api.example.com/tool", "integration_type": "REST"}),
+        ("resources", "resource_service", "register_resources_bulk", {"name": "importresource", "uri": "resource://import/doc", "content": "hello"}),
+        ("prompts", "prompt_service", "register_prompts_bulk", {"name": "importprompt", "template": "Hello", "arguments": []}),
+    ],
+)
+async def test_bulk_imports_use_importer_team_and_ignore_payload_scope(import_service, mock_db, personal_team_id, entity_type, service_name, method_name, entity):
+    """Bulk imports use the authenticated importer's personal team and preserve NULL when no team exists."""
+    actor = "importer@example.com"
+    user = MagicMock()
+    user.email = actor
+    user.get_personal_team.return_value = SimpleNamespace(id=personal_team_id, name="Personal Team") if personal_team_id else None
+    mock_db.query.return_value.filter.return_value.first.return_value = user
+    register = getattr(getattr(import_service, service_name), method_name)
+    register.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    payload = {**entity, "team_id": "untrusted-team", "owner_email": "other@example.com", "visibility": "public"}
+    status = ImportStatus("import-team-audit")
+
+    await import_service._process_entities(
+        db=mock_db,
+        entity_type=entity_type,
+        entity_list=[payload],
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by=actor,
+    )
+
+    call = register.await_args.kwargs
+    assert call["team_id"] == personal_team_id
+    assert call["created_by"] == actor
+    assert call["created_via"] == "import"
+    assert call[entity_type][0].team_id is None
+    assert call[entity_type][0].owner_email is None
+    assert "owner_email" not in call
+    assert "visibility" not in call
+    assert payload["team_id"] == "untrusted-team"
+    assert status.created_entities == 1
+    assert status.errors == []
+    user.get_personal_team.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("personal_team_id", [None, "trusted-personal-team"])
+@pytest.mark.parametrize("rename", [False, True])
+async def test_server_import_creation_and_rename_use_trusted_ownership(import_service, mock_db, personal_team_id, rename):
+    """Server creation and rename receive trusted ownership before registration and reject payload ownership."""
+    actor = "importer@example.com"
+    context = {"team_id": personal_team_id, "user_email": actor} if personal_team_id else None
+    import_service._get_user_context = AsyncMock(return_value=context)
+    if rename:
+        import_service.server_service.register_server.side_effect = [ServerNameConflictError("importserver", server_id="existing-id"), MagicMock()]
+    status = ImportStatus("server-import-team")
+
+    await import_service._process_entities(
+        mock_db,
+        entity_type="servers",
+        entity_list=[{"name": "importserver", "team_id": "untrusted-team", "owner_email": "other@example.com", "visibility": "public"}],
+        conflict_strategy=ConflictStrategy.RENAME,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by=actor,
+    )
+
+    assert status.created_entities == 1
+    assert status.failed_entities == 0, status.errors
+    calls = import_service.server_service.register_server.await_args_list
+    assert len(calls) == (2 if rename else 1)
+    for call in calls:
+        assert call.kwargs.get("team_id") == personal_team_id
+        assert call.kwargs.get("owner_email", actor) == actor
+        assert call.kwargs.get("visibility", "public") == ("team" if personal_team_id else "public")
+        assert call.kwargs["created_by"] == actor
+        assert call.args[1].team_id is None
+        assert call.args[1].owner_email is None
+    import_service.server_service.list_servers.assert_not_called()
 
 
 @pytest.mark.asyncio

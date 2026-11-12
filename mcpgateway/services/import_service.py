@@ -830,24 +830,23 @@ class ImportService:
 
         try:
             create_data = await self._convert_to_server_create(db, server_data)
+            user_context = await self._get_user_context(db, imported_by)
+            ownership = {"team_id": user_context["team_id"], "owner_email": user_context["user_email"], "visibility": "team"} if user_context else {}
 
             try:
-                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", **ownership)
                 status.created_entities += 1
                 logger.debug("Created server: %s", server_name)
 
-            except ServerNameConflictError:
+            except ServerNameConflictError as conflict:
                 if conflict_strategy == ConflictStrategy.SKIP:
                     status.skipped_entities += 1
                     status.warnings.append(f"Skipped existing server: {server_name}")
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
-                        # Find existing server by name
-                        servers = await self.server_service.list_servers(db, include_inactive=True)
-                        existing_server = next((s for s in servers if s.name == server_name), None)
-                        if existing_server:
+                        if conflict.server_id:
                             update_data = await self._convert_to_server_update(db, server_data)
-                            await self.server_service.update_server(db, existing_server.id, update_data, imported_by)
+                            await self.server_service.update_server(db, conflict.server_id, update_data, imported_by)
                             status.updated_entities += 1
                             logger.debug("Updated server: %s", server_name)
                         else:
@@ -860,7 +859,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{server_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", **ownership)
                     status.created_entities += 1
                     status.warnings.append(f"Renamed server {server_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -1002,12 +1001,14 @@ class ImportService:
             batch_id = str(uuid.uuid4())
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.tool_service.register_tools_bulk(
                 db=db,
                 tools=tools_to_register,
                 created_by=imported_by,
                 created_via="import",
                 import_batch_id=batch_id,
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
@@ -1079,11 +1080,13 @@ class ImportService:
                 return
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.resource_service.register_resources_bulk(
                 db=db,
                 resources=resources_to_register,
                 created_by=imported_by,
                 created_via="import",
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
@@ -1139,11 +1142,13 @@ class ImportService:
                 return
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.prompt_service.register_prompts_bulk(
                 db=db,
                 prompts=prompts_to_register,
                 created_by=imported_by,
                 created_via="import",
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
