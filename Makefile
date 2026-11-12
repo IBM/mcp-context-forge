@@ -921,6 +921,12 @@ bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
 	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
 	@echo "✅ bats tests passed!"
 
+.PHONY: test-oauth-browser-binding
+test-oauth-browser-binding: uv  ## Test OAuth binding with isolated HTTPS servers and Chromium
+	@$(UV_BIN) run rstest -n 0 -c pyproject.toml -o addopts='' -p playwright \
+		tests/live_gateway/e2e/test_oauth_browser_binding.py \
+		tests/playwright/test_oauth_browser_binding.py --browser chromium -v --tb=short
+
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"

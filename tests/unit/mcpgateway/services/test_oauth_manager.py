@@ -1383,14 +1383,14 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
     mock_token_storage.store_tokens.return_value = mock_token_record
     oauth_manager.token_storage = mock_token_storage
 
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
         patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}, validated_state=validated_state
         )
 
     assert result["success"] is True
@@ -1411,14 +1411,14 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
     mock_token_storage.store_tokens.return_value = mock_token_record
     oauth_manager.token_storage = mock_token_storage
 
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
         patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}, validated_state=validated_state
         )
 
     assert result["success"] is True
@@ -1439,14 +1439,14 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
     mock_token_storage.store_tokens.return_value = mock_token_record
     oauth_manager.token_storage = mock_token_storage
 
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
         patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}, validated_state=validated_state
         )
 
     assert result["success"] is True
@@ -1467,14 +1467,14 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
     mock_token_storage.store_tokens.return_value = mock_token_record
     oauth_manager.token_storage = mock_token_storage
 
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
         patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}, validated_state=validated_state
         )
 
     assert result["success"] is True
@@ -1495,14 +1495,14 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
     mock_token_storage.store_tokens.return_value = mock_token_record
     oauth_manager.token_storage = mock_token_storage
 
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
         patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}, validated_state=validated_state
         )
 
     assert result["success"] is True
@@ -1533,12 +1533,14 @@ class TestRedirectUriPinning:
 
         exchange_mock = AsyncMock(return_value=mock_token_response)
 
+        validated_state = {
+            "gateway_id": "gw-123",
+            "state": "test-state",
+            "code_verifier": "verifier",
+            "app_user_email": "user@example.com",
+            "redirect_uri": "https://pinned.example.com/oauth/callback",
+        }
         with (
-            patch.object(
-                oauth_manager,
-                "_validate_and_retrieve_state",
-                return_value={"code_verifier": "verifier", "app_user_email": "user@example.com", "redirect_uri": "https://pinned.example.com/oauth/callback"},
-            ),
             patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
             patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
             patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
@@ -1550,6 +1552,7 @@ class TestRedirectUriPinning:
                 # Router-computed value; must be superseded by the pinned one below since
                 # e.g. app_domain or the gateway's oauth_config could have changed since authorize.
                 credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://recomputed.example.com/oauth/callback"},
+                validated_state=validated_state,
             )
 
         assert result["success"] is True
@@ -1571,8 +1574,8 @@ class TestRedirectUriPinning:
 
         exchange_mock = AsyncMock(return_value=mock_token_response)
 
+        validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
         with (
-            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
             patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
             patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
             patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
@@ -1582,6 +1585,7 @@ class TestRedirectUriPinning:
                 code="auth-code",
                 state="test-state",
                 credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://fallback.example.com/oauth/callback"},
+                validated_state=validated_state,
             )
 
         assert result["success"] is True
@@ -1600,6 +1604,7 @@ class TestRedirectUriPinning:
                 "test-gateway",
                 {"client_id": "test-client", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback"},
                 app_user_email="user@test.com",
+                browser_binding="test-binding-secret",
             )
 
         store_state_mock.assert_called_once()
@@ -1661,14 +1666,14 @@ class TestIssuerPinningOnAudienceLearning:
 
         from mcpgateway.services.dcr_service import DcrError
 
+        validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
         with (
-            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
             patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
             patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
             patch.object(oauth_manager, "_extract_aud_and_iss", return_value=aud_iss),
             patch("mcpgateway.services.oauth_manager.DcrService.discover_as_metadata", new_callable=AsyncMock, side_effect=DcrError("discovery unavailable")),
         ):
-            result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials)
+            result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials, validated_state=validated_state)
 
         assert result["success"] is True
         mock_token_storage.store_tokens.assert_called_once()
@@ -1859,7 +1864,7 @@ async def test_initiate_authorization_code_flow_with_popup_false(oauth_manager):
         "redirect_uri": "https://app.example.com/callback",
     }
 
-    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=False)
+    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=False, browser_binding="test-binding-secret")
 
     assert "authorization_url" in result
     assert "state" in result
@@ -1875,7 +1880,7 @@ async def test_initiate_authorization_code_flow_with_popup_true(oauth_manager):
         "redirect_uri": "https://app.example.com/callback",
     }
 
-    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=True)
+    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=True, browser_binding="test-binding-secret")
 
     assert "authorization_url" in result
     assert "state" in result
@@ -3264,9 +3269,9 @@ async def test_non_templated_metadata_issuer_mismatch_falls_back_to_configured(o
 
 @pytest.mark.asyncio
 async def test_complete_flow_refuses_code_exchange_on_iss_mismatch(oauth_manager):
-    """The state is consumed, but the code never reaches the token endpoint."""
+    """Reject issuer mismatch before code exchange."""
+    validated_state = {"gateway_id": "gw-123", "state": "test-state", "code_verifier": "verifier", "app_user_email": "user@example.com"}
     with (
-        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}) as retrieve,
         patch.object(oauth_manager, "_exchange_code_for_tokens") as exchange,
         patch(DISCOVER, new=AsyncMock(return_value=_metadata("https://as.example.com", True))),
         patch(SECURITY),
@@ -3278,8 +3283,8 @@ async def test_complete_flow_refuses_code_exchange_on_iss_mismatch(oauth_manager
                 state="test-state",
                 credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "issuer": "https://as.example.com"},
                 iss="https://attacker.example",
+                validated_state=validated_state,
             )
-    retrieve.assert_awaited_once()
     exchange.assert_not_called()
 
 

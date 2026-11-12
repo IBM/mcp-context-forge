@@ -934,12 +934,12 @@ class TestOAuthManagerTeamIdExtraction:
 
         stored_team_id = None
 
-        async def _capture_store(gw_id, state, code_verifier=None, app_user_email=None, redirect_uri=None, team_id=None):
+        async def _capture_store(gw_id, state, code_verifier=None, app_user_email=None, redirect_uri=None, team_id=None, browser_binding_hash=None):
             nonlocal stored_team_id
             stored_team_id = team_id
 
         with patch.object(mgr, "_store_authorization_state", side_effect=_capture_store):
-            await mgr.initiate_authorization_code_flow("gw-1", credentials, app_user_email="u@e.com")
+            await mgr.initiate_authorization_code_flow("gw-1", credentials, app_user_email="u@e.com", browser_binding="test-browser-binding")
 
         # teams[0] = "engineering" should be used
         assert stored_team_id == "engineering"
