@@ -19,7 +19,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -384,7 +383,7 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
             if cached and cached[1] > time.monotonic():
                 return f"Bearer {cached[0]}"
             try:
-                manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
                 token, expires_in = await manager.get_client_credentials_token({**oauth_config, "grant_type": "client_credentials"})
             except Exception as e:
                 raise A2AAgentError(f"Failed to obtain OAuth access token for agent '{agent_name}': {unexpected_error_detail(e)}") from e

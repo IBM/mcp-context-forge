@@ -36,6 +36,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 CLIENT_SECRET = "oauth-e2e-client-secret-value"  # pragma: allowlist secret
 ISSUED_TOKEN = "e2e-issued-access-token"  # pragma: allowlist secret
 OK_AGENT = "oauth-e2e-agent"
+PASSTHROUGH_AGENT = "oauth-e2e-passthrough"
 FAIL_AGENT = "oauth-e2e-failing-idp"
 DISABLED_AGENT = "oauth-e2e-disabled"
 PRIVATE_AGENT = "oauth-e2e-private"
@@ -103,7 +104,7 @@ def _make_agent_handler(recorder):
             length = int(self.headers.get("Content-Length", 0))
             self.rfile.read(length)
             with recorder.lock:
-                recorder.agent_requests.append({"authorization": self.headers.get("Authorization")})
+                recorder.agent_requests.append({"authorization": self.headers.get("Authorization"), "all_authorizations": self.headers.get_all("Authorization")})
             payload = json.dumps({"response": "ok", "status": "success"}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -151,6 +152,8 @@ def gateway(tmp_path_factory, servers):
         "MCPGATEWAY_ADMIN_API_ENABLED": "true",
         "MCPGATEWAY_UI_ENABLED": "false",
         "MCPGATEWAY_A2A_ENABLED": "true",
+        "ENABLE_HEADER_PASSTHROUGH": "true",
+        "ENABLE_SENSITIVE_HEADER_PASSTHROUGH": "true",
         "SSRF_ALLOW_LOCALHOST": "true",
         "PLUGINS_ENABLED": "false",
         "OBSERVABILITY_ENABLED": "false",
@@ -182,7 +185,7 @@ def gateway(tmp_path_factory, servers):
                 else:
                     pytest.fail(f"Gateway startup timed out: {log_path.read_text()[-5000:]}")
 
-                def register(name, token_path, visibility="public", team_id=None):
+                def register(name, token_path, visibility="public", team_id=None, passthrough_headers=None):
                     body = {
                         "agent": {
                             "name": name,
@@ -197,11 +200,14 @@ def gateway(tmp_path_factory, servers):
                     }
                     if team_id:
                         body["team_id"] = team_id
+                    if passthrough_headers:
+                        body["agent"]["passthrough_headers"] = passthrough_headers
                     response = client.post("/a2a", json=body)
                     assert response.status_code in (200, 201), response.text
                     return response.json()
 
                 register(OK_AGENT, "/token")
+                register(PASSTHROUGH_AGENT, "/token", passthrough_headers=["Authorization"])
                 register(FAIL_AGENT, "/broken")
                 disabled = register(DISABLED_AGENT, "/token")
                 assert client.post(f"/a2a/{disabled['id']}/state", params={"activate": "false"}).status_code == 200
@@ -250,6 +256,16 @@ def test_callers_gateway_token_is_not_forwarded(gateway, servers):
     assert _invoke(gateway, OK_AGENT).status_code == 200
 
     assert [call["authorization"] for call in recorder.agent_requests] == [f"Bearer {ISSUED_TOKEN}"]
+
+
+def test_authorization_passthrough_is_replaced_by_the_issued_token(gateway, servers):
+    """An agent that allows Authorization passthrough still receives only the issued token."""
+    _idp, _agent, recorder = servers
+    recorder.clear()
+
+    assert _invoke(gateway, PASSTHROUGH_AGENT).status_code == 200
+
+    assert [call["all_authorizations"] for call in recorder.agent_requests] == [[f"Bearer {ISSUED_TOKEN}"]]
 
 
 def test_token_acquisition_failure_sends_no_request_to_agent(gateway, servers):
@@ -305,3 +321,4 @@ def test_other_users_private_agent_acquires_no_token(gateway, servers):
 
     assert response.status_code in (403, 404)
     assert recorder.token_requests == [] and recorder.agent_requests == []
+
