@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, Optional
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.a2a_errors import A2AAgentError
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, service_token_fingerprint
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -134,6 +135,26 @@ def _remember_failure(agent_id: str, fingerprint: str, message: str) -> None:
         _recent_failures.popitem(last=False)
 
 
+def forget_a2a_oauth_failures(agent_id: str) -> None:
+    """Drop every remembered token failure of an agent.
+
+    Args:
+        agent_id: Agent identifier.
+
+    Examples:
+        >>> _recent_failures.clear()
+        >>> _remember_failure("a", "f1", "boom")
+        >>> _remember_failure("b", "f1", "boom")
+        >>> forget_a2a_oauth_failures("a")
+        >>> list(_recent_failures)
+        ['b:f1']
+        >>> _recent_failures.clear()
+    """
+    prefix = f"{agent_id}:"
+    for key in [key for key in _recent_failures if key.startswith(prefix)]:
+        _recent_failures.pop(key, None)
+
+
 async def resolve_a2a_oauth_headers(agent_id: str, agent_name: str, endpoint_url: str, oauth_config: Optional[Dict[str, Any]], oauth_manager: Optional[OAuthManager] = None) -> Dict[str, str]:
     """Return the ``Authorization`` header for an OAuth A2A agent.
 
@@ -142,7 +163,7 @@ async def resolve_a2a_oauth_headers(agent_id: str, agent_name: str, endpoint_url
         agent_name: Agent name, used in messages.
         endpoint_url: Agent endpoint URL.
         oauth_config: Stored agent OAuth configuration.
-        oauth_manager: Token client. Defaults to a new ``OAuthManager``.
+        oauth_manager: Token client. Defaults to a new ``OAuthManager`` that uses ``OAUTH_REQUEST_TIMEOUT`` and ``OAUTH_MAX_RETRIES``.
 
     Returns:
         ``{"Authorization": "Bearer <token>"}``.
@@ -171,7 +192,7 @@ async def resolve_a2a_oauth_headers(agent_id: str, agent_name: str, endpoint_url
             return {"Authorization": f"Bearer {cached}"}
         _raise_if_recently_failed(fingerprint, agent_id)
 
-        manager = oauth_manager or OAuthManager()
+        manager = oauth_manager or OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
         started = time.monotonic()
         try:
             response = await manager.get_client_credentials_token_response(effective, send_resource=True)
@@ -190,7 +211,9 @@ async def resolve_a2a_oauth_headers(agent_id: str, agent_name: str, endpoint_url
         blocking = validation.blocking_errors
         if blocking:
             logger.warning("Refusing OAuth token for A2A agent %s: %s correlation_id=%s", agent_name, "; ".join(blocking), get_correlation_id())
-            raise A2AOAuthError(f"Refusing to forward OAuth token for A2A agent '{agent_name}': {'; '.join(blocking)}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+            message = f"Refusing to forward OAuth token for A2A agent '{agent_name}': {'; '.join(blocking)}. Fix oauth_config (resource/scopes/issuer) or the IdP token request."
+            _remember_failure(agent_id, fingerprint, message)
+            raise A2AOAuthError(message)
 
         try:
             expires_in = int(response.get("expires_in") or _FALLBACK_TTL)

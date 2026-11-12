@@ -17,7 +17,6 @@ import base64
 import binascii
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-import hashlib
 import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
@@ -47,7 +46,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardRequest, A2AFetchCardResponse, A2AStoredCardRead, A2ATestError
 from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_errors import A2AAgentError
-from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, resolve_a2a_agent_oauth_headers
+from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, forget_a2a_oauth_failures, resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -55,7 +54,6 @@ from mcpgateway.services.gateway_service_token_cache import get_service_token_ca
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -2270,6 +2268,7 @@ class A2AAgentService(BaseService):
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
                 await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
+                forget_a2a_oauth_failures(agent_id)
 
                 # Cascade: update associated tool's enabled status to match agent.
                 # This mirrors gateway_service.set_gateway_state() which lets cascade
@@ -2381,6 +2380,7 @@ class A2AAgentService(BaseService):
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
                 await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
+                forget_a2a_oauth_failures(agent_id)
                 # Also invalidate tags cache since agent tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

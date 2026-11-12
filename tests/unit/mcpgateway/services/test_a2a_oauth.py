@@ -88,10 +88,9 @@ async def test_token_is_cached_and_blocked_token_is_not():
 
     bad = _manager(_jwt("https://wrong.example.com"))
     cfg = {**CONFIG, "resource": "https://api.example.com"}
-    for _ in range(2):
-        with pytest.raises(A2AOAuthError):
-            await resolve_a2a_oauth_headers("a2", "agent", ENDPOINT, cfg, oauth_manager=bad)
-    assert bad.get_client_credentials_token_response.await_count == 2
+    with pytest.raises(A2AOAuthError):
+        await resolve_a2a_oauth_headers("a2", "agent", ENDPOINT, cfg, oauth_manager=bad)
+    assert await a2a_oauth.get_service_token_cache().get(a2a_oauth.A2A_OAUTH_TOKEN_PURPOSE, "a2", a2a_oauth._cache_fingerprint(a2a_oauth._effective_config(cfg, ENDPOINT))) is None
 
 
 @pytest.mark.asyncio
@@ -307,3 +306,40 @@ async def test_client_credentials_sends_every_listed_resource():
     await manager.get_client_credentials_token_response(cfg, send_resource=True)
     pairs = manager._post_token_request.call_args.args[1]
     assert [value for key, value in pairs if key == "resource"] == ["https://a.example.com", "https://b.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_default_token_client_uses_the_oauth_settings(monkeypatch):
+    """Without an injected client, the token request honors OAUTH_REQUEST_TIMEOUT and OAUTH_MAX_RETRIES."""
+    seen = {}
+
+    class _Manager:
+        def __init__(self, request_timeout, max_retries):
+            seen.update(request_timeout=request_timeout, max_retries=max_retries)
+
+        async def get_client_credentials_token_response(self, *_args, **_kwargs):
+            return {"access_token": _jwt("https://agent.example.com"), "expires_in": 300}
+
+    monkeypatch.setattr(a2a_oauth, "OAuthManager", _Manager)
+    monkeypatch.setattr(a2a_oauth.settings, "oauth_request_timeout", 7)
+    monkeypatch.setattr(a2a_oauth.settings, "oauth_max_retries", 5)
+    await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, CONFIG)
+    assert seen == {"request_timeout": 7, "max_retries": 5}
+
+
+@pytest.mark.asyncio
+async def test_blocked_token_is_not_requested_again_inside_the_negative_window():
+    """A token that fails claim validation costs one IdP request for the window, not one per call."""
+    bad = _manager(_jwt("https://wrong.example.com"))
+    cfg = {**CONFIG, "resource": "https://api.example.com"}
+    for _ in range(3):
+        with pytest.raises(A2AOAuthError, match="audience"):
+            await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, cfg, oauth_manager=bad)
+    assert bad.get_client_credentials_token_response.await_count == 1
+
+
+def test_forget_failures_drops_only_that_agent():
+    a2a_oauth._remember_failure("a1", "f", "boom")
+    a2a_oauth._remember_failure("a10", "f", "boom")
+    a2a_oauth.forget_a2a_oauth_failures("a1")
+    assert list(a2a_oauth._recent_failures) == ["a10:f"]
