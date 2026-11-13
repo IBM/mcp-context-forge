@@ -177,6 +177,22 @@ class TestRegistrationFetch:
         await service._fetch_registration_card("https://cards.evil.example", "bearer", auth_value, "https://agent.example.com/rpc")  # pylint: disable=protected-access
         assert fetch.await_args.args[2] is None
 
+    @pytest.mark.parametrize("card_url", ["https://evil.example\\@a.example.com/card.json", "https://a.example.com:8443/card.json", "http://a.example.com/card.json"])
+    async def test_credentials_are_withheld_when_parsers_or_origins_differ(self, service, monkeypatch, card_url):
+        """A backslash-userinfo URL, another port, or another scheme never receives the credential."""
+        fetch = AsyncMock(return_value=_fetched())
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        auth_value = a2a_service_module.encode_auth({"Authorization": "Bearer t0k"})  # pragma: allowlist secret
+        await service._fetch_registration_card(card_url, "bearer", auth_value, "https://a.example.com/rpc")  # pylint: disable=protected-access
+        assert fetch.await_args.args[2] is None
+
+    async def test_fetch_uses_the_normalized_card_url(self, service, monkeypatch):
+        """The URL that is fetched is the normalized URL that the origin check used."""
+        fetch = AsyncMock(return_value=_fetched())
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        await service._fetch_registration_card("https://evil.example\\@a.example.com/card.json")  # pylint: disable=protected-access
+        assert fetch.await_args.args[0] == "https://evil.example/@a.example.com/card.json"
+
     async def test_no_credentials_sends_no_headers(self, service, monkeypatch):
         """A registration without auth fetches the card without headers."""
         fetch = AsyncMock(return_value=_fetched())
