@@ -166,8 +166,16 @@ class TestRegistrationFetch:
         fetch = AsyncMock(return_value=_fetched())
         monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
         auth_value = a2a_service_module.encode_auth({"Authorization": "Bearer t0k"})  # pragma: allowlist secret
-        await service._fetch_registration_card("https://agent.example.com", "bearer", auth_value)  # pylint: disable=protected-access
+        await service._fetch_registration_card("https://agent.example.com", "bearer", auth_value, "https://agent.example.com/rpc")  # pylint: disable=protected-access
         assert fetch.await_args.args[2] == {"Authorization": "Bearer t0k"}
+
+    async def test_credentials_are_withheld_from_another_origin(self, service, monkeypatch):
+        """A card URL on a different origin than the endpoint never receives the credential."""
+        fetch = AsyncMock(return_value=_fetched())
+        monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
+        auth_value = a2a_service_module.encode_auth({"Authorization": "Bearer t0k"})  # pragma: allowlist secret
+        await service._fetch_registration_card("https://cards.evil.example", "bearer", auth_value, "https://agent.example.com/rpc")  # pylint: disable=protected-access
+        assert fetch.await_args.args[2] is None
 
     async def test_no_credentials_sends_no_headers(self, service, monkeypatch):
         """A registration without auth fetches the card without headers."""
@@ -182,7 +190,7 @@ class TestRegistrationFetch:
         monkeypatch.setattr(a2a_service_module, "fetch_agent_card", fetch)
         auth_value = a2a_service_module.encode_auth({"Host": "evil.example"})
         with pytest.raises(ValueError):
-            await service._fetch_registration_card("https://agent.example.com", "authheaders", auth_value)  # pylint: disable=protected-access
+            await service._fetch_registration_card("https://agent.example.com", "authheaders", auth_value, "https://agent.example.com/rpc")  # pylint: disable=protected-access
         fetch.assert_not_awaited()
 
 

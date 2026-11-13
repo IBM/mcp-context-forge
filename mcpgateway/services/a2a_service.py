@@ -399,6 +399,31 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
             _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
 
 
+def _same_origin(url: str, other: Optional[str]) -> bool:
+    """Return whether two URLs share scheme, host, and port.
+
+    Args:
+        url: First URL.
+        other: Second URL, or ``None``.
+
+    Returns:
+        ``True`` when both URLs have the same origin.
+
+    Examples:
+        >>> _same_origin("https://a.example.com/card", "https://a.example.com:443/rpc")
+        True
+        >>> _same_origin("https://a.example.com", "https://b.example.com")
+        False
+        >>> _same_origin("https://a.example.com", None)
+        False
+    """
+    if not other:
+        return False
+    first, second = urlparse(url), urlparse(other)
+    default_ports = {"http": 80, "https": 443}
+    return (first.scheme, first.hostname, first.port or default_ports.get(first.scheme)) == (second.scheme, second.hostname, second.port or default_ports.get(second.scheme))
+
+
 class A2AAgentError(Exception):
     """Base class for A2A agent-related errors.
 
@@ -910,7 +935,7 @@ class A2AAgentService(BaseService):
         Examples:
             # TODO
         """
-        fetched_card = await self._fetch_registration_card(agent_data.card_url, getattr(agent_data, "auth_type", None), getattr(agent_data, "auth_value", None))
+        fetched_card = await self._fetch_registration_card(agent_data.card_url, getattr(agent_data, "auth_type", None), getattr(agent_data, "auth_value", None), str(agent_data.endpoint_url))
         with create_span(
             "a2a.register",
             {
@@ -1183,16 +1208,20 @@ class A2AAgentService(BaseService):
                 raise A2AAgentError(f"Failed to register A2A agent: {unexpected_error_detail(e)}")
 
     @staticmethod
-    async def _fetch_registration_card(card_url: Optional[str], auth_type: Optional[str] = None, auth_value: Optional[str] = None) -> Optional[A2AFetchCardResponse]:
+    async def _fetch_registration_card(
+        card_url: Optional[str], auth_type: Optional[str] = None, auth_value: Optional[str] = None, endpoint_url: Optional[str] = None
+    ) -> Optional[A2AFetchCardResponse]:
         """Fetch the Agent Card named by ``card_url`` before any write happens.
 
         The registration credentials of types ``basic``, ``bearer`` and ``authheaders`` go to the
-        card URL host, so an agent that publishes its card behind a key can still register.
+        card URL only when it shares an origin with ``endpoint_url``. A mistyped or hostile
+        ``card_url`` on another origin never receives them.
 
         Args:
             card_url: Agent endpoint or card URL from the registration request, or ``None``.
             auth_type: Authentication type of the registration request.
             auth_value: Encoded authentication value of the registration request.
+            endpoint_url: Agent endpoint URL of the registration request.
 
         Returns:
             The fetched card, or ``None`` when registration names no card.
@@ -1203,7 +1232,7 @@ class A2AAgentService(BaseService):
         if not card_url:
             return None
         headers: Optional[Dict[str, str]] = None
-        if auth_type in ("basic", "bearer", "authheaders") and auth_value:
+        if auth_type in ("basic", "bearer", "authheaders") and auth_value and _same_origin(card_url, endpoint_url):
             headers = {str(key): str(value) for key, value in decode_auth(auth_value).items()}
         request = A2AFetchCardRequest(base_url=card_url, headers=headers)
         fetched = await fetch_agent_card(str(request.base_url), None, request.headers)

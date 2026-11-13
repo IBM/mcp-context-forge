@@ -5180,6 +5180,8 @@ async def get_a2a_agent_stored_card(
 ) -> A2AStoredCardRead:
     """Return the Agent Card stored for a registered agent, as fetched.
 
+    Every caller with ``a2a.read`` who can see the agent receives the card, including a card fetched with credentials.
+
     Args:
         agent_id (str): The ID of the agent.
         request (Request): The FastAPI request object for token scope retrieval.
