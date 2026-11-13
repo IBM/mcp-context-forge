@@ -815,6 +815,7 @@ class TestTokenExchangeDiscoveryHealthCheck:
         pinned.pin = lambda url: url
         pinned.apply_headers = lambda headers: headers
         pinned.extensions = {}
+        pinned.stream_async = lambda c, method, url, **kw: c.stream(method, url, **kw)
 
         with (
             patch(
