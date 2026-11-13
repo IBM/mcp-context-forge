@@ -547,6 +547,7 @@ class ExportService:
                 "tags": gateway.tags or [],
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "tool_validation_policy": gateway.tool_validation_policy,
+                "pin_sessions_by_caller": getattr(gateway, "pin_sessions_by_caller", False) is True,
             }
 
             # Handle authentication data securely - use batch-fetched values
@@ -978,6 +979,7 @@ class ExportService:
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
                 "tool_validation_policy": db_gateway.tool_validation_policy,
+                "pin_sessions_by_caller": getattr(db_gateway, "pin_sessions_by_caller", False) is True,
             }
 
             # Include auth data directly from DB (already have raw values)

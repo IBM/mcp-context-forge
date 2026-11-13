@@ -89,17 +89,15 @@ from mcpgateway.auth_context import (
     selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.common.models import InitializeResult
+from mcpgateway.common.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
-from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, QueryPaginationCursor, QueryTeamId, QueryVisibility, resolve_gateway_id_filter
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2APushNotificationConfig
+from mcpgateway.db import A2APushNotificationConfig, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
@@ -191,13 +189,14 @@ from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
+    completion_error_code,
     CompletionError,
     CompletionInvalidParamsError,
     CompletionNotSupportedError,
     CompletionService,
-    completion_error_code,
 )
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
@@ -214,9 +213,8 @@ from mcpgateway.services.gateway_service import (
     GatewayToolNameConflictError,
     test_server_handshake,
 )
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -233,10 +231,10 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
-from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -248,17 +246,18 @@ from mcpgateway.transports.streamablehttp_transport import (
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
-    user_context_var,
     text_content_carries,
+    user_context_var,
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import (
-    PUBLIC_REASON_CODES,
     ErrorFormatter,
     extract_reason_code,
+    PUBLIC_REASON_CODES,
     PublicValidationError,
     safe_error_detail,
     sanitize_validation_error_for_log,
@@ -266,7 +265,6 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
-from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -566,6 +564,11 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
         "auth_method": payload.get("auth_method") or ("jwt" if is_authenticated else "anonymous"),
         "token_use": payload.get("token_use"),
     }
+    internal = get_internal_mcp_auth_context(request)
+    if internal is not None and internal.get("is_authenticated") is True:
+        context["caller_session_identity"] = internal.get("caller_session_identity")
+    elif is_authenticated and isinstance(cached, tuple) and isinstance(cached[0], str):
+        context["caller_session_identity"] = verified_caller_identity(cached[0], email, str(payload.get("iss", "")))
     if scoped_permissions is not None:
         context["scoped_permissions"] = scoped_permissions
     if scoped_server_id:
@@ -1644,7 +1647,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             downstream_session_id=downstream_session_id,
         )
 
-    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    registry = init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    registry.start_caller_cleanup()
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
@@ -9364,6 +9368,7 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
             request_headers=dict(request.headers),
+            caller_auth_context=_build_internal_mcp_auth_context_for_rpc(request, user),
         )
         payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
 
@@ -10141,6 +10146,7 @@ async def handle_internal_mcp_prompts_get(request: Request):
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
             _meta_data=meta_data,
+            caller_auth_context=_build_internal_mcp_auth_context_for_rpc(request, user),
         )
         payload = result.model_dump(by_alias=True, exclude_none=True) if hasattr(result, "model_dump") else result
 
@@ -11246,9 +11252,12 @@ async def _execute_rpc_tools_call(
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    caller_auth_context=_build_internal_mcp_auth_context_for_rpc(request, user),
                     skip_pre_invoke=skip_pre_invoke,
                     require_model_visible=True,
                 )
+            except CallerSessionError as exc:
+                raise JSONRPCError(exc.code, str(exc), None) from exc
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
                 raise JSONRPCError(-32601, f"Tool not found: {name}", None)
@@ -12054,6 +12063,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
                     request_headers=dict(request.headers),
+                    caller_auth_context=_build_internal_mcp_auth_context_for_rpc(request, user),
                 )
                 result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
             except (ValueError, ResourceNotFoundError) as e:
@@ -12122,6 +12132,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     _meta_data=meta_data,
+                    caller_auth_context=_build_internal_mcp_auth_context_for_rpc(request, user),
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
@@ -12395,6 +12406,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
     except (PluginError, PluginViolationError):
         raise
+    except CallerSessionError as exc:
+        return {"jsonrpc": "2.0", "error": {"code": exc.code, "message": str(exc)}, "id": req_id}
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}

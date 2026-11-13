@@ -15,6 +15,8 @@ identified by its ``Mcp-Session-Id``) and each upstream gateway it talks to.
 Within one downstream session, tool calls still reuse a single upstream
 session per gateway — so the per-call latency win of pooling survives — but
 nothing is ever shared across downstream sessions.
+Separate caller bindings provide opt-in continuity for authenticated session-less requests.
+Explicit correlation keys subdivide caller bindings without joining downstream sessions.
 """
 
 # Future
@@ -42,6 +44,16 @@ import mcp_types
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.caller_session import (
+    CallerBinding,
+    CallerOwnershipLostError,
+    CallerOwnershipState,
+    CallerOwnershipTicket,
+    CallerSessionError,
+    connection_fingerprint,
+    INTERNAL_HEADERS,
+    REQUEST_HEADERS,
+)
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.session_compat import RequestResponder
@@ -67,6 +79,24 @@ class TransportType(str, Enum):
 
     SSE = "sse"
     STREAMABLE_HTTP = "streamablehttp"
+
+
+def upstream_session_needs_replacement(exc: BaseException) -> bool:
+    """Recognize transport failures, including SDK task-group wrappers.
+
+    Args:
+        exc: Exception raised by an upstream operation.
+
+    Returns:
+        Whether another operation must use a fresh upstream session.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return any(upstream_session_needs_replacement(child) for child in exc.exceptions)
+    if isinstance(exc, (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError, httpx.TransportError, httpx2.TransportError)):
+        return True
+    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return exc.response.status_code in (401, 403, 404, 410)
+    return isinstance(exc, McpError) and exc.error.code == -32600 and exc.error.message == "Session terminated"
 
 
 HttpxClientFactory = Callable[
@@ -164,6 +194,8 @@ class SessionCreateRequest:
     httpx_client_factory: Optional[HttpxClientFactory]
     message_handler_factory: Optional[MessageHandlerFactory]
     timeout_seconds: float
+    request_headers: Optional[dict[str, str]] = None
+    operation_context: Optional[dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         """Validate invariants the registry relies on at creation time."""
@@ -649,6 +681,49 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     else:
         pinned_httpx_client_factory = _build_pinned_httpx_client_factory(pinned_target)
 
+    if req.request_headers is not None:
+        base_factory = pinned_httpx_client_factory
+
+        def operation_client_factory(*args: Any, **kwargs: Any) -> httpx2.AsyncClient:
+            """Apply operation headers inside owner-task transport requests."""
+            client = base_factory(*args, **kwargs)
+
+            class OperationTransport(httpx2.AsyncBaseTransport):
+                """Restore operation context before instrumented HTTP transport execution."""
+
+                def __init__(self, inner: httpx2.AsyncBaseTransport) -> None:
+                    """Retain the pinned transport and its configured TLS material."""
+                    self.inner = inner
+
+                async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+                    """Run HTTP instrumentation under the current caller's trace context."""
+                    try:
+                        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+                    except ImportError:
+                        return await self.inner.handle_async_request(request)
+                    token = otel_context.attach((req.operation_context or {}).get("value", otel_context.Context()))
+                    try:
+                        return await self.inner.handle_async_request(request)
+                    finally:
+                        otel_context.detach(token)
+
+                async def aclose(self) -> None:
+                    """Close the underlying pinned transport."""
+                    await self.inner.aclose()
+
+            client._transport = OperationTransport(client._transport)  # pylint: disable=protected-access
+
+            async def trace_request(request: Any) -> None:
+                """Replace tracing headers with the current serialized operation's headers."""
+                for name in REQUEST_HEADERS:
+                    request.headers.pop(name, None)
+                request.headers.update(req.request_headers or {})
+
+            client.event_hooks.setdefault("request", []).append(trace_request)
+            return client
+
+        pinned_httpx_client_factory = operation_client_factory
+
     if req.transport_type is TransportType.SSE:
         transport_ctx = sse_client(
             url=req.url,
@@ -890,6 +965,24 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=client)
 
 
+@dataclass
+class _CallerEntry:
+    """Own one caller binding, including queued operations and transport headers."""
+
+    binding: CallerBinding
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+    upstream: Optional[UpstreamSession] = None
+    fingerprint: str = ""
+    last_used: float = field(default_factory=time.monotonic)
+    request_headers: dict[str, str] = field(default_factory=dict)
+    operation_context: dict[str, Any] = field(default_factory=dict)
+    invalidated: bool = False
+    ownership: Optional[CallerOwnershipTicket] = None
+    ownership_revoked: bool = False
+    drained: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 class UpstreamSessionRegistry:
     """Maps ``(downstream_session_id, gateway_id)`` to a single upstream session.
 
@@ -900,8 +993,8 @@ class UpstreamSessionRegistry:
 
     Lifetime of an upstream session follows the downstream session: callers
     evict via evict_session() on DELETE /mcp (or session expiry). There is no
-    wall-clock TTL; staleness is handled by a health probe on reuse after the
-    idle validation window.
+    wall-clock TTL for downstream bindings; idle validation probes their health.
+    Caller bindings have bounded capacity and idle expiry, independent of downstream sessions.
 
     Calls through one reused MCP SDK ClientSession are serialized. The SDK
     request-id counter is not locked, so concurrent send_request() calls can
@@ -922,6 +1015,8 @@ class UpstreamSessionRegistry:
         health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
         session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
         shutdown_timeout_seconds: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+        caller_idle_timeout: Optional[float] = None,
+        caller_max_bindings: Optional[int] = None,
     ) -> None:
         """Build a registry. ``session_factory`` is injectable for tests."""
         self._session_factory: SessionFactory = session_factory or _default_session_factory
@@ -935,6 +1030,219 @@ class UpstreamSessionRegistry:
         self._key_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
         self._metrics = _RegistryMetrics()
+        self._callers: dict[tuple[str, str], _CallerEntry] = {}
+        self._caller_idle_timeout = caller_idle_timeout if caller_idle_timeout is not None else settings.mcp_caller_session_idle_timeout
+        self._caller_max_bindings = caller_max_bindings if caller_max_bindings is not None else settings.mcp_caller_session_max_bindings
+        self._caller_cleanup_task: Optional[asyncio.Task] = None
+        self._closing = False
+        self._caller_ownership: dict[str, CallerOwnershipTicket] = {}
+
+    def start_caller_cleanup(self) -> None:
+        """Start periodic expiry inside the application event loop."""
+        if self._caller_cleanup_task is None:
+            self._caller_cleanup_task = asyncio.create_task(self._cleanup_callers(), name="caller-session-cleanup")
+
+    async def _cleanup_callers(self) -> None:
+        """Expire idle caller bindings until application shutdown."""
+        while True:
+            await asyncio.sleep(min(self._caller_idle_timeout, 30.0))
+            await self.expire_callers()
+
+    async def expire_callers(self) -> int:
+        """Close expired caller sessions while protecting active and queued calls."""
+        async with self._global_lock:
+            expired = [key for key, entry in self._callers.items() if entry.users == 0 and time.monotonic() - entry.last_used >= self._caller_idle_timeout]
+            for key in expired:
+                entry = self._callers.pop(key)
+                if entry.upstream is not None:
+                    await self._close_session(entry.upstream)
+                    self._metrics.evictions += 1
+            return len(expired)
+
+    def _require_caller_ownership(self, binding: CallerBinding, ownership: Optional[CallerOwnershipTicket], entry: Optional[_CallerEntry] = None) -> None:
+        """Reject stale admission tickets and terminally revoked queued entries.
+
+        Args:
+            binding: Authenticated caller binding being acquired.
+            ownership: Server-issued ticket, or None for single-worker admission.
+            entry: Reserved entry when acquisition has reached the operation queue.
+        """
+        if entry is not None and (entry.ownership_revoked or entry.ownership is not ownership):
+            raise CallerOwnershipLostError()
+        if ownership is None:
+            if settings.mcpgateway_session_affinity_enabled or binding.routing_key in self._caller_ownership:
+                raise CallerOwnershipLostError()
+            return
+        ownership.require_valid()
+        if ownership.routing_key != binding.routing_key or self._caller_ownership.get(binding.routing_key) is not ownership:
+            raise CallerOwnershipLostError()
+
+    async def _validate_caller_ownership(self, binding: CallerBinding, ownership: Optional[CallerOwnershipTicket], entry: Optional[_CallerEntry] = None) -> None:
+        """Revalidate shared authority after asynchronous waits and before dispatch.
+
+        Args:
+            binding: Authenticated caller binding being acquired.
+            ownership: Server-issued ticket, or None for single-worker admission.
+            entry: Reserved entry when acquisition has reached the operation queue.
+        """
+        self._require_caller_ownership(binding, ownership, entry)
+        if ownership is not None:
+            await ownership.validate()
+        self._require_caller_ownership(binding, ownership, entry)
+
+    async def install_caller_ownership(self, ownership: CallerOwnershipTicket) -> None:
+        """Revoke older local generations and drain them before publishing a replacement.
+
+        Args:
+            ownership: Pending ticket verified by the affinity service.
+        """
+        ownership.require_valid(ready=False)
+        async with self._global_lock:
+            if self._closing:
+                raise CallerOwnershipLostError()
+            previous = self._caller_ownership.get(ownership.routing_key)
+            if previous is not None and previous is not ownership:
+                previous.revoke()
+            self._caller_ownership[ownership.routing_key] = ownership
+            stale = []
+            for key, entry in self._callers.items():
+                if entry.binding.routing_key == ownership.routing_key and entry.ownership is not ownership:
+                    entry.ownership_revoked = True
+                    if entry.ownership is not None:
+                        entry.ownership.revoke()
+                    stale.append((key, entry))
+        for key, entry in stale:
+            if entry.users:
+                await entry.drained.wait()
+            if entry.upstream is not None:
+                await self._close_session(entry.upstream)
+                entry.upstream = None
+            async with self._global_lock:
+                if self._callers.get(key) is entry:
+                    self._callers.pop(key)
+
+    def publish_caller_ownership(self, ownership: CallerOwnershipTicket) -> None:
+        """Admit a verified generation only after local initialization completes.
+
+        Args:
+            ownership: Pending ticket whose shared lease has just been checked.
+        """
+        ownership.require_valid(ready=False)
+        if self._closing or self._caller_ownership.get(ownership.routing_key) is not ownership:
+            raise CallerOwnershipLostError()
+        ownership.state = CallerOwnershipState.READY
+
+    @asynccontextmanager
+    async def acquire_caller(
+        self,
+        *,
+        binding: CallerBinding,
+        gateway_id: str,
+        url: str,
+        headers: dict[str, str],
+        transport_type: TransportType,
+        httpx_client_factory: Optional[HttpxClientFactory] = None,
+        tls_identity: Any = None,
+        ownership: Optional[CallerOwnershipTicket] = None,
+    ) -> AsyncIterator[UpstreamSession]:
+        """Serialize caller operations while enforcing current worker ownership.
+
+        Args:
+            binding: Authenticated caller binding and optional real listener ID.
+            gateway_id: Authorized upstream gateway ID.
+            url: Effective upstream URL.
+            headers: Effective headers after credential resolution and plugin hooks.
+            transport_type: Upstream transport.
+            httpx_client_factory: Optional transport client factory.
+            tls_identity: Effective TLS trust and client certificate material.
+            ownership: Server-issued local ownership ticket when affinity is enabled.
+
+        Yields:
+            A live upstream session held exclusively for this operation.
+
+        Raises:
+            CallerSessionError: When capacity is exhausted or shutdown has started.
+            CallerOwnershipLostError: When ownership cannot authorize dispatch.
+        """
+        await self._validate_caller_ownership(binding, ownership)
+        await self.expire_callers()
+        key = (binding.key, gateway_id)
+        async with self._global_lock:
+            if self._closing:
+                raise CallerSessionError("Upstream session registry is closing")
+            self._require_caller_ownership(binding, ownership)
+            entry = self._callers.get(key)
+            if entry is None:
+                if len(self._callers) >= self._caller_max_bindings:
+                    raise CallerSessionError("Upstream session capacity exhausted")
+                entry = _CallerEntry(binding=binding, ownership=ownership)
+                self._callers[key] = entry
+            entry.users += 1
+            entry.drained.clear()
+        try:
+            async with entry.lock:
+                try:
+                    await self._validate_caller_ownership(binding, ownership, entry)
+                    fingerprint = connection_fingerprint(url, transport_type.value, headers, tls_identity)
+                    entry.request_headers.update({name.lower(): value for name, value in headers.items() if name.lower() in REQUEST_HEADERS})
+                    try:
+                        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+
+                        entry.operation_context["value"] = otel_context.get_current()
+                    except ImportError:
+                        pass
+                    upstream = entry.upstream
+                    if upstream is not None and (entry.invalidated or upstream.is_closed or entry.fingerprint != fingerprint):
+                        await self._close_session(upstream)
+                        entry.upstream = upstream = None
+                    if upstream is not None and upstream.idle_seconds > self._idle_validation_seconds:
+                        if not await self._probe_health(upstream):
+                            await self._close_session(upstream)
+                            entry.upstream = upstream = None
+                        await self._validate_caller_ownership(binding, ownership, entry)
+                    if upstream is None:
+                        await self._validate_caller_ownership(binding, ownership, entry)
+                        stable_headers = {name: value for name, value in headers.items() if name.lower() not in REQUEST_HEADERS | INTERNAL_HEADERS}
+                        upstream = await self._create_session(
+                            downstream_session_id=binding.downstream_session_id or binding.routing_key,
+                            gateway_id=gateway_id,
+                            url=url,
+                            headers=stable_headers,
+                            transport_type=transport_type,
+                            httpx_client_factory=httpx_client_factory,
+                            caller_entry=entry,
+                        )
+                        entry.upstream = upstream
+                        await self._validate_caller_ownership(binding, ownership, entry)
+                        entry.fingerprint = fingerprint
+                        entry.invalidated = False
+                        self._metrics.creates += 1
+                    else:
+                        self._metrics.reuses += 1
+                    async with upstream.operation_lock:
+                        await self._validate_caller_ownership(binding, ownership, entry)
+                        upstream.use_count += 1
+                        try:
+                            yield upstream
+                        except BaseException as exc:
+                            entry.invalidated = entry.invalidated or upstream_session_needs_replacement(exc)
+                            raise
+                finally:
+                    entry.request_headers.clear()
+                    entry.operation_context.clear()
+                    if entry.upstream is not None:
+                        entry.upstream.last_used = time.time()
+                        if entry.invalidated or entry.ownership_revoked or (ownership is not None and ownership.state is CallerOwnershipState.REVOKED):
+                            await self._close_session(entry.upstream)
+                            entry.upstream = None
+        finally:
+            async with self._global_lock:
+                entry.users -= 1
+                entry.last_used = time.monotonic()
+                if entry.users == 0:
+                    entry.drained.set()
+                    if entry.upstream is None and self._callers.get(key) is entry:
+                        self._callers.pop(key)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1032,9 +1340,10 @@ class UpstreamSessionRegistry:
         """
         async with self._global_lock:
             keys = [k for k in self._sessions if k[0] == downstream_session_id]
-        return await self._evict_keys_in_parallel(keys)
+        caller_count = await self._evict_callers(downstream_session_id=downstream_session_id)
+        return caller_count + await self._evict_keys_in_parallel(keys)
 
-    async def evict_gateway(self, gateway_id: str) -> int:
+    async def evict_gateway(self, gateway_id: str, *, callers_only: bool = False) -> int:
         """Close and remove every upstream session pointing at a given gateway.
 
         Intended for gateway-removal/rotation; downstream sessions survive but
@@ -1042,9 +1351,63 @@ class UpstreamSessionRegistry:
         concurrently — fires post-commit on admin update/delete, so a slow
         drain must not stall the response.
         """
+        if callers_only:
+            return await self._evict_callers(gateway_id=gateway_id)
         async with self._global_lock:
             keys = [k for k in self._sessions if k[1] == gateway_id]
-        return await self._evict_keys_in_parallel(keys)
+        caller_count = await self._evict_callers(gateway_id=gateway_id)
+        return caller_count + await self._evict_keys_in_parallel(keys)
+
+    async def _evict_callers(self, *, gateway_id: Optional[str] = None, downstream_session_id: Optional[str] = None) -> int:
+        """Invalidate matching caller entries without closing active operations."""
+        async with self._global_lock:
+            keys = [
+                key
+                for key, entry in self._callers.items()
+                if (gateway_id is None or key[1] == gateway_id) and (downstream_session_id is None or entry.binding.downstream_session_id == downstream_session_id)
+            ]
+            for key in keys:
+                entry = self._callers[key]
+                entry.invalidated = True
+                if entry.users == 0:
+                    if entry.upstream is not None:
+                        await self._close_session(entry.upstream)
+                    self._callers.pop(key)
+            return len(keys)
+
+    def has_caller_route(self, routing_key: str) -> bool:
+        """Return whether this worker retains sessions or queued work for a caller route.
+
+        Args:
+            routing_key: Server-derived caller routing identity.
+
+        Returns:
+            Whether a matching caller entry remains live.
+        """
+        return any(entry.binding.routing_key == routing_key for entry in self._callers.values())
+
+    async def evict_caller_route(self, routing_key: str, *, generation: Optional[str] = None) -> None:
+        """Revoke one ownership generation without affecting a newer generation.
+
+        Args:
+            routing_key: Server-derived caller routing identity.
+            generation: Exact generation to revoke, or None to revoke the current route.
+        """
+        async with self._global_lock:
+            authority = self._caller_ownership.get(routing_key)
+            if authority is not None and (generation is None or authority.generation == generation):
+                authority.revoke()
+                self._caller_ownership.pop(routing_key, None)
+            for key, entry in list(self._callers.items()):
+                if entry.binding.routing_key != routing_key or (generation is not None and (entry.ownership is None or entry.ownership.generation != generation)):
+                    continue
+                entry.ownership_revoked = True
+                if entry.ownership is not None:
+                    entry.ownership.revoke()
+                if entry.users == 0:
+                    if entry.upstream is not None:
+                        await self._close_session(entry.upstream)
+                    self._callers.pop(key)
 
     async def _evict_keys_in_parallel(self, keys: list[tuple[str, str]]) -> int:
         """Run _evict_key concurrently for a set of keys; returns the count that succeeded."""
@@ -1062,6 +1425,15 @@ class UpstreamSessionRegistry:
         stall. ``asyncio.gather`` caps the total drain at roughly
         ``shutdown_timeout_seconds`` plus a small constant.
         """
+        self._closing = True
+        for ownership in self._caller_ownership.values():
+            ownership.revoke()
+        self._caller_ownership.clear()
+        if self._caller_cleanup_task is not None:
+            self._caller_cleanup_task.cancel()
+            await asyncio.gather(self._caller_cleanup_task, return_exceptions=True)
+            self._caller_cleanup_task = None
+        await self._evict_callers()
         async with self._global_lock:
             keys = list(self._sessions.keys())
         if not keys:
@@ -1071,7 +1443,7 @@ class UpstreamSessionRegistry:
     def snapshot(self) -> RegistrySnapshot:
         """Return a point-in-time copy of the registry's counters."""
         return RegistrySnapshot(
-            active_sessions=len(self._sessions),
+            active_sessions=len(self._sessions) + sum(entry.upstream is not None for entry in self._callers.values()),
             creates=self._metrics.creates,
             reuses=self._metrics.reuses,
             health_check_failures=self._metrics.health_check_failures,
@@ -1117,6 +1489,7 @@ class UpstreamSessionRegistry:
         headers: Optional[dict[str, str]],
         transport_type: TransportType,
         httpx_client_factory: Optional[HttpxClientFactory],
+        caller_entry: Optional[_CallerEntry] = None,
     ) -> UpstreamSession:
         """Build a fresh upstream session via the configured SessionFactory."""
         merged_headers = {"Accept": "application/json, text/event-stream"}
@@ -1129,6 +1502,9 @@ class UpstreamSessionRegistry:
             if hdr.lower() in ("x-mcp-session-id", "mcp-session-id"):
                 del merged_headers[hdr]
 
+        handler_factory = self._message_handler_factory
+        if caller_entry is not None and caller_entry.binding.downstream_session_id is None:
+            handler_factory = None
         req = SessionCreateRequest(
             url=url,
             transport_type=transport_type,
@@ -1136,8 +1512,10 @@ class UpstreamSessionRegistry:
             gateway_id=gateway_id,
             downstream_session_id=downstream_session_id,
             httpx_client_factory=httpx_client_factory,
-            message_handler_factory=self._message_handler_factory,
+            message_handler_factory=handler_factory,
             timeout_seconds=self._session_create_timeout_seconds,
+            request_headers=caller_entry.request_headers if caller_entry is not None else None,
+            operation_context=caller_entry.operation_context if caller_entry is not None else None,
         )
         session, lifecycle = await self._session_factory(req)
         return UpstreamSession(

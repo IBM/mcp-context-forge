@@ -27,6 +27,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import logging
@@ -34,7 +35,7 @@ import os
 import re
 import socket
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 import uuid
 import weakref
 
@@ -45,6 +46,7 @@ import orjson
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.services.caller_session import CallerBinding, CallerOwnershipLostError, CallerOwnershipState, CallerOwnershipTicket, CallerRoutingResult, CallerSessionError, forwarded_caller_ownership
 from mcpgateway.services.upstream_session_registry import (  # re-exported as the single source of truth
     MessageHandlerFactory,
 )
@@ -156,6 +158,14 @@ class ListenerClaimResult(Enum):
     UNAVAILABLE = "unavailable"
 
 
+@dataclass
+class _CallerRouteGate:
+    """Serialize route initialization and report coordinator failure to waiting admissions."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    failures: int = 0
+
+
 class SessionAffinity:
     """Multi-worker MCP session-affinity service.
 
@@ -214,6 +224,8 @@ class SessionAffinity:
         # because both layers share the singleton lifecycle.
         self._listener_claims: Dict[str, tuple[str, float]] = {}
         self._listener_lock = asyncio.Lock()
+        self._caller_routes: dict[str, CallerOwnershipTicket] = {}
+        self._caller_gates: weakref.WeakValueDictionary[str, _CallerRouteGate] = weakref.WeakValueDictionary()
 
     @staticmethod
     def is_valid_mcp_session_id(session_id: str) -> bool:
@@ -290,10 +302,151 @@ class SessionAffinity:
                 if redis:
                     # Refresh heartbeat with 30s TTL (much shorter than session TTL)
                     await redis.setex(self._worker_heartbeat_key(), 30, "alive")
+                    await self._renew_caller_routes(redis)
             except Exception as e:
                 logger.debug("Heartbeat update failed: %s", e)
 
             await asyncio.sleep(10)  # Refresh every 10s
+
+    @staticmethod
+    def _caller_owner_key(routing_key: str) -> str:
+        """Use caller-only versioned records without changing downstream-session ownership.
+
+        Args:
+            routing_key: Server-derived caller routing identity.
+
+        Returns:
+            The versioned Redis ownership key.
+        """
+        return f"mcpgw:caller_owner:v1:{routing_key}"
+
+    async def _revoke_caller_ticket(self, ownership: CallerOwnershipTicket) -> None:
+        """Revoke only the affected generation, even after another claim succeeds.
+
+        Args:
+            ownership: Ticket whose generation loses local admission.
+        """
+        from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        ownership.revoke()
+        await get_upstream_session_registry().evict_caller_route(ownership.routing_key, generation=ownership.generation)
+
+    async def _validate_caller_ticket(self, ownership: CallerOwnershipTicket) -> None:
+        """Check shared ownership without allowing an obsolete generation to renew itself.
+
+        Args:
+            ownership: Pending or ready ticket to verify against Redis.
+
+        Raises:
+            CallerOwnershipLostError: If the lease no longer authorizes this generation.
+        """
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        started = time.monotonic()
+        try:
+            ownership.require_valid(ready=False)
+            redis = await get_redis_client()
+            if redis is None:
+                raise CallerOwnershipLostError()
+            ttl = await redis.eval(
+                """-- caller_validate_v1
+                if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
+                    and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
+                    return redis.call('PTTL', KEYS[1])
+                end
+                return 0
+                """,
+                1,
+                self._caller_owner_key(ownership.routing_key),
+                ownership.owner,
+                ownership.generation,
+            )
+            ownership.require_valid(ready=False)
+            if not isinstance(ttl, int) or ttl <= 0:
+                raise CallerOwnershipLostError()
+            ownership.expires_at = started + ttl / 1000
+            ownership.require_valid(ready=False)
+        except BaseException as exc:
+            ownership.revoke()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise CallerOwnershipLostError() from exc
+
+    async def _release_caller_ticket(self, ownership: CallerOwnershipTicket) -> None:
+        """Release a retired generation without deleting another generation's lease.
+
+        Args:
+            ownership: Revoked ticket whose matching shared lease can be removed.
+        """
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if redis is None:
+            raise CallerOwnershipLostError()
+        await redis.eval(
+            """-- caller_release_v1
+                if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
+                    and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
+                    return redis.call('DEL', KEYS[1])
+                end
+                return 0
+                """,
+            1,
+            self._caller_owner_key(ownership.routing_key),
+            ownership.owner,
+            ownership.generation,
+        )
+
+    async def _renew_caller_routes(self, redis: Any) -> None:
+        """Renew exact generations while their bindings or initial admissions remain live.
+
+        Args:
+            redis: Shared ownership store.
+        """
+        from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+
+        if not self._caller_routes:
+            return
+        registry = get_upstream_session_registry()
+        for routing_key, ownership in list(self._caller_routes.items()):
+            if ownership.state is CallerOwnershipState.PENDING:
+                continue
+            try:
+                if ownership.state is CallerOwnershipState.REVOKED:
+                    await self._revoke_caller_ticket(ownership)
+                    await self._release_caller_ticket(ownership)
+                    if self._caller_routes.get(routing_key) is ownership:
+                        self._caller_routes.pop(routing_key)
+                    continue
+                ownership.require_valid()
+                if not registry.has_caller_route(routing_key) and time.monotonic() >= ownership.retained_until:
+                    await self._revoke_caller_ticket(ownership)
+                    await self._release_caller_ticket(ownership)
+                    if self._caller_routes.get(routing_key) is ownership:
+                        self._caller_routes.pop(routing_key)
+                    continue
+                started = time.monotonic()
+                ttl = await redis.eval(
+                    """-- caller_renew_v1
+                    if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
+                        and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
+                        redis.call('EXPIRE', KEYS[1], ARGV[3])
+                        return redis.call('PTTL', KEYS[1])
+                    end
+                    return 0
+                    """,
+                    1,
+                    self._caller_owner_key(routing_key),
+                    ownership.owner,
+                    ownership.generation,
+                    max(30, settings.mcpgateway_session_affinity_ttl),
+                )
+                ownership.require_valid()
+                if not isinstance(ttl, int) or ttl <= 0:
+                    raise CallerOwnershipLostError()
+                ownership.expires_at = started + ttl / 1000
+            except Exception:
+                await self._revoke_caller_ticket(ownership)
 
     async def _is_worker_alive(self, worker_id: str) -> bool:
         """Check if a worker is alive via heartbeat."""
@@ -688,6 +841,8 @@ class SessionAffinity:
     async def close_all(self) -> None:
         """Stop background tasks and clear affinity state. Call at shutdown."""
         self._closed = True
+        for ownership in self._caller_routes.values():
+            ownership.revoke()
         logger.info("Closing session-affinity service...")
 
         # Stop RPC listener if running (first, so no new forward tasks spawn)
@@ -829,6 +984,7 @@ class SessionAffinity:
         request_data: Dict[str, Any],
         auth_context: str,
         timeout: Optional[float] = None,
+        strict: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Forward RPC request to the worker that owns the session owner.
 
@@ -843,6 +999,7 @@ class SessionAffinity:
                 the Redis envelope and verified by the owner before the trusted-internal
                 dispatch, so the rpc forward hop carries a tamper-evident identity.
             timeout: Optional timeout in seconds (default from config).
+            strict: Refuse local fallback when ownership cannot be verified.
 
         Returns:
             The response from the owner worker, or None if we own the session
@@ -875,12 +1032,16 @@ class SessionAffinity:
 
             redis = await get_redis_client()
             if not redis:
+                if strict:
+                    raise RuntimeError("Caller session ownership storage is unavailable")
                 return None  # Execute locally - no Redis
 
             # Check who owns this session
             owner = await redis.get(self._session_owner_key(mcp_session_id))
             method = request_data.get("method", "unknown")
             if not owner:
+                if strict:
+                    raise RuntimeError("Caller session ownership is unavailable")
                 logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | No owner → execute locally (new session)", get_worker_id(), mcp_session_id[:8], method)
                 return None  # No owner registered - execute locally (new session)
 
@@ -915,6 +1076,8 @@ class SessionAffinity:
                 # Another worker already reclaimed; re-read the new owner and forward
                 new_owner = await redis.get(self._session_owner_key(mcp_session_id))
                 if not new_owner:
+                    if strict:
+                        raise RuntimeError("Caller session ownership changed during forwarding")
                     return None  # Key vanished - execute locally
                 owner_id = new_owner.decode() if isinstance(new_owner, bytes) else new_owner
                 if owner_id == get_worker_id():
@@ -923,56 +1086,7 @@ class SessionAffinity:
 
             logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Owner: %s → forwarding", get_worker_id(), mcp_session_id[:8], method, owner_id)
 
-            # Forward to owner worker via pub/sub
-            response_id = str(uuid.uuid4())
-            response_channel = f"mcpgw:pool_rpc_response:{response_id}"
-
-            # Subscribe to response channel
-            async with redis.pubsub() as pubsub:
-                await pubsub.subscribe(response_channel)
-
-                try:
-                    # First-Party
-                    from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
-                    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
-
-                    # Propagate the W3C trace context across the Redis hop so the
-                    # owner-side dispatch continues this trace instead of rooting a
-                    # new one. An existing traceparent always wins: callers in SDK
-                    # handler tasks already carry the edge-injected context in their
-                    # headers, while their ambient OTel context may be a stale (valid
-                    # but ended) span from whichever request spawned the session task —
-                    # injecting from that would clobber the live request's trace.
-                    outbound_headers = request_data.get("headers") or {}
-                    if not any(str(key).lower() == "traceparent" for key in outbound_headers):
-                        outbound_headers = inject_trace_context_headers(outbound_headers)
-                    request_data = {**request_data, "headers": outbound_headers}
-
-                    # Prepare request with response channel and the edge auth context.
-                    forward_data = {
-                        "type": "rpc_forward",
-                        **request_data,
-                        "response_channel": response_channel,
-                        "mcp_session_id": mcp_session_id,
-                        "timestamp": time.time(),
-                        "auth_context": auth_context,
-                    }
-                    # HMAC over the whole envelope (identity + operation + response_channel);
-                    # verified by the owner before trust so nothing can be tampered or redirected.
-                    forward_data[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(forward_data)
-
-                    # Publish request to owner's channel
-                    await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
-                    self._forwarded_requests += 1
-                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Published to worker %s", get_worker_id(), mcp_session_id[:8], method, owner_id)
-
-                    # Wait for response
-                    async with asyncio.timeout(effective_timeout):
-                        async for msg in pubsub.listen():
-                            if msg["type"] == "message":
-                                return orjson.loads(msg["data"])
-                finally:
-                    await pubsub.unsubscribe(response_channel)
+            return await self._forward_rpc_to_worker(redis, owner_id, mcp_session_id, request_data, auth_context, effective_timeout)
 
         except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
@@ -981,7 +1095,197 @@ class SessionAffinity:
         except Exception as e:
             self._forwarded_request_failures += 1
             logger.debug("Error forwarding request to owner: %s", e)
+            if strict:
+                raise
             return None  # Execute locally on error
+
+    async def _forward_rpc_to_worker(self, redis: Any, owner_id: str, mcp_session_id: str, request_data: Dict[str, Any], auth_context: str, effective_timeout: float) -> Dict[str, Any]:
+        """Send a signed RPC envelope to a selected worker and await its response.
+
+        Args:
+            redis: Shared forwarding connection.
+            owner_id: Worker that receives the operation.
+            mcp_session_id: Downstream session ID or internal caller route.
+            request_data: Authorized operation and original headers.
+            auth_context: Encoded verified ingress context.
+            effective_timeout: Maximum response wait in seconds.
+
+        Returns:
+            The remote JSON-RPC response.
+        """
+        method = request_data.get("method", "unknown")
+        # Forward to owner worker via pub/sub
+        response_id = str(uuid.uuid4())
+        response_channel = f"mcpgw:pool_rpc_response:{response_id}"
+
+        # Subscribe to response channel
+        async with redis.pubsub() as pubsub:
+            await pubsub.subscribe(response_channel)
+
+            try:
+                # First-Party
+                from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
+                from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
+
+                # Propagate the W3C trace context across the Redis hop so the
+                # owner-side dispatch continues this trace instead of rooting a
+                # new one. An existing traceparent always wins: callers in SDK
+                # handler tasks already carry the edge-injected context in their
+                # headers, while their ambient OTel context may be a stale (valid
+                # but ended) span from whichever request spawned the session task —
+                # injecting from that would clobber the live request's trace.
+                outbound_headers = request_data.get("headers") or {}
+                if not any(str(key).lower() == "traceparent" for key in outbound_headers):
+                    outbound_headers = inject_trace_context_headers(outbound_headers)
+                request_data = {**request_data, "headers": outbound_headers}
+
+                # Prepare request with response channel and the edge auth context.
+                forward_data = {
+                    "type": "rpc_forward",
+                    **request_data,
+                    "response_channel": response_channel,
+                    "mcp_session_id": mcp_session_id,
+                    "timestamp": time.time(),
+                    "auth_context": auth_context,
+                }
+                # HMAC over the whole envelope (identity + operation + response_channel);
+                # verified by the owner before trust so nothing can be tampered or redirected.
+                forward_data[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(forward_data)
+
+                # Publish request to owner's channel
+                await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
+                self._forwarded_requests += 1
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Published to worker %s", get_worker_id(), mcp_session_id[:8], method, owner_id)
+
+                # Wait for response
+                async with asyncio.timeout(effective_timeout):
+                    async for msg in pubsub.listen():
+                        if msg["type"] == "message":
+                            return orjson.loads(msg["data"])
+            finally:
+                await pubsub.unsubscribe(response_channel)
+        raise CallerSessionError("Caller session forwarding ended without a response")
+
+    async def forward_caller_request(self, routing_key: str, request_data: Dict[str, Any], auth_context: str) -> CallerOwnershipTicket | Dict[str, Any]:
+        """Return verified local admission or forward to the current caller-route owner.
+
+        Args:
+            routing_key: Server-derived caller routing identity.
+            request_data: Authorized operation and original headers.
+            auth_context: Encoded verified ingress context.
+
+        Returns:
+            An initialized local ticket or the remote JSON-RPC response.
+
+        Raises:
+            CallerSessionError: If ownership, initialization, or forwarding fails.
+        """
+        from mcpgateway.services.upstream_session_registry import get_upstream_session_registry  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        if not auth_context or not self.is_valid_mcp_session_id(routing_key):
+            raise CallerOwnershipLostError()
+        gate = self._caller_gates.get(routing_key)
+        if gate is None:
+            gate = _CallerRouteGate()
+            self._caller_gates[routing_key] = gate
+        failures = gate.failures
+        expected = forwarded_caller_ownership.get()
+        if expected is not None and (expected[0] != routing_key or expected[1] != get_worker_id()):
+            raise CallerOwnershipLostError()
+        initialized = None
+        try:
+            async with gate.lock:
+                if failures != gate.failures or self._closed:
+                    raise CallerOwnershipLostError()
+                redis = await get_redis_client()
+                if redis is None:
+                    raise CallerSessionError("Caller session ownership storage is unavailable")
+                previous = self._caller_routes.get(routing_key)
+                force_generation = ""
+                if previous is not None:
+                    try:
+                        previous.require_valid()
+                    except CallerOwnershipLostError:
+                        if expected is not None:
+                            raise
+                        force_generation = previous.generation
+                started = time.monotonic()
+                response = await redis.eval(
+                    """-- caller_claim_v1
+                    if redis.call('EXISTS', KEYS[2]) ~= 0 then return {'', '', -1, 0} end
+                    local owner = redis.call('HGET', KEYS[1], 'owner')
+                    local generation = redis.call('HGET', KEYS[1], 'generation')
+                    local changed = 0
+                    if ARGV[4] ~= '' then
+                        if owner ~= ARGV[1] or generation ~= ARGV[4] then return {'', '', -1, 0} end
+                    elseif not owner or (owner ~= ARGV[1] and redis.call('EXISTS', ARGV[6] .. owner) == 0)
+                        or (owner == ARGV[1] and generation == ARGV[5]) then
+                        owner = ARGV[1]
+                        generation = ARGV[2]
+                        redis.call('HSET', KEYS[1], 'owner', owner, 'generation', generation)
+                        changed = 1
+                    end
+                    if not generation then return {'', '', -1, 0} end
+                    if owner == ARGV[1] then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
+                    return {owner, generation, changed, redis.call('PTTL', KEYS[1])}
+                    """,
+                    2,
+                    self._caller_owner_key(routing_key),
+                    self._session_owner_key(routing_key),
+                    get_worker_id(),
+                    uuid.uuid4().hex,
+                    max(30, settings.mcpgateway_session_affinity_ttl),
+                    expected[2] if expected is not None else "",
+                    force_generation,
+                    "mcpgw:worker_heartbeat:",
+                )
+                if not isinstance(response, (list, tuple)) or len(response) != 4:
+                    raise CallerOwnershipLostError()
+                raw_owner, raw_generation, changed, ttl = response
+                owner = raw_owner.decode() if isinstance(raw_owner, bytes) else raw_owner
+                generation = raw_generation.decode() if isinstance(raw_generation, bytes) else raw_generation
+                if changed == -1 or not isinstance(owner, str) or not owner or not isinstance(generation, str) or not generation or not isinstance(ttl, int) or ttl <= 0:
+                    raise CallerOwnershipLostError()
+                if owner == get_worker_id():
+                    registry = get_upstream_session_registry()
+                    if previous is not None and previous.generation == generation and previous.state is CallerOwnershipState.READY:
+                        previous.require_valid()
+                        previous.expires_at = started + ttl / 1000
+                        await previous.validate()
+                        previous.retained_until = time.monotonic() + 30
+                        return previous
+                    initialized = CallerOwnershipTicket(routing_key, owner, generation, started + ttl / 1000, self._validate_caller_ticket)
+                    self._caller_routes[routing_key] = initialized
+                    async with asyncio.timeout(settings.mcpgateway_pool_rpc_forward_timeout):
+                        await registry.install_caller_ownership(initialized)
+                        await self._validate_caller_ticket(initialized)
+                        registry.publish_caller_ownership(initialized)
+                    self._caller_routes[routing_key] = initialized
+                    return initialized
+                if previous is not None:
+                    await self._revoke_caller_ticket(previous)
+            # Forwarding never holds the initialization gate; the receiving worker verifies this exact generation.
+            return await self._forward_rpc_to_worker(
+                redis,
+                owner,
+                routing_key,
+                {**request_data, "caller_ownership": {"route": routing_key, "owner": owner, "generation": generation}},
+                auth_context,
+                settings.mcpgateway_pool_rpc_forward_timeout,
+            )
+        except BaseException as exc:
+            gate.failures += 1
+            if initialized is not None:
+                initialized.revoke()
+                await get_upstream_session_registry().evict_caller_route(routing_key, generation=initialized.generation)
+                try:
+                    await self._release_caller_ticket(initialized)
+                except Exception:
+                    logger.warning("Caller ownership initialization lease cleanup failed")
+            if isinstance(exc, (asyncio.CancelledError, CallerSessionError)):
+                raise
+            raise CallerSessionError("Caller session forwarding failed") from exc
 
     async def start_rpc_listener(self) -> None:
         """Start listening for forwarded RPC and HTTP requests on this worker's channels.
@@ -1207,6 +1511,17 @@ class SessionAffinity:
             # but add x-forwarded-internally to prevent infinite loops. Relies on the
             # originating transport having already filtered passthrough headers via
             # extract_headers_for_loopback (#3640).
+            forwarded_ownership = request.get("caller_ownership")
+            ownership_context = None
+            if forwarded_ownership is not None:
+                if not isinstance(forwarded_ownership, dict):
+                    return {"error": {"code": -32000, "message": "Caller session ownership lost"}}
+                route = forwarded_ownership.get("route")
+                owner = forwarded_ownership.get("owner")
+                generation = forwarded_ownership.get("generation")
+                if not isinstance(route, str) or not isinstance(owner, str) or route != mcp_session_id or owner != get_worker_id() or not isinstance(generation, str) or not generation:
+                    return {"error": {"code": -32000, "message": "Caller session ownership lost"}}
+                ownership_context = (route, owner, generation)
             internal_headers = dict(headers)
             internal_headers["x-forwarded-internally"] = "true"
             internal_headers["content-type"] = "application/json"
@@ -1217,6 +1532,7 @@ class SessionAffinity:
             # envelope's trace context so the dispatch nests in the caller's trace.
             from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
 
+            ownership_token = forwarded_caller_ownership.set(ownership_context)
             trace_token = _attach_envelope_trace_context(headers)
             try:
                 with create_span("mcp.affinity.execute_forwarded", {"mcp.session_id": session_short, "mcp.affinity.forward_type": "rpc", "mcp.method": str(method)}):
@@ -1235,6 +1551,7 @@ class SessionAffinity:
                     )
             finally:
                 _detach_envelope_trace_context(trace_token)
+                forwarded_caller_ownership.reset(ownership_token)
 
             # Gate on HTTP status first: non-2xx responses are errors
             # even if the body parses as JSON.
@@ -1749,3 +2066,44 @@ def unregister_gateway_from_notifications(gateway_id: str) -> None:
         notification_svc.unregister_gateway(gateway_id)
     except RuntimeError:
         pass  # Notification service not initialized
+
+
+async def forward_binding_operation(binding: Optional[CallerBinding], auth_context: Mapping[str, Any], method: str, params: dict[str, Any], headers: Mapping[str, str]) -> CallerRoutingResult:
+    """Route caller-bound operations through verified worker ownership.
+
+    Args:
+        binding: Resolved caller binding.
+        auth_context: Verified ingress authentication context.
+        method: MCP operation name.
+        params: Authorized operation parameters.
+        headers: Original request headers for trusted forwarding.
+
+    Returns:
+        A remote result or a verified local ownership ticket.
+
+    Raises:
+        CallerSessionError: When ownership, forwarding, or remote execution fails.
+    """
+    if binding is None or not settings.mcpgateway_session_affinity_enabled:
+        if forwarded_caller_ownership.get() is not None:
+            raise CallerOwnershipLostError()
+        return CallerRoutingResult()
+    from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+    try:
+        response = await get_session_affinity().forward_caller_request(
+            binding.routing_key, {"method": method, "params": params, "headers": dict(headers)}, encode_internal_mcp_auth_context(dict(auth_context))
+        )
+    except CallerSessionError:
+        raise
+    except RuntimeError as exc:
+        raise CallerSessionError("Caller session ownership is unavailable") from exc
+    if isinstance(response, CallerOwnershipTicket):
+        return CallerRoutingResult(ownership=response)
+    if response is None:
+        raise CallerOwnershipLostError()
+    if "error" in response:
+        failure = CallerSessionError(response["error"].get("message", "Caller session forwarding failed"))
+        failure.code = response["error"].get("code", -32000)
+        raise failure
+    return CallerRoutingResult(result=response.get("result", {}))

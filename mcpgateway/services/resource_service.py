@@ -20,10 +20,10 @@ Examples:
 """
 
 # Standard
-import contextvars
 import asyncio
 import base64
 import binascii
+import contextvars
 from datetime import datetime, timezone
 from functools import lru_cache
 import mimetypes
@@ -53,22 +53,19 @@ from mcpgateway.common.models import BlobResourceContents, ResourceContent, Reso
 from mcpgateway.common.validators import SecurityValidator, without_progress_token
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session, get_for_update, ResourceMetric, ResourceMetricsHourly, server_resource_association
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
-from mcpgateway.db import server_resource_association
-from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import apply_resource_meta, optional_extension_metadata, validate_ui_resource
@@ -77,12 +74,15 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
+from mcpgateway.services.session_affinity import forward_binding_operation
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.token_exchange_actor import invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
-from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType, upstream_session_needs_replacement
+from mcpgateway.transports.context import user_context_var
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -96,7 +96,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -275,6 +274,8 @@ def _raise_unresolved_gateway_resource(exc: BaseException, auth_query_params: Op
         ResourceError: For every other failure.
     """
     root_cause = _upstream_root_cause(exc)
+    if isinstance(root_cause, CallerSessionError):
+        raise root_cause
     if isinstance(root_cause, MCPError):
         message = sanitize_exception_message(str(root_cause), auth_query_params)
         raise ResourceUpstreamError(root_cause.error.code, message, _sanitize_error_data(root_cause.error.data, auth_query_params)) from exc
@@ -1852,6 +1853,8 @@ class ResourceService(BaseService):
         server_id: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
         progress_callback: ProgressFnT | None = None,
+        *,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1869,6 +1872,7 @@ class ResourceService(BaseService):
         - StreamableHTTP transport gateways
 
         Args:
+            caller_auth_context: Verified ingress context for caller-session bindings.
             db (Session):
                 SQLAlchemy session for retrieving resource and gateway information.
             resource_id (str):
@@ -2143,7 +2147,7 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None
@@ -2249,6 +2253,21 @@ class ResourceService(BaseService):
                             if isinstance(user_identity, UserCtx):
                                 headers.update(build_identity_headers(user_identity, gateway))
 
+                        auth_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
+                        caller_binding = resolve_caller_binding(
+                            caller_identity=auth_context.get("caller_session_identity") if auth_context.get("is_authenticated") is True else None,
+                            server_id=server_id,
+                            downstream_session_id=_downstream_session_id_from_request(),
+                            meta=meta_data,
+                            pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
+                        )
+                        forwarded = await forward_binding_operation(
+                            caller_binding, auth_context, "resources/read", {"uri": resource_uri, "_meta": meta_data, "server_id": server_id}, request_headers or {}
+                        )
+                        if forwarded.result is not None:
+                            return _upstream_resource_content(types.ReadResourceResult.model_validate(forwarded.result))
+                        meta_data = upstream_meta(meta_data)
+
                         async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
                             max_read_attempts = 2
@@ -2258,6 +2277,8 @@ class ResourceService(BaseService):
                                     set_upstream_cache_directive(resource_response)
                                     return _upstream_resource_content(resource_response)
                                 except Exception as exc:
+                                    if upstream_session_needs_replacement(exc):
+                                        raise
                                     if attempt == max_read_attempts:
                                         raise
                                     sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
@@ -2309,23 +2330,39 @@ class ResourceService(BaseService):
                                 # Mcp-Session-Id; upstream state is then bound 1:1 to that
                                 # downstream session and never shared across clients.
                                 downstream_session_id = _downstream_session_id_from_request()
-                                use_registry = bool(downstream_session_id) and bool(gateway_id)
+                                use_registry = (bool(downstream_session_id) or caller_binding is not None) and bool(gateway_id)
                                 registry = None
                                 if use_registry:
                                     try:
                                         registry = get_upstream_session_registry()
                                     except RegistryNotInitializedError:
+                                        if caller_binding is not None:
+                                            raise CallerSessionError("Upstream session registry is unavailable")
                                         use_registry = False
 
                                 if use_registry and registry is not None:
-                                    async with registry.acquire(
-                                        downstream_session_id=downstream_session_id,
-                                        gateway_id=gateway_id,
-                                        url=server_url,
-                                        headers=authentication,
-                                        transport_type=TransportType.SSE,
-                                        httpx_client_factory=_get_httpx_client_factory,
-                                    ) as upstream:
+                                    acquisition = (
+                                        registry.acquire_caller(
+                                            binding=caller_binding,
+                                            ownership=forwarded.ownership,
+                                            gateway_id=gateway_id,
+                                            url=server_url,
+                                            headers=inject_trace_context_headers(authentication),
+                                            transport_type=TransportType.SSE,
+                                            httpx_client_factory=_get_httpx_client_factory,
+                                            tls_identity=[gateway.ca_certificate, gateway.client_cert, gateway.client_key, getattr(gateway, "version", None)],
+                                        )
+                                        if caller_binding is not None
+                                        else registry.acquire(
+                                            downstream_session_id=downstream_session_id,
+                                            gateway_id=gateway_id,
+                                            url=server_url,
+                                            headers=inject_trace_context_headers(authentication),
+                                            transport_type=TransportType.SSE,
+                                            httpx_client_factory=_get_httpx_client_factory,
+                                        )
+                                    )
+                                    async with acquisition as upstream:
                                         resource_content = await _read_resource_content_with_retry(upstream.session, uri, "SSE")
                                         resource_received = True
                                 else:
@@ -2383,23 +2420,39 @@ class ResourceService(BaseService):
                             try:
                                 # #4205: see SSE path above; same 1:1 binding rationale.
                                 downstream_session_id = _downstream_session_id_from_request()
-                                use_registry = bool(downstream_session_id) and bool(gateway_id)
+                                use_registry = (bool(downstream_session_id) or caller_binding is not None) and bool(gateway_id)
                                 registry = None
                                 if use_registry:
                                     try:
                                         registry = get_upstream_session_registry()
                                     except RegistryNotInitializedError:
+                                        if caller_binding is not None:
+                                            raise CallerSessionError("Upstream session registry is unavailable")
                                         use_registry = False
 
                                 if use_registry and registry is not None:
-                                    async with registry.acquire(
-                                        downstream_session_id=downstream_session_id,
-                                        gateway_id=gateway_id,
-                                        url=server_url,
-                                        headers=authentication,
-                                        transport_type=TransportType.STREAMABLE_HTTP,
-                                        httpx_client_factory=_get_httpx_client_factory,
-                                    ) as upstream:
+                                    acquisition = (
+                                        registry.acquire_caller(
+                                            binding=caller_binding,
+                                            ownership=forwarded.ownership,
+                                            gateway_id=gateway_id,
+                                            url=server_url,
+                                            headers=inject_trace_context_headers(authentication),
+                                            transport_type=TransportType.STREAMABLE_HTTP,
+                                            httpx_client_factory=_get_httpx_client_factory,
+                                            tls_identity=[gateway.ca_certificate, gateway.client_cert, gateway.client_key, getattr(gateway, "version", None)],
+                                        )
+                                        if caller_binding is not None
+                                        else registry.acquire(
+                                            downstream_session_id=downstream_session_id,
+                                            gateway_id=gateway_id,
+                                            url=server_url,
+                                            headers=inject_trace_context_headers(authentication),
+                                            transport_type=TransportType.STREAMABLE_HTTP,
+                                            httpx_client_factory=_get_httpx_client_factory,
+                                        )
+                                    )
+                                    async with acquisition as upstream:
                                         resource_content = await _read_resource_content_with_retry(upstream.session, uri, "StreamableHTTP")
                                         resource_received = True
                                 else:
@@ -2473,10 +2526,13 @@ class ResourceService(BaseService):
         meta_data: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
         progress_callback: ProgressFnT | None = None,
+        *,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
         Args:
+            caller_auth_context: Verified ingress context for caller-session bindings.
             db: Database session.
             resource_id: Optional ID of the resource to read.
             resource_uri: Optional URI of the resource to read.
@@ -2960,6 +3016,7 @@ class ResourceService(BaseService):
                             meta_data=meta_data,
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
+                            caller_auth_context=caller_auth_context,
                             server_id=server_id,
                             request_headers=request_headers,
                             progress_callback=progress_callback,

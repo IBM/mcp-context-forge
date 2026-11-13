@@ -1393,24 +1393,76 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
 | `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
 
-### MCP Session Pool
+### Upstream MCP sessions
 
-| Setting                                   | Description                                        | Default | Options     |
-| ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
-| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
-| `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
-| `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
-| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |
-| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL`  | Idle time before health check (seconds)            | `60`    | float       |
-| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT`        | Timeout waiting for session slot (seconds)         | `30`    | float       |
-| `MCP_SESSION_POOL_CREATE_TIMEOUT`         | Timeout creating new session (seconds)             | `30`    | float       |
-| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens                   | `5`     | int         |
-| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET`  | Seconds before circuit resets                      | `60`    | float       |
-| `MCP_SESSION_POOL_IDLE_EVICTION`          | Evict idle pool keys after (seconds)               | `600`   | float       |
-| `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`    | Force explicit RPC on health checks                | `false` | bool        |
+The registry reuses one upstream session per downstream MCP session and gateway.
+Without a downstream session, each call normally opens a fresh upstream session.
+The former `MCP_SESSION_POOL_*` settings do not control this registry.
 
-!!! tip "Session Pool Performance"
-    Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing.
+Set `pin_sessions_by_caller: true` when registering or updating a gateway to enable
+continuity for authenticated callers without downstream sessions. The default is `false`.
+Distinct verified tokens and virtual servers have separate bindings.
+
+Clients authenticated with bearer tokens can request a separate conversation binding regardless of this flag:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "counter-increment",
+    "arguments": {},
+    "_meta": {"io.contextforge/sessionKey": "conversation-42"}
+  }
+}
+```
+
+Send the key in `params._meta`, outside tool arguments. Modern `/mcp` clients must also
+include their protocol-required metadata envelope. `/rpc` accepts the same correlation key.
+Keys must be non-empty strings of at most 256 UTF-8 bytes. Invalid keys return `-32602`.
+Existing downstream sessions remain isolated; explicit keys subdivide their bindings.
+
+Anonymous requests without downstream sessions always use fresh upstream sessions,
+including requests with keys. A correlation key does not authenticate a caller.
+This authenticated-only guarantee narrows the original unconditional explicit-key proposal.
+
+| Setting | Description | Default |
+| --- | --- | --- |
+| `MCP_CALLER_SESSION_IDLE_TIMEOUT` | Idle seconds before a caller binding expires | `600.0` |
+| `MCP_CALLER_SESSION_MAX_BINDINGS` | Maximum caller bindings per worker, including creations in progress | `1000` |
+
+Expiry protects active and queued operations. Capacity cleanup reclaims expired idle bindings only.
+When capacity remains full, new bindings return `-32000` (`Upstream session capacity exhausted`).
+Existing bindings remain usable. Capacity rejection never dispatches through a temporary session.
+
+!!! warning "Shared-token conversations"
+    Callers using one token without distinct keys share upstream state on opted-in gateways.
+    Use separate tokens or conversation keys when workflows require separate state.
+
+Credentials are resolved on every invocation after OAuth and plugin processing.
+Changed effective credentials close the old session after active work finishes and create a new session.
+Credential lookup failures never fall back to credentials retained by an existing connection.
+Credential refresh, gateway updates, idle expiry, token rotation, upstream session loss, and worker restarts can reset state.
+Failed mutating calls are not automatically replayed by the binding registry.
+
+Caller continuity operates independently of `USE_STATEFUL_SESSIONS`.
+For multiple workers, enable `MCPGATEWAY_SESSION_AFFINITY_ENABLED` and configure Redis.
+Caller-route ownership uses a worker ID and an opaque generation in a versioned Redis record.
+The owner completes local initialization before admitting operations under that generation.
+Queued operations recheck ownership after lock waits, connection creation, and health checks.
+Ownership loss returns `-32000` (`Caller session ownership lost`) before subsequent upstream dispatch.
+Operations already dispatched can finish. Ownership loss does not undo their effects or trigger replay.
+Ownership or forwarding failures reject calls instead of creating conflicting local state.
+
+Deploy this ownership format with a coordinated stop and restart of all gateway workers.
+Mixed versions cannot enforce the same generation checks. Drain in-flight operations before stopping workers.
+Earlier caller-affinity builds use `mcpgw:pool_owner:caller-<digest>` records.
+Wait for those records to expire, or remove only those caller records while all workers remain stopped.
+New workers reject caller-route claims while a matching earlier record exists.
+Existing downstream-session ownership records and APIs keep their format.
+
+Request tracing uses current operation headers without replacing the caller binding.
 
 ### Development
 

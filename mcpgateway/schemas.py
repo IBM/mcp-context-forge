@@ -3749,6 +3749,7 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+    pin_sessions_by_caller: bool = Field(False, description="Pin upstream sessions by authenticated caller")
 
     @field_validator("gateway_mode", mode="before")
     @classmethod
@@ -4160,6 +4161,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+    pin_sessions_by_caller: Optional[bool] = Field(None, description="Pin upstream sessions by authenticated caller")
 
     @field_validator("tags")
     @classmethod
@@ -4545,6 +4547,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config")
+    pin_sessions_by_caller: bool = Field(False, description="Pin upstream sessions by authenticated caller")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
