@@ -90,6 +90,27 @@ In `plugins/config.yaml`, change `mode` from `disabled` to `enforce`:
 
 The plugin is now active. All tool invocations and resource fetches will be checked.
 
+> **⚠️ Blanket lockout, not selective enforcement, for unroled callers.**
+> With the shipped `default_rules.json` and `default_decision: "deny"`,
+> every rule is keyed on `roles`. Any caller whose auth token carries
+> no `roles` claim at all (a common case for API/service tokens minted
+> without an explicit role, not just interactive users) has **no
+> matching allow rule for anything** — every tool call and resource
+> fetch is denied identically, with no distinction between a dangerous
+> tool and a completely harmless one. During evaluation this is easy to
+> mistake for "the plugin blocked my attack": it isn't recognizing the
+> attack, it's denying that caller unconditionally. Confirm this by
+> calling a known-harmless tool with the same token — if that is also
+> denied with `"Native RBAC: no matching allow rule (fail closed)"`,
+> you are seeing the lockout, not targeted protection.
+>
+> To protect one *specific* tool without locking out everyone else, add
+> an explicit deny rule scoped to that tool's exact name, using
+> `roles: ["*"]` to bypass the role-matching gate (see "Write your own
+> rules" below, and PR https://github.com/IBM/mcp-context-forge/pull/6826
+> for a worked example that live-tests this pattern against a real
+> known-malicious tool).
+
 ### 3. Write your own rules
 
 Edit `default_rules.json` or point `rules_file` at your own file. Example — allow only the `finance` team to invoke `billing-api`:
@@ -106,6 +127,31 @@ Edit `default_rules.json` or point `rules_file` at your own file. Example — al
   }
 ]
 ```
+
+Example — block one specific known-malicious tool by exact name, for
+every caller regardless of role, while leaving everything else subject
+to your normal rules (`roles: ["*"]` bypasses role-matching, so this
+rule alone is enough — no accompanying allow-all rule is needed if your
+other rules already cover legitimate access):
+
+```json
+[
+  {
+    "id": "deny:known-shadow-tool",
+    "roles": ["*"],
+    "actions": ["tools.invoke.some-gateway-shadow-tool-name"],
+    "resource_types": ["tool"],
+    "resource_ids": ["some-gateway-shadow-tool-name"],
+    "reason": "Blocks a known-malicious tool by exact federated name"
+  }
+]
+```
+
+This is a real, surgical fix for one identified bad tool — not a
+substitute for role-based access control. It requires already knowing
+the exact tool name; it does not detect a *new* shadow tool on its own
+(see #6825 for a proposed `ToolShadowDetectorPlugin` that detects
+near-miss tool names automatically).
 
 ### 4. Add MAC if you need classification levels
 
@@ -281,7 +327,11 @@ Cache key is built from: subject email + action + resource type + resource ID. C
 | `default.viewer-read-only` | `viewer` | List tools, list/fetch resources |
 | `deny:no-mfa-destructive` | Everyone | Blocks delete/update operations when MFA is not verified |
 
-**Tighten these rules before going to production.**
+**Tighten these rules before going to production.** In particular: any
+caller whose token has no `roles` claim gets no matching allow rule and
+is denied everything, not selectively protected — see the warning in
+"Quick Start" step 2 above before mistaking this for targeted
+enforcement during evaluation.
 
 ---
 
