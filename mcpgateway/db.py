@@ -1348,6 +1348,9 @@ class Permissions:
     TOOLS_PREVIEW = "tools.preview"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
+    # Tool validation policy permissions
+    VALIDATION_POLICY_MANAGE = "validation_policy.manage"
+
     # Plugin permissions
     PLUGINS_READ = "plugins.read"
 
@@ -3318,6 +3321,8 @@ class Tool(Base):
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     output_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
+    tool_validation_policy: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="CEL expression that overrides the gateway policy for this tool. NULL inherits.")
+    validation_refusal: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="Why the validation policy refused this discovered tool. The tool stays disabled while set.")
     extension_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -4725,6 +4730,9 @@ class Gateway(Base):
     transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     upstream_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tool_validation_policy: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="CEL expression that decides whether a tool from this gateway may be registered. NULL inherits the global policy."
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
@@ -4977,6 +4985,7 @@ class A2AAgent(Base):
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    skills: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=None)
     # Configuration
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 

@@ -33,12 +33,16 @@ Examples:
 # Standard
 import asyncio
 import base64
+from collections import Counter
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
+import ipaddress
 import re
+import time
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -50,7 +54,10 @@ import jwt
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.subscriptions import ListenHandler
 from mcp.shared.exceptions import MCPError
+from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
+from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -64,6 +71,7 @@ from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.cache.catalog_change_bus import get_listen_handler
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS, LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
@@ -98,6 +106,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay, scoped_listen_bus
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -116,7 +125,7 @@ from mcpgateway.utils.verify_credentials import (
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
-    verify_credentials,
+    verify_credentials_cached,
     verify_oauth_access_token,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -549,20 +558,44 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
     Returns:
         A list of allowed issuer URLs, with surrounding whitespace stripped.
     """
+
+    def _is_allowed_url(value: str) -> bool:
+        """Return whether an issuer URL uses an allowed scheme and host."""
+        try:
+            parts = urlsplit(value)
+            hostname = parts.hostname
+            # Accessing port validates malformed port values.
+            _ = parts.port
+        except ValueError:
+            return False
+        if not parts.netloc or not hostname:
+            return False
+        if parts.scheme.lower() == "https":
+            return True
+        if parts.scheme.lower() != "http" or not settings.ssrf_allow_localhost:
+            return False
+        hostname = hostname.rstrip(".").lower()
+        if hostname in {"localhost", "localhost.localdomain"}:
+            return True
+        try:
+            return ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+
     servers = oauth_config.get("authorization_servers") or []
     if isinstance(servers, list):
         cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
         if cleaned:
-            non_https = [s for s in cleaned if not s.lower().startswith("https://")]
-            if non_https:
-                logger.warning("Ignoring non-HTTPS authorization_servers (SSRF risk): %s", non_https)
-                cleaned = [s for s in cleaned if s.lower().startswith("https://")]
+            rejected = [s for s in cleaned if not _is_allowed_url(s)]
+            if rejected:
+                logger.warning("Ignoring invalid authorization_servers (SSRF risk): %s", rejected)
+                cleaned = [s for s in cleaned if _is_allowed_url(s)]
             return cleaned
     singular = oauth_config.get("authorization_server")
     if isinstance(singular, str) and singular.strip():
         url = singular.strip()
-        if not url.lower().startswith("https://"):
-            logger.warning("Ignoring non-HTTPS authorization_server (SSRF risk): %s", url)
+        if not _is_allowed_url(url):
+            logger.warning("Ignoring invalid authorization_server (SSRF risk): %s", url)
             return []
         return [url]
     return []
@@ -1876,6 +1909,145 @@ def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
         raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
 
 
+def _is_modern_protocol(version: Optional[str]) -> bool:
+    """Return whether a protocol version belongs to the modern (non-handshake) era.
+
+    Args:
+        version: The negotiated or declared protocol version, or ``None``.
+
+    Returns:
+        ``True`` for a version that is not handshake-era; ``False`` for ``None`` or a handshake-era version.
+
+    Examples:
+        >>> _is_modern_protocol("2026-07-28")
+        True
+        >>> _is_modern_protocol("2025-11-25")
+        False
+        >>> _is_modern_protocol(None)
+        False
+    """
+    return version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS
+
+
+_PROGRESS_DRAIN_TIMEOUT_SECONDS = 5.0
+_PROGRESS_SEND_TIMEOUT_SECONDS = 5.0
+
+
+class _ProgressRelay:
+    """Forward upstream progress to a downstream session and track sends still in flight.
+
+    The SDK client runs each upstream progress callback as a spawned task and resolves
+    the result at once, and the downstream SSE sink is a rendezvous stream. A handler
+    must ``drain()`` before it returns, or the SDK closes the sink and drops pending sends.
+
+    Each send is shielded, because closing a per-call upstream ``Client`` cancels its task
+    group and would abort sends still blocked on the sink. A send that hits
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS`` marks the relay stalled, and later updates are dropped.
+    On client hang-up, a pending send can hold handler teardown for at most
+    ``_PROGRESS_SEND_TIMEOUT_SECONDS``.
+
+    Examples:
+        >>> relay = _ProgressRelay(session=None)
+        >>> relay._inflight
+        0
+    """
+
+    def __init__(self, session: Any) -> None:
+        """Capture the downstream session.
+
+        Args:
+            session: The downstream session that receives ``report_progress`` calls.
+        """
+        self._session = session
+        self._inflight = 0
+        self._idle: anyio.Event | None = None
+        self._stalled = False
+
+    async def __call__(self, progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Forward one progress update to the downstream session.
+
+        Args:
+            progress: Current progress value.
+            total: Optional total value.
+            message: Optional human-readable status message.
+        """
+        if self._stalled:
+            return
+        idle = self._idle
+        if idle is None or self._inflight == 0:
+            idle = self._idle = anyio.Event()
+        self._inflight += 1
+        try:
+            with anyio.move_on_after(_PROGRESS_SEND_TIMEOUT_SECONDS, shield=True) as scope:
+                await self._session.report_progress(progress, total, message)
+            if scope.cancelled_caught:
+                self._stalled = True
+                logger.debug("Progress relay send timed out; dropping further progress for this request")
+        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
+            logger.debug("Progress relay failed: %s", exc)
+        finally:
+            self._inflight -= 1
+            if self._inflight == 0:
+                idle.set()
+
+    async def drain(self, timeout: float = _PROGRESS_DRAIN_TIMEOUT_SECONDS) -> None:
+        """Wait until no progress send is in flight, for at most ``timeout`` seconds.
+
+        Args:
+            timeout: Upper bound on the wait, so a stalled downstream reader never hangs the call.
+        """
+        # Let spawned progress callbacks that are queued but not yet started register as in flight.
+        await anyio.sleep(0)
+        with anyio.move_on_after(timeout) as scope:
+            while self._inflight and self._idle is not None:
+                await self._idle.wait()
+        if scope.cancelled_caught:
+            logger.debug("Progress relay drain timed out with %d sends in flight", self._inflight)
+
+
+async def _drain_progress(relay: _ProgressRelay | None) -> None:
+    """Drain ``relay`` when there is one.
+
+    Args:
+        relay: The relay a handler passed to its service call, or ``None``.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.run(_drain_progress(None))
+    """
+    if relay is not None:
+        await relay.drain()
+
+
+def _downstream_progress_relay(*, include_legacy: bool = False) -> _ProgressRelay | None:
+    """Build a callback that forwards upstream progress to the downstream caller.
+
+    The downstream session is captured when the relay is built, because upstream
+    callbacks can run in the context of another request.
+
+    Args:
+        include_legacy: Also build the relay for handshake-era peers.
+
+    Returns:
+        The relay, or ``None`` without a request context or session, or for a legacy peer when ``include_legacy`` is false.
+
+    Examples:
+        >>> _downstream_progress_relay() is None
+        True
+    """
+    try:
+        ctx = mcp_app.request_context  # pylint: disable=no-member
+    except LookupError:
+        return None
+    session = getattr(ctx, "session", None) if ctx else None
+    if session is None:
+        return None
+    protocol_version = getattr(ctx, "protocol_version", None)
+    if not (_is_modern_protocol(protocol_version) or include_legacy):
+        return None
+    return _ProgressRelay(session)
+
+
 def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
     """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
 
@@ -1981,7 +2153,6 @@ async def call_tool(
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
-    downstream_session = None
     mrtr_allowed = False
     inbound_input_responses = None
     inbound_request_state = None
@@ -1993,11 +2164,10 @@ async def call_tool(
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
         if ctx:
-            downstream_session = getattr(ctx, "session", None)
             # MRTR elicitation pass-through is modern-era only (scoping decision:
             # legacy clients keep today's no-elicitation behavior).
             protocol_version = getattr(ctx, "protocol_version", None)
-            mrtr_allowed = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+            mrtr_allowed = _is_modern_protocol(protocol_version)
             raw_params = getattr(ctx, "params", None) or {}
             raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
             inbound_request_state = raw_params.get("requestState") or raw_params.get("request_state")
@@ -2016,20 +2186,7 @@ async def call_tool(
 
     _reject_invalid_meta(meta_data)
 
-    async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
-        """Forward an upstream progress update to the downstream caller.
-
-        Args:
-            progress: Current progress value.
-            total: Optional total value.
-            message: Optional human-readable status message.
-        """
-        if downstream_session is None:
-            return
-        try:
-            await downstream_session.report_progress(progress, total, message)
-        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
-            logger.debug("Progress relay failed: %s", exc)
+    progress_relay = _downstream_progress_relay(include_legacy=True)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2079,16 +2236,21 @@ async def call_tool(
 
                     # Use direct proxy method - returns raw CallToolResult from remote server
                     # Return it directly without any normalization
-                    return await tool_service.invoke_tool_direct(
-                        gateway_id=gateway_id_from_header,
-                        name=name,
-                        arguments=arguments,
-                        request_headers=request_headers,
-                        meta_data=meta_data,
-                        user_email=user_email,
-                        token_teams=token_teams,
-                        user_context=user_identity_var.get(),
-                    )
+                    direct_relay = _downstream_progress_relay()
+                    try:
+                        return await tool_service.invoke_tool_direct(
+                            gateway_id=gateway_id_from_header,
+                            name=name,
+                            arguments=arguments,
+                            request_headers=request_headers,
+                            meta_data=meta_data,
+                            user_email=user_email,
+                            token_teams=token_teams,
+                            user_context=user_identity_var.get(),
+                            progress_callback=direct_relay,
+                        )
+                    finally:
+                        await _drain_progress(direct_relay)
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
             return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], is_error=True)
@@ -2220,24 +2382,27 @@ async def call_tool(
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
-            result = await tool_service.invoke_tool(
-                db=db,
-                name=name,
-                arguments=arguments,
-                request_headers=request_headers,
-                app_user_email=app_user_email,
-                user_email=user_email,
-                token_teams=token_teams,
-                server_id=server_id,
-                meta_data=meta_data,
-                require_model_visible=True,
-                progress_callback=_relay_progress,
-                allow_input_required=mrtr_allowed,
-                input_responses=inbound_input_responses,
-                request_state=inbound_request_state,
-                plugin_global_context=plugin_global_context,
-                plugin_context_table=plugin_context_table,
-            )
+            try:
+                result = await tool_service.invoke_tool(
+                    db=db,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=request_headers,
+                    app_user_email=app_user_email,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    server_id=server_id,
+                    meta_data=meta_data,
+                    require_model_visible=True,
+                    progress_callback=progress_relay,
+                    allow_input_required=mrtr_allowed,
+                    input_responses=inbound_input_responses,
+                    request_state=inbound_request_state,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
+                )
+            finally:
+                await _drain_progress(progress_relay)
             # A result may carry its data only in structuredContent; only an empty result on both counts is "no content".
             if not result or (not result.content and not isinstance(getattr(result, "structured_content", None), (dict, list, str, int, float, bool))):
                 logger.warning("No content returned by tool: %s", name)
@@ -2562,8 +2727,9 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
-    canonical ``{email, teams, is_admin, is_authenticated, token_use}`` dict that MCP
-    handlers expect.  This mirrors the normalization performed by
+    canonical ``{email, user_id, teams, is_admin, is_authenticated, token_use}`` dict that MCP
+    handlers expect.  ``user_id`` is the canonical identity; its phase-1 value equals the e-mail.
+    This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
 
@@ -2571,7 +2737,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
-        Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
+        Canonical user context dict with keys email, user_id, teams, is_admin, is_authenticated, token_use.
     """
     email = await _resolve_jwt_user_email_for_streamable(payload)
     jwt_is_admin = payload.get("is_admin", False)
@@ -2686,6 +2852,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                                 user=(
                                     {
                                         "email": getattr(user_record, "email", email),
+                                        "user_id": getattr(user_record, "email", email),  # canonical user_id, phase-1 value = e-mail
                                         "password_hash": getattr(user_record, "password_hash", ""),
                                         "full_name": getattr(user_record, "full_name", None),
                                         "is_admin": bool(getattr(user_record, "is_admin", False)),
@@ -2735,6 +2902,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     user_ctx: dict[str, Any] = {
         "email": email,
+        "user_id": email,  # canonical user_id, phase-1 value = e-mail
         "teams": final_teams,
         "is_admin": effective_is_admin,
         "is_authenticated": True,
@@ -2989,6 +3157,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     try:
         async with get_db() as db:
+            progress_relay = _downstream_progress_relay()
             try:
                 result = await prompt_service.get_prompt(
                     db=db,
@@ -2998,6 +3167,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    progress_callback=progress_relay,
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
@@ -3010,6 +3180,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             except PromptUpstreamError as e:
                 logger.info("Upstream answered prompt %s with JSON-RPC error %s", prompt_id, e.code)
                 raise MCPError(code=_relayed_upstream_code(e.code), message=str(e), data=e.data) from e
+            finally:
+                await _drain_progress(progress_relay)
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
                 return types.GetPromptResult(messages=[])
@@ -3148,8 +3320,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
         >>> sig = inspect.signature(read_resource)
         >>> list(sig.parameters.keys())
         ['resource_uri']
-        >>> sig.return_annotation
-        typing.Union[str, bytes, typing.List[typing.Any]]
+        >>> sig.return_annotation == Union[str, bytes, List[Any]]
+        True
     """
     upstream_read_cache_var.set(None)  # only an upstream read made during this call may set it
     server_id, request_headers, user_context = await _get_request_context_or_default()
@@ -3228,6 +3400,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
             # Default cache mode: use database
+            progress_relay = _downstream_progress_relay()
             try:
                 result = await resource_service.read_resource(
                     db=db,
@@ -3237,6 +3410,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    progress_callback=progress_relay,
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
                 )
@@ -3252,9 +3426,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                 # The resource cache content is empty
                 logger.warning("Resource %s has no cached content; returning empty", resource_uri)
                 return ""
+            finally:
+                await _drain_progress(progress_relay)
 
             # Return blob content if available (binary resources)
-            if result and getattr(result, "blob", None):
+            if result and getattr(result, "blob", None) is not None:
                 return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)
@@ -3471,12 +3647,17 @@ async def complete(
             if meta is not None:
                 params["_meta"] = meta.model_dump(by_alias=True) if hasattr(meta, "model_dump") else meta
 
-            result = await completion_service.handle_completion(
-                db,
-                params,
-                user_email=user_email,
-                token_teams=token_teams,
-            )
+            progress_relay = _downstream_progress_relay()
+            try:
+                result = await completion_service.handle_completion(
+                    db,
+                    params,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    progress_callback=progress_relay,
+                )
+            finally:
+                await _drain_progress(progress_relay)
 
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
@@ -3692,6 +3873,55 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
         _v2_request_ctx.reset(token)
 
 
+LIST_PERMISSIONS: dict[str, str] = {
+    "tools/list": "tools.read",
+    "prompts/list": "prompts.read",
+    "resources/list": "resources.read",
+    "resources/templates/list": "resources.read",
+}
+
+
+async def _resolve_catalog_scope() -> tuple[Optional[str], dict[str, Any], dict[str, Any]]:
+    """Resolve the caller's catalog scope and enforce per-server OAuth once.
+
+    Returns:
+        ``(server_id, request_headers, user_context)`` for the current request.
+
+    Raises:
+        OAuthRequiredError: If ``MCP_REQUIRE_AUTH=false`` and an unauthenticated caller targets an ``oauth_enabled`` server.
+    """
+    server_id, headers, user_context = await _get_request_context_or_default()
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+    return server_id, headers, user_context
+
+
+def _token_allows_catalog_read(user_context: dict[str, Any], permission: str) -> bool:
+    """Apply the token-scope ceiling shared by the catalog ``*/list`` handlers and ``subscriptions/listen``.
+
+    This is a Layer-1 check only. An empty token scope sets no ceiling.
+    Neither path runs a per-method Layer-2 RBAC check for ``tools.read``,
+    ``prompts.read`` or ``resources.read``. The server-scoped route checks
+    only ``servers.use`` at entry. So the listen gate equals the ``*/list`` gate.
+
+    Args:
+        user_context: Request user context.
+        permission: The list permission, a value of ``LIST_PERMISSIONS``.
+
+    Returns:
+        bool: True when the token scope permits the read.
+
+    Examples:
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": ["tools.read"]}, "prompts.read")
+        False
+        >>> _token_allows_catalog_read({"is_authenticated": True, "scoped_permissions": []}, "prompts.read")
+        True
+        >>> _token_allows_catalog_read({}, "tools.read")
+        True
+    """
+    return not _should_enforce_streamable_rbac(user_context) or _check_scoped_permission(user_context, permission)
+
+
 async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     """Authorize and serve one MCP catalog page.
 
@@ -3709,12 +3939,9 @@ async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    server_id, headers, user_context = await _get_request_context_or_default()
-    permission = {"tools/list": "tools.read", "prompts/list": "prompts.read"}.get(method, "resources.read")
-    if _should_enforce_streamable_rbac(user_context) and not _check_scoped_permission(user_context, permission):
+    server_id, headers, user_context = await _resolve_catalog_scope()
+    if not _token_allows_catalog_read(user_context, LIST_PERMISSIONS[method]):
         raise PermissionError(_ACCESS_DENIED_MSG)
-    if not settings.mcp_require_auth:
-        await _check_server_oauth_enforcement(server_id, user_context)
     user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
     meta = getattr(params, "meta", None) if params is not None else None
     try:
@@ -3853,6 +4080,177 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
         _v2_request_ctx.reset(token)
 
 
+_LISTEN_FLAG_PERMISSIONS: dict[str, str] = {
+    "tools_list_changed": LIST_PERMISSIONS["tools/list"],
+    "prompts_list_changed": LIST_PERMISSIONS["prompts/list"],
+    "resources_list_changed": LIST_PERMISSIONS["resources/list"],
+}
+
+
+LISTEN_DEADLINE_FLOOR_SECONDS: float = 5.0
+
+
+def _listen_lifetime_seconds(user_context: Any) -> float:
+    """Return how long a listen stream may stay open.
+
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``, whichever is sooner.
+    The floor keeps the stream open long enough for the handler to send its ack first.
+
+    Args:
+        user_context: Resolved caller context; a missing or ``None`` ``exp`` claim sets no token limit.
+
+    Returns:
+        float: Seconds from now until the stream ends.
+    """
+    lifetime = float(settings.mcp_listen_max_lifetime_seconds)
+    exp = (user_context or {}).get("exp")
+    if exp is not None:
+        lifetime = min(lifetime, float(exp) - time.time())
+    return max(LISTEN_DEADLINE_FLOOR_SECONDS, lifetime)
+
+
+_listen_streams_by_principal: Counter[str] = Counter()
+_anonymous_listen_streams: int = 0  # pylint: disable=invalid-name
+
+
+def _claim_listen_slot(principal: Optional[str]) -> None:
+    """Count one open listen stream for ``principal``, or refuse it at the cap.
+
+    A caller with no email counts against the shared anonymous cap.
+    The check and the increment run without an ``await``, so concurrent streams cannot exceed the cap.
+
+    Args:
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
+
+    Raises:
+        MCPError: ``INTERNAL_ERROR`` "Subscription limit reached" when the cap is full.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if not principal:
+        if _anonymous_listen_streams >= settings.mcp_listen_max_anonymous_streams:
+            raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+        _anonymous_listen_streams += 1
+        return
+    if _listen_streams_by_principal[principal] >= settings.mcp_listen_max_streams_per_principal:
+        raise MCPError(code=types.INTERNAL_ERROR, message="Subscription limit reached")
+    _listen_streams_by_principal[principal] += 1
+
+
+def _release_listen_slot(principal: Optional[str]) -> None:
+    """Free the slot ``_claim_listen_slot`` took, removing a principal key at zero.
+
+    Args:
+        principal: Caller email, or ``None`` or an empty string for an anonymous caller.
+    """
+    global _anonymous_listen_streams  # pylint: disable=global-statement
+    if not principal:
+        _anonymous_listen_streams -= 1
+    elif _listen_streams_by_principal[principal] <= 1:
+        del _listen_streams_by_principal[principal]
+    else:
+        _listen_streams_by_principal[principal] -= 1
+
+
+async def _adapt_subscriptions_listen(ctx: Any, params: types.SubscriptionsListenRequestParams) -> types.SubscriptionsListenResult:
+    """Serve ``subscriptions/listen`` for 2026-07-28 callers through the shared ``ListenHandler``.
+
+    Each requested list kind passes the same token-scope gate as its ``*/list`` call.
+    ``resourceSubscriptions`` needs ``resources.read``; the ack keeps only URIs the caller can see that come from a reachable upstream server.
+    The stream holds one relay watch per honored upstream resource. Unknown filter keys are dropped.
+    The stream ends at the token ``exp`` or ``MCP_LISTEN_MAX_LIFETIME_SECONDS``.
+    Every server teardown sends ``notifications/cancelled`` naming the listen request, then the completion result.
+    A client disconnect cancels the handler and sends nothing.
+    Each principal may hold ``MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL`` streams; anonymous callers share ``MCP_LISTEN_MAX_ANONYMOUS_STREAMS``.
+
+    Args:
+        ctx: SDK request context.
+        params: The listen request params.
+
+    Returns:
+        types.SubscriptionsListenResult: The shared handler's completion result.
+
+    Raises:
+        MCPError: ``METHOD_NOT_FOUND`` for a handshake-era caller.
+            ``INTERNAL_ERROR`` "Subscription limit reached" when the caller is at its concurrent-stream cap.
+        PermissionError: If kinds or URIs were requested and the token scope denies every one, as ``tools/list`` or ``resources/read`` would.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        if not _caller_is_modern():
+            raise MCPError(code=types.METHOD_NOT_FOUND, message="Method not found", data="subscriptions/listen")
+        server_id, _, user_context = await _resolve_catalog_scope()
+        requested = [flag for flag in _LISTEN_FLAG_PERMISSIONS if getattr(params.notifications, flag)]
+        granted = {flag: True for flag in requested if _token_allows_catalog_read(user_context, _LISTEN_FLAG_PERMISSIONS[flag])}
+        requested_uris = list(params.notifications.resource_subscriptions or ())
+        uris_permitted = bool(requested_uris) and _token_allows_catalog_read(user_context, LIST_PERMISSIONS["resources/list"])
+        if (requested or requested_uris) and not granted and not uris_permitted:
+            raise PermissionError(_ACCESS_DENIED_MSG)
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+        targets: dict[str, list[Any]] = {}
+        if uris_permitted:
+            async with get_db() as db:
+                targets = await resource_service.resolve_subscription_targets(db, requested_uris, server_id=server_id, user_email=user_email, token_teams=token_teams)
+        _claim_listen_slot(user_email)
+        try:
+            async with get_resource_subscription_relay().watch([target for uri_targets in targets.values() for target in uri_targets]) as admitted:
+                admitted_set = set(admitted)
+                honored_uris = [uri for uri, uri_targets in targets.items() if admitted_set.intersection(uri_targets)]
+                narrowed = params.model_copy(update={"notifications": types.SubscriptionFilter(**granted, resource_subscriptions=honored_uris or None)})
+                handler = _listen_handler_for(admitted)
+                result = types.SubscriptionsListenResult(_meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+                with anyio.move_on_after(_listen_lifetime_seconds(user_context)):
+                    result = await handler(ctx, narrowed)
+                await _send_listen_teardown(ctx)
+                return result
+        finally:
+            _release_listen_slot(user_email)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+def _listen_handler_for(admitted: List[Any]) -> Any:
+    """Return the ``ListenHandler`` that serves one stream.
+
+    Two upstream servers can expose one URI to different teams. A stream that watches
+    upstream resources therefore gets its own handler over a bus scoped to its targets.
+    Other streams share the process-wide handler.
+
+    Args:
+        admitted: Upstream resource targets the stream watches.
+
+    Returns:
+        Any: A ``ListenHandler`` to delegate the stream to.
+    """
+    if admitted:
+        return ListenHandler(scoped_listen_bus(admitted), max_subscriptions=1)
+    return get_listen_handler()
+
+
+LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _send_listen_teardown(ctx: Any) -> None:
+    """Send ``notifications/cancelled`` naming the listen request before the gateway closes the stream.
+
+    The 2026-07-28 cancellation spec requires this frame on every server teardown and forbids it for any other purpose.
+    A client that has stopped reading cannot hold the stream open: the send is bounded and its failure is only logged.
+
+    Args:
+        ctx: SDK request context of the listen request.
+    """
+    notification = types.CancelledNotification(
+        params=types.CancelledNotificationParams(request_id=ctx.request_id, reason="Subscription closed by server", _meta={SUBSCRIPTION_ID_META_KEY: ctx.request_id})
+    )
+    with anyio.move_on_after(LISTEN_TEARDOWN_SEND_TIMEOUT_SECONDS):
+        try:
+            await ctx.session.send_notification(notification, related_request_id=ctx.request_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("Listen teardown notification for %r not sent: %s", ctx.request_id, exc)
+
+
 # Register all handlers via the v2 add_request_handler API. set_logging_level
 # was already migrated to (_ctx, params) form so it registers directly.
 mcp_app.add_request_handler("server/discover", types.RequestParams, _adapt_discover_with_ttl_cache_scope)
@@ -3866,6 +4264,7 @@ mcp_app.add_request_handler("resources/read", types.ReadResourceRequestParams, _
 mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestParams, _adapt_list_resource_templates)
 mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
 mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
+mcp_app.add_request_handler("subscriptions/listen", types.SubscriptionsListenRequestParams, _adapt_subscriptions_listen)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------
@@ -4400,6 +4799,55 @@ def _accepts_event_stream(accept_header: str) -> bool:
     return False
 
 
+def _requests_progress_stream(body: bytes | None) -> bool:
+    """Return whether a request body is one JSON-RPC message that carries a valid ``_meta.progressToken``.
+
+    Args:
+        body: Raw POST body, or ``None`` when the body could not be read.
+
+    Returns:
+        ``True`` when the body is a single JSON object whose ``params._meta.progressToken`` is a string or integer.
+
+    Examples:
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": "a"}}}')
+        True
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": true}}}')
+        False
+        >>> _requests_progress_stream(b'{"params": {}}')
+        False
+        >>> _requests_progress_stream(None)
+        False
+    """
+    if body is None or b"progressToken" not in body:
+        return False
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and progress_token_from_params(payload.get("params")) is not None
+
+
+def _has_single_modern_protocol_version(scope: Scope) -> bool:
+    """Return whether the request carries exactly one ``mcp-protocol-version`` header with a modern value.
+
+    Args:
+        scope: ASGI scope with raw ``headers``.
+
+    Returns:
+        ``True`` for one header whose value is not a handshake-era version; ``False`` for none, several, or a legacy value.
+
+    Examples:
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")]})
+        True
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2025-11-25")]})
+        False
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")] * 2})
+        False
+    """
+    values = [item[1] for item in scope.get("headers") or [] if isinstance(item, (tuple, list)) and len(item) == 2 and item[0] == b"mcp-protocol-version"]
+    return len(values) == 1 and isinstance(values[0], bytes) and _is_modern_protocol(values[0].decode("latin-1"))
+
+
 def _bucket_method_label(method: Optional[str]) -> str:
     """Map an MCP method name to a bounded Prometheus label value."""
     if not isinstance(method, str) or not method:
@@ -4764,6 +5212,10 @@ class SessionManagerWrapper:
             json_response=settings.json_response_enabled,
             stateless=stateless,
         )
+        # JSON mode answers in one body, so progress has no channel. Modern requests that ask for progress use this SSE manager instead.
+        self.progress_session_manager: StreamableHTTPSessionManager | None = None
+        if settings.json_response_enabled:
+            self.progress_session_manager = StreamableHTTPSessionManager(app=mcp_app, event_store=None, json_response=False, stateless=True)
         self.stack = AsyncExitStack()
 
     async def initialize(self) -> None:
@@ -4780,6 +5232,8 @@ class SessionManagerWrapper:
         """
         logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
+        if self.progress_session_manager is not None:
+            await self.stack.enter_async_context(self.progress_session_manager.run())
 
     async def shutdown(self) -> None:
         """
@@ -5470,7 +5924,7 @@ class SessionManagerWrapper:
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         # check if modern era request
         _pv_header = headers.get("mcp-protocol-version")
-        is_modern_era_request = _pv_header is not None and _pv_header not in HANDSHAKE_PROTOCOL_VERSIONS
+        is_modern_era_request = _is_modern_protocol(_pv_header)
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -5582,10 +6036,25 @@ class SessionManagerWrapper:
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
+        session_manager = self.session_manager
+        if (
+            self.progress_session_manager is not None
+            and method == "POST"
+            and not is_internally_forwarded
+            and _has_single_modern_protocol_version(scope)
+            and _accepts_event_stream(headers.get("accept", ""))
+        ):
+            peek = await _drain_request_body(receive)
+            outcome, receive = await _dispatch_peek_outcome(peek, receive, send, accepted_body=b"", log_label="progress stream routing", log_context=path)
+            if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
+                return
+            if not peek.too_large and _requests_progress_stream(peek.body):
+                session_manager = self.progress_session_manager
+
         span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
 
         try:
-            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
+            await session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled
@@ -5684,11 +6153,14 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
     # Standard
     from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
 
+    # First-Party
+    from mcpgateway.auth_context import get_user_id  # pylint: disable=import-outside-toplevel
+
     email = ctx.get("email")
     if email:
         user_identity_var.set(
             UserContext(
-                user_id=email,
+                user_id=get_user_id(ctx),
                 email=email,
                 is_admin=ctx.get("is_admin", False),
                 teams=ctx.get("teams"),
@@ -5749,6 +6221,7 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 
         # Trusted proxy auth is DB/header-derived, not JWT-derived, so there is no token exp claim to clamp.
         _proxy_ctx: dict[str, Any] = {
+            "user_id": proxy_user,
             "email": proxy_user,
             "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
             "is_authenticated": True,
@@ -5782,6 +6255,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
 
     forwarded: dict[str, Any] = {}
     for key in (
+        "user_id",
         "email",
         "teams",
         "team_name",
@@ -5859,7 +6333,7 @@ class _StreamableHttpAuthHandler:
             requests are rejected with 401 regardless of the global setting.
           - Valid tokens get full scoped access based on their teams.
           - Malformed/invalid Bearer tokens are rejected with 401 (no silent downgrade).
-        - If a Bearer token is present, it is verified using ``verify_credentials``.
+        - If a Bearer token is present, it is verified using ``verify_credentials_cached``.
 
         Returns:
             True if authentication passes or is skipped.
@@ -5966,6 +6440,7 @@ class _StreamableHttpAuthHandler:
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {
+                "user_id": None,
                 "email": None,
                 "teams": [],  # Empty list = public-only access
                 "is_authenticated": False,
@@ -5981,8 +6456,9 @@ class _StreamableHttpAuthHandler:
         """Verify a JWT Bearer token and populate the user context.
 
         Routes to ContextForge-issued or IdP-issued (OAuth) verification based
-        on the token's ``iss`` claim. IdP-issued tokens are only accepted for
-        virtual servers with ``oauth_enabled=True``.
+        on the token's ``iss`` claim. IdP-issued tokens go to the OAuth path
+        for virtual servers with ``oauth_enabled=True``. Trusted external-IdP
+        tokens (``SSO_API_TOKEN_AUTH_ENABLED``) are verified as on ``/rpc``.
 
         Args:
             token: Bearer token value extracted from the Authorization header.
@@ -5995,7 +6471,7 @@ class _StreamableHttpAuthHandler:
             return routed
 
         try:
-            user_payload = await verify_credentials(token)
+            user_payload = await verify_credentials_cached(token)
             # Store enriched user context with normalized teams
             if not isinstance(user_payload, dict):
                 return True
@@ -6132,6 +6608,7 @@ class _StreamableHttpAuthHandler:
                                     user=(
                                         {
                                             "email": user_record.email,
+                                            "user_id": user_record.email,  # canonical user_id, phase-1 value = e-mail
                                             "password_hash": user_record.password_hash,
                                             "full_name": user_record.full_name,
                                             "is_admin": bool(user_record.is_admin),
@@ -6156,7 +6633,9 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
             # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
             # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
-            effective_is_admin = db_user_is_admin or is_admin
+            # External-IdP identities are cached (60s TTL) with the DB is_admin at build time, so the
+            # payload copy can lag a demotion. They take admin from the DB only.
+            effective_is_admin = db_user_is_admin if user_payload.get("source") == "external_idp" else (db_user_is_admin or is_admin)
 
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
@@ -6201,6 +6680,7 @@ class _StreamableHttpAuthHandler:
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
             auth_user_ctx: dict[str, Any] = {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
@@ -6230,8 +6710,8 @@ class _StreamableHttpAuthHandler:
                 auth_method="jwt",
                 team_name=trace_team_name,
             )
-        except HTTPException:
-            # Internal JWT verification failed (expired, malformed, bad signature, etc.)
+        except HTTPException as exc:
+            logger.debug("MCP bearer token rejected: %s", sanitize_for_log(str(exc.detail)))
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         except SQLAlchemyError:
             # DB failure during team resolution or membership validation
@@ -6262,17 +6742,17 @@ class _StreamableHttpAuthHandler:
         Returns:
             True on successful OAuth verification (user context populated).
             False when an error response has already been sent. ``None`` when
-            the caller should continue with ContextForge-issued JWT
-            verification (undecodable token, internal ``iss``, or an
-            IdP-issued token on a server that does not handle it).
+            the caller should continue with ``verify_credentials_cached()``
+            (undecodable token, internal ``iss``, or an IdP-issued token on a
+            server that does not handle it).
         """
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
         except jwt.DecodeError:
-            # Undecodable bearer token. Flow through to verify_credentials()
+            # Undecodable bearer token. Flow through to verify_credentials_cached()
             # which will emit the canonical 401. Log at DEBUG only — auth
             # floods would otherwise pollute WARN-level observability.
-            logger.debug("Bearer token is not a decodable JWT; deferring to internal verify_credentials")
+            logger.debug("Bearer token is not a decodable JWT; deferring to verify_credentials_cached")
             return None
 
         if unverified.get("iss", "") == settings.jwt_issuer:
@@ -6297,16 +6777,9 @@ class _StreamableHttpAuthHandler:
         if oauth_result is OAuthAuthResult.FAILED:
             oauth_verify_events_counter.labels(outcome="failed").inc()
             return False  # Error response already sent
-        # OAuthAuthResult.NOT_APPLICABLE — this handler is not responsible for
-        # the token (target server is not oauth_enabled, token's issuer is
-        # outside the allowlist, or the URL carries no server id). When
-        # internal issuer verification is enabled, an iss mismatch will be
-        # rejected by verify_credentials() anyway, so short-circuit with the
-        # canonical 401. When it is disabled, fall through so legacy internal
-        # JWTs whose iss differs from settings.jwt_issuer remain accepted.
+        # NOT_APPLICABLE: verify_credentials_cached() decides. It accepts trusted
+        # external-IdP tokens and rejects any other foreign issuer.
         oauth_verify_events_counter.labels(outcome="not_applicable").inc()
-        if settings.jwt_issuer_verification:
-            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         return None
 
     async def _try_oauth_access_token(self, token: str, unverified: Optional[Dict[str, Any]] = None) -> OAuthAuthResult:  # noqa: PLR0911
@@ -6332,8 +6805,10 @@ class _StreamableHttpAuthHandler:
             resolution succeeded, ``FAILED`` when an error response has
             already been sent, ``NOT_APPLICABLE`` when the target virtual
             server does not use OAuth *or* when this server is not the right
-            handler for the token (issuer outside the allowlist); in the
-            latter case the caller should defer to internal JWT verification.
+            handler for the token (issuer outside the allowlist). The caller
+            then defers to ``verify_credentials_cached()``. That function
+            accepts trusted external-IdP issuers and rejects all other
+            foreign issuers.
         """
         if unverified is None:
             try:
@@ -6388,21 +6863,17 @@ class _StreamableHttpAuthHandler:
 
         # Check whether this server is the right handler for the token. If
         # the issuer is not in the allowlist (including tokens with a
-        # missing/empty iss), return NOT_APPLICABLE so the caller can fall
-        # through to internal JWT verification. This preserves legacy
-        # behaviour on ``oauth_enabled`` servers for gateway-issued JWTs
-        # whose iss is missing or predates the current ``settings.jwt_issuer``
-        # value — those tokens would previously have been accepted by
-        # ``verify_credentials()`` when ``JWT_ISSUER_VERIFICATION=false``,
-        # and rejecting them here would be a regression. Tokens with a
-        # non-matching iss that are *not* legitimate internal JWTs will
-        # still fail signature verification in the internal path and be
-        # rejected there.
+        # missing/empty iss), return NOT_APPLICABLE so the caller defers to
+        # ``verify_credentials_cached()``. This preserves legacy behaviour on
+        # ``oauth_enabled`` servers for gateway-issued JWTs whose iss is
+        # missing or predates the current ``settings.jwt_issuer`` value.
+        # ``verify_credentials_cached()`` accepts trusted external-IdP issuers
+        # and rejects all other foreign issuers.
         token_issuer = unverified.get("iss")
         normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
         if not isinstance(token_issuer, str) or token_issuer.rstrip("/") not in normalized_allowed:
             logger.info(
-                "Token issuer %s not in allowlist for server %s; deferring to internal verify",
+                "Token issuer %s not in allowlist for server %s; deferring to verify_credentials_cached",
                 sanitize_for_log(token_issuer) if token_issuer else "<missing>",
                 server_id_log,
             )
@@ -6510,6 +6981,7 @@ class _StreamableHttpAuthHandler:
         # auth_method distinguishes the origin for audit/logging.
         user_context_var.set(
             {
+                "user_id": user_email,
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,

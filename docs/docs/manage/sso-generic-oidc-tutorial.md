@@ -702,6 +702,11 @@ curl https://your-provider.com/.well-known/openid-configuration | jq '.id_token_
 SKIP_SSL_VERIFY=true
 ```
 
+!!! warning "JWKS follows `SKIP_SSL_VERIFY`"
+    `SKIP_SSL_VERIFY=true` also disables TLS verification when ContextForge fetches the JWKS
+    signing keys. An attacker on the network path can then serve their own keys and forge tokens.
+    Use it in development only. The gateway logs a warning on each JWKS fetch while it is set.
+
 For production, fix the certificate issue at the provider level.
 
 ## Testing Checklist

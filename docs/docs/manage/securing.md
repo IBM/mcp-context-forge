@@ -705,8 +705,10 @@ written and again when it is invoked, and — on Linux — they execute in a for
 worker whose environment has been cleared, under `JQ_FILTER_TIMEOUT_SECONDS`.
 
 Filters that reference `env`, `$ENV`, `input`, `inputs`, `input_filename`,
-`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`, or
-`modulemeta` are rejected. Field access such as `.env` is unaffected.
+`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`,
+`modulemeta`, `halt`, `halt_error`, `builtins`, `while`, `until`, `recurse`,
+`recurse_down`, `foreach`, or `repeat` are rejected. Field access such as `.env`
+is unaffected.
 
 Object-construction keys are read as code, so an unquoted key named after a
 restricted built-in is refused. Quote it instead — write `{"env": .region}`
@@ -745,10 +747,35 @@ response filtering for the lifetime of the gateway process.
 **If you ran a build released before this change**, treat the following as
 disclosed and rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the
 credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
-`BASIC_AUTH_PASSWORD`. Audit existing tools for hostile `jsonpath_filter` values
-before upgrading, since those tools will begin failing at invoke time.
+`BASIC_AUTH_PASSWORD`. Audit existing tools for `jsonpath_filter` values
+referencing restricted built-ins (including process control and unbounded iteration
+constructs such as `halt`, `recurse`, `while`, `until`, `foreach`, `repeat`, and `builtins`)
+before upgrading, since those tools will begin failing at write and invoke time.
 
-### 14. JSON Schema Regex Sandbox
+### 14. Tool Validation Policy Sandbox
+
+Gateway and tool `tool_validation_policy` values are CEL expressions written by
+operators. They are evaluated when the policy is saved and whenever a tool is
+registered, refreshed, or edited, and — on Linux — they execute in the same kind of
+forked, environment-scrubbed worker as jq filters, under `CEL_TIMEOUT_SECONDS`.
+An expression sees only `description` and `tool_name`; any other name, any
+function the CEL runtime does not provide, and any non-boolean result is
+rejected when the policy is saved.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `CEL_EXECUTION` | `subprocess` | `subprocess` evaluates policies in the sandbox; `inprocess` disables it. |
+| `CEL_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for a single evaluation, at most 1.0. |
+| `CEL_WORKERS` | `2` | Worker processes per gateway process. |
+
+The platform caveat, the meaning of `inprocess`, and the pool-wide kill on timeout
+are the same as for the jq sandbox above. A policy that cannot be evaluated counts as a
+refusal, after one retry for a sandbox that is busy or unavailable, so a failed
+check disables the affected tools with the reason stored on the row rather than
+admitting them unchecked. Setting a policy requires the `validation_policy.manage` permission and
+is written to the audit trail.
+
+### 15. JSON Schema Regex Sandbox
 
 A JSON Schema `pattern` or `patternProperties` keyword is a regular expression,
 and tool, prompt, and output schemas are attacker-influenced. A schema that
@@ -786,7 +813,7 @@ the gateway's own sandboxed check runs. A hostile federated MCP server
 controls both the schema and the instance on this path, and it is not yet
 bounded by this sandbox; tracked as a follow-up.
 
-### 15. Database Security
+### 16. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -794,7 +821,7 @@ bounded by this sandbox; tracked as a follow-up.
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 16. Monitoring & Logging
+### 17. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -802,7 +829,7 @@ bounded by this sandbox; tracked as a follow-up.
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 17. Integration Security
+### 18. Integration Security
 
 ContextForge should be integrated with:
 
@@ -812,7 +839,7 @@ ContextForge should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 18. Well-Known URI Security
+### 19. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -836,7 +863,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 19. Downstream Application Security
+### 20. Downstream Application Security
 
 Applications consuming ContextForge data must:
 

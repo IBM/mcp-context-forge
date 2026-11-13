@@ -251,28 +251,102 @@ class TestConditionalPaths:
 
         assert any("CSRF protection middleware disabled" in rec.message for rec in caplog.records)
 
-    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+    def test_optional_routers_include_siem_router_with_admin_csrf_dependency(self, monkeypatch):
         """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        # Standard
+        from types import ModuleType
+
+        # Third-Party
+        from fastapi import APIRouter, FastAPI
+
         include_calls = []
-        from fastapi.applications import FastAPI
 
         original_include_router = FastAPI.include_router
 
-        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001, ANN202
             include_calls.append((router, kwargs.get("dependencies")))
             return original_include_router(self, router, *args, **kwargs)
 
         monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
 
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "mcpgateway_admin_api_enabled": True,
-                "siem_export_enabled": True,
-            },
-        )
+        # Stub the admin and SIEM modules so the wiring runs without importing heavy modules.
+        # Import the real admin module first: monkeypatch.setitem then restores it on teardown
+        # instead of dropping the sys.modules entry and forcing a later re-import under
+        # patched settings (admin.py binds a2a_service at import time).
+        # First-Party
+        import mcpgateway.admin  # noqa: F401 pylint: disable=unused-import
+
+        admin_mod = ModuleType("mcpgateway.admin")
+
+        def enforce_admin_csrf():  # noqa: ANN202 - stub matching the real dependency's name
+            return None
+
+        admin_mod.enforce_admin_csrf = enforce_admin_csrf
+        monkeypatch.setitem(sys.modules, "mcpgateway.admin", admin_mod)
+
+        siem_mod = ModuleType("mcpgateway.routers.siem")
+        siem_mod.router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.siem", siem_mod)
+
+        monkeypatch.setattr(settings, "mcpgateway_admin_api_enabled", True)
+        monkeypatch.setattr(settings, "siem_export_enabled", True)
+
+        # First-Party
+        import mcpgateway.main as main_module
+
+        main_module._include_optional_routers(FastAPI())  # pylint: disable=protected-access
 
         assert any(deps and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps) for _, deps in include_calls)
+
+    @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_vault"])
+    def test_optional_router_mount_gates(self, monkeypatch, caplog, variant):
+        """Exercise the optional-router mount gates against a bare app.
+
+        Runs ``_include_optional_routers`` under three settings matrices. The
+        matrix covers both outcomes of each mount gate without re-executing the
+        module.
+        """
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        import mcpgateway.main as main_module
+        from mcpgateway.routers.log_search import router as log_search_router
+        from mcpgateway.routers.vault_router import vault_router
+
+        guarded = {"mcpgateway.routers.a2a_agent_plugin_bindings", "mcpgateway.routers.mcp_servers_router"}
+        overrides = {"structured_logging_enabled": False}
+
+        if variant == "features_on":
+            overrides.update({"oauth_token_backend": "vault", "structured_logging_enabled": True})
+        elif variant == "degraded_vault":
+            guarded.add("mcpgateway.routers.vault_router")
+            overrides["oauth_token_backend"] = "vault"
+
+        for name in guarded:
+            # A None entry makes ``from <name> import router`` raise ImportError.
+            monkeypatch.setitem(sys.modules, name, None)
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
+
+        bare_app = FastAPI()
+        main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
+
+        def _mounted(router):
+            # include_router is lazy: a bare app holds _IncludedRouter wrappers, not materialized paths.
+            return any(getattr(route, "original_router", None) is router for route in bare_app.routes)
+
+
+        if variant == "features_on":
+            assert _mounted(vault_router)
+            assert _mounted(log_search_router)
+        else:
+            assert not _mounted(vault_router)
+            assert not _mounted(log_search_router)
+
+        # Guarded imports degrade to an error log; both routers stay unmounted.
+        assert "A2A agent plugin bindings router not available" in caplog.text
+        assert "MCP servers router not available" in caplog.text
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
@@ -1808,7 +1882,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -1978,6 +2052,44 @@ class TestAdminAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_admin_auth_bearer_principal_wins_over_cookie(self, monkeypatch):
+        """The Authorization bearer principal is authorized, not the cookie principal."""
+        middleware = AdminAuthMiddleware(None)
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        users = {
+            "admin-tok": MagicMock(email="admin@example.com", is_admin=True, full_name="Admin"),
+            "user-tok": MagicMock(email="user@example.com", is_admin=False, full_name="User"),
+        }
+
+        async def _validate(_request, token):
+            return users[token]
+
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
+
+        for bearer, cookie, expect_allowed in (("user-tok", "admin-tok", False), ("admin-tok", "user-tok", True)):
+            request = _make_request(
+                "/admin/tools",
+                headers={"accept": "application/json", "authorization": f"Bearer {bearer}"},
+                cookies={"jwt_token": cookie},
+            )
+            call_next = AsyncMock(return_value="ok")
+            with (
+                patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=_validate)),
+                patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
+                patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
+            ):
+                response = await middleware.dispatch(request, call_next)
+
+            if expect_allowed:
+                assert response == "ok"
+                call_next.assert_called_once()
+            else:
+                assert response.status_code == 403
+                call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_admin_auth_api_token_revoked_and_success(self, monkeypatch):
         """Cover API token revoked and valid branches (when JWT validation fails)."""
         middleware = AdminAuthMiddleware(None)
@@ -2138,7 +2250,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},  # pragma: allowlist secret
         )
         request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
@@ -2182,7 +2294,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "00000000000000000000000000000099"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2212,7 +2324,7 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 403
         # team_id was not in token_teams, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
@@ -2222,7 +2334,7 @@ class TestAdminAuthMiddleware:
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2251,7 +2363,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # No team_id in request, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
@@ -5144,6 +5256,63 @@ class TestLifespanAdvanced:
         # Legacy mode must suppress modern listener initialization
         mock_init_modern.assert_not_called()
 
+    async def _run_lifespan_with_modern_listeners(self, monkeypatch, *, cache_type, election_backend, events):
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod.settings, "gateway_modern_listeners_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_client_connect_mode", "auto")
+        monkeypatch.setattr(main_mod.settings, "cache_type", cache_type)
+        monkeypatch.setattr(main_mod.settings, "primary_worker_election_backend", election_backend)
+        monkeypatch.setattr("mcpgateway.services.leader_election.start_primary_worker_elector", AsyncMock(side_effect=lambda: events.append("elector")))
+        monkeypatch.setattr("mcpgateway.services.leader_election.stop_primary_worker_elector", AsyncMock())
+
+        listener = MagicMock()
+        listener.initialize = AsyncMock(side_effect=lambda: events.append("listener"))
+        listener.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, "init_modern_listener_service", MagicMock(return_value=listener))
+        monkeypatch.setattr(main_mod, "get_modern_listener_service", MagicMock(return_value=listener))
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_lifespan_warns_when_listeners_use_filelock_with_redis_cache(self, monkeypatch, caplog):
+        events = []
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
+            await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="filelock", events=events)
+
+        assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" in caplog.text
+        assert events == ["listener"]
+
+    @pytest.mark.asyncio
+    async def test_lifespan_starts_listeners_after_redis_elector(self, monkeypatch, caplog):
+        events = []
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
+            await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=events)
+
+        assert events == ["elector", "listener"]
+        assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_lifespan_shuts_down_resource_subscription_relay(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        relay = MagicMock()
+        relay.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, "get_resource_subscription_relay", MagicMock(return_value=relay))
+        await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=[])
+
+        relay.shutdown.assert_awaited_once()
+
 
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""
@@ -5957,10 +6126,6 @@ class TestA2ABranchCoverage:
         response = await main_mod.create_a2a_agent(agent, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert response.status_code == 403
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_validation_and_integrity_errors(self, monkeypatch):
@@ -6017,11 +6182,6 @@ class TestA2ABranchCoverage:
         import mcpgateway.main as main_mod
         from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
-
         svc = MagicMock()
         svc.delete_agent = AsyncMock(side_effect=PermissionError("nope"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
@@ -6047,11 +6207,6 @@ class TestA2ABranchCoverage:
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
-        assert excinfo.value.status_code == 503
 
         svc = MagicMock()
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
@@ -6090,22 +6245,6 @@ class TestA2ABranchCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
         db = MagicMock()
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.list_a2a_agents(
-                request,
-                include_inactive=False,
-                tags="a, b",
-                team_id=None,
-                visibility=None,
-                cursor=None,
-                include_pagination=False,
-                limit=None,
-                db=db,
-                user={"email": "user@example.com"},
-            )
-        assert excinfo.value.status_code == 503
 
         agent = MagicMock()
         agent.model_dump.return_value = {"id": "agent-1"}
@@ -11702,7 +11841,15 @@ class TestRemainingCoverageGaps:
         assert result["status"] == "success"
         a2a.reset_metrics.assert_awaited_once()
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
+
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", True)
+        monkeypatch.setattr(main_mod, "a2a_service", a2a)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_metrics_enabled", False)
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
@@ -11821,11 +11968,6 @@ class TestRemainingCoverageGaps:
             lambda *_a, **_k: {"modified_by": "u", "modified_from_ip": "127.0.0.1", "modified_via": "api", "modified_user_agent": "test"},
         )
 
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
-
         validation = ValidationError.from_exception_data("A2AAgentUpdate", [{"type": "missing", "loc": ("name",), "msg": "Field required", "input": {}}])
         svc = MagicMock()
         svc.update_agent = AsyncMock(side_effect=validation)
@@ -11835,65 +11977,59 @@ class TestRemainingCoverageGaps:
             await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 422
 
-    async def test_module_level_router_registration_branches(self, monkeypatch):
-        """Import main.py under unique name to cover module-level wiring branches."""
-        # Standard
-        from types import ModuleType
+    @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_baggage"])
+    def test_module_level_middleware_registration_branches(self, monkeypatch, variant):
+        """Exercise the middleware registration gates against a bare app.
 
+        Runs ``_register_middleware`` under three settings matrices. The matrix
+        covers both outcomes of each middleware gate without re-executing the
+        module.
+        """
         # Third-Party
-        from fastapi import APIRouter
+        from fastapi import FastAPI
 
-        # Provide lightweight router modules to avoid importing heavy optional dependencies.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
-
-        # Force ImportError branches for optional routers.
-        force_error = {
-            "mcpgateway.routers.oauth_router",
-            "mcpgateway.routers.reverse_proxy",
-            "mcpgateway.routers.llmchat_router",
-            "mcpgateway.routers.llm_admin_router",
-            "mcpgateway.routers.llm_config_router",
-            "mcpgateway.routers.llm_proxy_router",
-            "mcpgateway.routers.toolops_router",
-        }
+        # First-Party
+        import mcpgateway.main as main_module
 
         overrides = {
             "environment": "production",
             "allowed_origins": [],
             "compression_enabled": False,
             "validation_middleware_enabled": False,
+            "token_usage_logging_enabled": False,
             "email_auth_enabled": False,
             "security_logging_enabled": True,
             "observability_enabled": True,
             "db_query_log_enabled": True,
-            "cache_type": "redis",
-            "redis_url": "redis://localhost:6379",
-            "redis_ssl": False,
-            "structured_logging_enabled": False,
-            "mcpgateway_a2a_enabled": False,
-            "mcpgateway_tool_cancellation_enabled": False,
-            "mcpgateway_admin_api_enabled": False,
-            "mcpgateway_ui_enabled": False,
-            "llmchat_enabled": True,
-            "toolops_enabled": True,
         }
+        if variant == "features_on":
+            overrides.update(
+                {
+                    "validation_middleware_enabled": True,
+                    "token_usage_logging_enabled": True,
+                    "otel_baggage_enabled": True,
+                }
+            )
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: True)
+        elif variant == "degraded_baggage":
+            overrides["otel_baggage_enabled"] = True
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: False)
 
-        # Ensure REDIS_AVAILABLE reflects actual install state; prior tests that
-        # reload session_registry with redis.asyncio=None pollute this flag in-place.
-        monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
+        monkeypatch.setattr("mcpgateway.middleware.db_query_logging.setup_query_logging", lambda *_a, **_k: None, raising=False)
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "true"}, force_import_error=force_error)
+        bare_app = FastAPI()
+        main_module._register_middleware(bare_app)  # pylint: disable=protected-access
 
-        # Allow the import-time bootstrap_db create_task (running-loop branch) to complete.
-        await asyncio.sleep(0)
-
-        # root_info exists only when UI is disabled (no version/admin status exposed).
-        info = await mod.root_info()
-        assert "name" in info
-        assert "version" not in info
-        assert "admin_api_enabled" not in info
+        names = [mw.cls.__name__ for mw in bare_app.user_middleware]
+        if variant == "features_on":
+            assert "ValidationMiddleware" in names
+            assert "TokenUsageMiddleware" in names
+            assert "BaggageMiddleware" in names
+        else:
+            assert "ValidationMiddleware" not in names
+            assert "BaggageMiddleware" not in names
 
     def test_jsonpath_modifier_defaults_when_jsonpath_missing(self):
         # jsonpath_modifier(None/""/0) should fall back to default "$[*]".
@@ -11978,16 +12114,66 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.tag_service, "get_entities_by_tag", AsyncMock(return_value=[]))
         _ = await main_mod.get_entities_by_tag.__wrapped__(request, "tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
 
-    async def test_get_a2a_agent_service_unavailable(self, monkeypatch):
+    async def test_get_a2a_agent_card_resolves_standalone_agent(self, monkeypatch):
+        """A standalone agent's card is returned without consulting the virtual-server fallback (#6700)."""
         # First-Party
         import mcpgateway.main as main_mod
 
-        request = _make_request("/a2a/a1")
-        monkeypatch.setattr(main_mod, "a2a_service", None)
+        request = _make_request("/a2a/a1/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value={"name": "ag"})
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
+
+        response = FastAPIResponse()
+        result = await main_mod.get_a2a_agent_card.__wrapped__("a1", request, response, db=MagicMock(), user={"email": "u"})
+
+        assert result == {"name": "ag"}
+        mock_server_service.get_server_agent_card.assert_not_called()
+        assert response.headers["cache-control"] == "private, no-store"
+
+    async def test_get_a2a_agent_card_falls_back_to_virtual_server(self, monkeypatch):
+        """No standalone agent matches the ID, so the virtual-server fallback resolves the card (#6700)."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/srv-1/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value=None)
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        mock_server_service.get_server_agent_card.return_value = {"name": "srv-as-agent"}
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
+
+        result = await main_mod.get_a2a_agent_card.__wrapped__("srv-1", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
+
+        assert result == {"name": "srv-as-agent"}
+
+    async def test_get_a2a_agent_card_not_found_anywhere_raises_404(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = _make_request("/a2a/missing/card")
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
+
+        svc = MagicMock()
+        svc.get_agent_card = AsyncMock(return_value=None)
+        monkeypatch.setattr(main_mod, "a2a_service", svc)
+
+        mock_server_service = MagicMock()
+        mock_server_service.get_server_agent_card.return_value = None
+        monkeypatch.setattr(main_mod, "A2AServerService", lambda: mock_server_service)
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
+            await main_mod.get_a2a_agent_card.__wrapped__("missing", request, FastAPIResponse(), db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 404
 
     async def test_create_a2a_agent_public_only_sets_team_id_none(self, monkeypatch):
         # First-Party
@@ -12021,15 +12207,6 @@ class TestRemainingCoverageGaps:
             user={"email": "u"},
         )
         assert svc.register_agent.call_args.kwargs["team_id"] is None
-
-    async def test_set_a2a_agent_state_service_unavailable(self, monkeypatch):
-        # First-Party
-        import mcpgateway.main as main_mod
-
-        monkeypatch.setattr(main_mod, "a2a_service", None)
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_a2a_agent_state.__wrapped__("a1", activate=True, db=MagicMock(), user={"email": "u"})
-        assert excinfo.value.status_code == 503
 
     async def test_delete_tool_not_found_maps_to_404(self, monkeypatch):
         # First-Party
@@ -12536,35 +12713,47 @@ class TestRemainingCoverageGaps:
             async with main_mod.lifespan(main_mod.app):
                 pass
 
-    async def test_module_level_structured_logging_and_static_mount_errors(self, monkeypatch):
-        # Standard
-        from types import ModuleType
+    @pytest.mark.parametrize("variant", ["ui_missing_dir", "ui_valid_dir", "ui_disabled"])
+    async def test_module_level_ui_routes_branches(self, monkeypatch, tmp_path, variant):
+        """Exercise the UI-route registration branches against a bare app.
 
+        Runs ``_register_ui_routes`` under three matrices: UI enabled with a
+        missing static directory, UI enabled with a valid directory, and UI
+        disabled. The matrix covers the static-mount success and failure
+        branches, the favicon redirect, and the API-info root route.
+        """
         # Third-Party
-        from fastapi import APIRouter
+        from fastapi import FastAPI
 
-        # Keep router imports light.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
+        # First-Party
+        import mcpgateway.main as main_module
 
         overrides = {
-            "structured_logging_enabled": True,
-            "mcpgateway_tool_cancellation_enabled": True,
             "mcpgateway_ui_enabled": True,
             "static_dir": "/tmp/definitely-missing-static-dir",
         }
-        force_error = {
-            "mcpgateway.routers.log_search",
-            "mcpgateway.routers.cancellation_router",
-        }
+        if variant == "ui_valid_dir":
+            overrides["static_dir"] = tmp_path
+        elif variant == "ui_disabled":
+            overrides["mcpgateway_ui_enabled"] = False
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
-        await asyncio.sleep(0)
+        bare_app = FastAPI()
+        main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
 
-        # Cover favicon redirect logic (only registered when UI is enabled).
-        resp = await mod.favicon_redirect()
-        assert resp.status_code == 301
+        mounted = any(getattr(route, "path", None) == "/static" for route in bare_app.routes)
+        if variant == "ui_disabled":
+            assert not mounted
+            root = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
+            info = await root.endpoint()
+            assert "name" in info
+            assert "version" not in info
+        else:
+            assert mounted == (variant == "ui_valid_dir")
+            favicon = next(route for route in bare_app.routes if getattr(route, "path", "") == "/favicon.ico")
+            resp = await favicon.endpoint()
+            assert resp.status_code == 301
 
     async def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
         # Standard
@@ -12678,25 +12867,32 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         # Reset plugin state before test
         plugin_module.enable_plugins(False)
         plugin_module.reset_plugin_manager_factory()
 
-        _import_fresh_main_module(
-            monkeypatch,
-            env={
-                "PLUGINS_ENABLED": "false",
-                "PLUGINS_SERVER_PORT": "abc",
-            },
-        )
+        # Invalid plugin configuration must not matter while the subsystem is off.
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: False))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is False → get_plugin_manager() short-circuits to None
         result = await plugin_module.get_plugin_manager()
         assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         class _DummyFactory:
@@ -12713,7 +12909,14 @@ class TestRemainingCoverageGaps:
         # Create the factory instance
         plugin_module._plugin_manager_factory = _DummyFactory()
 
-        _import_fresh_main_module(monkeypatch)
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: True))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is True → get_plugin_manager() returns a manager
         result = await plugin_module.get_plugin_manager()
         assert result is not None
@@ -13228,19 +13431,23 @@ class TestRpcScopedPermissions:
 
 
 class TestRedisStartupPath:
-    """Cover main.py module-level redis readiness check (lines 255/257)."""
+    """Cover the redis readiness check in ``_wait_for_redis_at_startup``."""
 
     def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
-        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "cache_type": "redis",
-                "redis_url": "redis://localhost:6379/0",
-                "redis_ssl": False,
-            },
-        )
-        # If we reach here the module loaded — lines 255/257 were executed.
+        """_wait_for_redis_at_startup calls wait_for_redis_ready when cache_type is redis."""
+        # First-Party
+        import mcpgateway.main as main_module
+
+        calls = []
+        monkeypatch.setattr(main_module, "wait_for_redis_ready", lambda **kwargs: calls.append(kwargs))
+        monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0", raising=False)
+        monkeypatch.setattr(settings, "redis_ssl", False, raising=False)
+
+        main_module._wait_for_redis_at_startup()  # pylint: disable=protected-access
+
+        assert len(calls) == 1
+        assert calls[0]["redis_url"] == "redis://localhost:6379/0"
 
 
 @pytest.fixture

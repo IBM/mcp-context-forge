@@ -12,6 +12,7 @@ and error handling scenarios.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6689,7 +6690,7 @@ class TestLegacyJwtOnOauthEnabledServer:
         with _patched_get_db(self._oauth_server()):
             result = await handler._route_idp_issued_token(token)
 
-        # ``None`` means "continue with internal verify_credentials" — the
+        # ``None`` means "continue with verify_credentials_cached" — the
         # caller will validate signature + claims against the internal
         # signing key, which is exactly the legacy path we must preserve.
         assert result is None
@@ -6704,9 +6705,10 @@ class TestRouteIdpIssuedToken:
     does not match, routing to the OAuth path must run regardless of the
     ``jwt_issuer_verification`` toggle — that toggle governs how
     ContextForge's *own* JWTs are checked, not whether externally-issued
-    tokens are eligible for OAuth validation. Legacy fall-through to
-    internal JWT verification is preserved only for non-OAuth servers when
-    issuer verification is disabled.
+    tokens are eligible for OAuth validation. When the OAuth path does not
+    apply, the router never sends a response: ``verify_credentials_cached()``
+    decides, so trusted external-IdP tokens are accepted and other foreign
+    issuers are rejected.
     """
 
     @pytest.mark.asyncio
@@ -6758,7 +6760,7 @@ class TestRouteIdpIssuedToken:
 
         assert result is None
         assert called is False
-        assert responses == []  # Downstream verify_credentials produces the 401.
+        assert responses == []  # Downstream verify_credentials_cached produces the 401.
 
     @pytest.mark.asyncio
     async def test_idp_token_routes_to_oauth_even_when_issuer_verification_disabled(self, monkeypatch):
@@ -6808,8 +6810,8 @@ class TestRouteIdpIssuedToken:
         assert responses == []  # No 401 sent yet.
 
     @pytest.mark.asyncio
-    async def test_non_oauth_server_rejects_when_issuer_verification_enabled(self, monkeypatch):
-        """When issuer verification is on, a mismatched ``iss`` on a non-OAuth server is a 401."""
+    async def test_non_oauth_server_falls_through_when_issuer_verification_enabled(self, monkeypatch):
+        """With issuer verification on, a non-OAuth server defers the decision to ``verify_credentials_cached``."""
         handler, responses = _make_handler()
         monkeypatch.setattr(settings, "jwt_issuer_verification", True)
         monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
@@ -6824,9 +6826,8 @@ class TestRouteIdpIssuedToken:
         ):
             result = await handler._route_idp_issued_token(token)
 
-        assert result is False
-        start = next(m for m in responses if m["type"] == "http.response.start")
-        assert start["status"] == 401
+        assert result is None
+        assert responses == []
 
     @pytest.mark.asyncio
     async def test_idp_token_failed_returns_false_and_does_not_double_send(self, monkeypatch):
@@ -7172,7 +7173,7 @@ class TestBuildServerResourceUrlAppDomainError:
 
 
 class TestAuthJwtRoutingReturn:
-    """``_auth_jwt`` returns the outcome of ``_route_idp_issued_token`` without reaching verify_credentials."""
+    """``_auth_jwt`` returns the outcome of ``_route_idp_issued_token`` without reaching verify_credentials_cached."""
 
     @pytest.mark.asyncio
     async def test_auth_jwt_returns_true_when_route_succeeds(self, monkeypatch):
@@ -7183,8 +7184,8 @@ class TestAuthJwtRoutingReturn:
 
         monkeypatch.setattr(_StreamableHttpAuthHandler, "_route_idp_issued_token", fake_route)
 
-        # verify_credentials should never be called on this path.
-        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", side_effect=AssertionError("must not be called")):
+        # verify_credentials_cached should never be called on this path.
+        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", side_effect=AssertionError("must not be called")):
             result = await handler._auth_jwt(token="unused")
 
         assert result is True
@@ -7198,10 +7199,136 @@ class TestAuthJwtRoutingReturn:
 
         monkeypatch.setattr(_StreamableHttpAuthHandler, "_route_idp_issued_token", fake_route)
 
-        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", side_effect=AssertionError("must not be called")):
+        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", side_effect=AssertionError("must not be called")):
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestAuthJwtExternalIdp:
+    """``_auth_jwt`` accepts trusted external-IdP tokens on ``/mcp`` exactly as ``/rpc`` does."""
+
+    SERVICE_EMAIL = "svc-svc-client@keycloak.service.local"
+
+    @staticmethod
+    def _setup(monkeypatch, *, sso_enabled=True, stub_oauth=True):
+        """Configure settings and, unless ``stub_oauth`` is false, the OAuth router stub for a foreign-issuer token."""
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        monkeypatch.setattr(settings, "jwt_issuer_verification", True)
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", sso_enabled)
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
+
+        if not stub_oauth:
+            return
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        monkeypatch.setattr(_StreamableHttpAuthHandler, "_try_oauth_access_token", fake_try_oauth)
+
+    @pytest.mark.asyncio
+    async def test_trusted_external_token_accepted_on_mcp(self, monkeypatch):
+        """A trusted Keycloak service-account token passes ``/mcp`` auth and populates the user context."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import user_context_var  # pylint: disable=import-outside-toplevel
+
+        self._setup(monkeypatch)
+        handler, responses = _make_handler()
+        tok = _make_idp_token()
+        claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
+        identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
+        verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        resolve_teams = AsyncMock(return_value=[])
+
+        with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.utils.verify_credentials.build_external_identity", AsyncMock(return_value=identity)),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+            patch("mcpgateway.auth.resolve_session_teams", resolve_teams),
+        ):
+            result = await handler._auth_jwt(token=tok)
+
+        assert result is True
+        verify_external.assert_awaited_once()
+        resolve_teams.assert_awaited_once()
+        assert self.SERVICE_EMAIL in resolve_teams.await_args.args
+        assert user_context_var.get()["email"] == self.SERVICE_EMAIL
+        assert not any(m["type"] == "http.response.start" for m in responses)
+
+    @pytest.mark.asyncio
+    async def test_oauth_server_out_of_allowlist_trusted_issuer_accepted(self, monkeypatch):
+        """On an ``oauth_enabled`` server whose allowlist excludes the issuer, a trusted-provider token is accepted."""
+        self._setup(monkeypatch, stub_oauth=False)
+        handler, responses = _make_handler()
+        tok = _make_idp_token()
+        claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
+        identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
+        verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": ["https://other-idp.example.com"]}
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server
+        db_cm = MagicMock()
+        db_cm.__aenter__ = AsyncMock(return_value=db_mock)
+        db_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=db_cm),
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.utils.verify_credentials.build_external_identity", AsyncMock(return_value=identity)),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+            patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[])),
+        ):
+            result = await handler._auth_jwt(token=tok)
+
+        assert result is True
+        verify_external.assert_awaited_once()
+        assert not any(m["type"] == "http.response.start" for m in responses)
+
+    @pytest.mark.asyncio
+    async def test_untrusted_issuer_real_dispatch_rejected(self, monkeypatch):
+        """A foreign issuer that no trusted provider verifies yields a canonical 401 through the real dispatch."""
+        self._setup(monkeypatch)
+        handler, responses = _make_handler()
+        verify_external = AsyncMock(return_value=(None, None))
+
+        with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+        ):
+            result = await handler._auth_jwt(token=_make_idp_token())
+
+        assert result is False
+        verify_external.assert_awaited_once()
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+        assert (b"www-authenticate", b"Bearer") in start["headers"]
+        assert json.loads(_response_body(responses)) == {"detail": "Invalid authentication credentials"}
+
+    @pytest.mark.asyncio
+    async def test_external_dispatch_disabled_rejects_foreign_token(self, monkeypatch):
+        """With ``SSO_API_TOKEN_AUTH_ENABLED`` off, a foreign-issuer token is rejected on ``/mcp``."""
+        self._setup(monkeypatch, sso_enabled=False)
+        handler, responses = _make_handler()
+
+        result = await handler._auth_jwt(token=_make_idp_token())
+
+        assert result is False
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
 
 
 class TestUserFromCachedDictFullShape:
@@ -7259,3 +7386,81 @@ class TestUserFromCachedDictFullShape:
         # contract that writers must not rely on these defaults for existing fields.
         assert user.auth_provider == "local", "default masks real provider"
         assert user.password_change_required is False, "default skips forced change"
+
+
+class TestPrincipalCarriesUserId:
+    """Contract: every principal construction site emits user_id equal to the e-mail (issue #5887)."""
+
+    def test_bootstrap_platform_admin_user_carries_user_id(self):
+        """The synthesized platform-admin principal carries user_id equal to its e-mail."""
+        # First-Party
+        from mcpgateway.auth import _bootstrap_platform_admin_user  # pylint: disable=import-outside-toplevel
+
+        user = _bootstrap_platform_admin_user("admin@x.test")
+
+        assert user.email == "admin@x.test"
+        assert getattr(user, "user_id", None) == "admin@x.test"
+
+    def test_user_from_cached_dict_carries_user_id(self):
+        """The cache-rebuilt principal carries user_id, with e-mail fallback."""
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        user = _user_from_cached_dict({"email": "a@x.test", "user_id": "a@x.test", "is_admin": False, "is_active": True})
+        assert user.user_id == "a@x.test"
+
+        fallback_user = _user_from_cached_dict({"email": "a@x.test", "is_admin": False, "is_active": True})
+        assert fallback_user.user_id == "a@x.test"
+
+    def test_batched_auth_context_user_dict_carries_user_id(self, monkeypatch):
+        """The batched auth-context user dict carries user_id equal to its e-mail."""
+        # Standard
+        from contextlib import contextmanager
+
+        results = [
+            SimpleNamespace(  # user
+                email="user@example.com",
+                password_hash="h",
+                password_hash_type="argon2id",
+                full_name="U",
+                is_admin=False,
+                is_active=True,
+                auth_provider="local",
+                password_change_required=False,
+                email_verified_at=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            ),
+            None,  # no personal team
+            [],  # no team memberships (query 4: team_ids)
+        ]
+
+        class DummyResult:
+            def __init__(self, val):
+                self._val = val
+
+            def scalar_one_or_none(self):
+                return self._val
+
+            def all(self):
+                return self._val if isinstance(self._val, list) else []
+
+        class DummySession:
+            def __init__(self):
+                self._idx = 0
+
+            def execute(self, _q):
+                val = results[self._idx] if self._idx < len(results) else None
+                self._idx += 1
+                return DummyResult(val)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
+        from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+        result = _get_auth_context_batched_sync("user@example.com")
+        assert result["user"]["user_id"] == result["user"]["email"]

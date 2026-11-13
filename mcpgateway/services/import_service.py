@@ -655,7 +655,7 @@ class ImportService:
         """
         try:
             if entity_type == "tools":
-                await self._process_tool(db, entity_data, conflict_strategy, dry_run, status)
+                await self._process_tool(db, entity_data, conflict_strategy, dry_run, status, imported_by)
             elif entity_type == "gateways":
                 await self._process_gateway(db, entity_data, conflict_strategy, dry_run, status, imported_by)
             elif entity_type == "servers":
@@ -672,7 +672,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process {entity_type}: {unexpected_error_detail(e)}")
 
-    async def _process_tool(self, db: Session, tool_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_tool(self, db: Session, tool_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a tool entity.
 
         Args:
@@ -681,6 +681,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
@@ -698,7 +699,7 @@ class ImportService:
 
             # Try to create the tool
             try:
-                await self.tool_service.register_tool(db, create_data)
+                await self.tool_service.register_tool(db, create_data, created_by=imported_by)
                 status.created_entities += 1
                 logger.debug("Created tool: %s", tool_name)
 
@@ -716,7 +717,7 @@ class ImportService:
                         existing_tool = next((t for t in tools if t.original_name == tool_name), None)
                         if existing_tool:
                             update_data = self._convert_to_tool_update(tool_data)
-                            await self.tool_service.update_tool(db, existing_tool.id, update_data)
+                            await self.tool_service.update_tool(db, existing_tool.id, update_data, user_email=imported_by)
                             status.updated_entities += 1
                             logger.debug("Updated tool: %s", tool_name)
                         else:
@@ -730,7 +731,7 @@ class ImportService:
                     # Rename and create
                     new_name = f"{tool_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.tool_service.register_tool(db, create_data)
+                    await self.tool_service.register_tool(db, create_data, created_by=imported_by)
                     status.created_entities += 1
                     status.warnings.append(f"Renamed tool {tool_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -829,24 +830,23 @@ class ImportService:
 
         try:
             create_data = await self._convert_to_server_create(db, server_data)
+            user_context = await self._get_user_context(db, imported_by)
+            ownership = {"team_id": user_context["team_id"], "owner_email": user_context["user_email"], "visibility": "team"} if user_context else {}
 
             try:
-                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", **ownership)
                 status.created_entities += 1
                 logger.debug("Created server: %s", server_name)
 
-            except ServerNameConflictError:
+            except ServerNameConflictError as conflict:
                 if conflict_strategy == ConflictStrategy.SKIP:
                     status.skipped_entities += 1
                     status.warnings.append(f"Skipped existing server: {server_name}")
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
-                        # Find existing server by name
-                        servers = await self.server_service.list_servers(db, include_inactive=True)
-                        existing_server = next((s for s in servers if s.name == server_name), None)
-                        if existing_server:
+                        if conflict.server_id:
                             update_data = await self._convert_to_server_update(db, server_data)
-                            await self.server_service.update_server(db, existing_server.id, update_data, imported_by)
+                            await self.server_service.update_server(db, conflict.server_id, update_data, imported_by)
                             status.updated_entities += 1
                             logger.debug("Updated server: %s", server_name)
                         else:
@@ -859,7 +859,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{server_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", **ownership)
                     status.created_entities += 1
                     status.warnings.append(f"Renamed server {server_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -1001,12 +1001,14 @@ class ImportService:
             batch_id = str(uuid.uuid4())
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.tool_service.register_tools_bulk(
                 db=db,
                 tools=tools_to_register,
                 created_by=imported_by,
                 created_via="import",
                 import_batch_id=batch_id,
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
@@ -1078,11 +1080,13 @@ class ImportService:
                 return
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.resource_service.register_resources_bulk(
                 db=db,
                 resources=resources_to_register,
                 created_by=imported_by,
                 created_via="import",
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
@@ -1138,11 +1142,13 @@ class ImportService:
                 return
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.prompt_service.register_prompts_bulk(
                 db=db,
                 prompts=prompts_to_register,
                 created_by=imported_by,
                 created_via="import",
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
                 user_email=imported_by,
             )
@@ -1229,6 +1235,7 @@ class ImportService:
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
+            tool_validation_policy=tool_data.get("tool_validation_policy"),
             auth=auth_info,
             tags=tool_data.get("tags", []),
         )
@@ -1258,6 +1265,7 @@ class ImportService:
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
+            tool_validation_policy=tool_data.get("tool_validation_policy"),
             auth=auth_info,
             tags=tool_data.get("tags"),
         )
@@ -1327,6 +1335,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tool_validation_policy=gateway_data.get("tool_validation_policy"),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1391,6 +1400,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tool_validation_policy=gateway_data.get("tool_validation_policy"),
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )
@@ -1949,6 +1959,15 @@ class ImportService:
 
             if total_assigned > 0:
                 db.commit()
+
+                # First-Party
+                from mcpgateway.cache.registry_cache import get_registry_cache  # pylint: disable=import-outside-toplevel
+
+                cache = get_registry_cache()
+                await cache.invalidate_tools()
+                await cache.invalidate_resources()
+                await cache.invalidate_prompts()
+                await cache.invalidate_servers()
                 logger.info("Assigned %s imported items to %s with team visibility", total_assigned, personal_team.name)
             else:
                 logger.debug("No orphaned imported items found")

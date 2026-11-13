@@ -62,6 +62,8 @@ from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
     EventMessage,
+    GatewayImpactPreview,
+    GatewayRefreshResponse,
     ListFilters,
     PromptCreate,
     PromptMetrics,
@@ -1460,6 +1462,24 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    @pytest.mark.parametrize(
+        "oauth_config,expected",
+        [
+            ({"registration_method": "cimd", "client_id": "c"}, "cimd"),
+            ({"registration_method": "dcr"}, "dcr"),
+            ({"client_id": "c"}, None),
+            (None, None),
+        ],
+    )
+    def test_gateway_read_exposes_registration_method(self, oauth_config, expected):
+        """GatewayRead mirrors oauth_config.registration_method, including through masking."""
+        # First-Party
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(id="gw-1", name="Test Gateway", slug="test-gateway", url="https://example.com", transport="STREAMABLEHTTP", oauth_config=oauth_config)
+        assert gateway.registration_method == expected
+        assert gateway.masked().registration_method == expected
+
     def test_gateway_read_tool_count_defaults_to_zero(self):
         """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
         # First-Party
@@ -2391,3 +2411,200 @@ class TestToolOutputSchemaShapes:
     def test_tool_result_carries_any_json_value(self, value):
         result = ToolResult(content=[], structured_content=value)
         assert result.structured_content == value
+
+
+class TestMcpServerIdResponseAlias:
+    """Responses carrying ``gateway_id`` also emit ``mcp_server_id`` (issue #6544)."""
+
+    _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    @classmethod
+    def _tool(cls, gateway_id):
+        return ToolRead.model_validate(
+            {
+                "id": "t1",
+                "original_name": "tool",
+                "request_type": "POST",
+                "integration_type": "REST",
+                "url": None,
+                "description": None,
+                "headers": None,
+                "annotations": {},
+                "jsonpath_filter": None,
+                "auth": None,
+                "input_schema": {"type": "object"},
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "deprecated": False,
+                "reachable": True,
+                "gateway_id": gateway_id,
+                "name": "tool",
+                "gateway_slug": "gw",
+                "custom_name": "tool",
+                "custom_name_slug": "tool",
+            }
+        )
+
+    @classmethod
+    def _resource(cls, gateway_id):
+        return ResourceRead.model_validate({"id": "r1", "uri": "test://r", "name": "r", "description": None, "mime_type": None, "size": None, "created_at": cls._NOW, "updated_at": cls._NOW, "enabled": True, "gateway_id": gateway_id})
+
+    @classmethod
+    def _prompt(cls, gateway_id):
+        return PromptRead.model_validate(
+            {
+                "id": "p1",
+                "name": "p",
+                "original_name": "p",
+                "custom_name": "p",
+                "custom_name_slug": "p",
+                "description": None,
+                "template": "hi",
+                "arguments": [],
+                "created_at": cls._NOW,
+                "updated_at": cls._NOW,
+                "enabled": True,
+                "gateway_id": gateway_id,
+            }
+        )
+
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_serialization_schema_lists_alias(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert "mcpServerId" in properties
+        assert "gatewayId" in properties
+
+    @pytest.mark.parametrize("model", [ToolRead, ResourceRead, PromptRead, GatewayRefreshResponse, GatewayImpactPreview])
+    def test_alias_openapi_type_matches_gateway_id(self, model):
+        properties = model.model_json_schema(mode="serialization")["properties"]
+        assert properties["mcpServerId"].get("type") == properties["gatewayId"].get("type")
+        assert properties["mcpServerId"].get("anyOf") == properties["gatewayId"].get("anyOf")
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_both_keys_with_a_gateway(self, build):
+        record = getattr(self, build)("gw-1")
+        dumped = record.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_read_models_emit_null_alias_without_a_gateway(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True)
+        assert dumped["gatewayId"] is None
+        assert dumped["mcpServerId"] is None
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_exclude_none_drops_alias_with_gateway_id(self, build):
+        dumped = getattr(self, build)(None).model_dump(by_alias=True, exclude_none=True)
+        assert "gatewayId" not in dumped
+        assert "mcpServerId" not in dumped
+
+    @pytest.mark.parametrize("build", ["_tool", "_resource", "_prompt"])
+    def test_json_key_order_is_unchanged_by_the_alias(self, build):
+        keys = list(getattr(self, build)("gw-1").model_dump(by_alias=True))
+        assert keys[0] == "id"
+        assert keys[-1] == "mcpServerId"
+
+    def test_refresh_response_emits_both_keys(self):
+        response = GatewayRefreshResponse(gateway_id="gw-1", duration_ms=1, refreshed_at=datetime.now(timezone.utc))
+        dumped = response.model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    def test_impact_preview_emits_both_keys(self):
+        dumped = GatewayImpactPreview(gateway_id="gw-1", servers=[]).model_dump(by_alias=True)
+        assert dumped["gatewayId"] == dumped["mcpServerId"] == "gw-1"
+
+    def test_alias_in_response_body_is_ignored_on_input(self):
+        response = GatewayImpactPreview.model_validate({"gateway_id": "gw-1", "servers": [], "mcp_server_id": "other"})
+        assert response.mcp_server_id == "gw-1"
+
+
+class TestA2AAgentSkills:
+    """Skills are a typed top-level field on A2A agent create and update schemas."""
+
+    VALID_SKILL = {"id": "summarize", "name": "Summarize", "description": "Summarize text", "tags": ["text"]}
+
+    def test_create_accepts_valid_skill_and_keeps_capabilities_untouched(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", capabilities={"streaming": True}, skills=[self.VALID_SKILL])
+
+        assert agent.skills[0].tags == ["text"]
+        assert agent.capabilities == {"streaming": True}
+
+    @pytest.mark.parametrize("missing", ["id", "name", "description", "tags"])
+    def test_create_rejects_skill_missing_required_key(self, missing):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        skill = {k: v for k, v in self.VALID_SKILL.items() if k != missing}
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[skill])
+
+    def test_update_with_only_skills_leaves_capabilities_unset(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        update = A2AAgentUpdate(skills=[self.VALID_SKILL])
+
+        assert update.model_fields_set == {"skills"}
+
+    def test_update_rejects_skill_without_tags(self):
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=[{"id": "s", "name": "n", "description": "d"}])
+
+    def test_skill_keeps_extra_agent_card_fields(self):
+        from mcpgateway.schemas import A2AAgentCreate
+
+        agent = A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[{**self.VALID_SKILL, "examples": ["x"]}])
+
+        assert agent.skills[0].model_dump()["examples"] == ["x"]
+
+    @pytest.mark.parametrize("field,value", [("name", "<script>alert(1)</script>"), ("description", "<img src=x onerror=alert(1)>"), ("id", "<script>x</script>")])
+    def test_skill_rejects_markup(self, field, value):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, field: value})
+
+    def test_skill_rejects_markup_in_tag(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["<script>x</script>"]})
+
+    def test_skill_rejects_oversized_values(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["x" * 100000]})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "tags": ["t"] * 51})
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "name": "n" * 100000})
+
+    def test_skill_rejects_deeply_nested_extra_field(self):
+        from mcpgateway.schemas import A2AAgentSkill
+
+        nested: dict = {}
+        for _ in range(500):
+            nested = {"a": nested}
+        with pytest.raises(ValidationError):
+            A2AAgentSkill(**{**self.VALID_SKILL, "extra": nested})
+
+    def test_create_and_update_reject_too_many_skills(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        skills = [{**self.VALID_SKILL, "id": f"s{i}"} for i in range(101)]
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=skills)
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(skills=skills)
+
+    def test_create_and_update_reject_duplicate_skill_ids(self):
+        from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
+
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentCreate(name="a", endpoint_url="https://agent.example.com", skills=[self.VALID_SKILL, self.VALID_SKILL])
+        with pytest.raises(ValidationError, match="Duplicate skill id"):
+            A2AAgentUpdate(skills=[self.VALID_SKILL, self.VALID_SKILL])

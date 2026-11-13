@@ -276,13 +276,13 @@ PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=false
 
 ## Related Configuration
 
-- [`AUTH_REQUIRED`](./rbac.md#authentication-requirements) - Enable/disable authentication
-- [`JWT_SECRET_KEY`](./rbac.md#jwt-configuration) - JWT signing key
-- [`PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`](../using/plugins/overview.md) - Plugin header modification
+- [`AUTH_REQUIRED`](./rbac.md#authentication-methods) - Enable/disable authentication
+- [`JWT_SECRET_KEY`](./rbac.md#authentication-methods) - JWT signing key
+- [`PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`](../using/plugins/index.md) - Plugin header modification
 
 ## See Also
 
 - [RBAC Documentation](./rbac.md)
 - [Multi-tenancy Architecture](../architecture/multitenancy.md)
 - [OAuth Token Delegation](../architecture/oauth-design.md)
-- [Plugin Framework](../using/plugins/overview.md)
+- [Plugin Framework](../using/plugins/index.md)

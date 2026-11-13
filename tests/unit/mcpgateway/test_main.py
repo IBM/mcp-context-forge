@@ -11,7 +11,6 @@ import asyncio
 import base64
 from copy import deepcopy
 import datetime
-import importlib
 import json
 import logging
 import os
@@ -41,8 +40,9 @@ from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
 
 # First-Party
-from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.common.models import BlobResourceContents, InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
+from mcpgateway.services.a2a_service import A2ATestOutcome
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -333,18 +333,19 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
 
 
 def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
-    """Import-time app setup should register the OTEL request middleware when enabled."""
+    """Middleware registration should register the OTEL request middleware when enabled."""
+    # Third-Party
+    from fastapi import FastAPI
+
     # First-Party
     import mcpgateway.main as main_module
 
-    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
-        reloaded = importlib.reload(main_module)
+    bare_app = FastAPI()
+    with patch("mcpgateway.main.otel_tracing_enabled", return_value=True):
+        main_module._register_middleware(bare_app)  # pylint: disable=protected-access
 
-    try:
-        middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
-        assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
-    finally:
-        importlib.reload(reloaded)
+    middleware_classes = [middleware.cls for middleware in bare_app.user_middleware]
+    assert main_module.OpenTelemetryRequestMiddleware in middleware_classes
 
 
 def test_get_csp_nonce_from_request_with_none():
@@ -1801,6 +1802,20 @@ class TestResourceEndpoints:
         assert body["uri"] == "test/resource" and body["text"] == "This is test content"
         mock_read_resource.assert_called_once()
 
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    @pytest.mark.parametrize("meta", [None, {"source": "upstream"}])
+    @patch("mcpgateway.main.resource_service.read_resource")
+    def test_read_resource_endpoint_preserves_blob(self, mock_read_resource, test_client, auth_headers, blob, meta):
+        """REST reads preserve binary payloads, MIME types, and metadata."""
+        content = BlobResourceContents(uri="test://binary", mimeType="application/octet-stream", blob=blob, _meta=meta)
+        mock_read_resource.return_value = content
+
+        response = test_client.get("/resources/1", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {"type": "resource", "id": "1", **content.model_dump(by_alias=True, exclude_none=True)}
+        assert "text" not in response.json()
+
     @patch("mcpgateway.main.resource_service.read_resource")
     def test_read_resource_endpoint_fetch_error_returns_bad_request(self, mock_read_resource, test_client, auth_headers):
         """Upstream resource failures are not reported as missing resources."""
@@ -2728,7 +2743,7 @@ class TestGatewayEndpoints:
         response = test_client.get("/v1/gateways/gateway-1/impact-preview", headers=auth_headers)
 
         assert response.status_code == 200
-        assert response.json() == {"gatewayId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
+        assert response.json() == {"gatewayId": "gateway-1", "mcpServerId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
         mock_preview.assert_awaited_once()
 
     @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")
@@ -3625,6 +3640,17 @@ class TestRPCEndpoints:
 
         mock_subscribe.assert_called_once()
         mock_unsubscribe.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock)
+    def test_rpc_subscriptions_listen_method_not_found(self, mock_invoke_tool, test_client, auth_headers):
+        """subscriptions/listen is a streaming MCP method, so /rpc returns -32601 without a tool lookup."""
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "listen-1", "method": "subscriptions/listen", "params": {"notifications": {"toolsListChanged": True}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32601
+        assert body["id"] == "listen-1"
+        mock_invoke_tool.assert_not_called()
 
     @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list(self, mock_list_templates, test_client, auth_headers):
@@ -4781,6 +4807,12 @@ class TestMetricsEndpoints:
 # ----------------------------------------------------- #
 # A2A Agent API Tests                                   #
 # ----------------------------------------------------- #
+def _a2a_metrics(**overrides):
+    values = dict(total_agents=0, active_agents=0, total_interactions=0, successful_interactions=0, failed_interactions=0, success_rate=0.0, avg_response_time=0.0, min_response_time=0.0, max_response_time=0.0)
+    values.update(overrides)
+    return A2AAgentAggregateMetrics(**values)
+
+
 class TestA2AAgentEndpoints:
     """Test A2A agent API endpoints."""
 
@@ -4851,6 +4883,177 @@ class TestA2AAgentEndpoints:
         response = test_client.delete("/a2a/agent-1", headers=auth_headers)
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_success(self, mock_service, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test returns the success envelope."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {"ok": 1}, "agent_name": "a", "test_timestamp": 1.0}))
+        response = test_client.post("/a2a/agent-1/test", json={"query": "hi"}, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["agent_name"] == "a" and body["result"] == {"ok": 1} and "test_timestamp" in body
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert kwargs["query"] == "hi"
+        assert "interaction_type" not in kwargs
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_no_body_uses_service_default(self, mock_service, test_client, auth_headers):
+        """An empty body leaves the message to the service default."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {}, "agent_name": "a", "test_timestamp": 1.0}))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_service.test_agent.call_args.kwargs["query"] is None
+
+    @pytest.mark.parametrize("status,error_type", [(404, "not_found"), (502, "agent_error"), (422, "validation_error"), (500, "internal_error")])
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_errors_raise_http_exception(self, mock_service, status, error_type, test_client, auth_headers):
+        """Failures surface as HTTPException with the classified envelope in detail."""
+        body = {"success": False, "error": "boom", "error_type": error_type, "agent_id": "agent-1"}
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(status, body))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == status
+        assert response.json()["detail"] == body
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("u@x.com", ["team-a"]))
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_forwards_layer1_scope(self, mock_service, _mock_scope, test_client, auth_headers):
+        """Visibility scope comes from get_scoped_resource_access_context, so other teams' agents stay hidden."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(404, {"success": False, "error": "nf", "error_type": "not_found", "agent_id": "agent-1"}))
+        response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 404
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert kwargs["user_email"] == "u@x.com" and kwargs["token_teams"] == ["team-a"]
+
+    def test_test_a2a_agent_unauthenticated_returns_401(self, app_with_temp_db):
+        """POST /a2a/{agent_id}/test without credentials returns 401."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            response = TestClient(app_with_temp_db, raise_server_exceptions=False).post("/a2a/agent-1/test")
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+        assert response.status_code == 401
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test without a2a.invoke returns 403 and never reaches the service."""
+        mock_service.test_agent = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.test_agent.assert_not_called()
+
+    def test_test_a2a_agent_service_unavailable_returns_503(self, test_client, auth_headers):
+        """POST /a2a/{agent_id}/test returns 503 when the A2A service is not loaded."""
+        with patch("mcpgateway.main.a2a_service", None):
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 503
+
+    def test_test_a2a_agent_rejects_unknown_body_fields(self, test_client, auth_headers):
+        """The request body forbids extra fields."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "hi", "extra": 1}, headers=auth_headers)
+        assert response.status_code == 422
+
+    def test_test_a2a_agent_rejects_oversized_query(self, test_client, auth_headers):
+        """A query over 4096 characters fails body validation."""
+        response = test_client.post("/a2a/agent-1/test", json={"query": "x" * 4097}, headers=auth_headers)
+        assert response.status_code == 422
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_test_a2a_agent_forwards_request_context(self, mock_service, test_client, auth_headers):
+        """The route forwards the shared invoke context, including passthrough headers and content type."""
+        mock_service.test_agent = AsyncMock(return_value=A2ATestOutcome(200, {"success": True, "result": {}, "agent_name": "a", "test_timestamp": 1.0}))
+        context = {
+            "user_id": "uid",
+            "user_email": "u@x.com",
+            "token_teams": ["team-a"],
+            "hop_count": 2,
+            "bearer_token": None,
+            "content_type": "application/json",
+            "request_headers": {"x-trace": "abc"},
+        }
+        with patch("mcpgateway.main._extract_a2a_request_context", return_value=context) as extract:
+            response = test_client.post("/a2a/agent-1/test", headers=auth_headers)
+        assert response.status_code == 200
+        extract.assert_called_once()
+        kwargs = mock_service.test_agent.call_args.kwargs
+        assert {key: kwargs[key] for key in context} == context
+
+    def test_test_a2a_agent_openapi_documents_wrapped_error_body(self, test_client):
+        """OpenAPI documents the wire shape: an object holding the envelope under detail."""
+        spec = test_client.app.openapi()
+        operation = spec["paths"]["/v1/a2a/{agent_id}/test"]["post"]
+        for status in ("404", "422", "500", "502"):
+            assert operation["responses"][status]["content"]["application/json"]["schema"]["$ref"].endswith("/A2ATestErrorResponse")
+        wrapper = spec["components"]["schemas"]["A2ATestErrorResponse"]
+        assert wrapper["properties"]["detail"]["$ref"].endswith("/A2ATestError")
+
+    def test_test_a2a_agent_in_openapi(self, test_client):
+        """The route is part of the OpenAPI schema."""
+        paths = test_client.app.openapi()["paths"]
+        assert "post" in paths["/v1/a2a/{agent_id}/test"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_scoped(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics is not read as an agent ID and passes the Layer-1 scope."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics(total_agents=2))
+        mock_service.get_agent = AsyncMock()
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("u@x.com", ["team-a"])):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["totalAgents"] == 2
+        assert mock_service.aggregate_metrics.call_args.kwargs == {"user_email": "u@x.com", "token_teams": ["team-a"]}
+        mock_service.get_agent.assert_not_called()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_unscoped_context_fails_closed(self, mock_service, test_client, auth_headers):
+        """A (None, None) scope must not select the global aggregate."""
+        mock_service.aggregate_metrics = AsyncMock(return_value=_a2a_metrics())
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=(None, None)):
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        assert mock_service.aggregate_metrics.call_args.kwargs["token_teams"] == []
+
+    @patch("mcpgateway.main.settings")
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_disabled_returns_404(self, mock_service, mock_settings, test_client, auth_headers):
+        """The route returns 404 when MCPGATEWAY_A2A_METRICS_ENABLED is false."""
+        mock_settings.mcpgateway_a2a_metrics_enabled = False
+        mock_service.aggregate_metrics = AsyncMock()
+        response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 404
+        mock_service.aggregate_metrics.assert_not_called()
+
+    def test_get_a2a_agent_metrics_unauthenticated_returns_401(self, app_with_temp_db):
+        """GET /a2a/metrics without credentials must return 401."""
+        from fastapi import HTTPException, status as http_status
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            assert client.get("/a2a/metrics").status_code == 401
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_metrics_missing_permission_returns_403(self, mock_service, test_client, auth_headers):
+        """GET /a2a/metrics without a2a.read must return 403 and not reach the service."""
+        mock_service.aggregate_metrics = AsyncMock()
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            MockPS.return_value.check_permission = AsyncMock(return_value=False)
+            response = test_client.get("/a2a/metrics", headers=auth_headers)
+        assert response.status_code == 403
+        mock_service.aggregate_metrics.assert_not_called()
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
@@ -6587,7 +6790,6 @@ def test_startup_no_warning_when_a2a_disabled():
 def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
     """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
@@ -6606,7 +6808,6 @@ def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
 def test_startup_succeeds_with_uaid_require_allowlist_false():
     """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
-
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
         mock_settings.uaid_allow_all_domains = False
@@ -6820,12 +7021,42 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
 class TestA2AInvokeBodyEndpoint:
     """Test coverage for /a2a/invoke endpoint with agent_id in request body."""
 
-    @patch("mcpgateway.main.a2a_service", None)
-    def test_invoke_returns_503_when_service_unavailable(self, test_client, auth_headers):
-        """Test /a2a/invoke returns 503 when A2A service is None. Covers: main.py lines 5166-5167"""
+    @patch.object(settings, "mcpgateway_a2a_enabled", False)
+    def test_invoke_returns_typed_404_when_a2a_disabled(self, test_client, auth_headers):
+        """/a2a/invoke answers with the typed a2a_disabled 404 when A2A is disabled."""
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
-        assert response.status_code == 503
-        assert "A2A service not available" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"]["error"] == "a2a_disabled"
+
+    @patch.object(settings, "mcpgateway_a2a_enabled", False)
+    @pytest.mark.parametrize("method,path", [("get", "/a2a"), ("get", "/a2a/agent-1"), ("post", "/a2a/agent-1/invoke"), ("delete", "/a2a/agent-1")])
+    def test_every_a2a_route_returns_same_typed_404_when_disabled(self, method, path, test_client, auth_headers):
+        """All A2A routes share one status code and body shape when A2A is disabled."""
+        response = getattr(test_client, method)(path, headers=auth_headers)
+        assert response.status_code == 404
+        assert response.json() == {"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}
+
+    @patch.object(settings, "mcpgateway_a2a_enabled", False)
+    def test_disabled_check_resolves_authentication_once(self, test_client, auth_headers):
+        """The router dependency and the handler share one authentication resolution per request."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        original = test_client.app.dependency_overrides[get_current_user_with_permissions]
+        calls = []
+
+        def counting_user():
+            calls.append(1)
+            return original()
+
+        test_client.app.dependency_overrides[get_current_user_with_permissions] = counting_user
+        try:
+            response = test_client.get("/a2a", headers=auth_headers)
+        finally:
+            test_client.app.dependency_overrides[get_current_user_with_permissions] = original
+
+        assert response.status_code == 404
+        assert len(calls) == 1
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
@@ -7295,3 +7526,288 @@ class TestOauthCallbackRouteValidation:
         response = test_client.get("/oauth/callback?state=x&code=" + "a" * 16)
 
         assert response.status_code != 422, response.text
+
+
+class TestTokenExchangeDiscoveryRestDenyPaths:
+    """``PUT /gateways/{id}`` deny paths for the token-exchange ``discovery`` object.
+
+    Each test seeds a real gateway row and asserts that the stored ``oauth_config`` is unchanged.
+    """
+
+    _STORED_CONFIG = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as.example.com/token", "target_audience": "https://svc"}
+
+    @staticmethod
+    def _seed_gateway(**overrides) -> str:
+        """Insert a token-exchange gateway row and return its id.
+
+        Args:
+            **overrides: Column overrides.
+
+        Returns:
+            str: Gateway id.
+        """
+        values = {
+            "name": "te-discovery-gw",
+            "slug": "te-discovery-gw",
+            "url": "https://upstream.example.com/mcp",
+            "transport": "STREAMABLEHTTP",
+            "capabilities": {},
+            "auth_type": "oauth",
+            "oauth_config": dict(TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG),
+            "owner_email": "owner@example.com",
+            "visibility": "team",
+            "team_id": "team-a",
+        }
+        values.update(overrides)
+        with db_mod.SessionLocal() as session:
+            gateway = db_mod.Gateway(**values)
+            session.add(gateway)
+            session.commit()
+            return gateway.id
+
+    @staticmethod
+    def _stored_oauth_config(gateway_id: str) -> dict:
+        """Read the stored oauth_config for a gateway.
+
+        Args:
+            gateway_id: Gateway id.
+
+        Returns:
+            dict: Stored oauth_config.
+        """
+        with db_mod.SessionLocal() as session:
+            return session.get(db_mod.Gateway, gateway_id).oauth_config
+
+    @staticmethod
+    def _update_body(discovery: dict) -> dict:
+        """Build a PUT body that adds a discovery object.
+
+        Args:
+            discovery: Discovery object.
+
+        Returns:
+            dict: Request body.
+        """
+        return {"auth_type": "oauth", "oauth_config": {**TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG, "discovery": discovery}}
+
+    def test_non_admin_adding_discovery_returns_403(self, test_client, auth_headers):
+        """The requester owns the gateway but is not a platform admin."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        async def deny_wildcard(self, user_email, permission, *args, **kwargs):
+            return permission != "*"
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_permission", new=deny_wildcard),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "client_credentials", "scopes": ["mcp.discover"]}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert "platform administrator" in response.json()["message"]
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_wrong_team_user_changing_discovery_rejected(self, test_client, auth_headers):
+        """The requester is neither the owner nor a team owner of the gateway's team."""
+        gateway_id = self._seed_gateway()
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService._is_user_admin", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.services.permission_service.PermissionService._get_user_team_role", new=AsyncMock(return_value=None)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "client_credentials"}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_disallowed_discovery_token_url_rejected(self, test_client, auth_headers):
+        """A platform admin cannot save a discovery.token_url that fails egress validation."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(
+            f"/gateways/{gateway_id}",
+            json=self._update_body({"grant_type": "client_credentials", "token_url": "http://169.254.169.254/latest/meta-data/"}),
+            headers=auth_headers,
+        )
+
+        assert response.status_code in (400, 422)
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_unsupported_discovery_grant_rejected(self, test_client, auth_headers):
+        """discovery.grant_type accepts client_credentials only."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "authorization_code"}), headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+
+class TestTokenExchangeDelegationRestDenyPaths:
+    """``PUT /gateways/{id}`` deny paths for the token-exchange delegation keys.
+
+    Each test seeds a real gateway row and asserts that the stored ``oauth_config`` is unchanged.
+    """
+
+    _STORED_CONFIG = TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG
+    _seed_gateway = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._seed_gateway)
+    _stored_oauth_config = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._stored_oauth_config)
+
+    @staticmethod
+    def _update_body(**delegation) -> dict:
+        """Build a PUT body that sets delegation keys.
+
+        Args:
+            **delegation: Delegation keys to add to the stored config.
+
+        Returns:
+            dict: Request body.
+        """
+        return {"auth_type": "oauth", "oauth_config": {**TestTokenExchangeDelegationRestDenyPaths._STORED_CONFIG, **delegation}}
+
+    def test_non_admin_enabling_delegation_returns_403(self, test_client, auth_headers):
+        """The requester owns the gateway but is not a platform admin."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        async def deny_wildcard(self, user_email, permission, *args, **kwargs):
+            return permission != "*"
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_permission", new=deny_wildcard),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert "platform administrator" in response.json()["message"]
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_wrong_team_user_changing_delegation_rejected(self, test_client, auth_headers):
+        """The requester is neither the owner nor a team owner of the gateway's team."""
+        gateway_id = self._seed_gateway()
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService._is_user_admin", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.services.permission_service.PermissionService._get_user_team_role", new=AsyncMock(return_value=None)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_unknown_actor_token_source_rejected(self, test_client, auth_headers):
+        """A platform admin cannot save an unsupported actor_token_source."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="password"), headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert "actor_token_source" in response.text
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_client_assertion_without_private_key_rejected(self, test_client, auth_headers):
+        """client_assertion needs a stored or submitted private key."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_assertion"), headers=auth_headers)
+
+        # update_gateway wraps service-layer ValueErrors in GatewayError, as for the private_key_jwt key check.
+        assert response.status_code >= 400
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_admin_enabling_delegation_stores_default_type(self, test_client, auth_headers):
+        """A platform admin enables delegation and the stored config carries the default actor_token_type."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 200, response.text
+        stored = self._stored_oauth_config(gateway_id)
+        assert stored["actor_token_source"] == "client_credentials"
+        assert stored["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+
+class TestTokenExchangeActorRestDenyPaths:
+    """``PUT /gateways/{id}`` deny paths for the token-exchange ``actor`` client override.
+
+    Each test seeds a real gateway row and asserts that the stored ``oauth_config`` is unchanged.
+    """
+
+    _STORED_CONFIG = {**TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG, "actor_token_source": "client_credentials", "actor": {"client_id": "cf-old"}}
+    _seed_gateway = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._seed_gateway)
+    _stored_oauth_config = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._stored_oauth_config)
+
+    @staticmethod
+    def _update_body(actor) -> dict:
+        """Build a PUT body that sets the actor override.
+
+        Args:
+            actor: Actor object.
+
+        Returns:
+            dict: Request body.
+        """
+        return {"auth_type": "oauth", "oauth_config": {**TestTokenExchangeActorRestDenyPaths._STORED_CONFIG, "actor": actor}}
+
+    def test_non_admin_setting_actor_returns_403(self, test_client, auth_headers):
+        """The requester owns the gateway but is not a platform admin."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com", oauth_config=dict(self._STORED_CONFIG))
+
+        async def deny_wildcard(self, user_email, permission, *args, **kwargs):
+            return permission != "*"
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_permission", new=deny_wildcard),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"client_id": "contextforge", "client_secret": "s"}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert "platform administrator" in response.json()["message"]
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_wrong_team_user_changing_actor_rejected(self, test_client, auth_headers):
+        """The requester is neither the owner nor a team owner of the gateway's team."""
+        gateway_id = self._seed_gateway(oauth_config=dict(self._STORED_CONFIG))
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService._is_user_admin", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.services.permission_service.PermissionService._get_user_team_role", new=AsyncMock(return_value=None)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"client_id": "cf-new"}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_actor_without_client_credentials_source_rejected(self, test_client, auth_headers):
+        """A platform admin cannot attach an actor to an impersonation config."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com", oauth_config=dict(self._STORED_CONFIG))
+        body = self._update_body({"client_id": "cf-new"})
+        body["oauth_config"]["actor_token_source"] = "none"
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=body, headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert "actor" in response.text
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_disallowed_actor_token_url_rejected(self, test_client, auth_headers):
+        """A platform admin cannot save an actor.token_url that fails egress validation."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com", oauth_config=dict(self._STORED_CONFIG))
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"client_id": "cf-new", "token_url": "http://169.254.169.254/latest/meta-data/"}), headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_admin_setting_actor_stores_encrypted_secret(self, test_client, auth_headers):
+        """A platform admin sets the actor; the stored secret is ciphertext and the response masks it."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com", oauth_config=dict(self._STORED_CONFIG))
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"client_id": "contextforge", "client_secret": "actor-plain-secret"}), headers=auth_headers)  # pragma: allowlist secret
+
+        assert response.status_code == 200, response.text
+        assert "actor-plain-secret" not in response.text
+        stored = self._stored_oauth_config(gateway_id)
+        assert stored["actor"]["client_id"] == "contextforge"
+        assert stored["actor"]["client_secret"] != "actor-plain-secret"  # pragma: allowlist secret
