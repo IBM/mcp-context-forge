@@ -358,7 +358,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
     _validate_oauth_token_endpoint_auth(v)
-    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
+    for field_name in ("token_url", "authorization_url", "registration_endpoint", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
             continue
@@ -9628,6 +9628,7 @@ class CatalogOAuthMetadata(BaseModel):
     issuer: Optional[str] = Field(None, description="OAuth issuer / authorization server base URL")
     authorization_url: Optional[str] = Field(None, description="OAuth authorization endpoint")
     token_url: Optional[str] = Field(None, description="OAuth token endpoint")
+    registration_endpoint: Optional[str] = Field(None, description="OAuth Dynamic Client Registration endpoint")
     scopes: List[str] = Field(default_factory=list, description="Scopes recognized by this provider's OAuth server")
     supports_dcr: bool = Field(default=False, description="Whether the provider supports Dynamic Client Registration (RFC 7591)")
     resource: Optional[str] = Field(None, description="RFC 8707 resource indicator for this server")
@@ -9657,7 +9658,7 @@ class CatalogServer(BaseModel):
 
 
 # oauth_credentials is a flat dict of known keys (issuer, client_id, client_secret, token_url,
-# authorization_url, redirect_uri, audience, scopes, resource) - CatalogService only ever reads a
+# authorization_url, registration_endpoint, redirect_uri, audience, scopes, resource) - CatalogService only ever reads a
 # scalar or a list of scalars out of it, so two levels of nesting is already generous.
 # validate_meta_data's own byte budget (4096 total, meant for a different field) would reject a
 # single legitimate 4096-char secret once JSON overhead is added, so the caps here are sized for
