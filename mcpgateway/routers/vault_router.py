@@ -15,18 +15,22 @@ The /vault/authorize endpoint allows clients to authorize using only their virtu
 server ID, without needing to know internal gateway details.
 """
 
+# Standard
 import logging
+import secrets
 from typing import Annotated
 
+# Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
+from mcpgateway.db import Gateway, get_db, Server, server_tool_association, Tool
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.routers.oauth_router import _build_user_context, _default_redirect_uri, _enforce_gateway_access
+from mcpgateway.routers.oauth_router import _build_user_context, _default_redirect_uri, _enforce_gateway_access, _set_binding_cookie
 from mcpgateway.services.a2a_server_service import _check_server_access as _check_server_visibility
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
@@ -212,11 +216,13 @@ async def vault_authorize(
         # browser session with a 5-minute JWT whose missing teams claim would be
         # widened to full DB membership by resolve_session_teams() (same root cause
         # as B1 / issue #6204).
+        binding = secrets.token_urlsafe(32)
         result = await oauth_manager.initiate_authorization_code_flow(
             gateway_id=gateway.id,
             credentials=oauth_config_with_callback,
             app_user_email=current_user["email"],
             popup=True,
+            browser_binding=binding,
         )
         auth_url = result["authorization_url"]
 
@@ -227,7 +233,7 @@ async def vault_authorize(
             SecurityValidator.sanitize_log_message(current_user["email"]),
         )
 
-        return RedirectResponse(url=auth_url, status_code=302)
+        return _set_binding_cookie(RedirectResponse(url=auth_url, status_code=302), request, result["state"], binding)
 
     except HTTPException:
         raise

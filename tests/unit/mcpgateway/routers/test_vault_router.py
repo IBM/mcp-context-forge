@@ -10,6 +10,7 @@ tests (unauthenticated, wrong team, insufficient permissions, feature disabled).
 """
 
 # Standard
+from http.cookies import SimpleCookie
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -24,6 +25,22 @@ from mcpgateway.routers.vault_router import _resolve_oauth_gateway, vault_author
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _assert_binding_cookie(response: RedirectResponse, manager: AsyncMock) -> None:
+    """Verify the authorization response carries the initiating browser secret."""
+    cookies = SimpleCookie()
+    for header in response.headers.getlist("set-cookie"):
+        cookies.load(header)
+    bindings = [cookie for name, cookie in cookies.items() if name.startswith("oauth_bind_")]
+    assert len(bindings) == 1
+    cookie = bindings[0]
+    assert cookie.value == manager.initiate_authorization_code_flow.call_args.kwargs["browser_binding"]
+    assert cookie["httponly"]
+    assert cookie["samesite"] == "lax"
+    assert cookie["path"] == "/oauth/callback"
+    assert cookie["max-age"] == "300"
+    assert not cookie["domain"]
 
 
 def _make_server(server_id: str = "srv-123", visibility: str = "public", team_id: str | None = None, owner_email: str | None = None) -> MagicMock:
@@ -254,9 +271,7 @@ class TestVaultAuthorizeDenyPaths:
             ):
                 with patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls:
                     mock_oauth = AsyncMock()
-                    mock_oauth.initiate_authorization_code_flow.return_value = {
-                        "authorization_url": "https://idp.example.com/authorize?state=xyz"
-                    }
+                    mock_oauth.initiate_authorization_code_flow.return_value = {"state": "xyz", "authorization_url": "https://idp.example.com/authorize?state=xyz"}
                     mock_oauth_cls.return_value = mock_oauth
 
                     response = await vault_authorize(
@@ -269,6 +284,7 @@ class TestVaultAuthorizeDenyPaths:
 
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 302
+        _assert_binding_cookie(response, mock_oauth)
 
     @pytest.mark.asyncio
     async def test_admin_user_can_authorize(self):
@@ -287,9 +303,7 @@ class TestVaultAuthorizeDenyPaths:
             ):
                 with patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls:
                     mock_oauth = AsyncMock()
-                    mock_oauth.initiate_authorization_code_flow.return_value = {
-                        "authorization_url": "https://idp.example.com/authorize?state=abc"
-                    }
+                    mock_oauth.initiate_authorization_code_flow.return_value = {"state": "xyz", "authorization_url": "https://idp.example.com/authorize?state=abc"}
                     mock_oauth_cls.return_value = mock_oauth
 
                     response = await vault_authorize(
@@ -302,6 +316,7 @@ class TestVaultAuthorizeDenyPaths:
 
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 302
+        _assert_binding_cookie(response, mock_oauth)
 
     @pytest.mark.asyncio
     async def test_private_server_non_member_returns_403(self):
@@ -370,9 +385,7 @@ class TestVaultAuthorizeDenyPaths:
                 ) as mock_role:
                     with patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls:
                         mock_oauth = AsyncMock()
-                        mock_oauth.initiate_authorization_code_flow.return_value = {
-                            "authorization_url": "https://idp.example.com/authorize?state=xyz"
-                        }
+                        mock_oauth.initiate_authorization_code_flow.return_value = {"state": "xyz", "authorization_url": "https://idp.example.com/authorize?state=xyz"}
                         mock_oauth_cls.return_value = mock_oauth
 
                         response = await vault_authorize(
@@ -523,9 +536,7 @@ async def test_vault_authorize_redirect_uri_uses_app_domain():
          patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls, \
          patch("mcpgateway.routers.vault_router._default_redirect_uri", return_value="https://public.example.com/proxy/oauth/callback") as mock_redirect:
         mock_oauth = AsyncMock()
-        mock_oauth.initiate_authorization_code_flow.return_value = {
-            "authorization_url": "https://idp.example.com/authorize?state=xyz"
-        }
+        mock_oauth.initiate_authorization_code_flow.return_value = {"state": "xyz", "authorization_url": "https://idp.example.com/authorize?state=xyz"}
         mock_oauth_cls.return_value = mock_oauth
 
         await vault_authorize(

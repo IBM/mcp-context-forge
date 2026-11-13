@@ -5442,6 +5442,7 @@ class OAuthState(Base):
     app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     redirect_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)  # Pinned at authorize time; reused at callback (RFC 6749 §4.1.3)
     team_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Team ID from JWT for Vault path
+    browser_binding_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

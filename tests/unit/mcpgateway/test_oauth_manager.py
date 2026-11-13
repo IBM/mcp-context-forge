@@ -475,7 +475,7 @@ class TestOAuthManager:
             gateway_id = "gateway123"
             credentials = {"client_id": "test_client", "authorization_url": "https://oauth.example.com/authorize", "redirect_uri": "https://gateway.example.com/callback", "scopes": ["read", "write"]}
 
-            result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
+            result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com", browser_binding="test-browser-binding")
 
             # With PKCE, the authorization URL now includes code_challenge and code_challenge_method
             assert "authorization_url" in result
@@ -528,7 +528,9 @@ class TestOAuthManager:
             token_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
 
             # Store the state with code_verifier (PKCE) and app_user_email to make it valid
-            await manager._store_authorization_state(gateway_id, state, code_verifier="test_code_verifier_123", app_user_email="test@example.com")
+            await manager._store_authorization_state(
+                gateway_id, state, code_verifier="test_code_verifier_123", app_user_email="test@example.com", browser_binding_hash=hashlib.sha256(b"test-browser-binding").hexdigest()
+            )
 
             with patch.object(manager, "_exchange_code_for_tokens") as mock_exchange:
                 mock_exchange.return_value = token_response
@@ -541,7 +543,9 @@ class TestOAuthManager:
                         mock_token_record.expires_at = None
                         mock_store_tokens.return_value = mock_token_record
 
-                        result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                        result = await manager.complete_authorization_code_flow(
+                            gateway_id, code, state, credentials, validated_state=await manager.consume_and_validate_authorization_state(gateway_id, state, "test-browser-binding")
+                        )
 
                         expected = {"user_id": "user123", "expires_at": None, "success": True}  # None because we set it to None in mock
                         assert result["user_id"] == expected["user_id"]
@@ -586,13 +590,17 @@ class TestOAuthManager:
             # Provider response intentionally omits expires_in (e.g. GitHub OAuth Apps).
             token_response = {"access_token": "access123", "refresh_token": "refresh123"}
 
-            await manager._store_authorization_state(gateway_id, state, code_verifier="cv-no-exp", app_user_email="test@example.com")
+            await manager._store_authorization_state(
+                gateway_id, state, code_verifier="cv-no-exp", app_user_email="test@example.com", browser_binding_hash=hashlib.sha256(b"test-browser-binding").hexdigest()
+            )
 
             with patch.object(manager, "_exchange_code_for_tokens", return_value=token_response):
                 with patch.object(manager, "_extract_user_id", return_value="user123"):
                     with patch.object(mock_token_storage, "store_tokens", new_callable=AsyncMock) as mock_store_tokens:
                         mock_store_tokens.return_value = Mock(expires_at=None)
-                        await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                        await manager.complete_authorization_code_flow(
+                            gateway_id, code, state, credentials, validated_state=await manager.consume_and_validate_authorization_state(gateway_id, state, "test-browser-binding")
+                        )
 
             mock_store_tokens.assert_called_once()
             assert mock_store_tokens.call_args.kwargs["expires_in"] is None
@@ -614,7 +622,7 @@ class TestOAuthManager:
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/oauth/callback"} # pragma: allowlist secret
 
         with pytest.raises(OAuthError):
-            await manager.complete_authorization_code_flow("gateway123", "code", state, credentials)
+            await manager.complete_authorization_code_flow("gateway123", "code", state, credentials, validated_state={"gateway_id": "wrong_gateway", "state": state, "code_verifier": "verifier"})
 
     @pytest.mark.asyncio
     async def test_get_access_token_for_user_success(self):
@@ -1072,9 +1080,9 @@ class TestOAuthManager:
 
             token_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
 
-            # Mock state validation to return state data with code_verifier
+            # Completion receives validated context and must not consume state again.
             with patch.object(manager, "_validate_and_retrieve_state") as mock_validate:
-                mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "test_verifier_abc123"}
+                mock_validate.side_effect = AssertionError("Completion must not consume state")
 
                 with patch.object(manager, "_exchange_code_for_tokens") as mock_exchange:
                     mock_exchange.return_value = token_response
@@ -1083,7 +1091,9 @@ class TestOAuthManager:
                         mock_extract_user.return_value = "user123"
 
                         # This should work without token storage
-                        result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                        result = await manager.complete_authorization_code_flow(
+                            gateway_id, code, state, credentials, validated_state={"state": state, "gateway_id": gateway_id, "code_verifier": "test_verifier_abc123"}
+                        )
 
                         # When no token storage, result includes state_data and token_response for caller to handle
                         assert result["success"] is True

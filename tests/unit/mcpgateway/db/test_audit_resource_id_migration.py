@@ -137,12 +137,15 @@ def _audit_rows(connection: Connection) -> list[dict]:
 
 
 def test_revision_extends_single_repository_head(migration: ModuleType) -> None:
-    """The migration extends the verified parent and leaves exactly one head."""
+    """The migration extends its verified parent within a single revision chain."""
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
     assert migration.branch_labels is None
     assert migration.depends_on is None
-    assert ScriptDirectory.from_config(_alembic_config()).get_heads() == [REVISION]
+    scripts = ScriptDirectory.from_config(_alembic_config())
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    assert REVISION in {revision.revision for revision in scripts.iterate_revisions(heads[0], "base")}
 
 
 def test_upgrade_preserves_historical_rows_indexes_and_other_schema(engine: Engine, migration: ModuleType) -> None:
