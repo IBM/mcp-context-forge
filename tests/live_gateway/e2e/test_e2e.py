@@ -407,8 +407,6 @@ def repeating_pagination_upstream(request):
 
     async def list_tools(context, params):
         """Return overlapping tool pages."""
-        if kind == "prompts":
-            return ListToolsResult(tools=[])
         keys = "ab" if params is None or params.cursor is None else "bc"
         return ListToolsResult(tools=[Tool(name=key, input_schema={"type": "object"}) for key in keys], next_cursor="repeat")
 
@@ -417,9 +415,7 @@ def repeating_pagination_upstream(request):
         keys = "ab" if params is None or params.cursor is None else "bc"
         return ListPromptsResult(prompts=[Prompt(name=key) for key in keys], next_cursor="repeat")
 
-    options = {"on_list_tools": list_tools}
-    if kind == "prompts":
-        options["on_list_prompts"] = list_prompts
+    options = {"on_list_prompts": list_prompts} if kind == "prompts" else {"on_list_tools": list_tools}
     app = Server("repeating-pagination", **options)
     listener = socket.socket()
     listener.bind(("0.0.0.0", 0))

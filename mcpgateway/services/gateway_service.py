@@ -68,7 +68,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import ListToolsResult
+from mcp.types import ListToolsResult, METHOD_NOT_FOUND
 from pydantic import ValidationError
 from sqlalchemy import and_, case, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -207,6 +207,10 @@ _LIST_IDENTITY_ATTRIBUTE = {
 }
 
 
+class _UnimplementedToolList(list):
+    """Empty tool list marker returned when an upstream rejects ``tools/list`` with ``-32601``."""
+
+
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
     """Collect unique MCP list results and stop when pagination ends or repeats.
 
@@ -219,11 +223,23 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
     Returns:
         Objects in encounter order, retaining the first object for each protocol identity.
         Repeated cursors produce a warning and preserve collected unique objects.
-        Upstream exceptions propagate to the caller.
+        A server that rejects ``tools/list`` with JSON-RPC method-not-found yields an
+        ``_UnimplementedToolList`` (an empty ``list`` subclass) so reconciliation can distinguish
+        an unimplemented ``tools/list`` from an authoritative empty tool catalog.
+        Other upstream exceptions propagate to the caller.
     """
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
-    response = await list_method()
+    try:
+        response = await list_method()
+    except MCPError as exc:
+        # The tools capability is optional, and servers that only serve prompts or resources
+        # may not implement tools/list. Servers that under-declare capabilities still serve tools,
+        # so the call is not gated on the negotiated capability.
+        if mcp_method is not MCPListMethod.TOOLS or exc.error.code != METHOD_NOT_FOUND:
+            raise
+        logger.info("Upstream does not implement tools/list; continuing without tools")
+        return _UnimplementedToolList()
     mcp_responses = list(getattr(response, response_attribute, None) or [])
     seen_cursors = set()
     while getattr(response, "next_cursor", None) is not None:
@@ -983,7 +999,7 @@ class GatewayConnectionMaterial:
 class GatewayCatalogSyncResult:
     """Result of syncing fetched gateway catalog items into ORM objects."""
 
-    new_tool_names: List[str]
+    new_tool_names: Optional[List[str]]
     new_resource_uris: Optional[List[str]]
     new_prompt_names: Optional[List[str]]
     tools_to_add: List[DbTool]
@@ -7687,8 +7703,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         project_gateway_rename: bool = False,
         stale_created_via_values: Optional[Set[str]] = None,
+        prune_tools: bool = True,
     ) -> GatewayCatalogSyncResult:
         """Update/create fetched catalog rows inside caller transaction."""
+        prune_tools = prune_tools and not isinstance(tools, _UnimplementedToolList)
         tools = [tool for tool in tools if tool is not None]
         existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
         refusals = self._validation_refusals(
@@ -7703,7 +7721,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         retained_tool_original_names = {
             tool.original_name
             for tool in gateway.tools
-            if stale_created_via_values is not None and tool.original_name not in fetched_tool_names and getattr(tool, "created_via", None) not in stale_created_via_values
+            if tool.original_name not in fetched_tool_names
+            and (not prune_tools or (stale_created_via_values is not None and getattr(tool, "created_via", None) not in stale_created_via_values))
         }
         self._validate_tool_name_collisions(
             db,
@@ -7719,7 +7738,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             retained_tool_original_names=retained_tool_original_names,
         )
         return GatewayCatalogSyncResult(
-            new_tool_names=[tool.name for tool in tools],
+            new_tool_names=[tool.name for tool in tools] if prune_tools else None,
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,
             new_prompt_names=[prompt.name for prompt in prompts] if include_prompts else None,
             tools_to_add=self._update_or_create_tools(db, tools, gateway, created_via, update_visibility=update_visibility, refusals=refusals),
@@ -7753,7 +7772,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return stale_created_via_values is None or created_via in stale_created_via_values
 
         stale_tool_ids = []
-        if not skip_stale_cleanup:
+        if not skip_stale_cleanup and catalog_sync.new_tool_names is not None:
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in catalog_sync.new_tool_names and _created_via_allowed(getattr(tool, "created_via", None))]
             if stale_tool_ids:
                 for i in range(0, len(stale_tool_ids), 500):
@@ -7787,7 +7806,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.expire(gateway)
 
         if not skip_stale_cleanup:
-            gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
+            if catalog_sync.new_tool_names is not None:
+                gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
             if catalog_sync.new_resource_uris is not None:
                 gateway.resources = [resource for resource in gateway.resources if resource.uri in catalog_sync.new_resource_uris or not _created_via_allowed(getattr(resource, "created_via", None))]
             if catalog_sync.new_prompt_names is not None:
@@ -8498,7 +8518,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             OAuthToolValidationError: If all tools fail validation in OAuth context
             GatewayConnectionError: If all tools fail validation in default context
         """
-        valid_tools: list[ToolCreate] = []
+        valid_tools: list[ToolCreate] = _UnimplementedToolList() if isinstance(tools, _UnimplementedToolList) else []
         validation_errors: list[str] = []
 
         for i, tool_dict in enumerate(tools):
@@ -8610,7 +8630,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.debug("Server capabilities: %s", capabilities)
 
                 tools = await get_list_paginated(client, MCPListMethod.TOOLS)
-                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+                if tools:
+                    tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools, context="oauth")
                 if tools:
@@ -8800,7 +8821,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.debug("Server capabilities: %s", capabilities)
 
             tools = await get_list_paginated(client, MCPListMethod.TOOLS)
-            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+            if tools:
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
             tools, validation_errors = self._validate_tools(tools)
             if tools:
@@ -8979,7 +9001,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.debug("Server capabilities: %s", capabilities)
 
             tools = await get_list_paginated(client, MCPListMethod.TOOLS)
-            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+            if tools:
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
             tools, validation_errors = self._validate_tools(tools)
             for tool in tools:

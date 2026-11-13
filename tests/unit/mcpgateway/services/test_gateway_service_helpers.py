@@ -14,7 +14,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
-from mcp.types import Prompt, Resource, ResourceTemplate, Tool
+from mcp.shared.exceptions import MCPError
+from mcp.types import INTERNAL_ERROR, METHOD_NOT_FOUND, Prompt, Resource, ResourceTemplate, Tool
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -1648,3 +1649,33 @@ async def test_get_list_paginated_preserves_upstream_error():
     ]
     with pytest.raises(RuntimeError, match="upstream failed"):
         await get_list_paginated(session, MCPListMethod.TOOLS)
+
+
+@pytest.mark.asyncio
+async def test_get_list_paginated_tolerates_missing_tools_list():
+    """Return an empty list when the server does not implement tools/list."""
+    session = AsyncMock()
+    session.list_tools.side_effect = MCPError(METHOD_NOT_FOUND, "Method not found")
+
+    assert await get_list_paginated(session, MCPListMethod.TOOLS) == []
+    session.list_tools.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,code",
+    [
+        (MCPListMethod.TOOLS, INTERNAL_ERROR),
+        (MCPListMethod.PROMPTS, METHOD_NOT_FOUND),
+        (MCPListMethod.RESOURCES, METHOD_NOT_FOUND),
+        (MCPListMethod.RESOURCE_TEMPLATES, METHOD_NOT_FOUND),
+    ],
+)
+async def test_get_list_paginated_propagates_other_mcp_errors(method, code):
+    """Propagate non-32601 tool errors and method-not-found on capability-gated methods."""
+    suffix, _ = method.value
+    session = AsyncMock()
+    getattr(session, f"list_{suffix}").side_effect = MCPError(code, "upstream error")
+
+    with pytest.raises(MCPError):
+        await get_list_paginated(session, method)
