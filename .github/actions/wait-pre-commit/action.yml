@@ -1,0 +1,53 @@
+name: Wait for pre-commit
+description: Block until the "Run pre-commit hooks" job (pre-commit.yml) succeeds on the PR head SHA; fail if it does not. Non-pull_request events are an intentional no-op.
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for pre-commit
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Must match the job name in .github/workflows/pre-commit.yml.
+        CHECK_NAME: Run pre-commit hooks
+      run: |
+        set -euo pipefail
+        # shortcut: flat 20s poll; add backoff only if API rate limits bite.
+        # Deadline stays under the 25 min gate-job timeout so this step's own error fires first.
+        # app_id 15368 = github-actions; stops other apps from posting a check with the same name.
+        err=$(mktemp)
+        fails=0
+        deadline=$((SECONDS + 1380))
+        while (( SECONDS < deadline )); do
+          if out=$(gh api --method GET "repos/${REPO}/commits/${HEAD_SHA}/check-runs" \
+                -f check_name="${CHECK_NAME}" -f app_id=15368 -f filter=latest -f per_page=100 \
+                --paginate --jq '.check_runs[]' 2>"${err}"); then
+            fails=0
+            conclusion=$(jq -rs 'sort_by(.id) | last | .conclusion // "pending"' <<<"${out}")
+          else
+            msg=$(cat "${err}")
+            if grep -qE 'HTTP (401|404|422)' <<<"${msg}" \
+              || { grep -q 'HTTP 403' <<<"${msg}" && ! grep -qi 'rate limit' <<<"${msg}"; }; then
+              echo "::error::gh api failed with a non-retryable error: ${msg}"
+              exit 1
+            fi
+            fails=$((fails + 1))
+            echo "::warning::gh api failed (${fails}/5): ${msg}"
+            if (( fails >= 5 )); then
+              echo "::error::gh api failed 5 times in a row; halting CI."
+              exit 1
+            fi
+            conclusion="pending"
+          fi
+
+          case "${conclusion}" in
+            success) echo "pre-commit passed."; exit 0 ;;
+            pending) sleep 20 ;;
+            *) echo "::error::pre-commit finished with '${conclusion}'; halting CI."; exit 1 ;;
+          esac
+        done
+        echo "::error::Timed out waiting for pre-commit."
+        exit 1
