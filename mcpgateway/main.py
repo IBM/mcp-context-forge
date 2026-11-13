@@ -8262,6 +8262,12 @@ async def update_gateway(
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, PublicValidationError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
+
+        # Config-validation failures wrap their ValueError/PublicValidationError
+        # cause (see update_gateway's final wrap in gateway_service). Answer 400
+        # like POST /gateways/ does for the same invalid payload (#7144).
+        if isinstance(ex, GatewayError) and isinstance(ex.__cause__, ValueError):
+            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
