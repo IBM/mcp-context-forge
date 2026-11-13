@@ -27,7 +27,7 @@ import uuid
 # Third-Party
 from fastapi import HTTPException
 import httpx
-from pydantic import ValidationError
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -399,29 +399,37 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
             _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
 
 
-def _same_origin(url: str, other: Optional[str]) -> bool:
-    """Return whether two URLs share scheme, host, and port.
+def _same_origin(url: AnyHttpUrl, other: Optional[str]) -> bool:
+    """Return whether a normalized URL and another URL share scheme, host, and port.
+
+    Both URLs go through the same WHATWG parser the card fetch uses, so a URL
+    that the fetch resolves to another host never matches.
 
     Args:
-        url: First URL.
+        url: Normalized URL that the card fetch uses.
         other: Second URL, or ``None``.
 
     Returns:
         ``True`` when both URLs have the same origin.
 
     Examples:
-        >>> _same_origin("https://a.example.com/card", "https://a.example.com:443/rpc")
+        >>> from pydantic import AnyHttpUrl
+        >>> _same_origin(AnyHttpUrl("https://a.example.com/card"), "https://a.example.com:443/rpc")
         True
-        >>> _same_origin("https://a.example.com", "https://b.example.com")
+        >>> _same_origin(AnyHttpUrl("https://a.example.com"), "https://b.example.com")
         False
-        >>> _same_origin("https://a.example.com", None)
+        >>> _same_origin(AnyHttpUrl("https://a.example.com"), None)
+        False
+        >>> _same_origin(AnyHttpUrl("https://evil.example\\\\@a.example.com/card"), "https://a.example.com/rpc")
         False
     """
     if not other:
         return False
-    first, second = urlparse(url), urlparse(other)
-    default_ports = {"http": 80, "https": 443}
-    return (first.scheme, first.hostname, first.port or default_ports.get(first.scheme)) == (second.scheme, second.hostname, second.port or default_ports.get(second.scheme))
+    try:
+        endpoint = TypeAdapter(AnyHttpUrl).validate_python(other)
+    except ValidationError:
+        return False
+    return (url.scheme, url.host, url.port) == (endpoint.scheme, endpoint.host, endpoint.port)
 
 
 class A2AAgentError(Exception):
@@ -1231,10 +1239,11 @@ class A2AAgentService(BaseService):
         """
         if not card_url:
             return None
+        card_base_url = A2AFetchCardRequest(base_url=card_url).base_url
         headers: Optional[Dict[str, str]] = None
-        if auth_type in ("basic", "bearer", "authheaders") and auth_value and _same_origin(card_url, endpoint_url):
+        if auth_type in ("basic", "bearer", "authheaders") and auth_value and _same_origin(card_base_url, endpoint_url):
             headers = {str(key): str(value) for key, value in decode_auth(auth_value).items()}
-        request = A2AFetchCardRequest(base_url=card_url, headers=headers)
+        request = A2AFetchCardRequest(base_url=card_base_url, headers=headers)
         fetched = await fetch_agent_card(str(request.base_url), None, request.headers)
         if fetched.found:
             return fetched
