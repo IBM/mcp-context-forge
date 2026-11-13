@@ -27,12 +27,13 @@ from __future__ import annotations
 # Standard
 import contextlib
 import logging
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, Optional
 
 # Third-Party
 import httpx2
 from mcp import Client
 from mcp.client.sse import sse_client
+from mcp_types import CLIENT_CAPABILITIES_META_KEY
 
 # First-Party
 from mcpgateway.config import settings
@@ -40,12 +41,63 @@ from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["mcp_proxy_client"]
+__all__ = ["keep_caller_capabilities", "mcp_proxy_client"]
 
 # Third-Party
 # Re-export for use by transport code that still references streamable_http_client
 # from the SDK directly when needed.
 from mcp.client.streamable_http import streamable_http_client  # noqa: E402  # SDK-only re-export for this module.
+
+
+# Capabilities the gateway carries upstream on the caller's behalf: the three kinds of
+# question a 2026 upstream can ask through an ``input_required`` result, which the gateway
+# relays to the end client untouched. Extensions stay out: they can change result shapes
+# that this client still has to parse itself.
+_RELAYED_CAPABILITY_KEYS = ("elicitation", "sampling", "roots")
+
+
+def _relayed_capabilities(params: Any) -> Optional[dict[str, Any]]:
+    """Return the slice of the caller's declared capabilities that the gateway relays.
+
+    Args:
+        params: Serialized request params, possibly carrying the caller's ``_meta``.
+
+    Returns:
+        The caller's relayable capabilities, or ``None`` when the caller declared none.
+    """
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    declared = meta.get(CLIENT_CAPABILITIES_META_KEY) if isinstance(meta, dict) else None
+    if not isinstance(declared, dict):
+        return None
+    return {key: value for key, value in declared.items() if key in _RELAYED_CAPABILITY_KEYS}
+
+
+def keep_caller_capabilities(client: Client) -> None:
+    """Make ``client`` advertise the caller's capabilities upstream instead of its own.
+
+    Requests that carry no caller-declared capabilities (legacy callers) and legacy
+    upstreams (whose handshake stamp writes no capabilities key) are left untouched.
+
+    Args:
+        client: A connected ``mcp.Client``.
+    """
+    session = client.session
+    sdk_stamp = session._stamp  # pylint: disable=protected-access
+
+    def stamp(data: dict[str, Any], opts: Any) -> None:
+        """Run the SDK stamp, then restore the caller's relayable capabilities.
+
+        Args:
+            data: The serialized request about to be sent.
+            opts: The SDK's per-call options, passed through untouched.
+        """
+        caller = _relayed_capabilities(data.get("params"))
+        sdk_stamp(data, opts)
+        meta = (data.get("params") or {}).get("_meta")
+        if caller is not None and isinstance(meta, dict) and CLIENT_CAPABILITIES_META_KEY in meta:
+            meta[CLIENT_CAPABILITIES_META_KEY] = caller
+
+    session._stamp = stamp  # pylint: disable=protected-access
 
 
 @contextlib.asynccontextmanager
@@ -92,6 +144,7 @@ async def mcp_proxy_client(
         else:
             sse_acm = sse_client(url, headers=headers, timeout=timeout)
         async with Client(sse_acm, mode=resolved_mode) as client:
+            keep_caller_capabilities(client)
             yield client
         return
 
@@ -122,6 +175,7 @@ async def mcp_proxy_client(
         transport_acm = streamable_http_client(url, http_client=http_client)
         try:
             async with Client(transport_acm, mode=resolved_mode) as client:
+                keep_caller_capabilities(client)
                 yield client
         except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
             # an error the SDK made up stands for a transport failure: surface that instead

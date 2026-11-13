@@ -1758,7 +1758,7 @@ async def _proxy_read_resource_to_gateway(  # pylint: disable=unused-argument
         return []
 
 
-def _mrtr_intake(ctx: Any) -> tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
+def _mrtr_intake(ctx: Any) -> tuple[bool, Optional[Dict[str, Any]], Optional[str], Optional[types.ClientCapabilities]]:
     """Read the 2026 multi-round-trip fields of the inbound request.
 
     Elicitation pass-through is modern-era only
@@ -1767,11 +1767,15 @@ def _mrtr_intake(ctx: Any) -> tuple[bool, Optional[Dict[str, Any]], Optional[str
         ctx: The SDK request context, or ``None`` when there is no active request.
 
     Returns:
-        tuple: ``(mrtr_allowed, input_responses, request_state)``.
+        tuple: ``(mrtr_allowed, input_responses, request_state, client_capabilities)``;
+        ``client_capabilities`` is what the caller declared in its request envelope.
     """
     if not ctx:
-        return False, None, None
+        return False, None, None, None
     mrtr_allowed = _is_modern_protocol(getattr(ctx, "protocol_version", None))
+    client_capabilities = getattr(getattr(ctx, "session", None), "client_capabilities", None)
+    if not isinstance(client_capabilities, types.ClientCapabilities):
+        client_capabilities = None
     raw_params = getattr(ctx, "params", None) or {}
     # Only the camelCase wire keys: those are the ones the SDK validated before this handler ran.
     raw_responses = raw_params.get("inputResponses")
@@ -1786,7 +1790,74 @@ def _mrtr_intake(ctx: Any) -> tuple[bool, Optional[Dict[str, Any]], Optional[str
                 except Exception:  # noqa: BLE001 - non-elicitation responses pass through raw
                     pass
             input_responses[key] = value
-    return mrtr_allowed, input_responses, request_state
+    return mrtr_allowed, input_responses, request_state, client_capabilities
+
+
+def _undeclared_input_capability(result: types.InputRequiredResult, declared: Optional[types.ClientCapabilities]) -> Optional[tuple[str, types.ClientCapabilities]]:
+    """Find a question in ``result`` that the caller never declared support for.
+
+    Mirrors the SDK server's rules: a bare ``elicitation: {}`` counts as form support,
+    url-only does not; a sampling question that carries tools needs ``sampling.tools``.
+
+    Args:
+        result: The upstream ``input_required`` result about to be relayed.
+        declared: The capabilities the caller declared, if any.
+
+    Returns:
+        ``(name, required)`` for the first uncovered question, or ``None`` when every
+        question is covered.
+    """
+    elicitation = declared.elicitation if declared is not None else None
+    form_ok = elicitation is not None and (elicitation.form is not None or elicitation.url is None)
+    url_ok = elicitation is not None and elicitation.url is not None
+    for request in (result.input_requests or {}).values():
+        if isinstance(request, types.ElicitRequest):
+            if getattr(request.params, "mode", None) == "url":
+                if not url_ok:
+                    return "url elicitation", types.ClientCapabilities(elicitation=types.ElicitationCapability(url=types.UrlElicitationCapability()))
+            elif not form_ok:
+                return "form elicitation", types.ClientCapabilities(elicitation=types.ElicitationCapability(form=types.FormElicitationCapability()))
+        elif isinstance(request, types.CreateMessageRequest):
+            sampling = declared.sampling if declared is not None else None
+            wants_tools = bool(getattr(request.params, "tools", None) or getattr(request.params, "tool_choice", None))
+            if sampling is None or (wants_tools and sampling.tools is None):
+                required = types.SamplingCapability(tools=types.SamplingToolsCapability() if wants_tools else None)
+                return "sampling.tools" if wants_tools else "sampling", types.ClientCapabilities(sampling=required)
+        elif declared is None or declared.roots is None:
+            return "roots", types.ClientCapabilities(roots=types.RootsCapability())
+    return None
+
+
+def _relay_input_required(result: types.InputRequiredResult, declared: Optional[types.ClientCapabilities], subject: str) -> types.InputRequiredResult:
+    """Return the upstream questions for relaying, or refuse them with -32021.
+
+    A strict upstream refuses an undeclared question itself; this covers upstreams
+    that do not check.
+
+    Args:
+        result: The upstream ``input_required`` result.
+        declared: The capabilities the caller declared, if any.
+        subject: What was being served, for the log line and error message.
+
+    Returns:
+        ``result`` unchanged when the caller can answer every question in it.
+
+    Raises:
+        MCPError: ``MISSING_REQUIRED_CLIENT_CAPABILITY`` with the SDK's
+            ``requiredCapabilities`` payload when the caller cannot answer a question.
+    """
+    missing = _undeclared_input_capability(result, declared)
+    if missing is None:
+        logger.info("Input required for %s; relaying to client", subject)
+        return result
+    name, required = missing
+    logger.info("Input required for %s but the client did not declare %s; refusing", subject, name)
+    data = types.MissingRequiredClientCapabilityErrorData(required_capabilities=required)
+    raise MCPError(
+        code=types.MISSING_REQUIRED_CLIENT_CAPABILITY,
+        message=f"Client did not declare the {name} capability required by {subject}",
+        data=data.model_dump(by_alias=True, mode="json", exclude_none=True),
+    )
 
 
 def _caller_is_modern() -> bool:
@@ -2206,6 +2277,7 @@ async def call_tool(
     mrtr_allowed = False
     inbound_input_responses = None
     inbound_request_state = None
+    client_capabilities = None
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context  # pylint: disable=no-member
@@ -2214,7 +2286,7 @@ async def call_tool(
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
         if ctx:
-            mrtr_allowed, inbound_input_responses, inbound_request_state = _mrtr_intake(ctx)
+            mrtr_allowed, inbound_input_responses, inbound_request_state, client_capabilities = _mrtr_intake(ctx)
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2581,8 +2653,7 @@ async def call_tool(
     except ToolInputRequired as e:
         # 2026 MRTR: return the upstream question to the modern client, which
         # answers and retries the call with input_responses + request_state.
-        logger.info("Input required for tool '%s'; relaying to client", name)
-        return e.result
+        return _relay_input_required(e.result, client_capabilities, f"tool '{name}'")
     except ToolNotFoundError:
         logger.info("Unknown tool requested: %s", name)
         return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
@@ -3174,7 +3245,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         await _check_server_oauth_enforcement(server_id, user_context)
 
     meta_data = None
-    mrtr_allowed, input_responses, request_state = False, None, None
+    mrtr_allowed, input_responses, request_state, client_capabilities = False, None, None, None
     # Extract _meta and any MRTR retry fields from request context if available
     try:
         ctx = mcp_app.request_context  # pylint: disable=no-member
@@ -3182,7 +3253,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
-        mrtr_allowed, input_responses, request_state = _mrtr_intake(ctx)
+        mrtr_allowed, input_responses, request_state, client_capabilities = _mrtr_intake(ctx)
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -3214,8 +3285,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                 # 2026 MRTR: a modern client answers and retries with inputResponses + requestState.
                 if not mrtr_allowed:
                     raise MCPError(code=types.INTERNAL_ERROR, message="Elicitation not supported") from e
-                logger.info("Input required for prompt '%s'; relaying to client", prompt_id)
-                return e.result
+                return _relay_input_required(e.result, client_capabilities, f"prompt '{prompt_id}'")
             except PromptNotFoundError as e:
                 logger.info("Unknown prompt requested: %s", prompt_id)
                 raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown prompt: {prompt_id}") from e
@@ -3392,7 +3462,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any], types
         await _check_server_oauth_enforcement(server_id, user_context)
 
     meta_data = None
-    mrtr_allowed, input_responses, request_state = False, None, None
+    mrtr_allowed, input_responses, request_state, client_capabilities = False, None, None, None
     # Extract _meta and any MRTR retry fields from request context if available
     try:
         ctx = mcp_app.request_context  # pylint: disable=no-member
@@ -3400,7 +3470,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any], types
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
-        mrtr_allowed, input_responses, request_state = _mrtr_intake(ctx)
+        mrtr_allowed, input_responses, request_state, client_capabilities = _mrtr_intake(ctx)
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -3493,8 +3563,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any], types
         # 2026 MRTR: a modern client answers and retries with inputResponses + requestState.
         if not mrtr_allowed:
             raise MCPError(code=types.INTERNAL_ERROR, message="Elicitation not supported") from e
-        logger.info("Input required for resource '%s'; relaying to client", resource_uri)
-        return e.result
+        return _relay_input_required(e.result, client_capabilities, f"resource '{resource_uri}'")
     except MCPError:
         raise
     except Exception as e:
