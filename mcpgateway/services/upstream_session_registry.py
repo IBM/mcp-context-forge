@@ -424,6 +424,31 @@ class SessionLifecycle:
     client: Any
 
 
+def _is_dead_session_error(exc: McpError) -> bool:
+    """Return True only when an ``McpError`` means the upstream session is unusable.
+
+    ``send_request()`` raises ``McpError`` for three disjoint cases (see
+    ``mcp/shared/jsonrpc_dispatcher.py``): peer JSON-RPC error responses,
+    ``REQUEST_TIMEOUT`` when the per-request timeout elapses, and
+    ``CONNECTION_CLOSED`` when the transport tore down mid-request or the
+    dispatcher shut down — the v2 spelling of what v1 surfaced as raw
+    ``ClosedResourceError``/``BrokenResourceError`` on the request path.
+    Only the last case, plus peer errors that report session death, justify
+    eviction; tool errors and timeouts leave a healthy session in place.
+
+    Peer-reported session death arrives two ways under SDK v2
+    (``mcp/client/streamable_http.py``): a bare HTTP 404 for a pinned session
+    id is synthesized client-side as "Session terminated", while an SDK
+    server's 404 JSON-RPC body ("Session not found") is forwarded verbatim.
+    Match on those message phrases rather than codes: both travel under the
+    generic ``INVALID_REQUEST`` (-32600), which alone does not imply death.
+    """
+    if exc.error.code == mcp_types.CONNECTION_CLOSED:
+        return True
+    message = exc.error.message.lower()
+    return "session terminated" in message or "session not found" in message
+
+
 @dataclass
 class UpstreamSession:
     """A single upstream MCP session bound to one downstream session.
@@ -1019,9 +1044,20 @@ class UpstreamSessionRegistry:
             )
             await self._evict_key(key)
             raise
-        # All other exceptions (tool-level errors from the upstream, caller
-        # application errors) intentionally leave the session in place — the
-        # transport is fine, the caller just didn't like the result.
+        except McpError as exc:
+            if _is_dead_session_error(exc):
+                logger.info(
+                    "acquire() caller hit dead-session MCPError (code=%s) for gateway=%s; evicting so next acquire rebuilds",
+                    exc.error.code,
+                    gateway_id,
+                )
+                await self._evict_key(key)
+            raise
+        # Everything else intentionally leaves the session in place: tool-level
+        # errors from the upstream, non-fatal McpErrors (unknown tool, invalid
+        # params, per-request timeout), and caller application errors all mean
+        # the transport is fine — the caller just didn't like the result.
+        # Evicting on those would tear down a healthy session.
 
     async def evict_session(self, downstream_session_id: str) -> int:
         """Close and remove every upstream session owned by this downstream session id.
