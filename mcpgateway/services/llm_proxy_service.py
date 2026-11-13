@@ -503,11 +503,12 @@ class LLMProxyService:
                     verify=not settings.skip_ssl_verify,
                     follow_redirects=False,
                 ) as client:
-                    response = await client.post(
-                        pinned_target.pin(url),
-                        headers=pinned_target.apply_headers(headers),
+                    response = await pinned_target.connect_async(
+                        client,
+                        "POST",
+                        url,
+                        headers=headers,
                         json=body,
-                        extensions=pinned_target.extensions,
                     )
                 response.raise_for_status()
                 data = response.json()
@@ -608,12 +609,12 @@ class LLMProxyService:
                         verify=not settings.skip_ssl_verify,
                         follow_redirects=False,
                     ) as client,
-                    client.stream(
+                    pinned_target.stream_async(
+                        client,
                         "POST",
-                        pinned_target.pin(url),
-                        headers=pinned_target.apply_headers(headers),
+                        url,
+                        headers=headers,
                         json=body,
-                        extensions=pinned_target.extensions,
                     ) as response,
                 ):
                     response.raise_for_status()

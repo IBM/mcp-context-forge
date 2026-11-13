@@ -3327,12 +3327,13 @@ class A2AAgentService(BaseService):
             # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
             # would reuse a connection whose certificate was verified for that other name.
             async with get_isolated_http_client(follow_redirects=False) as client:
-                http_response = await client.post(
-                    pinned_target.pin(url),
+                http_response = await pinned_target.connect_async(
+                    client,
+                    "POST",
+                    url,
                     json=request_data,
-                    headers=pinned_target.apply_headers(headers),
+                    headers=headers,
                     timeout=30.0,
-                    extensions=pinned_target.extensions,
                 )
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 

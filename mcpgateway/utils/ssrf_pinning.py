@@ -10,24 +10,27 @@ client that receives the hostname resolves it a second time at connection time, 
 attacker who controls DNS can answer with a public address for the check and a private
 address for the connection. These helpers carry the checked addresses to the connection.
 
-Constraint for callers: httpcore keys pooled connections by URL origin and does not include
-``sni_hostname`` in that key. A URL pinned by :meth:`PinnedTarget.pin` therefore carries the
-address as its origin, so two hostnames pinned to one address would collapse into a single
-pooled connection whose certificate was verified for only the first of them. Never issue a
-URL pinned by :meth:`PinnedTarget.pin` on a client shared with another destination: use an
-isolated per-call client, as every caller in this repository does. :class:`SniPinningTransport`
-is exempt: each instance accepts only its one validated hostname, so its pool never mixes
-hostnames.
+Client isolation constraint: ``pin()``, ``connect_async()``, and ``stream_async()`` rewrite
+URL origins to validated IP addresses. httpcore keys pooled connections by URL origin,
+without including ``sni_hostname``. Different hostnames pinned to one address can therefore
+reuse a connection whose certificate was verified for only the first hostname.
+Use a client isolated to one validated hostname for all three entry points.
+Never share that client across different hostnames. ``SniPinningTransport`` is exempt
+because each instance accepts only its validated hostname.
 """
 
 # Standard
+from contextlib import asynccontextmanager, AsyncExitStack
 from dataclasses import dataclass
 import logging
 import os
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+import ssl
+from typing import Any, AsyncGenerator, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
+import warnings
 
 # Third-Party
+import httpx
 import httpx2
 
 # First-Party
@@ -154,8 +157,36 @@ class PinnedTarget:
         """
         return {"sni_hostname": self.hostname} if self.is_pinned else {}
 
+    @staticmethod
+    async def _dial(client: Any, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Issue one request using the verb method for ``method``, as httpx callers already do.
+
+        Uses ``client.post`` / ``client.get`` so a caller's existing client stubs and
+        instrumentation keep working, and keeps ``client.request`` as the fallback for verbs
+        without a dedicated method.
+
+        Args:
+            client: httpx ``AsyncClient`` or a test double exposing the same verb methods.
+            method: HTTP method.
+            url: URL to dial.
+            **kwargs: Forwarded to the verb method.
+
+        Returns:
+            httpx.Response: Response returned by the client.
+        """
+        verb = getattr(client, method.lower(), None) if method.lower() in {"get", "post", "put", "patch", "delete", "head"} else None
+        if verb is None:
+            response: httpx.Response = await client.request(method, url, **kwargs)
+        else:
+            response = await verb(url, **kwargs)
+        return response
+
     def pin(self, url: str) -> str:
-        """Replace the network location of ``url`` with the first validated address.
+        """Replace the network location of ``url`` with a single validated address.
+
+        Deprecated: this dials only the first validated address, so a peer that listens on the
+        other address family is never reached. Use :meth:`connect_async` or :meth:`stream_async`
+        instead, which try every validated address.
 
         Args:
             url: URL addressed to the original hostname.
@@ -163,6 +194,7 @@ class PinnedTarget:
         Returns:
             str: The same URL addressed to a validated address, or unchanged when unpinned.
         """
+        warnings.warn("PinnedTarget.pin() is deprecated; use connect_async() or stream_async()", DeprecationWarning, stacklevel=2)
         if not self.is_pinned:
             return url
         return pin_url_to_resolved_ip(url, self.resolved_ips[0])
@@ -187,6 +219,135 @@ class PinnedTarget:
         pinned["Host"] = self.original_authority
         return pinned
 
+    async def connect_async(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Send one request, trying every validated address until one answers.
+
+        The request keeps the validated hostname in its ``Host`` header, while each attempt dials
+        one validated address. An address that refuses the connection or times out is retried with
+        the next one, so a peer bound to only one address family is still reached.
+
+        Purpose-built clients stay with the caller: this uses the ``client`` it is given, so
+        custom SSL contexts and per-call timeouts keep working.
+
+        Use a client isolated to this validated hostname. These helpers rewrite the URL
+        origin to an IP address. Never share that client across different hostnames.
+
+        Args:
+            client: ``httpx.AsyncClient`` used for every attempt.
+            method: HTTP method.
+            url: URL addressed to the validated hostname, not to an address.
+            headers: Headers for the request. A ``Host`` entry is replaced with the validated
+                authority on pinned attempts.
+            **kwargs: Forwarded to the client verb method (json, data, timeout, follow_redirects...).
+
+        Returns:
+            httpx.Response: The first response received.
+
+        Raises:
+            httpx.ConnectError: If TLS verification fails or every validated address refuses the connection.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
+        if not self.is_pinned:
+            return await self._dial(client, method, url, headers=dict(headers or {}), **kwargs)
+
+        pinned_headers = self.apply_headers(headers or {})
+        return await self._dial_pinned(client, method, url, pinned_headers, **kwargs)
+
+    async def _dial_pinned(self, client: Any, method: str, url: str, headers: Dict[str, str], **kwargs: Any) -> httpx.Response:
+        """Dial each validated address until one answers, keeping TLS pinned to the hostname.
+
+        ``sni_hostname`` is passed on every attempt so httpcore verifies the certificate against
+        the validated hostname rather than the IP literal in the dialled URL. A TLS failure is
+        raised immediately instead of being retried on the next address: retrying would mask a
+        certificate problem as an unreachable peer.
+
+        Args:
+            client: ``httpx.AsyncClient`` or a test double exposing the same verb methods.
+            method: HTTP method.
+            url: URL addressed to the validated hostname.
+            headers: Headers with ``Host`` already forced to the validated authority.
+            **kwargs: Forwarded to the client verb method.
+
+        Returns:
+            httpx.Response: The first response received.
+
+        Raises:
+            httpx.ConnectError: If every validated address refuses the connection, or TLS verification fails.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
+        for address in self.resolved_ips[:-1]:
+            try:
+                return await self._dial(client, method, pin_url_to_resolved_ip(url, address), headers=headers, extensions=self.extensions, **kwargs)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if _is_tls_failure(exc):
+                    raise
+                logger.debug(
+                    "Pinned attempt failed for %s target; trying the next validated address (%s)",
+                    "an IPv6" if ":" in address else "an IPv4",
+                    type(exc).__name__,
+                )
+        return await self._dial(client, method, pin_url_to_resolved_ip(url, self.resolved_ips[-1]), headers=headers, extensions=self.extensions, **kwargs)
+
+    @asynccontextmanager
+    async def stream_async(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[httpx.Response, None]:
+        """Stream one request, trying every validated address until one answers.
+
+        Retry connection setup only. Keep the response open while the caller reads the body.
+        Propagate caller, response-read, and cleanup errors without another request.
+
+        Use a client isolated to this validated hostname. These helpers rewrite the URL
+        origin to an IP address. Never share that client across different hostnames.
+
+        Args:
+            client: ``httpx.AsyncClient`` used for every attempt.
+            method: HTTP method.
+            url: URL addressed to the validated hostname, not to an address.
+            headers: Headers for the request. A ``Host`` entry is replaced with the validated
+                authority on pinned attempts.
+            **kwargs: Forwarded to ``client.stream``.
+
+        Yields:
+            httpx.Response: The first streaming response received.
+
+        Raises:
+            httpx.ConnectError: If TLS verification fails or every validated address refuses the connection.
+            httpx.ConnectTimeout: If every validated address times out.
+        """
+        if not self.is_pinned:
+            async with client.stream(method, url, headers=dict(headers or {}), **kwargs) as response:
+                yield response
+            return
+
+        pinned_headers = self.apply_headers(headers or {})
+        for index, address in enumerate(self.resolved_ips):
+            async with AsyncExitStack() as stack:
+                try:
+                    response = await stack.enter_async_context(client.stream(method, pin_url_to_resolved_ip(url, address), headers=pinned_headers, extensions=self.extensions, **kwargs))
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    if _is_tls_failure(exc) or index == len(self.resolved_ips) - 1:
+                        raise
+                    logger.debug("Pinned stream connection failed; trying another validated address (%s)", type(exc).__name__)
+                    continue
+
+                yield response
+                return
+
     def client_kwargs(self, *, verify: Any, limits: Optional[httpx2.Limits] = None) -> Dict[str, Any]:
         """Return the ``httpx2.AsyncClient`` keyword arguments that apply this target's pinning.
 
@@ -207,6 +368,30 @@ class PinnedTarget:
         return {"transport": SniPinningTransport(sni_hostname=self.hostname, pinned_hosts=self.resolved_ips, **transport_kwargs)}
 
 
+def _is_tls_failure(exc: BaseException) -> bool:
+    """Report whether a connection error is a TLS verification failure.
+
+    A pinned attempt dials an IP literal while ``sni_hostname`` carries the validated hostname.
+    When verification fails against that hostname, retrying another address cannot help: the
+    certificate is wrong for every one of them. Treating it as a transport failure would both
+    hide a security-relevant error and invite a pointless retry per address.
+
+    Args:
+        exc: Exception raised by the pinned attempt.
+
+    Returns:
+        bool: True when the cause chain contains a certificate verification failure.
+    """
+    seen = 0
+    current: Optional[BaseException] = exc
+    while current is not None and seen < 10:
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        current = current.__cause__ or current.__context__
+        seen += 1
+    return False
+
+
 async def resolve_pinned_target(url: str, field_name: str = "URL") -> PinnedTarget:
     """Validate an outbound URL and keep the addresses that passed the check.
 
@@ -225,9 +410,7 @@ async def resolve_pinned_target(url: str, field_name: str = "URL") -> PinnedTarg
         # Skipping the PIN must never skip the VALIDATION: the scheme allowlist,
         # dangerous-protocol, control-character, embedded-credential and XSS checks below
         # are unconditional even when DNS-based SSRF checks are off.
-        validated_url = SecurityValidator._validate_url_impl(  # pylint: disable=protected-access
-            url, field_name, skip_ssrf=True, reject_ipv6=not _authority_is_ipv6_literal(url)
-        )
+        validated_url = SecurityValidator._validate_url_impl(url, field_name, skip_ssrf=True, reject_ipv6=not _authority_is_ipv6_literal(url))  # pylint: disable=protected-access
         return PinnedTarget(validated_url=validated_url, hostname="", original_authority="", resolved_ips=())
     result = await SecurityValidator.validate_url_for_connection_pinning(url, field_name)
     validated_url = result["validated_url"]
