@@ -146,6 +146,7 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator
 
     Uses SQLite + a random port so no compose stack is required. Indirect
     parametrization may pass a dict of environment overrides as ``request.param``.
+    A module may also define a ``gateway_environment`` fixture that returns overrides.
 
     Yields:
         A tuple of ``(httpx.Client, admin_token_str, base_url, signing_key)``.
@@ -189,6 +190,11 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator
         "PYTHONUNBUFFERED": "1",
         **getattr(request, "param", {}),
     }
+
+    try:
+        env.update(request.getfixturevalue("gateway_environment"))
+    except pytest.FixtureLookupError:
+        pass
 
     token = make_test_jwt(
         "admin@example.com",
