@@ -56,13 +56,14 @@ _SERVER_PATH_PATTERNS: List[Pattern[str]] = [
     re.compile(r"^/ws/([^/?]+)(?:$|\?)"),
 ]
 
-# Resource ID extraction patterns (IDs are UUID hex strings)
+# Resource ID extraction patterns. An ID is a hex-and-dash string that fills a whole path
+# segment, so route names such as /gateways/discover-oauth do not match.
 _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
-    (re.compile(r"/servers/?([a-f0-9\-]+)"), "server"),
-    (re.compile(r"/tools/?([a-f0-9\-]+)"), "tool"),
-    (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
-    (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
-    (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
+    (re.compile(r"/servers/?([a-f0-9\-]+)(?=/|$)"), "server"),
+    (re.compile(r"/tools/?([a-f0-9\-]+)(?=/|$)"), "tool"),
+    (re.compile(r"/resources/?([a-f0-9\-]+)(?=/|$)"), "resource"),
+    (re.compile(r"/prompts/?([a-f0-9\-]+)(?=/|$)"), "prompt"),
+    (re.compile(r"/gateways/?([a-f0-9\-]+)(?=/|$)"), "gateway"),
 ]
 
 

@@ -289,6 +289,77 @@ class TestTokenScopingMiddleware:
         assert db.execute.call_count == 2
 
     @pytest.mark.parametrize(
+        "path",
+        [
+            "/admin/gateways/discover-oauth",
+            "/admin/observability/tools/chains",
+            "/admin/observability/tools/errors",
+            "/admin/observability/prompts/errors",
+            "/admin/observability/resources/errors",
+        ],
+    )
+    def test_route_names_with_hex_prefix_are_not_resource_ids(self, middleware, path):
+        """A route name that starts with hex characters is not a resource ID and needs no ownership lookup."""
+        db = MagicMock()
+
+        result = middleware._check_resource_team_ownership(path, ["team-1"], db=db, _user_email="user@example.com")
+
+        assert result is ResourceOwnershipResult.ALLOWED
+        db.execute.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/admin/gateways/c65c9e546b914d6c951eeecd02c1d5b9",
+            "/admin/gateways/c65c9e546b914d6c951eeecd02c1d5b9/delete",
+            "/gateways/c65c9e546b914d6c951eeecd02c1d5b9/tools/refresh",
+            "/gateways/c65c9e54-6b91-4d6c-951e-eecd02c1d5b9",
+        ],
+    )
+    def test_private_gateway_id_segment_enforces_ownership(self, middleware, path):
+        """A whole-segment gateway ID keeps the private-gateway owner check and looks up the full ID."""
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.owner_email = "owner@example.com"
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        owner = middleware._check_resource_team_ownership(path, ["team-1"], db=db, _user_email="owner@example.com")
+        other = middleware._check_resource_team_ownership(path, ["team-1"], db=db, _user_email="other@example.com")
+
+        assert owner is ResourceOwnershipResult.ALLOWED
+        assert other is ResourceOwnershipResult.DENIED
+        looked_up = db.execute.call_args.args[0].compile().params
+        assert path.split("/gateways/")[1].split("/")[0] in looked_up.values()
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/tools",
+            "/tools/3d7c7ab6a5264dadb8c7f4e04758295b/state",
+            "/resources/3d7c7ab6a5264dadb8c7f4e04758295b/info",
+            "/prompts/3d7c7ab6a5264dadb8c7f4e04758295b/state",
+            "/gateways/3d7c7ab6a5264dadb8c7f4e04758295b/tools/refresh",
+        ],
+    )
+    def test_team_resource_id_segment_denies_wrong_team_and_public_only(self, middleware, path):
+        """A whole-segment ID under each resource prefix keeps the team check for wrong-team and public-only tokens."""
+        db = MagicMock()
+        resource = MagicMock()
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        db.execute.return_value.scalar_one_or_none.return_value = resource
+
+        same_team = middleware._check_resource_team_ownership(path, ["team-1"], db=db, _user_email="user@example.com")
+        wrong_team = middleware._check_resource_team_ownership(path, ["team-2"], db=db, _user_email="user@example.com")
+        public_only = middleware._check_resource_team_ownership(path, [], db=db, _user_email="user@example.com")
+
+        assert same_team is ResourceOwnershipResult.ALLOWED
+        assert wrong_team is ResourceOwnershipResult.DENIED
+        assert public_only is ResourceOwnershipResult.DENIED
+        assert "3d7c7ab6a5264dadb8c7f4e04758295b" in db.execute.call_args.args[0].compile().params.values()
+
+    @pytest.mark.parametrize(
         "method,path,permission",
         [
             ("GET", "/v1/virtual-servers", Permissions.SERVERS_READ),
