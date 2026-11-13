@@ -447,6 +447,14 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-
 
 Without `path`, the gateway tries `/.well-known/agent-card.json` and then `/.well-known/agent.json`.
 
+**Extended card.** When `headers` are present and the card declares `capabilities.extendedAgentCard`, the gateway also requests the authenticated extended card through the JSON-RPC interface of the card. It sends `GetExtendedAgentCard` to a 1.0 interface and `agent/getAuthenticatedExtendedCard` to a 0.3 interface. The gateway sends the headers only when the interface shares an origin with the card URL. The response then carries `extendedOutcome`, and for `found` also `extendedCard`, `extendedRawCard`, and `extendedAdditions`, the dotted field paths the extended card adds or changes.
+
+| `extendedOutcome` | Meaning |
+|-------------------|---------|
+| `found` | The agent returned a valid extended card. The credentials work. |
+| `auth_rejected` | The agent answered 401 or 403. The credentials are wrong. |
+| `unavailable` | The request failed, the answer was not a card, the interface is not JSON-RPC, or the interface is on another origin. The credentials stay unproven. |
+
 | `outcome` | `found` | Meaning |
 |-----------|---------|---------|
 | `found` | `true` | A valid card. `card` is normalized to 1.0, `rawCard` is the document as fetched (omitted when identical), `suggestedAgent` maps the card, `warnings` lists what could not be mapped. |
@@ -471,7 +479,11 @@ pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends af
 
 The gateway sends the registration credentials (`basic`, `bearer`, `authheaders`) to `card_url` only when `card_url` has the same origin as `endpoint_url`.
 
+When the card declares an extended card and the registration carries credentials, the gateway also requests the extended card before any write. A rejected credential fails the registration with 400. A returned extended card is stored as a separate row with `kind` `extended`.
+
 `GET /a2a/{agent_id}/stored-card` returns the current stored card. It needs `a2a.read` and applies the same visibility rules as the agent read. It returns 404 when the agent has no stored card.
+
+`GET /a2a/{agent_id}/stored-card/extended` returns the stored extended card. The extended card is content that the agent shows only to credentialed callers, so the route needs `a2a.update`, not `a2a.read`, and applies the same agent visibility check. It returns 404 when the agent has no stored extended card.
 
 **Visibility of stored cards.** The route does not check how the card was fetched. A card fetched with registration credentials is readable by every caller who has `a2a.read` and can see the agent. For a `team` or `public` agent, that includes every team member or every user. Do not register a card behind credentials with a `team` or `public` agent if its content is confidential. Use `private` visibility instead.
 

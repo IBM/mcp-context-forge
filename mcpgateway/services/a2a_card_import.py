@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -649,7 +650,7 @@ def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
     return parts[0] if parts and _AUTH_SCHEME_RE.match(parts[0]) else None
 
 
-async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[str, str]) -> CardResponse:
+async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[str, str], method: str = "GET", body: Optional[bytes] = None) -> CardResponse:
     """Stream one response and parse it, bounding the raw (undecoded) bytes read.
 
     Args:
@@ -657,27 +658,29 @@ async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[s
         url: Candidate card URL, for logging.
         target: Pinned target from the outbound policy.
         request_headers: Headers to send.
+        method: HTTP method.
+        body: Optional request body.
 
     Returns:
         A ``CardResponse`` as described by ``_get_json``.
     """
-    async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
+    async with client.stream(method, target.pin(target.validated_url), headers=request_headers, content=body, extensions=target.extensions) as response:
         if response.status_code != 200:
             return CardResponse(response.status_code, challenge=response.headers.get("www-authenticate"))
         if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
             logger.warning("A2A card from %s is content-encoded and was discarded", sanitize_url_for_logging(url))
             return CardResponse(200)
-        body = bytearray()
+        received = bytearray()
         async for chunk in response.aiter_raw():
-            body.extend(chunk)
-            if len(body) > MAX_CARD_BYTES:
+            received.extend(chunk)
+            if len(received) > MAX_CARD_BYTES:
                 logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
                 return CardResponse(200)
-    return CardResponse(200, orjson.loads(bytes(body)), etag=response.headers.get("etag"), max_age=parse_max_age(response.headers.get("cache-control")))
+    return CardResponse(200, orjson.loads(bytes(received)), etag=response.headers.get("etag"), max_age=parse_max_age(response.headers.get("cache-control")))
 
 
-async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse:
-    """GET one URL under the outbound policy and parse a size-capped JSON body.
+async def _get_json(url: str, headers: Optional[Dict[str, str]], payload: Optional[Dict[str, Any]] = None) -> CardResponse:
+    """GET one URL, or POST a JSON payload to it, under the outbound policy and parse a size-capped JSON body.
 
     The request asks for an identity encoding and discards a content-encoded response, so
     a small compressed body cannot expand past the size cap. DNS resolution and the read share one deadline.
@@ -685,6 +688,7 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse
     Args:
         url: Candidate card URL.
         headers: Optional caller headers, sent only to this URL's pinned host.
+        payload: Optional JSON body. The request is a POST when given.
 
     Returns:
         A ``CardResponse``. ``status`` is ``None`` when the request was blocked or failed;
@@ -699,9 +703,12 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse
             except ValueError as exc:
                 logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
                 return CardResponse(None)
-            request_headers = target.apply_headers({"Accept": "application/json", "Accept-Encoding": "identity", **(headers or {})})
+            base_headers = {"Accept": "application/json", "Accept-Encoding": "identity", **({"Content-Type": "application/json"} if payload is not None else {}), **(headers or {})}
+            request_headers = target.apply_headers(base_headers)
             async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
-                return await _read_body(client, url, target, request_headers)
+                if payload is None:
+                    return await _read_body(client, url, target, request_headers)
+                return await _read_body(client, url, target, request_headers, "POST", orjson.dumps(payload))
     except orjson.JSONDecodeError:
         return CardResponse(200)
     except Exception as exc:  # pylint: disable=broad-except
@@ -743,6 +750,29 @@ def _build_found_response(url: str, document: Dict[str, Any], etag: Optional[str
     )
 
 
+async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
+    """Add the extended card to a found response when the card declares one and credentials exist.
+
+    Args:
+        found: The ``found`` response for the public card.
+        headers: Credential headers the caller supplied.
+
+    Returns:
+        The response, with the extended outcome, card, and added field paths set when an attempt was made.
+    """
+    if not headers or not found.card or not declares_extended_card(found.card):
+        return found
+    result = await fetch_extended_card(found.card, str(found.source_url), headers)
+    found.extended_outcome = result.outcome
+    if result.card is not None:
+        found.extended_card = result.card
+        found.extended_raw_card = None if result.card is result.document else result.document
+        found.extended_etag = result.etag
+        found.extended_max_age = result.max_age
+        found.extended_additions = extended_card_additions(found.card, result.card)
+    return found
+
+
 async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Fetch, validate and normalize an Agent Card from an unregistered endpoint.
 
@@ -773,8 +803,138 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
                     continue
                 found = _build_found_response(url, document, fetched.etag, fetched.max_age)
                 if found:
-                    return found
+                    return await _with_extended_card(found, headers)
     except TimeoutError:
         logger.warning("A2A card search for %s exceeded the total deadline", sanitize_url_for_logging(base_url))
         return _unreachable()
     return _not_found()
+
+
+def same_origin(url: AnyHttpUrl, other: Optional[str]) -> bool:
+    """Return whether a normalized URL and another URL share scheme, host, and port.
+
+    Both URLs go through the same WHATWG parser the card fetch uses, so a URL
+    that the fetch resolves to another host never matches.
+
+    Args:
+        url: Normalized URL that the card fetch uses.
+        other: Second URL, or ``None``.
+
+    Returns:
+        ``True`` when both URLs have the same origin.
+
+    Examples:
+        >>> same_origin(AnyHttpUrl("https://a.example.com/card"), "https://a.example.com:443/rpc")
+        True
+        >>> same_origin(AnyHttpUrl("https://a.example.com"), "https://b.example.com")
+        False
+        >>> same_origin(AnyHttpUrl("https://a.example.com"), None)
+        False
+        >>> same_origin(AnyHttpUrl("https://evil.example\\\\@a.example.com/card"), "https://a.example.com/rpc")
+        False
+    """
+    if not other:
+        return False
+    try:
+        endpoint = TypeAdapter(AnyHttpUrl).validate_python(other)
+    except ValidationError:
+        return False
+    return (url.scheme, url.host, url.port) == (endpoint.scheme, endpoint.host, endpoint.port)
+
+
+class ExtendedCardResult(NamedTuple):
+    """Outcome of fetching the authenticated extended Agent Card."""
+
+    outcome: str
+    document: Optional[Dict[str, Any]] = None
+    card: Optional[Dict[str, Any]] = None
+    etag: Optional[str] = None
+    max_age: Optional[int] = None
+
+
+def declares_extended_card(card: Dict[str, Any]) -> bool:
+    """Return whether a normalized card declares an authenticated extended card.
+
+    Args:
+        card: Card in the 1.0 shape.
+
+    Returns:
+        ``True`` when ``capabilities.extendedAgentCard`` is true.
+
+    Examples:
+        >>> declares_extended_card({"capabilities": {"extendedAgentCard": True}})
+        True
+        >>> declares_extended_card({"capabilities": {}})
+        False
+    """
+    capabilities = card.get("capabilities")
+    return isinstance(capabilities, dict) and capabilities.get("extendedAgentCard") is True
+
+
+def extended_card_additions(public: Dict[str, Any], extended: Dict[str, Any], prefix: str = "") -> List[str]:
+    """List the dotted field paths where the extended card adds to or changes the public card.
+
+    Nested objects are compared key by key. Lists and scalars are compared whole.
+
+    Args:
+        public: Normalized public card.
+        extended: Normalized extended card.
+        prefix: Path prefix for nested calls.
+
+    Returns:
+        Sorted dotted paths that exist only in the extended card or hold a different value.
+
+    Examples:
+        >>> extended_card_additions({"name": "a", "skills": [1]}, {"name": "a", "skills": [1, 2], "provider": {"organization": "x"}})
+        ['provider', 'skills']
+        >>> extended_card_additions({"capabilities": {"streaming": True}}, {"capabilities": {"streaming": True, "extensions": []}})
+        ['capabilities.extensions']
+    """
+    paths: List[str] = []
+    for key, value in extended.items():
+        path = f"{prefix}{key}"
+        if key not in public:
+            paths.append(path)
+        elif isinstance(value, dict) and isinstance(public[key], dict):
+            paths.extend(extended_card_additions(public[key], value, f"{path}."))
+        elif value != public[key]:
+            paths.append(path)
+    return sorted(paths)
+
+
+async def fetch_extended_card(card: Dict[str, Any], source_url: str, headers: Optional[Dict[str, str]]) -> ExtendedCardResult:
+    """Fetch the authenticated extended card through the agent's JSON-RPC interface.
+
+    Only the JSON-RPC binding is supported, because it is the binding ContextForge invokes.
+    The headers go to the interface only when it shares an origin with the card URL they were meant for,
+    so a card cannot redirect a credential to another host.
+
+    Args:
+        card: Normalized public card that declares ``capabilities.extendedAgentCard``.
+        source_url: URL the public card came from.
+        headers: Credential headers the caller supplied for the card URL.
+
+    Returns:
+        An ``ExtendedCardResult`` whose ``outcome`` is ``found``, ``auth_rejected`` or ``unavailable``.
+    """
+    try:
+        interface = _select_interface(card)
+    except IndexError:
+        return ExtendedCardResult("unavailable")
+    if str(interface.get("protocolBinding", _DEFAULT_PROTOCOL_BINDING)).upper() != _DEFAULT_PROTOCOL_BINDING:
+        return ExtendedCardResult("unavailable")
+    if headers and not same_origin(TypeAdapter(AnyHttpUrl).validate_python(source_url), str(interface["url"])):
+        return ExtendedCardResult("unavailable")
+    legacy = str(interface.get("protocolVersion", "1.0")).startswith("0.")
+    payload = {"jsonrpc": "2.0", "id": "1", "method": "agent/getAuthenticatedExtendedCard" if legacy else "GetExtendedAgentCard", "params": {}}
+    fetched = await _get_json(str(interface["url"]), headers, payload)
+    if fetched.status in (401, 403):
+        return ExtendedCardResult("auth_rejected")
+    result = fetched.document.get("result") if isinstance(fetched.document, dict) else None
+    if fetched.status != 200 or not is_agent_card(result):
+        return ExtendedCardResult("unavailable")
+    try:
+        normalized, _ = normalize_card(result)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        return ExtendedCardResult("unavailable")
+    return ExtendedCardResult("found", result, normalized, fetched.etag, fetched.max_age)

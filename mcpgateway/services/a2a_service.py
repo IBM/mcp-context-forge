@@ -27,7 +27,7 @@ import uuid
 # Third-Party
 from fastapi import HTTPException
 import httpx
-from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -45,7 +45,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardRequest, A2AFetchCardResponse, A2AStoredCardRead, A2ATestError
-from mcpgateway.services.a2a_card_import import fetch_agent_card
+from mcpgateway.services.a2a_card_import import fetch_agent_card, same_origin
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -397,39 +397,6 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
     finally:
         if not lock.locked():
             _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
-
-
-def _same_origin(url: AnyHttpUrl, other: Optional[str]) -> bool:
-    """Return whether a normalized URL and another URL share scheme, host, and port.
-
-    Both URLs go through the same WHATWG parser the card fetch uses, so a URL
-    that the fetch resolves to another host never matches.
-
-    Args:
-        url: Normalized URL that the card fetch uses.
-        other: Second URL, or ``None``.
-
-    Returns:
-        ``True`` when both URLs have the same origin.
-
-    Examples:
-        >>> from pydantic import AnyHttpUrl
-        >>> _same_origin(AnyHttpUrl("https://a.example.com/card"), "https://a.example.com:443/rpc")
-        True
-        >>> _same_origin(AnyHttpUrl("https://a.example.com"), "https://b.example.com")
-        False
-        >>> _same_origin(AnyHttpUrl("https://a.example.com"), None)
-        False
-        >>> _same_origin(AnyHttpUrl("https://evil.example\\\\@a.example.com/card"), "https://a.example.com/rpc")
-        False
-    """
-    if not other:
-        return False
-    try:
-        endpoint = TypeAdapter(AnyHttpUrl).validate_python(other)
-    except ValidationError:
-        return False
-    return (url.scheme, url.host, url.port) == (endpoint.scheme, endpoint.host, endpoint.port)
 
 
 class A2AAgentError(Exception):
@@ -1241,11 +1208,13 @@ class A2AAgentService(BaseService):
             return None
         card_base_url = A2AFetchCardRequest(base_url=card_url).base_url
         headers: Optional[Dict[str, str]] = None
-        if auth_type in ("basic", "bearer", "authheaders") and auth_value and _same_origin(card_base_url, endpoint_url):
+        if auth_type in ("basic", "bearer", "authheaders") and auth_value and same_origin(card_base_url, endpoint_url):
             headers = {str(key): str(value) for key, value in decode_auth(auth_value).items()}
         request = A2AFetchCardRequest(base_url=card_base_url, headers=headers)
         fetched = await fetch_agent_card(str(request.base_url), None, request.headers)
         if fetched.found:
+            if fetched.extended_outcome == "auth_rejected":
+                raise A2AAgentError("The agent rejected the credentials when the extended Agent Card was requested. Supply valid credentials.")
             return fetched
         if fetched.outcome == "auth_required":
             raise A2AAgentError("The Agent Card requires credentials. Supply valid credentials for the card URL.")
@@ -1265,11 +1234,12 @@ class A2AAgentService(BaseService):
             fetched: The fetched card. ``raw_card`` is ``None`` for a card already in the 1.0 shape, so ``card`` is the document as fetched.
         """
         try:
-            latest = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent.id)).scalar()
+            latest = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent.id)).scalar() or 0
             db.add(
                 A2AAgentCard(
                     a2a_agent_id=agent.id,
-                    version=(latest or 0) + 1,
+                    version=latest + 1,
+                    kind="public",
                     card=fetched.raw_card if fetched.raw_card is not None else fetched.card,
                     detected_version=fetched.detected_version,
                     source_url=fetched.source_url,
@@ -1277,6 +1247,19 @@ class A2AAgentService(BaseService):
                     max_age=fetched.max_age,
                 )
             )
+            if fetched.extended_outcome == "found" and fetched.extended_card is not None:
+                db.add(
+                    A2AAgentCard(
+                        a2a_agent_id=agent.id,
+                        version=latest + 2,
+                        kind="extended",
+                        card=fetched.extended_raw_card if fetched.extended_raw_card is not None else fetched.extended_card,
+                        detected_version=fetched.detected_version,
+                        source_url=fetched.source_url,
+                        etag=fetched.extended_etag,
+                        max_age=fetched.extended_max_age,
+                    )
+                )
             db.commit()
         except Exception:
             db.rollback()
@@ -1288,6 +1271,7 @@ class A2AAgentService(BaseService):
         agent_id: str,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        kind: str = "public",
     ) -> Optional[A2AStoredCardRead]:
         """Return the current stored Agent Card of a visible agent.
 
@@ -1296,12 +1280,13 @@ class A2AAgentService(BaseService):
             agent_id: Agent ID.
             user_email: Requester email for visibility checks.
             token_teams: Token team scope for visibility checks.
+            kind: ``public`` for the card read without credentials, ``extended`` for the authenticated extended card.
 
         Returns:
-            The highest stored card version, or ``None`` when the agent has no stored card.
+            The highest stored card version of that kind, or ``None`` when the agent has none.
         """
         await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
-        row = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+        row = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
         return A2AStoredCardRead.model_validate(row) if row else None
 
     async def list_agents(

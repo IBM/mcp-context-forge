@@ -190,6 +190,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
     # Order matters: the first method+path match wins, so the concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
+    ("GET", re.compile(r"^/a2a/[^/]+/stored-card/extended/?$"), Permissions.A2A_UPDATE),
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
