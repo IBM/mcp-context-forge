@@ -18,3 +18,13 @@ ignore:
       name: python3-libs
   - vulnerability: CVE-2026-54369
   - vulnerability: CVE-2026-54371
+  # CVE-2026-112322 (krb5-libs): Red Hat fixed it in 1.21.3-11.el10_3.2, which
+  # the Containerfile runtime stage installs via `microdnf upgrade`. The CI
+  # image carried 1.21.3-11.el10 while the UBI mirror lagged the advisory.
+  # Scoped to the affected build only; remove once a rebuilt image scans clean.
+  # Set on 20261113
+  - vulnerability: CVE-2026-112322
+    package:
+      name: krb5-libs
+      version: 1.21.3-11.el10
+      type: rpm
