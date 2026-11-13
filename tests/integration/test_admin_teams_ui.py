@@ -311,3 +311,21 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
 
     # Verify regular user does NOT see private team (no access)
     assert "Private Integration Test Team" not in html_content, "Regular user should NOT see private teams they are not members of"
+
+
+@pytest.mark.integration
+def test_admin_team_members_inputs_use_delegated_events_without_inline_oninput(test_client_with_teams):
+    """Verify that Manage Members search inputs use data-action-input instead of inline oninput (#7283)."""
+    client, session_factory, public_team, private_team, app = test_client_with_teams
+
+    response = client.get(f"/admin/teams/{public_team.id}/members")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    html = response.text
+    assert f'id="member-search-{public_team.id}"' in html
+    assert f'id="non-member-search-{public_team.id}"' in html
+    assert 'data-action-input="debouncedMemberSearch"' in html
+    assert 'data-action-input="debouncedNonMemberSearch"' in html
+    assert f'data-arg0="{public_team.id}"' in html
+    assert 'data-arg1="this.value"' in html
+    assert "oninput=" not in html
