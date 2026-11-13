@@ -54,12 +54,24 @@ spec:
         {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
         seccompProfile:
           type: RuntimeDefault
+      {{- with .Values.mcpContextForge.extraInitContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: mcp-context-forge
           securityContext:
             {{- toYaml .Values.mcpContextForge.containerSecurityContext | nindent 12 }}
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          {{- with .Values.mcpContextForge.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mcpContextForge.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
           {{- $tls := default dict .Values.mcpContextForge.tls }}
 
@@ -348,6 +360,12 @@ spec:
               mountPath: {{ $tls.mountPath | quote }}
               readOnly: true
           {{- end }}
+          {{- with .Values.mcpContextForge.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.mcpContextForge.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -363,4 +381,7 @@ spec:
         - name: gateway-tls-certs
           secret:
             secretName: {{ required "mcpContextForge.tls.secretName is required when mcpContextForge.tls.enabled=true" $tls.secretName }}
+      {{- end }}
+      {{- with .Values.mcpContextForge.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
