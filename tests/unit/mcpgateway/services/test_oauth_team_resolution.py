@@ -345,12 +345,12 @@ class TestVaultPathConstruction:
 
         path = backend._construct_vault_path(
             team_id="engineering",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="alice@example.com"
         )
 
-        # Verify path structure: mount/data/prefix/team_id/server_id/email
-        assert "secret/data/contextforge/oauth/engineering/" in path
+        # Verify path structure: mount/data/prefix/team_id/gateway_id/email
+        assert "secret/data/contextforge/oauth/engineering/gw-123/" in path
         assert "alice%40example.com" in path
 
     def test_construct_vault_path_with_none_team_uses_shared(self):
@@ -371,12 +371,12 @@ class TestVaultPathConstruction:
 
         path = backend._construct_vault_path(
             team_id=None,
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="admin@example.com"
         )
 
         # Verify path structure uses "shared" when team_id is None
-        assert "secret/data/contextforge/oauth/shared/" in path
+        assert "secret/data/contextforge/oauth/shared/gw-123/" in path
         assert "admin%40example.com" in path
 
     def test_construct_credentials_path_with_team(self):
