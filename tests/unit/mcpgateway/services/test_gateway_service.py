@@ -3684,6 +3684,43 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    async def test_tool_discovery_skipped_when_tools_capability_omitted(self, gateway_service, connector):
+        """A server with no tools capability registers its prompts without a tools/list call."""
+        client = AsyncMock()
+        client.server_capabilities = MagicMock()
+        client.instructions = None
+        client.server_capabilities.model_dump = MagicMock(return_value={"prompts": {}})
+        client.list_tools.side_effect = RuntimeError("Method not found")
+        client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
+            _, tools, _, prompts, _, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        client.list_tools.assert_not_awaited()
+        assert tools == []
+        assert [prompt.name for prompt in prompts] == ["simple-prompt"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    async def test_tool_discovery_runs_when_tools_capability_is_empty(self, gateway_service, connector):
+        """An empty tools capability object still enables discovery, as for resources and prompts."""
+        client = AsyncMock()
+        client.server_capabilities = MagicMock()
+        client.instructions = None
+        client.server_capabilities.model_dump = MagicMock(return_value={"tools": {}})
+        client.list_tools.return_value = SimpleNamespace(tools=[])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
+            await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        client.list_tools.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
     @pytest.mark.parametrize(
         ("reported", "expected"),
         [("Call search before fetch.", "Call search before fetch."), ("", None), (None, None)],
@@ -4771,7 +4808,7 @@ class TestGatewayRefresh:
         # Capabilities are intentionally empty so resources/prompts fetches are skipped.
         mock_session = AsyncMock()
         mock_session.server_capabilities = MagicMock()
-        mock_session.server_capabilities.model_dump = MagicMock(return_value={})
+        mock_session.server_capabilities.model_dump = MagicMock(return_value={"tools": {}})
 
         valid_tool = MagicMock()
         valid_tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
@@ -4897,7 +4934,7 @@ class TestGatewayRefresh:
         mock_client = AsyncMock()
         mock_client.server_capabilities = MagicMock()
         mock_client.instructions = None
-        mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": True, "prompts": True})
+        mock_client.server_capabilities.model_dump = MagicMock(return_value={"tools": {}, "resources": True, "prompts": True})
 
         mock_list_tools = MagicMock(next_cursor=None)
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
