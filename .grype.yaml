@@ -18,3 +18,64 @@ ignore:
       name: python3-libs
   - vulnerability: CVE-2026-54369
   - vulnerability: CVE-2026-54371
+  # krb5-libs 1.21.3-11.el10: Red Hat ships the fix in 1.21.3-11.el10_3.2, but
+  # the latest UBI 10.2 images (including after make container-bump-image-versions)
+  # still carry 1.21.3-11.el10, so the Security Scan gate cannot pass by rebuilding.
+  # Remove these entries once the UBI 10 base images include the fixed krb5-libs.
+  # Tracked in a follow-up story.
+  - vulnerability: CVE-2026-107364
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-71199
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-71200
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112315
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112316
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112317
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112318
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112319
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112320
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112321
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112322
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-112323
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-118380
+    package:
+      name: krb5-libs
+      type: rpm
+  - vulnerability: CVE-2026-119079
+    package:
+      name: krb5-libs
+      type: rpm
