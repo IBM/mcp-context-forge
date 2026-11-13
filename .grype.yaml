@@ -79,3 +79,4 @@ ignore:
     package:
       name: krb5-libs
       type: rpm
+
