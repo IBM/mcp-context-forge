@@ -529,6 +529,7 @@ async def test_get_redis_client_parser_configuration_error_returns_none():
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "hiredis"
         mock_settings.redis_ssl = False
+        mock_settings.redis_cluster_mode = False
 
         with patch("mcpgateway.utils.redis_client._get_async_parser_class", side_effect=ImportError("no hiredis")):
             with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
@@ -758,6 +759,7 @@ async def test_get_redis_client_warns_when_rediss_url_but_ssl_disabled(caplog):
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
         mock_settings.redis_ssl = False
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.redis_client"):
@@ -1034,6 +1036,7 @@ class TestClusterMode:
             mock_settings.redis_health_check_interval = 30
             mock_settings.redis_parser = "auto"
             mock_settings.redis_cluster_mode = False
+            mock_settings.redis_ssl = False
 
             with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
                 client = await get_redis_client()
