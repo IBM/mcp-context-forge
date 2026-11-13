@@ -99,7 +99,7 @@ def fetch(monkeypatch):
     responses = {}
     seen = []
 
-    async def _get_json(url, headers):
+    async def _get_json(url, headers, payload=None):
         seen.append((url, headers))
         outcome = responses.get(url, (404, None, None))
         return outcome if isinstance(outcome, CardResponse) else CardResponse(*outcome)
