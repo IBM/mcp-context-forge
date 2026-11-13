@@ -6438,6 +6438,65 @@ def _setup_cache_for_invoke(tool_payload, gateway_payload=None):
     return patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_cache)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"])
+@pytest.mark.parametrize("credential_source", ["oauth", "plugin"])
+async def test_caller_pinning_replaces_sessions_after_credential_rotation(tool_service, transport, credential_source):
+    """Resolve current OAuth and plugin credentials before reusing a caller-bound connection."""
+    from cpex.framework import ToolHookType
+
+    from mcpgateway.services.upstream_session_registry import SessionLifecycle, UpstreamSessionRegistry
+
+    tp = _make_tool_payload(integration_type="MCP", request_type=transport, gateway_id="gw-uuid-1", jsonpath_filter="")
+    gp = _make_gateway_payload(auth_type="oauth" if credential_source == "oauth" else None, oauth_config={"grant_type": "client_credentials"} if credential_source == "oauth" else None)
+    gp["pin_sessions_by_caller"] = True
+    created = []
+
+    async def factory(req):
+        session = MagicMock()
+        session.counter = 0
+
+        async def increment(*args, **kwargs):
+            session.counter += 1
+            return ToolResult(content=[TextContent(type="text", text=str(session.counter))], is_error=False)
+
+        session.call_tool = AsyncMock(side_effect=increment)
+        created.append(req)
+        return session, SessionLifecycle(owner_task=None, shutdown_event=None, client=None)
+
+    registry = UpstreamSessionRegistry(session_factory=factory)
+    tool_service.oauth_manager.get_access_token = AsyncMock(side_effect=["first", "first", "refreshed"])
+    manager = None
+    if credential_source == "plugin":
+        manager = MagicMock()
+        manager.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        results = []
+        for credential in ("first", "first", "refreshed"):
+            payload = SimpleNamespace(name="test_tool", args={}, headers=SimpleNamespace(model_dump=lambda value=credential: {"X-Plugin-Credential": value}))
+            results.append((SimpleNamespace(modified_payload=payload, metadata=None, executions=[], retry_delay_ms=0), {}))
+        manager.invoke_hook = AsyncMock(side_effect=results)
+
+    context = {"is_authenticated": True, "caller_session_identity": "verified-caller", "email": "user@example.com"}
+    try:
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=manager)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", AsyncMock(return_value=None)),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.tool_service.global_config_cache") as config_cache,
+            patch.object(settings, "mcpgateway_session_affinity_enabled", False),
+        ):
+            config_cache.get_passthrough_headers.return_value = []
+            results = [await tool_service.invoke_tool(MagicMock(), "test_tool", {}, request_headers={}, caller_auth_context=context) for _ in range(3)]
+        assert [result.content[0].text for result in results] == ["1", "2", "1"]
+        assert len(created) == 2
+        header = "Authorization" if credential_source == "oauth" else "X-Plugin-Credential"
+        assert [request.headers[header] for request in created] == (["Bearer first", "Bearer refreshed"] if credential_source == "oauth" else ["first", "refreshed"])
+    finally:
+        await registry.close_all()
+
+
 # ---------------------------------------------------------------------------
 # _extract_and_validate_structured_content — JSON parse error (lines 930-932)
 # ---------------------------------------------------------------------------

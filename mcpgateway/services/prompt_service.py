@@ -43,30 +43,32 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.common.validators import without_progress_token
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, get_for_update, PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
-from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.session_affinity import forward_binding_operation
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.transports.context import request_headers_var, user_context_var
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -76,7 +78,6 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -456,6 +457,9 @@ class PromptService(BaseService):
         arguments: Optional[Dict[str, str]],
         meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        *,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
+        server_id: Optional[str] = None,
     ) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
@@ -464,6 +468,8 @@ class PromptService(BaseService):
             arguments: Optional prompt-rendering arguments.
             meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
             progress_callback: Optional callback that receives upstream progress notifications.
+            caller_auth_context: Verified ingress authentication context.
+            server_id: Authorized virtual server context.
 
         Returns:
             Prompt result normalized into ContextForge models.
@@ -503,19 +509,49 @@ class PromptService(BaseService):
             # is in scope; this binds the upstream session 1:1 to the downstream
             # session and preserves connection reuse across its tool/prompt calls.
             downstream_session_id = _downstream_session_id_from_request()
-            if downstream_session_id and gateway_id:
+            auth_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
+            caller_binding = resolve_caller_binding(
+                caller_identity=auth_context.get("caller_session_identity") if auth_context.get("is_authenticated") is True else None,
+                server_id=server_id,
+                downstream_session_id=downstream_session_id,
+                meta=meta_data,
+                pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
+            )
+            forwarded = await forward_binding_operation(
+                caller_binding, auth_context, "prompts/get", {"name": prompt.name, "arguments": arguments or {}, "_meta": meta_data, "server_id": server_id}, request_headers_var.get()
+            )
+            if forwarded.result is not None:
+                return PromptResult.model_validate(forwarded.result)
+            meta_data = upstream_meta(meta_data)
+
+            if (downstream_session_id or caller_binding is not None) and gateway_id:
                 try:
                     registry = get_upstream_session_registry()
                 except RegistryNotInitializedError:
+                    if caller_binding is not None:
+                        raise CallerSessionError("Upstream session registry is unavailable")
                     registry = None
                 if registry is not None:
-                    async with registry.acquire(
-                        downstream_session_id=downstream_session_id,
-                        gateway_id=gateway_id,
-                        url=gateway_url,
-                        headers=headers,
-                        transport_type=registry_transport_type,
-                    ) as upstream:
+                    acquisition = (
+                        registry.acquire_caller(
+                            binding=caller_binding,
+                            ownership=forwarded.ownership,
+                            gateway_id=gateway_id,
+                            url=gateway_url,
+                            headers=inject_trace_context_headers(headers),
+                            transport_type=registry_transport_type,
+                            tls_identity=[getattr(gateway, "ca_certificate", None), getattr(gateway, "client_cert", None), getattr(gateway, "client_key", None), getattr(gateway, "version", None)],
+                        )
+                        if caller_binding is not None
+                        else registry.acquire(
+                            downstream_session_id=downstream_session_id,
+                            gateway_id=gateway_id,
+                            url=gateway_url,
+                            headers=headers,
+                            transport_type=registry_transport_type,
+                        )
+                    )
+                    async with acquisition as upstream:
                         remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback)
                         return PromptResult(
                             messages=[
@@ -548,6 +584,8 @@ class PromptService(BaseService):
                 ],
                 description=getattr(remote_result, "description", None) or prompt.description,
             )
+        except CallerSessionError:
+            raise
         except Exception as exc:
             # The SDK's task group wraps the failure; an upstream JSON-RPC error inside it wins over any other leaf.
             root_cause = _upstream_root_cause(exc)
@@ -2019,6 +2057,8 @@ class PromptService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         _meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        *,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
     ) -> PromptResult:
         """Retrieve and render a prompt by name or ID.
 
@@ -2043,6 +2083,7 @@ class PromptService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
             progress_callback: Optional callback that receives upstream progress notifications, forwarded to the gateway fetch.
+            caller_auth_context: Verified ingress context for caller-session bindings.
 
         Returns:
             Prompt result with rendered messages
@@ -2205,7 +2246,9 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback)
+                    result = await self._fetch_gateway_prompt_result(
+                        prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback, caller_auth_context=caller_auth_context, server_id=server_id
+                    )
                 elif arguments is None:
                     # No arguments at all means "show the template", as the REST view does.
                     result = PromptResult(

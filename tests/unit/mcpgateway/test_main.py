@@ -3352,6 +3352,7 @@ class TestRPCEndpoints:
             plugin_global_context=ANY,
             meta_data=None,
             skip_pre_invoke=False,
+            caller_auth_context=ANY,
             require_model_visible=True,
         )
 
@@ -3433,6 +3434,7 @@ class TestRPCEndpoints:
             plugin_context_table=None,
             plugin_global_context=ANY,
             _meta_data=None,
+            caller_auth_context=ANY,
         )
 
     @patch("mcpgateway.main.list_catalog_page")

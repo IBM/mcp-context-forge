@@ -4844,6 +4844,7 @@ class Gateway(Base):
     # Per-gateway identity propagation configuration (JSON)
     # Overrides global settings when set: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}
     identity_propagation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="Per-gateway identity propagation config overrides")
+    pin_sessions_by_caller: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")

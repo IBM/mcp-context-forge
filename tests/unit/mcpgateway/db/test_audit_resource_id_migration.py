@@ -142,7 +142,10 @@ def test_revision_extends_single_repository_head(migration: ModuleType) -> None:
     assert migration.down_revision == DOWN_REVISION
     assert migration.branch_labels is None
     assert migration.depends_on is None
-    assert ScriptDirectory.from_config(_alembic_config()).get_heads() == [REVISION]
+    scripts = ScriptDirectory.from_config(_alembic_config())
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    assert REVISION in {item.revision for item in scripts.walk_revisions(base="base", head=heads[0])}
 
 
 def test_upgrade_preserves_historical_rows_indexes_and_other_schema(engine: Engine, migration: ModuleType) -> None:
