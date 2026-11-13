@@ -3661,6 +3661,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+    except PermissionError as ex:
+        LOGGER.info(f"PermissionError in admin_add_server: {ex}")
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_add_server: {ex}")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
@@ -12551,7 +12554,12 @@ async def admin_add_tool(
 
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -12722,7 +12730,12 @@ async def admin_edit_tool(
     user_email = get_user_email(user)
     LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     headers_raw2 = form.get("headers")
     input_schema_raw2 = form.get("input_schema")
@@ -13999,7 +14012,12 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     try:
         # Handle template field: convert empty string to None for optional field
@@ -14144,7 +14162,12 @@ async def admin_edit_resource(
             team_id = existing_team
 
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -14405,7 +14428,12 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -14544,7 +14572,12 @@ async def admin_edit_prompt(
             team_id = existing_team
 
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -17464,8 +17497,13 @@ async def admin_create_grpc_service(
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
         requested_team_id = getattr(service, "team_id", None)
-        if requested_team_id and await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id) != requested_team_id:
-            raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
+        if requested_team_id:
+            try:
+                await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id)
+            except PermissionError:
+                raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
+            except PublicValidationError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:

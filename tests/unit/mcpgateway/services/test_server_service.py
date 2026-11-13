@@ -155,7 +155,7 @@ class TestValidateServerTeamAssignment:
 
     def test_requires_owner_membership_for_user_updates(self):
         db = self._build_db(team_exists=True, membership_exists=False)
-        with pytest.raises(ValueError, match="membership in team not sufficient"):
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
             _validate_server_team_assignment(db, "owner@example.com", "team-1")
 
     def test_accepts_owner_membership(self):
@@ -203,7 +203,7 @@ class TestServerService:
         server_update = ServerUpdate(visibility="team", team_id="team1")
         test_user_email = "user@example.com"
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            with pytest.raises(ServerError) as exc:
+            with pytest.raises(PermissionError) as exc:
                 await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
@@ -245,7 +245,7 @@ class TestServerService:
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
-            with pytest.raises(ServerError) as exc:
+            with pytest.raises(PermissionError) as exc:
                 await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
@@ -1842,7 +1842,7 @@ class TestServerService:
         test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)):
-            with pytest.raises(ServerError):
+            with pytest.raises(PermissionError):
                 await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(instructions="Injected text"), "other@example.com")  # pragma: allowlist secret
 
         assert mock_server.instructions == "Owner text"
@@ -3430,7 +3430,7 @@ class TestServerServiceCoverageMissingBranches:
             patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
             patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)),
         ):
-            with pytest.raises(ServerError, match="Failed to update server"):
+            with pytest.raises(PermissionError, match="Only the owner can update this server"):
                 await server_service.update_server(db, "srv-1", ServerUpdate(description="x"), user_email="user@example.com")
 
     @pytest.mark.asyncio
@@ -3471,15 +3471,18 @@ class TestServerServiceCoverageMissingBranches:
         with (
             patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server]) as lock,
             patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
-            patch("mcpgateway.services.server_service._validate_server_team_assignment", side_effect=PublicValidationError("User membership in team not sufficient for this update.")),
+            patch("mcpgateway.services.server_service._validate_server_team_assignment", side_effect=PermissionError("User membership in team not sufficient for this update.")),
         ):
-            with pytest.raises(ServerError, match="membership"):
+            with pytest.raises(PermissionError, match="membership"):
                 await server_service.update_server(db, "srv-1", ServerUpdate(name="taken-name", visibility="team", team_id="foreign-team"), user_email="user@example.com")
         assert lock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_update_server_team_name_check_no_conflict_continues_then_team_not_found(self, server_service, mock_server):
         """Cover name check branch where existing_server is falsy (1183->1187)."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
         db = MagicMock()
         db.rollback = Mock()
         db.query.return_value.filter.return_value.first.return_value = None  # Team not found
@@ -3487,7 +3490,7 @@ class TestServerServiceCoverageMissingBranches:
         server_service._audit_trail = MagicMock()
 
         with patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server, None]):
-            with pytest.raises(ServerError, match="Team team1 not found"):
+            with pytest.raises(PublicValidationError, match="Team team1 not found"):
                 await server_service.update_server(
                     db,
                     "srv-1",
@@ -3517,17 +3520,23 @@ class TestServerServiceCoverageMissingBranches:
 
     @pytest.mark.asyncio
     async def test_update_server_team_visibility_without_team_id_raises(self, server_service, mock_server):
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
         db = MagicMock()
         db.rollback = Mock()
         server_service._structured_logger = MagicMock()
         server_service._audit_trail = MagicMock()
 
         with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server):
-            with pytest.raises(ServerError, match="Cannot set visibility"):
+            with pytest.raises(PublicValidationError, match="Cannot set visibility"):
                 await server_service.update_server(db, "srv-1", ServerUpdate(visibility="team"), user_email="")
 
     @pytest.mark.asyncio
     async def test_update_server_team_not_found_raises(self, server_service, mock_server):
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
         db = MagicMock()
         db.rollback = Mock()
         db.query.return_value.filter.return_value.first.return_value = None
@@ -3535,8 +3544,74 @@ class TestServerServiceCoverageMissingBranches:
         server_service._audit_trail = MagicMock()
 
         with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server):
-            with pytest.raises(ServerError, match="Team team1 not found"):
+            with pytest.raises(PublicValidationError, match="Team team1 not found"):
                 await server_service.update_server(db, "srv-1", ServerUpdate(visibility="team", team_id="team1"), user_email="")
+
+    @pytest.mark.asyncio
+    async def test_update_server_unchanged_team_visibility_skips_owner_gate(self, server_service, mock_server):
+        """Saving an unchanged team-visibility row keeps the team and skips the owner gate (#5791)."""
+        mock_server.visibility = "team"
+        mock_server.team_id = "team1"
+        mock_server.version = None
+
+        db = MagicMock()
+        db.rollback = Mock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = MagicMock(return_value="server_read")
+
+        cache = AsyncMock()
+        cache.invalidate_servers = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server, None]),
+            patch("mcpgateway.services.server_service._validate_server_team_assignment") as gate,
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            result = await server_service.update_server(db, "srv-1", ServerUpdate(visibility="team", name="renamed"), user_email="member@example.com")
+
+        assert result == "server_read"
+        assert mock_server.team_id == "team1"
+        gate.assert_not_called()
+        db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_server_empty_team_id_keeps_current_team(self, server_service, mock_server):
+        """An empty team_id means "keep the current team", not "clear the team" (#5791)."""
+        mock_server.visibility = "team"
+        mock_server.team_id = "team1"
+        mock_server.version = None
+
+        db = MagicMock()
+        db.rollback = Mock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = MagicMock(return_value="server_read")
+
+        cache = AsyncMock()
+        cache.invalidate_servers = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._validate_server_team_assignment") as gate,
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            result = await server_service.update_server(db, "srv-1", ServerUpdate(visibility="team", team_id=""), user_email="member@example.com")
+
+        assert result == "server_read"
+        assert mock_server.team_id == "team1"
+        gate.assert_not_called()
+        db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_server_sets_team_id_and_version_default(self, server_service, mock_server):
@@ -3597,7 +3672,7 @@ class TestServerServiceCoverageMissingBranches:
             patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
             patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
         ):
-            with pytest.raises(ServerError) as exc_info:
+            with pytest.raises(PermissionError) as exc_info:
                 await server_service.update_server(db, "srv-1", ServerUpdate(team_id="team-new"), user_email="user@example.com")
 
         assert "User membership in team not sufficient" in str(exc_info.value)

@@ -764,7 +764,7 @@ class TestAdminServerRoutes:
         # Set custom root path
         mock_request.scope = {"root_path": "/api/v1"}
 
-        result = await admin_edit_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
@@ -3133,7 +3133,6 @@ class TestAdminResourceUriConflictMessage:
         mock_update_resource.assert_called_once()
         assert mock_update_resource.call_args[0][1] == uri
 
-    @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentSizeError."""
         # First-Party
@@ -3158,7 +3157,6 @@ class TestAdminResourceUriConflictMessage:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
 
-    @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_type_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentTypeError."""
         # First-Party
@@ -9880,7 +9878,7 @@ class TestEdgeCasesAndErrorHandling:
             mock_update.side_effect = IntegrityError("Concurrent modification detected", params={}, orig=Exception("Version mismatch"))
 
             # Should handle gracefully
-            result = await admin_edit_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             if isinstance(result, JSONResponse):
                 assert result.status_code in (200, 409, 422, 500)
@@ -17003,30 +17001,37 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verified_team, expected_status", [([], 403), ("team-b", 201)])
+@pytest.mark.parametrize(
+    "verified_team, expected_status",
+    [
+        (PermissionError("User membership in team not sufficient for this update."), 403),
+        (PublicValidationError("Unable to verify team membership for the requested team."), 400),
+        ("team-b", 201),
+    ],
+)
 async def test_admin_create_grpc_service_checks_team_membership(monkeypatch, mock_db, verified_team, expected_status):
-    """A payload team_id the caller does not belong to returns 403 and registers nothing."""
+    """A payload team_id the caller may not act for maps to 403 or 400 and registers nothing."""
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
     mgr = MagicMock()
     mgr.register_service = AsyncMock(return_value={"id": "svc-1"})
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
-    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: SimpleNamespace(verify_team_for_user=AsyncMock(return_value=verified_team)))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: SimpleNamespace(verify_team_for_user=AsyncMock(side_effect=[verified_team])))
 
     request = MagicMock(spec=Request)
     request.client = SimpleNamespace(host="10.0.0.2")
     request.scope = {"root_path": ""}
     service = GrpcServiceCreate(name="grpc-service", target="localhost:50051", team_id="team-b", visibility="team")
 
-    if expected_status == 403:
-        with pytest.raises(HTTPException) as excinfo:
-            await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
-        assert excinfo.value.status_code == 403
-        mgr.register_service.assert_not_awaited()
-    else:
+    if expected_status == 201:
         response = await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 201
         mgr.register_service.assert_awaited_once()
+    else:
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert excinfo.value.status_code == expected_status
+        mgr.register_service.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -28609,3 +28614,402 @@ async def test_admin_a2a_plugin_binding_routes_return_typed_404_when_disabled(mo
 
     assert excinfo.value.status_code == 404
     assert excinfo.value.detail["error"] == "a2a_disabled"
+
+
+_GATE_SERVER_ID = "00000000-0000-0000-0000-000000000042"
+
+
+class TestTeamVisibilityDenyPaths:
+    """Route-level deny paths for the team-visibility authorization gate.
+
+    ``admin_edit_server`` is the reference handler. The sibling entity handlers
+    share its error mapping: ``PublicValidationError`` maps to 400 and
+    ``PermissionError`` maps to 403.
+    """
+
+    @staticmethod
+    def _edit_form(**overrides):
+        """Build an edit-form payload with team-visibility defaults.
+
+        Args:
+            **overrides: Form fields that replace the defaults.
+
+        Returns:
+            FakeForm: The form payload for ``admin_edit_server``.
+        """
+        data = {
+            "id": _GATE_SERVER_ID,
+            "name": "Team Server",
+            "description": "Server for team visibility",
+            "visibility": "team",
+            "team_id": "team-1",
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        }
+        data.update(overrides)
+        return FakeForm(data)
+
+    @patch.object(ServerService, "update_server")
+    async def test_member_not_owner_is_rejected_with_403(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """A member without the owner role cannot set team visibility."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=PermissionError("User membership in team not sufficient for this update."))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert json.loads(result.body)["message"] == "User membership in team not sufficient for this update."
+        mock_update_server.assert_not_called()
+
+    @patch.object(ServerService, "update_server")
+    async def test_service_gate_denial_maps_to_403(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """A PermissionError raised by the service team gate maps to 403."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        mock_update_server.side_effect = PermissionError("User membership in team not sufficient for this update.")
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert json.loads(result.body)["message"] == "User membership in team not sufficient for this update."
+        mock_update_server.assert_called_once()
+
+    @patch.object(ServerService, "update_server")
+    async def test_verification_lookup_failure_maps_to_400(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """A PublicValidationError from team verification maps to 400."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=PublicValidationError("Unable to verify team membership for the requested team."))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert json.loads(result.body)["message"] == "Unable to verify team membership for the requested team."
+        mock_update_server.assert_not_called()
+
+    @patch.object(ServerService, "update_server")
+    async def test_service_gate_validation_error_maps_to_400(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """A PublicValidationError raised by the service team gate maps to 400."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        mock_update_server.side_effect = PublicValidationError("Cannot set visibility to 'team' without a team_id")
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert json.loads(result.body)["message"] == "Cannot set visibility to 'team' without a team_id"
+        mock_update_server.assert_called_once()
+
+    @patch.object(ServerService, "update_server")
+    async def test_public_visibility_disabled_rejects_team_scoped_edit(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """ALLOW_PUBLIC_VISIBILITY=false rejects team-scoped public edits before any service call."""
+        monkeypatch.setattr(settings, "allow_public_visibility", False)
+        mock_request.form = AsyncMock(return_value=self._edit_form(visibility="public"))
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert excinfo.value.status_code == 422
+        team_service.verify_team_for_user.assert_not_called()
+        mock_update_server.assert_not_called()
+
+    @patch.object(ServerService, "update_server")
+    async def test_owner_team_assignment_succeeds(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """An active owner-role member can set team visibility."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": _GATE_SERVER_ID, "name": "Team Server", "team_id": "team-1", "visibility": "team"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "owner@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        assert server_update.team_id == "team-1"
+        assert server_update.visibility == "team"
+
+
+class TestTeamVisibilityRouteErrorMapping:
+    """Route error mapping for the team-visibility gate.
+
+    Server create/update handlers map membership denial (``PermissionError``) to
+    403 and team-scope validation failure (``PublicValidationError``) to 400.
+    Tool, resource, and prompt handlers map both error types in their pre-call
+    verification wrappers. Service-call error mapping for the other entity types
+    is out of scope here.
+    """
+
+    @staticmethod
+    def _form(**overrides):
+        """Build a form payload valid for every team-visibility handler.
+
+        Args:
+            **overrides: Form fields that replace the defaults.
+
+        Returns:
+            FakeForm: The form payload.
+        """
+        data = {
+            "name": "Team_Entity",
+            "customName": "team-entity",
+            "url": "http://example.com",
+            "description": "Team entity",
+            "content": "Team content",
+            "mimeType": "text/plain",
+            "uri": "test/resource",
+            "template": "Hello {{name}}",
+            "endpoint_url": "http://agent.example.com/agent",
+            "requestType": "GET",
+            "integrationType": "REST",
+            "headers": "{}",
+            "input_schema": "{}",
+            "visibility": "team",
+            "team_id": "11111111-2222-3333-4444-555555555555",
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        }
+        data.update(overrides)
+        return FakeForm(data)
+
+    @staticmethod
+    def _stub_team_service(monkeypatch, result):
+        """Install a TeamManagementService stub whose verification returns or raises.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
+            result: Return value, or the exception to raise, from verify_team_for_user.
+
+        Returns:
+            MagicMock: The stub service instance.
+        """
+        team_service = MagicMock()
+        if isinstance(result, Exception):
+            team_service.verify_team_for_user = AsyncMock(side_effect=result)
+        else:
+            team_service.verify_team_for_user = AsyncMock(return_value=result)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        return team_service
+
+    @staticmethod
+    def _stub_metadata(monkeypatch):
+        """Return fixed creation and modification metadata for every handler.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        creation = {
+            "created_by": "member@example.com",
+            "created_from_ip": "127.0.0.1",
+            "created_via": "ui",
+            "created_user_agent": "pytest",
+            "import_batch_id": None,
+            "federation_source": None,
+        }
+        modification = {
+            "modified_by": "member@example.com",
+            "modified_from_ip": "127.0.0.1",
+            "modified_via": "ui",
+            "modified_user_agent": "pytest",
+        }
+        monkeypatch.setattr("mcpgateway.admin.MetadataCapture.extract_creation_metadata", MagicMock(return_value=creation))
+        monkeypatch.setattr("mcpgateway.admin.MetadataCapture.extract_modification_metadata", MagicMock(return_value=modification))
+
+    # ------------------------------------------------------------------ #
+    # admin_add_server
+    # ------------------------------------------------------------------ #
+
+    @patch.object(ServerService, "register_server")
+    async def test_add_server_membership_denied_maps_to_403(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """A membership denial in admin_add_server maps to 403."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, "11111111-2222-3333-4444-555555555555")
+        mock_register_server.side_effect = PermissionError("User membership in team not sufficient for this update.")
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+
+    # ------------------------------------------------------------------ #
+    # admin_add_tool
+    # ------------------------------------------------------------------ #
+
+    @patch.object(ToolService, "register_tool")
+    async def test_add_tool_verify_denial_maps_to_403(self, mock_register_tool, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_add_tool returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_register_tool.assert_not_called()
+
+    @patch.object(ToolService, "register_tool")
+    async def test_add_tool_verify_validation_error_maps_to_400(self, mock_register_tool, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_add_tool returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Unable to verify team membership for the requested team."))
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Unable to verify team membership" in json.loads(result.body)["message"]
+        mock_register_tool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # admin_edit_tool
+    # ------------------------------------------------------------------ #
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_verify_denial_maps_to_403(self, mock_update_tool, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_edit_tool returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_edit_tool("00000000-0000-0000-0000-000000000043", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_verify_validation_error_maps_to_400(self, mock_update_tool, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_edit_tool returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Team team-1 not found"))
+
+        result = await admin_edit_tool("00000000-0000-0000-0000-000000000043", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-1 not found" in json.loads(result.body)["message"]
+        mock_update_tool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # admin_add_resource
+    # ------------------------------------------------------------------ #
+
+    @patch.object(ResourceService, "register_resource")
+    async def test_add_resource_verify_denial_maps_to_403(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_add_resource returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_register_resource.assert_not_called()
+
+    @patch.object(ResourceService, "register_resource")
+    async def test_add_resource_verify_validation_error_maps_to_400(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_add_resource returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Team team-1 not found"))
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-1 not found" in json.loads(result.body)["message"]
+        mock_register_resource.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # admin_edit_resource
+    # ------------------------------------------------------------------ #
+
+    @patch("mcpgateway.admin.resource_service.update_resource")
+    async def test_edit_resource_verify_denial_maps_to_403(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_edit_resource returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_edit_resource("1", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_update_resource.assert_not_called()
+
+    @patch("mcpgateway.admin.resource_service.update_resource")
+    async def test_edit_resource_verify_validation_error_maps_to_400(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_edit_resource returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Team team-1 not found"))
+
+        result = await admin_edit_resource("1", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-1 not found" in json.loads(result.body)["message"]
+        mock_update_resource.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # admin_add_prompt
+    # ------------------------------------------------------------------ #
+
+    @patch.object(PromptService, "register_prompt")
+    async def test_add_prompt_verify_denial_maps_to_403(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_add_prompt returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_add_prompt(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_register_prompt.assert_not_called()
+
+    @patch.object(PromptService, "register_prompt")
+    async def test_add_prompt_verify_validation_error_maps_to_400(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_add_prompt returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Team team-1 not found"))
+
+        result = await admin_add_prompt(mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-1 not found" in json.loads(result.body)["message"]
+        mock_register_prompt.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # admin_edit_prompt
+    # ------------------------------------------------------------------ #
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_edit_prompt_verify_denial_maps_to_403(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
+        """A verification PermissionError in admin_edit_prompt returns 403 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PermissionError("User membership in team not sufficient for this update."))
+
+        result = await admin_edit_prompt("1", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "membership in team not sufficient" in json.loads(result.body)["message"]
+        mock_update_prompt.assert_not_called()
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_edit_prompt_verify_validation_error_maps_to_400(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
+        """A verification PublicValidationError in admin_edit_prompt returns 400 before the service call."""
+        mock_request.form = AsyncMock(return_value=self._form())
+        self._stub_team_service(monkeypatch, PublicValidationError("Team team-1 not found"))
+
+        result = await admin_edit_prompt("1", mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-1 not found" in json.loads(result.body)["message"]
+        mock_update_prompt.assert_not_called()
+

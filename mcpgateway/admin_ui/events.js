@@ -25,6 +25,7 @@ import { ensureAddStoreListeners } from "./servers.js";
 import { initializeTagFiltering, updateAvailableTags } from "./tags.js";
 import {
   hideTeamEditModal,
+  initTeamSelects,
   initializeAddMembersForms,
   initializePasswordValidation,
   updateDefaultVisibility,
@@ -472,6 +473,10 @@ import {
       // Set initial state
       updateEditToolUrl();
     }
+
+    // Initialize team selects before visibility defaults so radio change
+    // events during defaulting keep the selects in sync.
+    initTeamSelects();
 
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();

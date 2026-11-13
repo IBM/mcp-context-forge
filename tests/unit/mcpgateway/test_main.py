@@ -7788,3 +7788,56 @@ class TestTokenExchangeActorRestDenyPaths:
         stored = self._stored_oauth_config(gateway_id)
         assert stored["actor"]["client_id"] == "contextforge"
         assert stored["actor"]["client_secret"] != "actor-plain-secret"  # pragma: allowlist secret
+
+
+class TestTeamVisibilityRouteErrorMapping:
+    """REST route error mapping for the team-visibility authorization gate.
+
+    Membership denial (``PermissionError``) maps to 403 and team-scope
+    validation failure (``PublicValidationError``) maps to 400 on the server
+    create/update routes. Other entity routes follow in later work.
+    """
+
+    @staticmethod
+    def _team_payload(base: dict) -> dict:
+        """Switch a create payload to team visibility without a team.
+
+        Args:
+            base: The default create payload.
+
+        Returns:
+            dict: The payload with ``visibility`` set to ``"team"``.
+        """
+        base["visibility"] = "team"
+        base["team_id"] = None
+        return base
+
+    @patch("mcpgateway.main.server_service.register_server")
+    def test_create_server_membership_denied_maps_to_403(self, mock_create, test_client, auth_headers):
+        """Membership denial on server create returns 403."""
+        mock_create.side_effect = PermissionError("User membership in team not sufficient for this update.")
+        response = test_client.post("/servers/", json=self._team_payload(_server_create_payload()), headers=auth_headers)
+        assert response.status_code == 403
+        assert "membership in team not sufficient" in response.json()["detail"]
+
+    @patch("mcpgateway.main.server_service.register_server")
+    def test_create_server_team_validation_maps_to_400(self, mock_create, test_client, auth_headers):
+        """Team-scope validation failure on server create returns 400."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        mock_create.side_effect = PublicValidationError("Cannot set visibility to 'team' without a team_id")
+        response = test_client.post("/servers/", json=self._team_payload(_server_create_payload()), headers=auth_headers)
+        assert response.status_code == 400
+        assert "Cannot set visibility to 'team' without a team_id" in response.json()["detail"]
+
+    @patch("mcpgateway.main.server_service.update_server")
+    def test_update_server_team_validation_maps_to_400(self, mock_update, test_client, auth_headers):
+        """Team-scope validation failure on server update returns 400."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
+        mock_update.side_effect = PublicValidationError("Team team-1 not found")
+        response = test_client.put("/servers/1", json={"description": "Updated description"}, headers=auth_headers)
+        assert response.status_code == 400
+        assert "Team team-1 not found" in response.json()["detail"]

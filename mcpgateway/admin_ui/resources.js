@@ -7,6 +7,7 @@ import {
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
+  getPickerTeamId,
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
@@ -1008,7 +1009,7 @@ export const initResourceSelect = function (
           const selectedGatewayIds = getSelectedGatewayIds
             ? getSelectedGatewayIds()
             : [];
-          const selectedTeamId = getCurrentTeamId();
+          const selectedTeamId = getPickerTeamId(container);
           const searchInputId =
             selectId === "edit-server-resources"
               ? "searchEditResources"

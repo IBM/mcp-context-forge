@@ -550,7 +550,7 @@ class TestGetUserTeamsCachePaths:
 class TestVerifyTeamForUserEdge:
     @pytest.mark.asyncio
     async def test_outer_exception_no_team_id(self, svc, db):
-        """Outer exception with no team_id sets team_id to None."""
+        """Outer exception with no team_id degrades to None."""
         mock_query = MagicMock()
         mock_join = MagicMock()
         # First inner try succeeds, then outer processing raises
@@ -1326,7 +1326,10 @@ class TestVerifyTeamForUserMoreBranches:
 
     @pytest.mark.asyncio
     async def test_outer_exception_with_team_id(self, svc, db):
-        """Outer exception when team_id was provided keeps team_id."""
+        """Outer exception when team_id was provided raises instead of returning an unverified team_id."""
+        # First-Party
+        from mcpgateway.utils.error_formatter import PublicValidationError
+
         teams_list = MagicMock()
         teams_list.__iter__ = MagicMock(side_effect=RuntimeError("iter fail"))
 
@@ -1338,9 +1341,8 @@ class TestVerifyTeamForUserMoreBranches:
         mock_query.join = MagicMock(return_value=mock_join)
         db.query = MagicMock(return_value=mock_query)
 
-        result = await svc.verify_team_for_user("u@t.com", team_id="t1")
-        # With team_id provided, the `if not team_id:` check is False, so team_id is returned as-is
-        assert result == "t1"
+        with pytest.raises(PublicValidationError, match="Unable to verify team membership"):
+            await svc.verify_team_for_user("u@t.com", team_id="t1")
 
 
 # ===========================================================================

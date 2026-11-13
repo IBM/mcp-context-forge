@@ -1131,6 +1131,165 @@ export const isTeamScopedView = function () {
 }
 
 /**
+ * Populate a team select with teams the caller may assign, and preselect the current team.
+ * The owner rule gates team visibility, so the options list owner-role teams (all
+ * teams for platform admins). When the current team is not assignable, the empty
+ * placeholder stays selected and the save keeps the current team.
+ * @param {HTMLSelectElement|null} selectEl - The team select to populate
+ * @param {string|null} currentTeamId - Team to preselect when the caller may assign it
+ */
+export const populateTeamSelect = function (selectEl, currentTeamId = null) {
+  if (!selectEl) return;
+  const teams = Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : [];
+  selectEl.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = currentTeamId
+    ? "Keep current team"
+    : "Personal team";
+  selectEl.appendChild(placeholder);
+  let covered = false;
+  teams.forEach((team) => {
+    const role = team.role || "member";
+    if (role !== "owner" && window.IS_ADMIN !== true) return;
+    const option = document.createElement("option");
+    option.value = team.id;
+    option.textContent = team.name || team.id;
+    option.dataset.role = role;
+    selectEl.appendChild(option);
+    if (String(team.id) === String(currentTeamId)) covered = true;
+  });
+  selectEl.value = currentTeamId && covered ? currentTeamId : "";
+};
+
+/**
+ * Show the team select when the Team visibility radio is checked; hide it otherwise.
+ * A disabled select is omitted from form posts, so private/public saves keep the stored team.
+ * @param {HTMLSelectElement|null} selectEl - The team select to sync
+ */
+export const syncTeamSelect = function (selectEl) {
+  if (!selectEl) return;
+  const wrapper = selectEl.closest("[data-team-select]");
+  if (!wrapper) return;
+  const prefix = wrapper.dataset.visibilityPrefix;
+  const teamRadio = document.querySelector(`[id="${prefix}-team"]`);
+  const show = Boolean(teamRadio && teamRadio.checked);
+  wrapper.classList.toggle("hidden", !show);
+  selectEl.disabled = !show;
+};
+
+/**
+ * Populate and sync one form's team select after its visibility radios are set.
+ * @param {string} selectId - Id of the team select, e.g. "edit-server-team-id"
+ * @param {string|null} currentTeamId - Entity's current team to preselect
+ */
+export const setFormTeamSelect = function (selectId, currentTeamId) {
+  const selectEl = document.getElementById(selectId);
+  if (!selectEl) return;
+  // Stamp the row's team so submit handling and the guards can tell
+  // "keep current team" from "no team at all".
+  selectEl.dataset.currentTeamId = currentTeamId || "";
+  populateTeamSelect(selectEl, currentTeamId || null);
+  syncTeamSelect(selectEl);
+};
+
+/**
+ * Wire every team select to its visibility radios and populate the options.
+ */
+export const initTeamSelects = function () {
+  const scopedTeamId = isTeamScopedView()
+    ? new URLSearchParams(window.location.search).get("team_id")
+    : null;
+  document
+    .querySelectorAll("[data-team-select] select[name='team_id']")
+    .forEach((selectEl) => {
+      const wrapper = selectEl.closest("[data-team-select]");
+      const prefix = wrapper ? wrapper.dataset.visibilityPrefix : "";
+      selectEl.dataset.scopeTeamId = scopedTeamId || "";
+      populateTeamSelect(selectEl, scopedTeamId);
+      if (prefix) {
+        document.querySelectorAll(`[id^="${prefix}-"]`).forEach((radio) => {
+          if (radio.tagName === "INPUT") {
+            radio.addEventListener("change", () => {
+              syncTeamSelect(selectEl);
+              rescopeTeamCandidates(selectEl);
+            });
+          }
+        });
+      }
+      selectEl.addEventListener("change", () => rescopeTeamCandidates(selectEl));
+      syncTeamSelect(selectEl);
+    });
+};
+
+/**
+ * Show or clear the inline hint for a public-to-Team coercion on an edit form.
+ * @param {string} prefix - Visibility ID prefix, e.g. "edit-server-visibility"
+ * @param {boolean} coerced - True when a saved public visibility renders as Team
+ */
+export const showVisibilityCoercionHint = function (prefix, coerced) {
+  const teamRadio = document.querySelector(`[id="${prefix}-team"]`);
+  let wrapper = document.getElementById(prefix);
+  if (!wrapper && teamRadio) {
+    const item = teamRadio.closest(".flex.items-center");
+    wrapper = item && item.parentElement ? item.parentElement.parentElement : null;
+  }
+  if (!wrapper) return;
+  const hintId = `${prefix}-coercion-hint`;
+  const existing = document.getElementById(hintId);
+  if (!coerced) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) return;
+  const hint = document.createElement("p");
+  hint.id = hintId;
+  hint.className = "mt-1 text-sm text-amber-600 dark:text-amber-400";
+  hint.textContent = "Public visibility is disabled in team scope. Showing as Team.";
+  wrapper.appendChild(hint);
+};
+
+/**
+ * Whether the caller may set team visibility anywhere.
+ * Team visibility needs a team the caller owns; platform admins may use every team.
+ * @returns {boolean} True when the caller owns a team or is a platform admin
+ */
+export const canUseTeamVisibility = function () {
+  if (window.IS_ADMIN === true) return true;
+  const teams = Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : [];
+  return teams.some((team) => team && team.role === "owner");
+};
+
+/**
+ * Show or clear the aria-live notice that explains a disabled team radio.
+ * @param {string} prefix - Visibility ID prefix, e.g. "server-visibility"
+ * @param {boolean} blocked - True when team visibility is unavailable
+ */
+const showTeamVisibilityUnavailableNotice = function (prefix, blocked) {
+  const noticeId = `${prefix}-team-unavailable`;
+  const existing = document.getElementById(noticeId);
+  if (!blocked) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) return;
+  const teamRadio = document.querySelector(`[id="${prefix}-team"]`);
+  let wrapper = document.getElementById(prefix);
+  if (!wrapper && teamRadio) {
+    const item = teamRadio.closest(".flex.items-center");
+    wrapper = item && item.parentElement ? item.parentElement.parentElement : null;
+  }
+  if (!wrapper) return;
+  const notice = document.createElement("p");
+  notice.id = noticeId;
+  notice.setAttribute("role", "status");
+  notice.className = "mt-1 text-sm text-amber-600 dark:text-amber-400";
+  // Set the text after insertion so the live region announces it.
+  wrapper.appendChild(notice);
+  notice.textContent = "Team visibility is disabled because you own no teams.";
+};
+
+/**
  * Apply visibility restrictions (disable/style public radio) without changing checked state.
  * Use this for edit forms to preserve the entity's saved visibility.
  * @param {string[]} prefixes - Array of visibility ID prefixes to process
@@ -1168,8 +1327,47 @@ export const applyVisibilityRestrictions = function (prefixes) {
         }
       }
     });
+
+    // Team visibility needs a team the caller owns. Forms with a team select
+    // disable the team radio when the caller owns no team and explain why.
+    const teamSelectWrapper = document.querySelector(
+      `[data-team-select][data-visibility-prefix="${prefix}"]`
+    );
+    const teamBlocked = Boolean(teamSelectWrapper) && !canUseTeamVisibility();
+    const teamRadios = document.querySelectorAll(`[id="${prefix}-team"]`);
+    teamRadios.forEach((radio) => {
+      // Mirror the public rule: a checked radio stays enabled so FormData
+      // still posts the stored visibility.
+      const shouldDisable = teamBlocked && !radio.checked;
+      radio.disabled = shouldDisable;
+      const wrapper = radio.closest(".flex.items-center");
+      if (wrapper) {
+        if (shouldDisable) {
+          wrapper.classList.add("opacity-40", "cursor-not-allowed");
+          wrapper.title = "Team visibility needs a team you own";
+          const label = wrapper.querySelector("label");
+          if (label) label.classList.add("line-through");
+        } else {
+          wrapper.classList.remove("opacity-40", "cursor-not-allowed");
+          wrapper.removeAttribute("title");
+          const label = wrapper.querySelector("label");
+          if (label) label.classList.remove("line-through");
+        }
+      }
+    });
+    showTeamVisibilityUnavailableNotice(prefix, teamBlocked);
   });
 }
+
+/**
+ * Report whether a form's team select resolves to a usable team.
+ * Forms without a team select keep the pre-existing scoped default.
+ * @param {HTMLSelectElement|null} teamSelect - The form's team select
+ * @returns {boolean} True when a team is preselected or the form has no select
+ */
+const hasAssignableTeam = function (teamSelect) {
+  return !teamSelect || Boolean(teamSelect.value);
+};
 
 // Function to update default visibility based on team_id in URL
 export const updateDefaultVisibility = function () {
@@ -1197,7 +1395,14 @@ export const updateDefaultVisibility = function () {
     const teamRadios = document.querySelectorAll(teamIdStr);
     const privateRadios = document.querySelectorAll(privateIdStr);
 
-    if (hasTeam) {
+    // Forms with a team select default to Team only when a team is
+    // preselected, so a Team submit always resolves to a usable team.
+    // Other forms keep the pre-existing scoped default.
+    const teamSelect = document.querySelector(
+      `[data-team-select][data-visibility-prefix="${prefix}"] select[name='team_id']`
+    );
+
+    if (hasTeam && hasAssignableTeam(teamSelect)) {
       // Default to Team
       teamRadios.forEach((radio) => {
         // Ensure we only set check if it's the initial default (not user modified,
@@ -1215,6 +1420,21 @@ export const updateDefaultVisibility = function () {
         radio.defaultChecked = false;
       });
       privateRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+    } else if (hasTeam) {
+      // Default to Private: the caller cannot set team visibility on create.
+      privateRadios.forEach((radio) => {
+        if (!radio.checked) {
+          radio.checked = true;
+          radio.defaultChecked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      publicRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+      teamRadios.forEach((radio) => {
         radio.defaultChecked = false;
       });
     } else {
@@ -1240,6 +1460,110 @@ export const updateDefaultVisibility = function () {
   // radios in create forms become disabled once switched to team/private.
   applyVisibilityRestrictions(visibilityPrefixes);
 }
+
+/**
+ * Resolve the team a form's selection submits or keeps.
+ * Edit selects carry the row's current team in dataset.currentTeamId;
+ * create selects fall back to the page's scoped team.
+ * @param {HTMLSelectElement} select - The team select
+ * @returns {string} Effective team id, or "" when no team resolves
+ */
+export const resolveFormTeamId = function (select) {
+  const chosen = typeof select.value === "string" ? select.value.trim() : "";
+  if (chosen) return chosen;
+  if (select.dataset.currentTeamId !== undefined) {
+    return select.dataset.currentTeamId || "";
+  }
+  return select.dataset.scopeTeamId || "";
+};
+
+/**
+ * Validate the team selection before a form submit.
+ * @param {HTMLFormElement} form - The form being submitted
+ * @returns {string|null} The error message, or null when the selection is valid
+ */
+export const validateTeamVisibilitySelection = function (form) {
+  const checked = form.querySelector('input[name="visibility"]:checked');
+  if (!checked || checked.value !== "team") return null;
+  const select = form.querySelector("select[name='team_id']");
+  if (!select) return null;
+  return resolveFormTeamId(select)
+    ? null
+    : "Select a team before you set visibility to Team.";
+};
+
+/**
+ * Show or clear the submit error for a form's team select.
+ * @param {HTMLFormElement} form - The form being submitted
+ * @param {string|null} message - The error message, or null to clear it
+ */
+export const showTeamSelectError = function (form, message) {
+  const select = form.querySelector("select[name='team_id']");
+  if (!select) return;
+  let errorEl = document.getElementById(`${select.id}-error`);
+  if (!errorEl) {
+    errorEl = document.createElement("p");
+    errorEl.id = `${select.id}-error`;
+    errorEl.className = "mt-1 text-sm text-red-600 dark:text-red-400";
+    select.parentElement.appendChild(errorEl);
+  }
+  errorEl.setAttribute("role", "alert");
+  errorEl.textContent = message || "";
+  select.setAttribute("aria-describedby", errorEl.id);
+};
+
+/**
+ * Re-scope a form's association picker candidates to the effective team.
+ * Each wrapper's data-rescope lists the picker container ids to reload.
+ * Containers stamp data-team-scope so their fetches follow the same team.
+ * @param {HTMLSelectElement} selectEl - The team select that changed
+ */
+export const rescopeTeamCandidates = function (selectEl) {
+  const wrapper = selectEl && selectEl.closest("[data-team-select]");
+  if (!wrapper || !wrapper.dataset.rescope) return;
+  const target = resolveFormTeamId(selectEl);
+  wrapper.dataset.rescope.split(",").forEach((rawId) => {
+    const containerId = rawId.trim();
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const hxGet = container.getAttribute("hx-get");
+    if (!hxGet) return;
+    const url = new URL(hxGet, window.location.href);
+    const current = url.searchParams.get("team_id") || "";
+    if (current === target) return;
+    if (target) {
+      url.searchParams.set("team_id", target);
+    } else {
+      url.searchParams.delete("team_id");
+    }
+    container.setAttribute("hx-get", url.pathname + url.search);
+    container.dataset.teamScope = target;
+    // Drop stale cross-page selections and "Select All" markers so
+    // associations follow the team.
+    delete AppState.editServerSelections[containerId];
+    container
+      .querySelectorAll(
+        'input[type="hidden"][name^="selectAll"], input[type="hidden"][name^="all"]'
+      )
+      .forEach((input) => input.remove());
+    if (window.htmx) {
+      container.addEventListener(
+        "htmx:afterSwap",
+        () => {
+          const firstCb = container.querySelector('input[type="checkbox"]');
+          (firstCb || container).dispatchEvent(
+            new Event("change", { bubbles: true })
+          );
+        },
+        { once: true }
+      );
+      window.htmx.ajax("get", container.getAttribute("hx-get"), {
+        target: container,
+        swap: "innerHTML",
+      });
+    }
+  });
+};
 
 /**
  * Load teams into the team selector dropdown.

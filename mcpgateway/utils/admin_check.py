@@ -92,7 +92,7 @@ def is_user_admin(db: Optional[Session], user_email: Optional[str]) -> bool:
     # SQLAlchemy makes available for caller use; it lives for the session
     # lifetime and is not shared across sessions.
     cache = db.info.setdefault(_ADMIN_CACHE_KEY, {})
-    if user_email in cache:
+    if isinstance(cache, dict) and user_email in cache:
         return cache[user_email]
 
     try:
@@ -107,7 +107,8 @@ def is_user_admin(db: Optional[Session], user_email: Optional[str]) -> bool:
         logger.debug("admin check failed for %s", user_email, exc_info=True)
         result = False
 
-    cache[user_email] = result
+    if isinstance(cache, dict):
+        cache[user_email] = result
     return result
 
 
