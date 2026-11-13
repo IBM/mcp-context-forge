@@ -283,7 +283,7 @@ def _strip_db_from_url(url: str) -> str:
     if parsed.path and parsed.path not in ("", "/"):
         db_str = parsed.path.lstrip("/")
         if db_str and db_str != "0":
-            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL " f"specifies /{db_str}. Remove the database selector or use /0.")
+            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL specifies /{db_str}. Remove the database selector or use /0.")
         cleaned = parsed._replace(path="")
         return cleaned.geturl()
     return url
@@ -451,7 +451,7 @@ async def get_redis_client() -> Optional[Any]:
         if settings.redis_cluster_mode:
             _client = await _create_cluster_client(settings, aioredis)
             masked_url = _mask_redis_url(_strip_db_from_url(settings.redis_url))
-            logger.info(f"Redis Cluster client initialized: parser={_parser_info}, " f"timeout={settings.redis_socket_timeout}s, " f"url={masked_url}")
+            logger.info(f"Redis Cluster client initialized: parser={_parser_info}, timeout={settings.redis_socket_timeout}s, url={masked_url}")
             logger.warning(
                 "Redis Cluster mode: async RedisCluster does not support "
                 "publish()/pubsub(). Cross-worker cache invalidation, "
