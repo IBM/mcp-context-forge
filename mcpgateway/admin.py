@@ -3065,10 +3065,13 @@ async def get_a2a_stats_cache_stats(
 
 def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
     """Replace the user and password of a URL with ***.
+
     Args:
         url: URL that may contain user:password@ credentials.
+
     Returns:
         The URL with credentials replaced, or the input unchanged when it has none.
+
     """
     if not url:
         return url

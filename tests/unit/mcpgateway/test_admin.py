@@ -13031,6 +13031,23 @@ async def test_get_configuration_settings_redacts_url_credentials(monkeypatch, m
     assert "redispass" not in str(result)
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (None, None),
+        ("", ""),
+        ("sqlite:///./mcp.db", "sqlite:///./mcp.db"),
+        ("redis://localhost:6379/0", "redis://localhost:6379/0"),
+        ("redis://:redispass@redis:6379/0", "redis://***@redis:6379/0"),  # pragma: allowlist secret
+        ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "postgresql+psycopg://***@pgbouncer:6432/mcp"),  # pragma: allowlist secret
+    ],
+)
+def test_redact_url_userinfo(url, expected):
+    from mcpgateway.admin import _redact_url_userinfo
+
+    assert _redact_url_userinfo(url) == expected
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
 async def test_admin_servers_partial_html_renders(monkeypatch, mock_request, mock_db, render):
