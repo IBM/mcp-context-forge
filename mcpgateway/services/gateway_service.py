@@ -922,7 +922,7 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
-async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
+async def _evict_upstream_sessions_for_gateway(gateway_id: str, *, callers_only: bool = False) -> int:
     """Close every upstream MCP session bound to ``gateway_id``.
 
     Called after gateway deletion or an update that changes the connect
@@ -937,6 +937,7 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
 
     Args:
         gateway_id: Gateway whose upstream sessions should be closed.
+        callers_only: Preserve existing downstream-session bindings when only caller policy changes.
 
     Returns:
         The number of upstream sessions evicted (0 if the registry is
@@ -949,7 +950,8 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
     )
 
     try:
-        return await get_upstream_session_registry().evict_gateway(gateway_id)
+        registry = get_upstream_session_registry()
+        return await registry.evict_gateway(gateway_id, callers_only=True) if callers_only else await registry.evict_gateway(gateway_id)
     except RegistryNotInitializedError:
         # Unit tests / very-early startup — nothing to evict by definition.
         return 0
@@ -2524,6 +2526,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             sigv4_config=preparation.sigv4_config,
             passthrough_headers=gateway.passthrough_headers,
             tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
+            pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
             tools=[],
             resources=[],
             prompts=[],
@@ -2962,6 +2965,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 sigv4_config=sigv4_config,
                 passthrough_headers=gateway.passthrough_headers,
                 tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
+                pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
                 tools=db_tools,
                 resources=db_resources,
                 prompts=db_prompts,
@@ -3900,6 +3904,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # gateway. "Connect-affecting" means anything that changes the
                 # HTTP/TLS envelope or credentials the upstream ClientSession
                 # would use — URL, auth, or any of the TLS/mTLS material.
+                original_pin_sessions_by_caller = getattr(gateway, "pin_sessions_by_caller", False)
                 original_transport = gateway.transport
                 original_auth_value = gateway.auth_value
                 original_auth_query_params = gateway.auth_query_params
@@ -3954,6 +3959,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.url = self.normalize_url(str(gateway_update.url))
                 if gateway_update.description is not None:
                     gateway.description = gateway_update.description
+                if getattr(gateway_update, "pin_sessions_by_caller", None) is not None:
+                    gateway.pin_sessions_by_caller = gateway_update.pin_sessions_by_caller
                 old_policy = getattr(gateway, "tool_validation_policy", None)
                 policy_was_changed = "tool_validation_policy" in getattr(gateway_update, "model_fields_set", ()) and policy_changed(old_policy, gateway_update.tool_validation_policy)
                 if policy_was_changed:
@@ -4219,6 +4226,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
                         await _evict_upstream_sessions_for_gateway(str(gateway.id))
+                    elif getattr(gateway, "pin_sessions_by_caller", False) != original_pin_sessions_by_caller:
+                        await _evict_upstream_sessions_for_gateway(str(gateway.id), callers_only=True)
 
                     cache = _get_registry_cache()
                     await cache.invalidate_gateways()
@@ -4429,6 +4438,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # connection-reuse benefit.
                 if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
                     await _evict_upstream_sessions_for_gateway(str(gateway.id))
+                elif getattr(gateway, "pin_sessions_by_caller", False) != original_pin_sessions_by_caller:
+                    await _evict_upstream_sessions_for_gateway(str(gateway.id), callers_only=True)
 
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()

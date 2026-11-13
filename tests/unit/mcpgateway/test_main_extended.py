@@ -9849,6 +9849,8 @@ class TestRemainingCoverageGaps:
 
         def capture_registry(*, message_handler_factory):  # noqa: ANN001
             captured["factory"] = message_handler_factory
+            captured["registry"] = MagicMock()
+            return captured["registry"]
 
         monkeypatch.setattr(
             "mcpgateway.services.upstream_session_registry.init_upstream_session_registry",
@@ -9860,6 +9862,7 @@ class TestRemainingCoverageGaps:
             handler = factory("https://peer.example/mcp", "gw-1", downstream_session_id="sess-123")
 
         assert handler is sentinel_handler
+        captured["registry"].start_caller_cleanup.assert_called_once_with()
         notification_svc.create_message_handler.assert_called_once_with(
             "gw-1",
             "https://peer.example/mcp",

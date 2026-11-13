@@ -3000,6 +3000,8 @@ class Settings(BaseSettings):
     # Session Affinity (multi-worker downstream-session → worker routing).
     # The upstream-session pooling surface that used to share this section is
     # gone as of #4205 — see mcpgateway.services.upstream_session_registry.
+    mcp_caller_session_idle_timeout: float = Field(default=600.0, gt=0, description="Idle seconds before caller-pinned upstream sessions expire")
+    mcp_caller_session_max_bindings: int = Field(default=1000, ge=1, description="Maximum caller-pinned upstream bindings per worker")
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker

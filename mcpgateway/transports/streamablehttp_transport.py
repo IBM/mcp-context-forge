@@ -79,13 +79,13 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
+from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity
+from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -122,13 +122,13 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -2392,8 +2392,10 @@ async def call_tool(
         try:
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import (
+                get_session_affinity,  # pylint: disable=import-outside-toplevel
+                SessionAffinity,  # pylint: disable=import-outside-toplevel
+            )
 
             if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
                 logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
@@ -2523,7 +2525,10 @@ async def call_tool(
                     request_state=inbound_request_state,
                     plugin_global_context=plugin_global_context,
                     plugin_context_table=plugin_context_table,
+                    caller_auth_context=get_streamable_http_auth_context(),
                 )
+            except CallerSessionError as exc:
+                raise MCPError(exc.code, str(exc)) from exc
             finally:
                 await _drain_progress(progress_relay)
             # A result may carry its data only in structuredContent; only an empty result on both counts is "no content".
@@ -3296,12 +3301,15 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     plugin_context_table=plugin_context_table,
                     input_responses=input_responses,
                     request_state=request_state,
+                    caller_auth_context=get_streamable_http_auth_context(),
                 )
             except PromptInputRequired as e:
                 # 2026 MRTR: a modern client answers and retries with inputResponses + requestState.
                 if not mrtr_allowed:
                     raise MCPError(code=types.INTERNAL_ERROR, message="Elicitation not supported") from e
                 return _relay_input_required(e.result, client_capabilities, f"prompt '{prompt_id}'")
+            except CallerSessionError as exc:
+                raise MCPError(exc.code, str(exc)) from exc
             except PromptNotFoundError as e:
                 logger.info("Unknown prompt requested: %s", prompt_id)
                 raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown prompt: {prompt_id}") from e
@@ -3548,7 +3556,10 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any], types
                     plugin_context_table=plugin_context_table,
                     input_responses=input_responses,
                     request_state=request_state,
+                    caller_auth_context=get_streamable_http_auth_context(),
                 )
+            except CallerSessionError as exc:
+                raise MCPError(exc.code, str(exc)) from exc
             except ResourceNotFoundError as e:
                 logger.info("Unknown resource requested: %s", resource_uri)
                 raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown resource: {resource_uri}") from e
@@ -6410,6 +6421,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "permission_is_admin",
         "scoped_permissions",
         "scoped_server_id",
+        "caller_session_identity",
     ):
         if key not in user_context:
             continue
@@ -6829,6 +6841,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": True,
                 "is_admin": effective_is_admin,
                 "auth_method": "jwt",
+                "caller_session_identity": verified_caller_identity(token, user_email, str(user_payload.get("iss", ""))),
                 "exp": user_payload.get("exp"),
                 "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
@@ -7133,6 +7146,7 @@ class _StreamableHttpAuthHandler:
                 "exp": claims.get("exp"),
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
+                "caller_session_identity": verified_caller_identity(token, user_email, str(claims.get("iss", ""))),
             }
         )
         _oauth_checked_var.set(True)

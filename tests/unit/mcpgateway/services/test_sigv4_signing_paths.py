@@ -50,6 +50,8 @@ def _sigv4_gateway(**overrides) -> SimpleNamespace:
         "oauth_config": None,
         "ca_certificate": None,
         "ca_certificate_sig": None,
+        "client_cert": None,
+        "client_key": None,
         "passthrough_headers": None,
         "gateway_mode": "direct_proxy",
         "visibility": "public",
@@ -107,18 +109,23 @@ class TestPromptSigning:
         assert signer.signer.credentials.secret_access_key == SECRET
 
     @pytest.mark.asyncio
-    async def test_prompt_fetch_signs_on_the_pooled_session_path(self):
+    @pytest.mark.parametrize("binding_kind", ["downstream", "caller"])
+    @pytest.mark.parametrize("transport", ["streamable_http", "sse"])
+    async def test_prompt_fetch_signs_on_the_pooled_session_path(self, binding_kind, transport):
         fake_registry = MagicMock()
-        fake_registry.acquire = MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=SimpleNamespace(session=MagicMock())), __aexit__=AsyncMock(return_value=False)))
+        acquisition = "acquire_caller" if binding_kind == "caller" else "acquire"
+        setattr(fake_registry, acquisition, MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=SimpleNamespace(session=MagicMock())), __aexit__=AsyncMock(return_value=False))))
+        context = {"is_authenticated": True, "caller_session_identity": "verified-caller"}
 
         with (
-            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-1"),
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-1" if binding_kind == "downstream" else None),
+            patch("mcpgateway.services.prompt_service.settings.mcpgateway_session_affinity_enabled", False),
             patch("mcpgateway.services.prompt_service.get_upstream_session_registry", return_value=fake_registry),
             patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=SimpleNamespace(messages=[], description="r")),
         ):
-            await PromptService()._fetch_gateway_prompt_result(self._prompt(_sigv4_gateway()), {})
+            await PromptService()._fetch_gateway_prompt_result(self._prompt(_sigv4_gateway(transport=transport, pin_sessions_by_caller=binding_kind == "caller")), {}, caller_auth_context=context)
 
-        signer = await _signer_of(fake_registry.acquire.call_args.kwargs["httpx_client_factory"])
+        signer = await _signer_of(getattr(fake_registry, acquisition).call_args.kwargs["httpx_client_factory"])
         assert signer.signer.credentials.access_key_id == CONFIG["access_key_id"]
 
     @pytest.mark.asyncio
@@ -212,21 +219,33 @@ class TestResourceSigning:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("transport", ["sse", "streamablehttp"])
-    async def test_invoke_resource_signs_with_the_gateway_credentials(self, monkeypatch, transport):
+    @pytest.mark.parametrize("binding_kind", ["fresh", "downstream", "caller"])
+    async def test_invoke_resource_signs_with_the_gateway_credentials(self, monkeypatch, transport, binding_kind):
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
         captured: dict = {}
         session = AsyncMock()
         session.session = session
         session.read_resource.return_value = SimpleNamespace(contents=[SimpleNamespace(uri="test://r", text="x", mimeType="text/plain")])
+        registry = SimpleNamespace(acquire=_capturing_proxy_client(captured, session), acquire_caller=_capturing_proxy_client(captured, session))
+        context = {"is_authenticated": True, "caller_session_identity": "verified-caller"}
 
         with (
             patch("mcpgateway.services.resource_service.mcp_proxy_client", _capturing_proxy_client(captured, session)),
-            patch("mcpgateway.services.resource_service._downstream_session_id_from_request", return_value=None),
+            patch("mcpgateway.services.resource_service._downstream_session_id_from_request", return_value="downstream-1" if binding_kind == "downstream" else None),
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.resource_service.settings.mcpgateway_session_affinity_enabled", False),
             patch("mcpgateway.services.resource_service.create_span"),
             patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=False),
         ):
-            await ResourceService().invoke_resource(MagicMock(), "res-1", "test://r", resource_obj=self._resource(), gateway_obj=_sigv4_gateway(transport=transport))
+            await ResourceService().invoke_resource(
+                MagicMock(),
+                "res-1",
+                "test://r",
+                resource_obj=self._resource(),
+                gateway_obj=_sigv4_gateway(transport=transport, pin_sessions_by_caller=binding_kind == "caller"),
+                caller_auth_context=context,
+            )
 
         signer = await _signer_of(captured["httpx_client_factory"])
         assert signer.signer.credentials.secret_access_key == SECRET

@@ -65,17 +65,14 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
-from mcpgateway.common.models import TextContent
+from mcpgateway.common.models import TextContent, ToolAnnotations, ToolResult
 from mcpgateway.common.models import Tool as PydanticTool
-from mcpgateway.common.models import ToolAnnotations, ToolResult
 from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import fresh_db_session
+from mcpgateway.db import fresh_db_session, get_for_update, Permissions, server_tool_association, ToolMetric, ToolMetricsHourly
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -83,6 +80,7 @@ from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, To
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
@@ -95,6 +93,7 @@ from mcpgateway.services.metrics_query_service import get_top_performers_combine
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.session_affinity import forward_binding_operation
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
@@ -102,7 +101,7 @@ from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exc
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.services.tool_validation_policy import admit_stored_tool, admit_tool, apply_refusal, check_policy_permission, policy_changed, policy_text, record_policy_change
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.transports.context import UserContext
+from mcpgateway.transports.context import user_context_var, UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
@@ -1317,7 +1316,7 @@ async def _call_upstream_tool(
         return await session.call_tool(
             tool_name,
             arguments,
-            meta=meta,
+            meta=upstream_meta(meta),
             progress_callback=progress_callback,
             allow_input_required=True,
             input_responses=input_responses,
@@ -1501,6 +1500,8 @@ class ToolService(BaseService):
                 "client_key": getattr(gateway, "client_key", None),
                 "auth_value": getattr(gateway, "auth_value", None),
                 "identity_propagation": getattr(gateway, "identity_propagation", None),
+                "pin_sessions_by_caller": getattr(gateway, "pin_sessions_by_caller", False) is True,
+                "version": getattr(gateway, "version", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -5134,6 +5135,7 @@ class ToolService(BaseService):
         require_app_visible: bool,
         require_model_visible: bool,
         path_label: str,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Any] = None,
         allow_input_required: bool = False,
         input_responses: Optional[Any] = None,
@@ -5163,6 +5165,7 @@ class ToolService(BaseService):
             require_app_visible: Whether the retried invocation must resolve an app-visible tool.
             require_model_visible: Whether the retried invocation must resolve a model-visible tool.
             path_label: Label for log messages (success/timeout/exception).
+            caller_auth_context: Verified ingress identity retained for caller bindings.
             progress_callback: Optional callback forwarded to the retried invocation for progress notifications.
             allow_input_required: Whether the retried invocation may return an InputRequiredResult (MRTR).
             input_responses: Client responses to a prior InputRequiredResult, forwarded on retry.
@@ -5198,6 +5201,7 @@ class ToolService(BaseService):
                 require_app_visible=require_app_visible,
                 require_model_visible=require_model_visible,
                 retry_attempt=retry_attempt + 1,
+                caller_auth_context=caller_auth_context,
                 progress_callback=progress_callback,
                 allow_input_required=allow_input_required,
                 input_responses=input_responses,
@@ -5302,6 +5306,8 @@ class ToolService(BaseService):
                     "passthrough_headers": gateway.passthrough_headers,
                     "gateway_mode": gateway.gateway_mode,
                     "identity_propagation": getattr(gateway, "identity_propagation", None),
+                    "pin_sessions_by_caller": getattr(gateway, "pin_sessions_by_caller", False) is True,
+                    "version": getattr(gateway, "version", None),
                 }
                 # Create minimal tool payload for direct proxy (no DB tool needed)
                 tool_payload = {
@@ -5478,6 +5484,7 @@ class ToolService(BaseService):
         require_model_visible: bool = False,
         retry_attempt: int = 0,
         *,
+        caller_auth_context: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Any] = None,
         allow_input_required: bool = False,
         input_responses: Optional[Any] = None,
@@ -5509,6 +5516,7 @@ class ToolService(BaseService):
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
             require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
             require_model_visible: When True, deny execution unless the resolved tool is model-visible.
+            caller_auth_context: Verified ingress identity used for caller-session isolation and forwarding.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
             progress_callback: Optional async callable (progress, total, message) invoked for
@@ -6293,6 +6301,25 @@ class ToolService(BaseService):
                             success = not getattr(tool_result, "is_error", False)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
+                    verified_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
+                    caller_binding = resolve_caller_binding(
+                        caller_identity=verified_context.get("caller_session_identity") if verified_context.get("is_authenticated") is True else None,
+                        server_id=server_id,
+                        downstream_session_id=_downstream_session_id_from_request(),
+                        meta=meta_data,
+                        pin_sessions_by_caller=bool(gateway_payload and gateway_payload.get("pin_sessions_by_caller") is True),
+                    )
+                    forwarded = await forward_binding_operation(
+                        caller_binding,
+                        verified_context,
+                        "tools/call",
+                        {"name": name, "arguments": arguments, "_meta": meta_data, "server_id": server_id},
+                        request_headers or {},
+                    )
+                    if forwarded.result is not None:
+                        tool_result = self._coerce_to_tool_result(forwarded.result)
+                        success = not tool_result.is_error
+                        return tool_result
 
                     # Tracks whether we entered the OAuth authorization_code "no DB token" branch.
                     # When True, the auth requirement is deferred to AFTER tool_pre_invoke hooks
@@ -6319,7 +6346,7 @@ class ToolService(BaseService):
 
                                 with fresh_db_session() as token_db:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # build_token_user_context uses token_teams as-is (JWT sole authority)
                                     # and only queries DB for the non-scoped is_admin flag.
@@ -6564,23 +6591,37 @@ class ToolService(BaseService):
                         }
                         downstream_session_id = _downstream_session_id_from_request()
                         registry = None
-                        if downstream_session_id and gateway_id_str:
+                        if (downstream_session_id or caller_binding is not None) and gateway_id_str:
                             try:
                                 registry = get_upstream_session_registry()
                             except RegistryNotInitializedError:
-                                pass
+                                if caller_binding is not None:
+                                    raise CallerSessionError("Upstream session registry is unavailable")
 
                         session_info = UpstreamSessionInfo()
                         with create_span("mcp.client.call", attributes) as call_span:
                             try:
-                                if registry is not None and downstream_session_id and gateway_id_str:
-                                    connection = registry.acquire(
-                                        downstream_session_id=downstream_session_id,
-                                        gateway_id=gateway_id_str,
-                                        url=server_url,
-                                        headers=headers,
-                                        transport_type=transport_type,
-                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
+                                if registry is not None and gateway_id_str:
+                                    connection = (
+                                        registry.acquire_caller(
+                                            binding=caller_binding,
+                                            ownership=forwarded.ownership,
+                                            gateway_id=gateway_id_str,
+                                            url=server_url,
+                                            headers={**inject_trace_context_headers(headers), **({"X-Correlation-ID": correlation_id} if correlation_id else {})},
+                                            transport_type=transport_type,
+                                            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
+                                            tls_identity=[gateway_ca_cert, gateway_client_cert, gateway_client_key, gateway_payload.get("version")],
+                                        )
+                                        if caller_binding is not None
+                                        else registry.acquire(
+                                            downstream_session_id=downstream_session_id,
+                                            gateway_id=gateway_id_str,
+                                            url=server_url,
+                                            headers=headers,
+                                            transport_type=transport_type,
+                                            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
+                                        )
                                     )
                                     request_headers = None
                                 else:
@@ -6730,6 +6771,8 @@ class ToolService(BaseService):
                             # Process-control signals must propagate; they are not tool failures.
                             # Mirrors the CancelledError guard above — see PR #3202 review B7.
                             raise
+                        except CallerSessionError:
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -6853,6 +6896,8 @@ class ToolService(BaseService):
                         except (SystemExit, GeneratorExit, KeyboardInterrupt):
                             # Process-control signals must propagate; they are not tool failures.
                             # Mirrors the CancelledError guard above — see PR #3202 review B7.
+                            raise
+                        except CallerSessionError:
                             raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -7219,6 +7264,7 @@ class ToolService(BaseService):
                             require_app_visible=require_app_visible,
                             require_model_visible=require_model_visible,
                             path_label="success",
+                            caller_auth_context=caller_auth_context,
                             progress_callback=progress_callback,
                             allow_input_required=allow_input_required,
                             input_responses=input_responses,
@@ -7278,6 +7324,7 @@ class ToolService(BaseService):
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
                         path_label="timeout",
+                        caller_auth_context=caller_auth_context,
                         progress_callback=progress_callback,
                         allow_input_required=allow_input_required,
                         input_responses=input_responses,
@@ -7289,6 +7336,8 @@ class ToolService(BaseService):
                 raise
             except ToolInputRequired:
                 # 2026 MRTR control flow, not a failure - let the transport handle it.
+                raise
+            except CallerSessionError:
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -7356,6 +7405,7 @@ class ToolService(BaseService):
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
                         path_label="exception",
+                        caller_auth_context=caller_auth_context,
                         progress_callback=progress_callback,
                         allow_input_required=allow_input_required,
                         input_responses=input_responses,

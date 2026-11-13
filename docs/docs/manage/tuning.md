@@ -232,6 +232,13 @@ or a higher concurrent-request capacity. Size the pool from measured concurrent 
 
 ## 6 - MCP Session Pool Tuning
 
+!!! warning "Legacy pool settings"
+    The identity-based pool described below has been replaced by the upstream session registry.
+    `MCP_SESSION_POOL_*` settings do not configure that registry. See
+    [upstream session configuration](configuration.md#upstream-mcp-sessions) for caller pinning,
+    idle expiry, capacity limits, and worker affinity.
+
+
 The MCP session pool maintains persistent connections to upstream MCP servers, providing **10-20x latency improvement** for repeated tool calls from the same user.
 
 !!! note "Disabled by Default"

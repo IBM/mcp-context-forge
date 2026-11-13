@@ -608,6 +608,8 @@ class TestPromptService:
             progress_callback=None,
             input_responses=None,
             request_state=None,
+            caller_auth_context=None,
+            server_id=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"

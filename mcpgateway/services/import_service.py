@@ -1336,6 +1336,7 @@ class ImportService:
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
             tool_validation_policy=gateway_data.get("tool_validation_policy"),
+            pin_sessions_by_caller=gateway_data.get("pin_sessions_by_caller", False),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1401,6 +1402,7 @@ class ImportService:
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
             tool_validation_policy=gateway_data.get("tool_validation_policy"),
+            pin_sessions_by_caller=gateway_data.get("pin_sessions_by_caller"),
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )
