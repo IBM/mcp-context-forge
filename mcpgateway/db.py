@@ -4983,6 +4983,7 @@ class A2AAgent(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
+    protocol_binding: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)  # "jsonrpc" or "http_json"; NULL uses the URL heuristic
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     skills: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=None)

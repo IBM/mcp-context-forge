@@ -6085,6 +6085,7 @@ class A2AAgentCreate(BaseModel):
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: str = Field(..., description="URL endpoint for the agent")
     agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
+    protocol_binding: Optional[Literal["jsonrpc", "http_json"]] = Field(None, description="Wire binding used to invoke the agent. Unset keeps the agent_type and trailing slash heuristic")
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     skills: Optional[List[A2AAgentSkill]] = Field(default=None, description="Skills the agent advertises on its Agent Card")
@@ -6441,6 +6442,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: Optional[str] = Field(None, description="URL endpoint for the agent")
     agent_type: Optional[str] = Field(None, description="Type of agent")
+    protocol_binding: Optional[Literal["jsonrpc", "http_json"]] = Field(None, description="Wire binding used to invoke the agent")
     protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     skills: Optional[List[A2AAgentSkill]] = Field(None, description="Skills the agent advertises on its Agent Card")
@@ -6828,6 +6830,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="a2a agent description")
     endpoint_url: str = Field(..., description="a2a agent endpoint URL")
     agent_type: str
+    protocol_binding: Optional[str] = Field(None, description="Wire binding used to invoke the agent")
     protocol_version: str
     capabilities: Dict[str, Any]
     skills: Optional[List[Dict[str, Any]]] = Field(default=None, description="Skills the agent advertises; falls back to capabilities.skills for older agents")

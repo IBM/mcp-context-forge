@@ -1037,6 +1037,7 @@ class A2AAgentService(BaseService):
                     description=agent_data.description,
                     endpoint_url=agent_data.endpoint_url,
                     agent_type=agent_data.agent_type,
+                    protocol_binding=agent_data.protocol_binding,
                     protocol_version=agent_data.protocol_version,
                     capabilities=agent_data.capabilities,
                     skills=dump_agent_skills(agent_data.skills) if agent_data.skills is not None else None,
@@ -2625,6 +2626,7 @@ class A2AAgentService(BaseService):
         agent_id = agent.id
         agent_endpoint_url = agent.endpoint_url
         agent_type = agent.agent_type
+        agent_protocol_binding = getattr(agent, "protocol_binding", None)
         agent_protocol_version = agent.protocol_version
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
@@ -2729,6 +2731,7 @@ class A2AAgentService(BaseService):
                 auth_query_params=agent_auth_query_params,
                 base_headers=downstream_headers,
                 correlation_id=correlation_id,
+                protocol_binding=agent_protocol_binding,
             )
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
