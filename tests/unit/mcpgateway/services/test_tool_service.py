@@ -10234,6 +10234,16 @@ class TestConvertToolToReadHeaderMasking:
         # When requesting_user_email is None, headers are masked as safe default
         assert result.headers["Authorization"] == "*****"
 
+    @pytest.mark.parametrize("owner_email, requesting_user_email", [(None, None), ("", "")])
+    def test_headers_masked_without_verified_identity(self, service, tool_with_headers, owner_email, requesting_user_email):
+        """Headers stay masked unless both owner and requester identities are present."""
+        tool_with_headers.owner_email = owner_email
+
+        result = service.convert_tool_to_read(tool_with_headers, requesting_user_email=requesting_user_email)
+
+        assert result.headers["Authorization"] == settings.masked_auth_value
+        assert result.headers["X-Api-Key"] == settings.masked_auth_value
+
     def test_encrypted_headers_decrypted_for_owner(self, service, tool_with_headers):
         """Owners/admins should see decrypted header values even when stored encrypted."""
         tool_with_headers.headers = {
