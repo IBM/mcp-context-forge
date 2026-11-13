@@ -564,7 +564,7 @@ async def test_forward_completion_upstream_uses_has_more_snake_case_attribute(mo
 
     captured_request = None
 
-    async def fake_send_request(request, result_type):
+    async def fake_send_request(request, result_type, progress_callback=None):
         nonlocal captured_request
         captured_request = request
         return SdkCompleteResult(completion=real_completion)
@@ -637,7 +637,7 @@ async def test_federated_prompt_completion_is_answered_by_upstream(monkeypatch):
     prompt = _DummyPromptForForwarding("upstream-prompt", {"properties": {}}, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         assert gw is gateway
         return SimpleNamespace(completion={"values": ["from-upstream"], "total": 1, "hasMore": False})
 
@@ -656,7 +656,7 @@ async def test_federated_prompt_raises_not_supported_without_fallback(monkeypatc
     prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         raise CompletionNotSupportedError("nope")
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
@@ -673,7 +673,7 @@ async def test_federated_prompt_internal_error_does_not_fall_back(monkeypatch):
     prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         raise CompletionInternalError("boom")
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
@@ -726,7 +726,7 @@ async def test_federated_resource_template_is_forwarded(monkeypatch):
     owner = _DummyResourceForForwarding("file://tmpl", uri_template="template://", gateway_id="gw-1", gateway=gateway)
     db = _db_resource(owner=owner)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         assert gw is gateway
         return SimpleNamespace(completion={"values": ["x"], "total": 1, "hasMore": False})
 
@@ -969,3 +969,78 @@ async def test_forward_completion_upstream_reraises_cancelled_error_unwrapped(mo
     service = CompletionService()
     with pytest.raises(asyncio.CancelledError):
         await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
+
+
+def _send_request_session(captured):
+    from mcp_types._types import Completion, CompleteResult as SdkCompleteResult
+
+    async def send_request(request, result_type, progress_callback=None):
+        captured["request"] = request
+        captured["progress_callback"] = progress_callback
+        return SdkCompleteResult(completion=Completion(values=["a"], total=1, has_more=False))
+
+    async def complete(*_args, **_kwargs):
+        captured["complete_called"] = True
+        return SdkCompleteResult(completion=Completion(values=["a"], total=1, has_more=False))
+
+    return SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()), send_request=send_request, complete=complete)
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_passes_progress_callback(monkeypatch):
+    captured = {}
+    _patch_upstream(monkeypatch, _send_request_session(captured))
+    callback = AsyncMock()
+
+    await CompletionService()._forward_completion_upstream(
+        _FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""}, meta=None, progress_callback=callback
+    )
+
+    assert captured["progress_callback"] is callback
+    assert "complete_called" not in captured
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_strips_client_token(monkeypatch):
+    captured = {}
+    _patch_upstream(monkeypatch, _send_request_session(captured))
+    callback = AsyncMock()
+
+    await CompletionService()._forward_completion_upstream(
+        _FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""}, meta={"progress_token": 3, "trace": "t"}, progress_callback=callback
+    )
+
+    assert captured["request"].params.model_dump(by_alias=True)["_meta"] == {"trace": "t"}
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_token_only_meta_uses_plain_complete(monkeypatch):
+    captured = {}
+    _patch_upstream(monkeypatch, _send_request_session(captured))
+
+    await CompletionService()._forward_completion_upstream(
+        _FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""}, meta={"progress_token": 3}, progress_callback=None
+    )
+
+    assert captured == {"complete_called": True}
+
+
+@pytest.mark.asyncio
+async def test_handle_completion_threads_progress_callback(monkeypatch):
+    callback = AsyncMock()
+    seen = []
+
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
+        seen.append(progress_callback)
+        return SimpleNamespace(completion={"values": ["x"], "total": 1, "hasMore": False})
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
+    service = CompletionService()
+
+    prompt = _DummyPromptForForwarding("upstream-prompt", {"properties": {}}, gateway_id="gw-1", gateway=_DummyGatewayForForwarding(), original_name="prompt")
+    await service.handle_completion(_db_returning(prompt), {"ref": {"type": "ref/prompt", "name": "upstream-prompt"}, "argument": {"name": "a", "value": ""}}, progress_callback=callback)
+
+    owner = _DummyResourceForForwarding("file://tmpl", uri_template="template://", gateway_id="gw-1", gateway=_DummyGatewayForResourceForwarding())
+    await service.handle_completion(_db_resource(owner=owner), {"ref": {"type": "ref/resource", "uri": "template://"}, "argument": {"name": "a", "value": ""}}, progress_callback=callback)
+
+    assert seen == [callback, callback]

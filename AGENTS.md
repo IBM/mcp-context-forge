@@ -7,7 +7,6 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `plugins/AGENTS.md` - Plugin framework and development
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
-- `crates/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory holds LLM guidance of two kinds: end-user runtime guidance for using ContextForge, and work prompts for agents changing this repository. Where `llms/` guidance overlaps an `AGENTS.md` file, the `AGENTS.md` file is authoritative.
 
@@ -32,11 +31,9 @@ mcpgateway/                 # Core FastAPI application
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
-crates/                     # Direct Rust crate folders (runtime)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -65,10 +62,6 @@ make pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
-
-# Before committing Rust changes (crates/mcp_runtime/):
-# Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## PR Review
@@ -221,7 +214,7 @@ See the [complete built-in permission table](docs/docs/manage/rbac.md#built-in-r
 
 **Issue #3883 - Separate Session Pattern**
 
-Observability write operations use **independent database sessions** that commit immediately (best-effort pattern). This means:
+Observability writes use sessions separate from the main request transaction. The HTTP middleware reuses one observability session per traced request. This means:
 
 - Observability data persists even when the main request fails
 - Traces may show "in progress" or partial states for failed requests
@@ -230,7 +223,7 @@ Observability write operations use **independent database sessions** that commit
 
 ### Implementation Details
 
-**Write methods** (use independent sessions):
+**Write methods** (create independent sessions unless callers supply a supported `obs_db` parameter):
 - `start_trace()`, `end_trace()`
 - `start_span()`, `end_span()`
 - `add_event()`, `record_token_usage()`, `record_metric()`, `delete_old_traces()`
@@ -242,7 +235,11 @@ Observability write operations use **independent database sessions** that commit
 **Context managers** (create single independent session for lifecycle):
 - `trace_span()`, `trace_tool_invocation()`, `trace_a2a_request()`
 
-**Pattern**: Follows existing SQL instrumentation approach in `instrumentation/sqlalchemy.py:58-87`
+**Middleware lifecycle**: Commit parent traces and HTTP spans before request processing so independent child writers can see them.
+Commit span and trace completion independently. Roll back caught span failures before attempting trace completion.
+Keep this session separate from application transactions.
+
+**Pattern**: SQL instrumentation also reuses a session for each query span in `instrumentation/sqlalchemy.py`.
 
 ## Audit Trail Transaction Behavior
 
@@ -256,11 +253,15 @@ Passing the shared session caused **"This transaction is inactive"** errors: the
 - The main resource (tool/gateway/resource/prompt/server) is committed **before** `log_action()` runs, so an audit-logging failure never rolls back already-persisted data — but callers' generic `except Exception` handlers still call `db.rollback()` and surface an error to the API caller even though the underlying row was already committed.
 - Do not add `db: Session` back to a `log_action()` call site. If a service needs the audit entry guaranteed within the same transaction as the main write, that is a deliberate design change requiring review, not a default.
 
-**Middleware**: `ObservabilityMiddleware` no longer creates `request.state.db`. Each observability operation creates its own short-lived session.
+**Middleware**: `ObservabilityMiddleware` creates one observability session per HTTP trace lifecycle and closes it after completion.
+Child spans, metrics, and SQL instrumentation can create additional sessions. The middleware does not create `request.state.db`.
 
 **Security**: Query operations use request-scoped sessions for RBAC/token scoping. Write operations are not RBAC-protected (observability visibility is platform-wide).
 
-**Connection Pool Sizing**: The separate session pattern creates 4-6 independent database sessions per traced request (trace start/end, span start/end, metrics, events). Default configuration (`DB_POOL_SIZE=200`, `DB_MAX_OVERFLOW=10`) provides 210 total connections, supporting ~35 concurrent traced requests. This is adequate for typical deployments. High-traffic production systems (>50 req/sec sustained) should increase pool size via environment variables: `DB_POOL_SIZE=500`, `DB_MAX_OVERFLOW=100` to support 80+ concurrent requests. Monitor for "QueuePool limit exceeded" errors and adjust pool sizing accordingly. Note: SQLite connections are capped at 50 due to file-based limitations.
+**Connection Pool Sizing**: Session allocations do not equal simultaneous connections. Commits release connections before subsequent lifecycle operations.
+Size pools from measured concurrent connection use, worker counts, and database limits.
+The SQLite lifecycle comparison measures session allocations and checkouts; it does not establish production capacity.
+See `docs/docs/manage/tuning.md` for measurements and limitations.
 
 ## Key Environment Variables
 
@@ -528,7 +529,7 @@ Run from the worktree root, in order. Each command must pass, or the PR must doc
 | Command | Validates |
 |---------|-----------|
 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
-| `make test` | Full pytest suite |
+| `make test` | Full rstest suite |
 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | `make docker-nuke docker-prod testing-up` | Rebuilds and launches the production-style gateway stack |
 | `make test-e2e` | MCP protocol E2E and RBAC against the live gateway |
@@ -542,6 +543,7 @@ When `detect-secrets` identifies false positives:
 
 - **Python files**: suppress inline with `# pragma: allowlist secret` so they don't appear in `.secrets.baseline` after `make detect-secrets-scan`.
   - Exception: doctest strings where the comment breaks the assertion. Rely on `.secrets.baseline` and audit with `make detect-secrets-audit`.
+- **Makefile**: suppress audited false positives inline with `# pragma: allowlist secret`. In variable assignments, append the pragma directly after the value (no space): make keeps whitespace before a comment in the value.
 - **All other file types**: regenerate the baseline with `make detect-secrets-scan`.
 - **Merge conflicts**: resolve `.secrets.baseline` using the version from `main`.
 
@@ -583,5 +585,5 @@ When `detect-secrets` identifies false positives:
 - `gh` for GitHub operations
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
-- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
+- Dev-group tools installed in the venv: `rstest`, `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
 - Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly

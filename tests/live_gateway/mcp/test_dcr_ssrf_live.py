@@ -42,6 +42,7 @@ class _DcrAuthorizationServer(ThreadingHTTPServer):
 
     issuer: str
     registration_endpoint: str
+    token_endpoint: str
     redirect_uri: str
 
 
@@ -84,7 +85,7 @@ class _AuthorizationServerHandler(BaseHTTPRequestHandler):
                 "issuer": server.issuer,
                 "registration_endpoint": server.registration_endpoint,
                 "authorization_endpoint": f"{server.issuer}/authorize",
-                "token_endpoint": f"{server.issuer}/token",
+                "token_endpoint": server.token_endpoint,
                 "grant_types_supported": ["authorization_code"],
                 "response_types_supported": ["code"],
             },
@@ -160,17 +161,25 @@ def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
     _BlockedReceiverHandler.requests.clear()
     malicious_as, malicious_worker = _start_authorization_server()
     valid_as, valid_worker = _start_authorization_server()
+    rogue_token_as, rogue_token_worker = _start_authorization_server()
     blocked_receiver, blocked_worker = _start_server("127.0.0.1", _BlockedReceiverHandler)
 
     malicious_issuer = f"http://127.0.0.1:{malicious_as.server_port}"
     valid_issuer = f"http://127.0.0.1:{valid_as.server_port}"
+    rogue_token_issuer = f"http://127.0.0.1:{rogue_token_as.server_port}"
     redirect_uri = "http://gateway.example.test/oauth/callback"
     malicious_as.issuer = malicious_issuer
     malicious_as.registration_endpoint = f"http://127.0.0.1:{blocked_receiver.server_port}/imds/register"
+    malicious_as.token_endpoint = f"{malicious_issuer}/token"
     malicious_as.redirect_uri = redirect_uri
     valid_as.issuer = valid_issuer
     valid_as.registration_endpoint = f"{valid_issuer}/register"
+    valid_as.token_endpoint = f"{valid_issuer}/token"
     valid_as.redirect_uri = redirect_uri
+    rogue_token_as.issuer = rogue_token_issuer
+    rogue_token_as.registration_endpoint = f"{rogue_token_issuer}/register"
+    rogue_token_as.token_endpoint = f"http://127.0.0.1:{blocked_receiver.server_port}/token"
+    rogue_token_as.redirect_uri = redirect_uri
 
     gateway_port = _free_port()
     signing_key = secrets.token_urlsafe(48)
@@ -230,7 +239,7 @@ def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
 
             engine = create_engine(database_url)
             db = sessionmaker(bind=engine)()
-            for gateway_id, issuer in (("dcr-ssrf-live", malicious_issuer), ("dcr-valid-live", valid_issuer)):
+            for gateway_id, issuer in (("dcr-ssrf-live", malicious_issuer), ("dcr-valid-live", valid_issuer), ("dcr-token-endpoint-live", rogue_token_issuer)):
                 db.add(
                     Gateway(
                         id=gateway_id,
@@ -265,7 +274,7 @@ def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
-            for server, worker in ((malicious_as, malicious_worker), (valid_as, valid_worker), (blocked_receiver, blocked_worker)):
+            for server, worker in ((malicious_as, malicious_worker), (valid_as, valid_worker), (rogue_token_as, rogue_token_worker), (blocked_receiver, blocked_worker)):
                 server.shutdown()
                 server.server_close()
                 worker.join(timeout=5)
@@ -300,3 +309,14 @@ def test_live_gateway_blocks_dcr_ssrf_and_allows_valid_registration(live_dcr_sta
     encryption = get_encryption_service(live_dcr_stack.encryption_secret)
     assert encryption.decrypt_secret(registered_client.client_secret_encrypted) == "live-dcr-secret"  # pragma: allowlist secret
     assert encryption.decrypt_secret(registered_client.registration_access_token_encrypted) == "live-registration-token"  # pragma: allowlist secret
+
+
+def test_live_gateway_refuses_cross_origin_token_endpoint(live_dcr_stack: _LiveDcrStack) -> None:
+    """Gateway refuses a DCR-discovered token endpoint outside the issuer origin."""
+    response = live_dcr_stack.client.get("/oauth/authorize/dcr-token-endpoint-live")
+    assert response.status_code == 500, response.text
+    assert "AS metadata token_endpoint must share the issuer origin" in live_dcr_stack.log_path.read_text()
+    live_dcr_stack.db.expire_all()
+    oauth_config = live_dcr_stack.db.get(Gateway, "dcr-token-endpoint-live").oauth_config or {}
+    assert "token_url" not in oauth_config
+    assert "client_id" not in oauth_config

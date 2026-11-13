@@ -613,7 +613,7 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 	@echo ""
 	@echo "💡  To use this certificate:"
 	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
-	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"  # pragma: allowlist secret
 
 .PHONY: certs-remove-passphrase
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
@@ -855,11 +855,11 @@ clean:
 # help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
 # help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
 # help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer
-# help: test                 - Run unit tests with pytest
+# help: test                 - Run unit tests with rstest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
-# help: coverage             - Run tests with coverage, emit HTML/XML + badge
-# help: coverage-pytest      - Run pytest unit tests with coverage collection
+# help: coverage             - Run tests with coverage, emit XML
+# help: coverage-pytest      - Run rstest unit tests with coverage collection
 # help: coverage-annotated   - Run coverage and generate annotated source files (.py,cover)
 # help: test-docs            - Run coverage and generate docs/docs/test/unittest.md report
 # help: htmlcov              - (re)build just the HTML coverage report into docs
@@ -929,7 +929,7 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
@@ -947,7 +947,7 @@ test-mcp-rbac: test-e2e
 test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for the current stack using a test-specific plugin config
 	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
 
@@ -965,7 +965,7 @@ test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales
 test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] against a running gateway + its Postgres
 	@echo "🧪 Running OAuth status endpoint live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack (postgres exposed on localhost:5433, the default)"
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
 		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
 	@echo "✅ OAuth status live tests passed!"
 
@@ -973,7 +973,7 @@ test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt to
 	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
 	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."
-	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
 		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
 	@echo "✅ private_key_jwt live tests passed!"
 
@@ -982,7 +982,7 @@ test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
 	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
 	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
+	@$(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
@@ -991,7 +991,7 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
 	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
-	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
+	@$(UV_BIN) run --extra plugins rstest -n 0 -p playwright tests/live_gateway/ -v --tb=short \
 		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
 
@@ -1022,7 +1022,7 @@ test: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest -n auto --maxfail=0 -v --durations=5 \
+	 $(UV_BIN) run --extra plugins rstest -n auto --maxfail=0 -v --durations=5 \
 		$(PYTEST_IGNORE_FLAGS)
 
 test-verbose: uv
@@ -1031,7 +1031,7 @@ test-verbose: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)
+	 $(UV_BIN) run --extra plugins rstest -n 0 --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)
 
 test-profile: uv
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -1039,39 +1039,40 @@ test-profile: uv
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 ARGON2ID_TIME_COST=1 \
 	 ARGON2ID_MEMORY_COST=1024 \
-	 $(UV_BIN) run --extra plugins pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)
+	 $(UV_BIN) run --extra plugins rstest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)
 
 .PHONY: coverage-pytest
 coverage-pytest: uv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 BASIC_AUTH_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
 	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-		--durations=120 --cov-report=term --cov=mcpgateway \
-		$(PYTEST_IGNORE_FLAGS) tests/ || true
+	 AUTH_ENCRYPTION_SECRET=$(COVERAGE_AUTH_ENCRYPTION_SECRET) \
+	 COVERAGE_FILE=.coverage.unit \
+	 $(UV_BIN) run --extra plugins rstest -n auto \
+		--cov=mcpgateway --cov-config=.github/pytest-branch-coverage.coveragerc \
+		--cov-branch --cov-report=xml --cov-fail-under=90 \
+		$(PYTEST_IGNORE_FLAGS) tests/
+
+# Test-only fixture values; inline pragma per AGENTS.md secret-detection policy.
+COVERAGE_TEST_PASSWORD := TestCoveragePassw0rd!42# pragma: allowlist secret
+COVERAGE_AUTH_ENCRYPTION_SECRET := coverage-test-auth-encryption-1234567890# pragma: allowlist secret
 
 coverage: coverage-pytest
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
-	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-		--cov=mcpgateway mcpgateway/ || true
-	@$(UV_BIN) run coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*
-	@$(UV_BIN) run coverage xml
-	@$(UV_BIN) run coverage report -m --no-skip-covered
-	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR) & XML ✔"
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 COVERAGE_FILE=.coverage.doctest \
+	 $(UV_BIN) run --extra plugins rstest -n auto --doctest-modules mcpgateway/ \
+		--cov=mcpgateway --cov-config=.github/pytest-branch-coverage.coveragerc \
+		--cov-branch --cov-report= --cov-fail-under=0 --tb=short
+	@$(UV_BIN) run coverage combine --rcfile=.github/pytest-branch-coverage.coveragerc .coverage.unit .coverage.doctest
+	@$(UV_BIN) run coverage xml --rcfile=.github/pytest-branch-coverage.coveragerc --fail-under=90
+	@echo "✅  Coverage report: coverage.xml"
 
 .PHONY: coverage-annotated
 coverage-annotated: coverage
@@ -1079,24 +1080,10 @@ coverage-annotated: coverage
 	@$(UV_BIN) run coverage annotate -d .
 	@echo "✅  Annotated files (.py,cover) generated ✔"
 
-test-docs: uv
+test-docs: coverage
 	@echo "📝  Generating test documentation (docs/docs/test/unittest.md)..."
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-		--cov=mcpgateway mcpgateway/ || true
-	@DATABASE_URL='sqlite:///:memory:' \
-	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-		--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-		--durations=120 --cov-report=term --cov=mcpgateway \
-		$(PYTEST_IGNORE_FLAGS) tests/ || true
-	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@$(UV_BIN) run coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md
 	@echo "✅  Test docs generated → $(DOCS_DIR)/docs/test/unittest.md"
@@ -1122,35 +1109,37 @@ diff-cover: uv
 pytest-examples: uv
 	@echo "🧪 Testing README examples..."
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
-	@$(UV_BIN) run pytest -v test_readme.py
+	@$(UV_BIN) run rstest -v test_readme.py
 
 test-curl:
 	./test_endpoints.sh
 
 ## --- Doctest targets ---------------------------------------------------------
+# Test-only fixture value; inline pragma per AGENTS.md secret-detection policy.
+DOCTEST_AUTH_ENCRYPTION_SECRET := doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus# pragma: allowlist secret
+
 doctest: uv
 	@echo "🧪 Running doctest on all modules..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 $(UV_BIN) run rstest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
 doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
+	 $(UV_BIN) run rstest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
 doctest-coverage: uv
 	@echo "📊 Generating doctest coverage report..."
 	@mkdir -p $(TEST_DOCS_DIR)
-	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ \
-		--cov=mcpgateway --cov-report=term --cov-report=html:htmlcov-doctest \
-		--cov-report=xml:coverage-doctest.xml
-	@echo "✅ Doctest coverage report generated in htmlcov-doctest/"
+	@$(UV_BIN) run rstest --doctest-modules mcpgateway/ \
+		--cov=mcpgateway --cov-report=xml:coverage-doctest.xml
+	@echo "✅ Doctest coverage report generated in coverage-doctest.xml"
 
 doctest-check: uv
 	@echo "🔍 Checking doctest coverage..."
-	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ --tb=no -q && \
+	@$(UV_BIN) run rstest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)
 
 ## --- Database Performance Testing --------------------------------------------
@@ -1160,7 +1149,7 @@ test-db-perf: uv  ## Run database performance and N+1 detection tests
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v --tb=short
+	 $(UV_BIN) run rstest tests/performance/test_db_query_patterns.py -v --tb=short
 
 test-db-perf-verbose: uv  ## Run database performance tests with full SQL query output
 	@echo "🔍 Running database performance tests with query logging..."
@@ -1168,7 +1157,7 @@ test-db-perf-verbose: uv  ## Run database performance tests with full SQL query 
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 SQLALCHEMY_ECHO=true \
-	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v -s --tb=short
+	 $(UV_BIN) run rstest tests/performance/test_db_query_patterns.py -v -s --tb=short
 
 # Shared env-var prefix for the 2025-11-25 compliance series.
 # Defined as a make variable so each target stays compact while keeping
@@ -1186,32 +1175,32 @@ MCP_2025_TEST_ENV := \
 	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-core: uv  ## Run MCP core compliance subset
 	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-tasks: uv  ## Run MCP tasks compliance subset
 	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-auth: uv  ## Run MCP authorization compliance subset
 	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
 
 2025-11-25-report: uv  ## Run MCP suite and emit JUnit XML + Markdown reports
 	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
 	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
 	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
+	 $(UV_BIN) run rstest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
 		--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
 		--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
 		$(MCP_2025_PYTEST_ARGS)
@@ -1716,7 +1705,7 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo ""
 	@echo "✅ Langfuse + monitoring stack started!"
 	@echo ""
-	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"  # pragma: allowlist secret
 	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
 	@echo "   🔥 Prometheus:     http://localhost:$${PROMETHEUS_PORT:-9090}"
 	@echo "   🧵 Tempo:          http://localhost:$${TEMPO_PORT:-3200}"
@@ -1907,7 +1896,7 @@ demo-a2a-up:                               ## Start all 3 A2A demo agents with a
 	@echo "   🎫 Bearer Token:  http://localhost:$(DEMO_A2A_BEARER_PORT)  (log: /tmp/demo-a2a-bearer.log)"
 	@echo "   🔑 X-API-Key:     http://localhost:$(DEMO_A2A_APIKEY_PORT)  (log: /tmp/demo-a2a-apikey.log)"
 	@echo ""
-	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"
+	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"  # pragma: allowlist secret
 	@echo "   Stop agents:      make demo-a2a-down"
 	@echo ""
 
@@ -1957,7 +1946,7 @@ demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
-demo-a2a-apikey:                           ## Start only X-API-Key demo agent
+demo-a2a-apikey:                           ## Start only X-API-Key demo agent  # pragma: allowlist secret
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
@@ -2187,19 +2176,6 @@ LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
 
-# Secrets Detection Benchmark Configuration
-# These values are tuned for focused plugin performance comparison
-SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
-SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
-SECRET_DETECTION_LOADTEST_USERS ?= 100          # Moderate load to isolate plugin overhead
-SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10      # Gradual ramp-up for stable measurements
-SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s       # 1 minute per phase
-SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1    # Single replica for consistent comparison
-SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2    # Minimal workers to highlight plugin impact
-SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1           # 1 core limit to amplify performance differences
-SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5   # Reserve half core for baseline
-SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G          # Generous memory to avoid OOM
-SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G    # Reserve 1GB baseline
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
@@ -2489,29 +2465,6 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 	@echo "✅ Report: reports/loadtest_fasttime.html"
 
 
-.PHONY: load-test-secret-detection-compare
-load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
-	@echo "🔐 Running focused secrets-detection benchmark..."
-	@echo "   Host: $(SECRET_DETECTION_LOADTEST_HOST)"
-	@echo "   Users: $(SECRET_DETECTION_LOADTEST_USERS)"
-	@echo "   Spawn rate: $(SECRET_DETECTION_LOADTEST_SPAWN_RATE)/s"
-	@echo "   Duration: $(SECRET_DETECTION_LOADTEST_RUN_TIME)"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@VENV_DIR="$(VENV_DIR)" \
-	COMPOSE_CMD="$(COMPOSE_CMD)" \
-	IMAGE_LOCAL_NAME="$(call get_image_name)" \
-	SECRET_DETECTION_LOADTEST_HOST="$(SECRET_DETECTION_LOADTEST_HOST)" \
-	SECRET_DETECTION_LOADTEST_USERS="$(SECRET_DETECTION_LOADTEST_USERS)" \
-	SECRET_DETECTION_LOADTEST_SPAWN_RATE="$(SECRET_DETECTION_LOADTEST_SPAWN_RATE)" \
-	SECRET_DETECTION_LOADTEST_RUN_TIME="$(SECRET_DETECTION_LOADTEST_RUN_TIME)" \
-	SECRET_DETECTION_BENCH_GATEWAY_REPLICAS="$(SECRET_DETECTION_BENCH_GATEWAY_REPLICAS)" \
-	SECRET_DETECTION_BENCH_GUNICORN_WORKERS="$(SECRET_DETECTION_BENCH_GUNICORN_WORKERS)" \
-	SECRET_DETECTION_BENCH_CPU_LIMIT="$(SECRET_DETECTION_BENCH_CPU_LIMIT)" \
-	SECRET_DETECTION_BENCH_CPU_RESERVATION="$(SECRET_DETECTION_BENCH_CPU_RESERVATION)" \
-	SECRET_DETECTION_BENCH_MEM_LIMIT="$(SECRET_DETECTION_BENCH_MEM_LIMIT)" \
-	SECRET_DETECTION_BENCH_MEM_RESERVATION="$(SECRET_DETECTION_BENCH_MEM_RESERVATION)" \
-	bash tests/loadtest/run_secret_detection_compare.sh
-
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
 	@echo "   Host: http://localhost:4444"
@@ -2687,7 +2640,6 @@ RL_USERS ?= 100
 RL_SPAWN_RATE ?= 10
 RL_REQS_PER_SECOND ?= 0.25
 RL_PROMPT_ID ?=
-RATE_LIMITER_FORCE_PYTHON ?=
 MCP_PROTOCOL_HOST ?= http://localhost:4444
 MCP_BENCHMARK_HOST ?= http://localhost:8080
 MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
@@ -2828,7 +2780,7 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 	@echo "   Host: $(HOST)"
 	@echo "   Server: $(SERVER_ID)"
 	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
-	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
+	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true) # pragma: allowlist secret
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
@@ -2953,7 +2905,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=ERROR \
-		RATE_LIMITER_FORCE_PYTHON=$(RATE_LIMITER_FORCE_PYTHON) \
 		RL_USERS=$(RL_USERS) \
 		RL_SPAWN_RATE=$(RL_SPAWN_RATE) \
 		RL_RUN_TIME=$(RL_RUN_TIME) \
@@ -2968,16 +2919,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 			--headless \
 			--only-summary \
 			CapacityPromptUser || true'
-
-# help: benchmark-rate-limiter-capacity-rust  - Capacity test with Rust engine enabled (default)
-.PHONY: benchmark-rate-limiter-capacity-rust
-benchmark-rate-limiter-capacity-rust:       ## Capacity test with Rust engine
-	RATE_LIMITER_FORCE_PYTHON=0 $(MAKE) benchmark-rate-limiter-redis-capacity
-
-# help: benchmark-rate-limiter-capacity-python  - Capacity test with Python fallback (forced)
-.PHONY: benchmark-rate-limiter-capacity-python
-benchmark-rate-limiter-capacity-python:     ## Capacity test with Python fallback
-	RATE_LIMITER_FORCE_PYTHON=1 $(MAKE) benchmark-rate-limiter-redis-capacity
 
 .PHONY: benchmark-mcp-mixed-300
 benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
@@ -3405,7 +3346,6 @@ images:
 # help: spellcheck-sort      - Sort local spellcheck dictionary
 # help: tox                  - Run tox across multi-Python versions
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
-# help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
@@ -3443,7 +3383,7 @@ endif
 # List of individual lint targets
 LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck \
-		pytype check-manifest markdownlint vulture
+		check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
@@ -3829,9 +3769,10 @@ isort-check:
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
+	@# Match CI while Pylint 3.3.9 misidentifies Python 3.14 standard-library exports.
 	@rcfile=".pylintrc"; \
 	 if [ -f ".pylintrc.$(TARGET)" ]; then rcfile=".pylintrc.$(TARGET)"; fi; \
-	 $(UV_BIN) tool run --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
+	 $(UV_BIN) tool run --python 3.12 --with-editable . --with pylint-pydantic==$(PYLINT_PYDANTIC_VERSION) pylint==$(PYLINT_VERSION) -j 0 --rcfile=$$rcfile --fail-on E --fail-under 10 $(TARGET)
 
 
 markdownlint:					    ## 📖  Markdown linting
@@ -3876,16 +3817,25 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-.PHONY: pre-commit
-pre-commit: uv                     ## 🪄  Run pre-commit tool
-	@echo "🪄  Running pre-commit hooks..."
+PREK_VERSION         ?= 0.5.10
+PRE_COMMIT_BASE_REF  ?= origin/main
+PREK_RUN             = $(UV_BIN) tool run prek@$(PREK_VERSION) --no-progress run --config .pre-commit-config.yaml --show-diff-on-failure
+
+.PHONY: pre-commit pre-commit-fast _prek
+pre-commit: uv                     ## 🪄  Run all pre-commit hooks on every file (prek)
+	@echo "🪄  Running pre-commit hooks on all files..."
+	@$(MAKE) --no-print-directory _prek PREK_SCOPE=--all-files
+
+pre-commit-fast: uv             ## 🪄  Run pre-commit hooks on commits since PRE_COMMIT_BASE_REF (committed changes only)
+	@echo "🪄  Running pre-commit hooks on commits since $(PRE_COMMIT_BASE_REF)..."
+	@base="$$(git merge-base "$(PRE_COMMIT_BASE_REF)" HEAD)" || { \
+		echo "❌  Cannot resolve PRE_COMMIT_BASE_REF=$(PRE_COMMIT_BASE_REF); fetch it or set PRE_COMMIT_BASE_REF."; exit 1; }; \
+	$(MAKE) --no-print-directory _prek PREK_SCOPE="--from-ref $$base --to-ref HEAD"
+
+_prek:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
-		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
-		$(UV_BIN) pip install --python "$(VENV_DIR)/bin/python" --quiet pre-commit; \
-	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
+		mkdir -p '$(CURDIR)/.cache/prek-home' \
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
@@ -3894,19 +3844,18 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
-		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
-		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
-		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
-		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
-		PATH='/usr/bin:$$PATH' \
-		TMPDIR='$(CURDIR)/.cache/tmp' \
-		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
-		PIP_USE_PEP517='0' \
-		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
+		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
+			XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+			XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+			VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+			TMPDIR='$(CURDIR)/.cache/tmp' \
+			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+			PIP_USE_PEP517='0' \
+			PIP_NO_BUILD_ISOLATION='1' \
+			GOPATH='$(CURDIR)/.cache/go-cache' \
+			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+			GOCACHE='$(CURDIR)/.cache/go-build'; \
+		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
@@ -4121,7 +4070,7 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 
 .PHONY: tox
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
-	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
+	@echo "🧪  Running tox with uv across Python 3.12, 3.13, 3.14..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		$(UV_BIN) pip install -q tox tox-uv && \
@@ -4159,10 +4108,6 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "📄  Files generated:"
 	@echo "    - $(PROJECT_NAME).sbom.xml (CycloneDX XML format)"
 	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
-
-pytype:								## 🧠  Pytype static type analysis
-	@echo "🧠  Pytype analysis..."
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto $(TARGET)
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
@@ -5736,8 +5681,7 @@ gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway
 # help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
 .PHONY: create-token
 create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
-	@SECRET="$(gateway_jwt_secret)"; \
-	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
+	@SECRET="$(gateway_jwt_secret)"; env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null # pragma: allowlist secret
 
 perf-down: compose-validate                ## Stop the pinned benchmark stack
 	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
@@ -6218,7 +6162,7 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 # IBMCLOUD_CODE_ENGINE_APP     = Code Engine app name
 # IBMCLOUD_IMAGE_NAME          = Full image path (e.g. us.icr.io/namespace/app:tag)
 # IBMCLOUD_IMG_PROD            = Local container image name
-# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)
+# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)  # pragma: allowlist secret
 
 ibmcloud-check-env:
 	@test -f .env.ce || { \
@@ -6752,7 +6696,7 @@ local-pypi-start: local-pypi-install local-pypi-stop
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
-local-pypi-start-auth: local-pypi-install local-pypi-stop
+local-pypi-start-auth: local-pypi-install local-pypi-stop  # pragma: allowlist secret
 	@echo "🚀  Starting local PyPI server with authentication on $(LOCAL_PYPI_URL)..."
 	@echo "🔐  Creating htpasswd file (admin/admin)..."
 	@mkdir -p $(LOCAL_PYPI_DIR)
@@ -6764,7 +6708,7 @@ local-pypi-start-auth: local-pypi-install local-pypi-stop
 	@sleep 2
 	@echo "✅  Local PyPI server started at $(LOCAL_PYPI_URL)"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
-	@echo "🔐  Username: admin, Password: admin"
+	@echo "🔐  Username: admin, Password: admin"  # pragma: allowlist secret
 
 local-pypi-stop:
 	@echo "🛑  Stopping local PyPI server..."
@@ -6836,7 +6780,7 @@ local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
 
-local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth
+local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth  # pragma: allowlist secret
 
 # Show server status
 local-pypi-status:
@@ -6996,7 +6940,7 @@ alembic-install:
 # test-only values so 'make db-*' works on a fresh checkout without secrets.
 define db_env
 	$(eval _JWT  := $(shell grep -s '^JWT_SECRET_KEY=' .env | cut -d= -f2-))
-	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))
+	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))  # pragma: allowlist secret
 	$(eval _JWT  := $(if $(_JWT),$(_JWT),alembic-jwt-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 	$(eval _ENC  := $(if $(_ENC),$(_ENC),alembic-enc-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 endef
@@ -7167,7 +7111,7 @@ playwright-preflight:
 	fi
 
 ## --- Playwright test macro ---------------------------------------------------
-# Run a Playwright test variant via `uv run pytest`.
+# Run a Playwright test variant via `uv run rstest`.
 # $(1) = label (e.g., "headed", "headless parallel")
 # $(2) = directories to mkdir -p (space-separated, or empty for none)
 # $(3) = env var exports before pytest (e.g., "PWDEBUG=1", or empty)
@@ -7191,7 +7135,7 @@ define run_playwright_test
 	@$(MAKE) --no-print-directory playwright-preflight
 	$(if $(strip $(2)),@mkdir -p $(2),)
 	@$(if $(strip $(3)),$(3),) TEST_BASE_URL='$(TEST_BASE_URL)' \
-	 $(UV_BIN) run pytest -p playwright $(4) \
+	 $(UV_BIN) run rstest $(if $(filter -n,$(4)),,-n 0) -p playwright $(4) \
 		--browser chromium \
 		$(if $(filter fail,$(5)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)
 endef
@@ -7240,8 +7184,8 @@ test-ui-report: uv playwright-install
 
 test-ui-coverage: uv playwright-install
 	$(call run_playwright_test,coverage,$(PLAYWRIGHT_REPORTS),,\
-		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage --cov-report=term,continue)
-	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
+		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=xml:$(PLAYWRIGHT_REPORTS)/coverage.xml,continue)
+	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage.xml"
 
 test-ui-screenshots: uv playwright-install
 	$(call run_playwright_test,screenshots,$(PLAYWRIGHT_REPORTS),,\
@@ -7276,7 +7220,7 @@ test-owasp: uv playwright-install  ## 🔒 Run OWASP access-control security tes
 	@$(MAKE) --no-print-directory playwright-preflight
 	@mkdir -p $(ZAP_REPORTS)
 	@TEST_BASE_URL='$(TEST_BASE_URL)' \
-	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+	 $(UV_BIN) run rstest -n 0 -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01 --tb=short \
 		|| { echo '❌ OWASP security tests failed!'; exit 1; }
 	@echo "✅ OWASP security tests completed!"
@@ -7293,7 +7237,7 @@ test-zap: uv playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZA
 	 ZAP_BASE_URL='$(ZAP_BASE_URL)' \
 	 ZAP_API_KEY='$(ZAP_API_KEY)' \
 	 ZAP_TARGET_URL='$(ZAP_TARGET_URL)' \
-	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+	 $(UV_BIN) run rstest -n 0 -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01_zap --tb=short \
 		|| { echo '❌ ZAP DAST scan failed!'; exit 1; }
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
@@ -7419,7 +7363,7 @@ async-test: uv async-lint async-debug
 	@echo "🔄 Running comprehensive async safety tests..."
 	@mkdir -p $(REPORTS_DIR)
 	@PYTHONASYNCIODEBUG=1 \
-	 $(UV_BIN) run --extra plugins pytest \
+	 $(UV_BIN) run --extra plugins rstest \
 		tests/ \
 		--asyncio-mode=auto \
 		--tb=short \
@@ -7461,8 +7405,7 @@ async-monitor:
 
 async-debug: uv
 	@echo "🐛 Running async tests with debug mode..."
-	@PYTHONASYNCIODEBUG=1 $(UV_BIN) run --extra plugins python -X dev \
-		-m pytest tests/ \
+	@PYTHONASYNCIODEBUG=1 PYTHONDEVMODE=1 $(UV_BIN) run --extra plugins rstest -n 0 tests/ \
 		--asyncio-mode=auto \
 		--capture=no \
 		-v
@@ -7502,7 +7445,6 @@ async-clean:
 # spaces — harmless under (?x).
 DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   package-lock\.json$$         \
-  |Cargo\.lock$$               \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
@@ -7555,11 +7497,7 @@ detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for r
 .PHONY: detect-secrets-hook
 detect-secrets-hook: uv                      ## 🔎  detect-secrets pre-commit hook equivalent
 	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets-hook \
-		--baseline .secrets.baseline \
-		--use-all-plugins \
-		--fail-on-unaudited \
-		--
+	@git ls-files -z | xargs -0 $(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' scripts/git/detect-secrets-hook-readonly.sh --
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
@@ -7686,7 +7624,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 ## --------------------------------------------------------------------------- ##
 ##  Snyk Authentication
 ## --------------------------------------------------------------------------- ##
-snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)
+snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)  # pragma: allowlist secret
 	@echo "🔑 Authenticating with Snyk..."
 	@command -v snyk >/dev/null 2>&1 || { \
 		echo "❌ Snyk CLI not installed."; \
@@ -8044,7 +7982,7 @@ fuzz-install: uv  ## 🔧 Sync project env (fuzz tooling now lives in the dev de
 .PHONY: fuzz-hypothesis
 fuzz-hypothesis: uv  ## 🧪 Run Hypothesis property-based tests
 	@echo "🧪 Running Hypothesis property-based tests..."
-	@$(UV_BIN) run pytest tests/fuzz/ -v \
+	@$(UV_BIN) run rstest tests/fuzz/ -v \
 		--hypothesis-show-statistics \
 		--hypothesis-profile=dev \
 		-k 'not (test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
@@ -8111,14 +8049,14 @@ fuzz-security: uv  ## 🔐 Run security-focused fuzzing tests
 	@echo "🔐 Running security-focused fuzzing tests..."
 	@echo "⚠️  Security tests require running application with auth - they may fail in isolation"
 	@HYPOTHESIS_PROFILE=dev \
-	 $(UV_BIN) run pytest tests/fuzz/test_security_fuzz.py -v \
+	 $(UV_BIN) run rstest tests/fuzz/test_security_fuzz.py -v \
 		|| true
 
 .PHONY: fuzz-quick
 fuzz-quick: uv  ## ⚡ Run quick fuzzing for CI
 	@echo "⚡ Running quick fuzzing for CI..."
 	@HYPOTHESIS_PROFILE=ci \
-	 $(UV_BIN) run pytest tests/fuzz/ -v \
+	 $(UV_BIN) run rstest tests/fuzz/ -v \
 		-k 'not (test_very_large or test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
 		|| true
 
@@ -8126,7 +8064,7 @@ fuzz-quick: uv  ## ⚡ Run quick fuzzing for CI
 fuzz-extended: uv  ## 🕐 Run extended fuzzing for nightly runs
 	@echo "🕐 Running extended fuzzing suite..."
 	@HYPOTHESIS_PROFILE=thorough \
-	 $(UV_BIN) run pytest tests/fuzz/ -v \
+	 $(UV_BIN) run rstest tests/fuzz/ -v \
 		--durations=20 || true
 
 .PHONY: fuzz-report
@@ -8176,12 +8114,12 @@ MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from versi
 migration-test-all: uv migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
 	@echo "📋 Testing SQLite migrations..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
 	@echo "📋 Testing PostgreSQL migrations..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
@@ -8192,13 +8130,13 @@ migration-test-all: uv migration-setup        ## Run comprehensive migration tes
 
 migration-test-sqlite: uv                     ## Run SQLite container migration tests only
 	@echo "🐍 Running SQLite migration tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ SQLite migration tests complete!"
 
 migration-test-postgres: uv                   ## Run PostgreSQL compose migration tests only
 	@echo "🐘 Running PostgreSQL migration tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ PostgreSQL migration tests complete!"
 
@@ -8208,13 +8146,13 @@ migration-test-performance: uv               ## Run migration performance benchm
 	@# because its measurement model conflicts with pytest-xdist's worker pool. This
 	@# target is the canonical opt-in: `-p benchmark` re-enables the plugin and the
 	@# absence of `-n` keeps execution single-process so timings stay meaningful.
-	@$(UV_BIN) run pytest -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
+	@$(UV_BIN) run rstest -n 0 -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Performance tests complete!"
 
 migration-test-rollback: uv               ## Run only downgrade/reverse migration tests (pytest + roundtrip)
 	@echo "⏪ Running reverse migration (downgrade) tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 	                     $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-k 'reverse or rollback' \
 		-v --tb=short --log-cli-level=INFO
@@ -8225,7 +8163,7 @@ migration-test-rollback: uv               ## Run only downgrade/reverse migratio
 migration-test-cross-db: uv               ## Run cross-database schema consistency test
 	@echo "🔀 Running cross-database schema consistency test..."
 	@UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
-	 $(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+	 $(UV_BIN) run rstest -n 0 $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Cross-database schema consistency check complete!"
 
@@ -8347,16 +8285,17 @@ CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
 CF_CONTROLPLANE_PULL_POLICY ?= never
 CF_COMPOSE_BUILD ?= true
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+CONFORMANCE_CLIENT_VERSIONS ?= 2025-11-25 2026-07-28
+CONFORMANCE_SERVER_ERAS ?= legacy modern
 
-# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
-# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+# help: conformance          - Run both MCP client versions against legacy and modern fixtures through the built-in dataplane
+# help: conformance-bless    - Update selected baselines after the complete conformance matrix finishes
 .PHONY: conformance conformance-bless
 
 # Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# Exercise only the 2025-11-25 client against a legacy fixture.
 conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
@@ -8373,8 +8312,9 @@ conformance conformance-bless:
 	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
 	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
 	"$(CF_INTEGRATION)" conformance run \
-		--client-version 2025-11-25 \
-		--server-era legacy \
+		$(foreach version,$(CONFORMANCE_CLIENT_VERSIONS),--client-version $(version)) \
+		$(foreach era,$(CONFORMANCE_SERVER_ERAS),--server-era $(era)) \
+		--lane fixture-direct \
 		--lane builtin \
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
 		--output-dir "$(CF_INTEGRATION_DIR)/reports" \

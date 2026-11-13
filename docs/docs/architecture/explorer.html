@@ -1971,7 +1971,6 @@ a.card-path:hover, a.gh-link:hover {
           <span class="layer-chip">Streamable HTTP</span>
           <span class="layer-chip">STDIO</span>
           <span class="layer-chip">gRPC</span>
-          <span class="layer-chip">Rust MCP Runtime</span>
         </div>
       </div>
 
@@ -3041,13 +3040,6 @@ const COMPONENTS = [
     exports:["StreamableHTTPTransport","handle_request()","create_session()","resume_session()"],
     config:["PROTOCOL_VERSION"],
     tags:["http","streaming","json-rpc"], connections:["session_pool"] },
-  { id:"tp_rust", name:"Rust MCP Runtime", category:"transport", group:"mcp",
-    path:"mcpgateway/transports/rust_mcp_runtime_proxy.py",
-    desc:"Rust MCP runtime sidecar integration with shadow/edge/full rollout modes.",
-        details:"Experimental proxy routing MCP traffic to Rust runtime while preserving Python auth/middleware.",
-    exports:["RustMCPRuntimeProxy", "handle_streamable_http"],
-    config:["EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED"],
-    tags:["rust","sidecar","performance"], connections:["tp_streamable"] },
   { id:"tp_redis", name:"Redis Event Store", category:"transport", group:"infra",
     path:"mcpgateway/transports/redis_event_store.py",
     desc:"Redis-backed event and session message store for distributed deployments.",
@@ -4168,10 +4160,7 @@ var TRANSPORT_PROTOCOLS = [
     tags:["CLI","Local","Process","Pipes"] },
   { name:"gRPC", color:"var(--accent-orange)", file:"grpc_service.py",
     desc:"Protocol Buffers over HTTP/2 with service discovery, reflection, and TLS. Optional transport.",
-    tags:["Protobuf","HTTP/2","TLS","Reflection"] },
-  { name:"Rust MCP Runtime", color:"var(--accent-pink)", file:"rust_mcp_runtime_proxy.py",
-    desc:"High-performance Rust sidecar with shadow/edge/full rollout modes for Streamable HTTP acceleration.",
-    tags:["Rust","Sidecar","Shadow","Performance"] }
+    tags:["Protobuf","HTTP/2","TLS","Reflection"] }
 ];
 
 var MCP_METHODS = [
@@ -4261,13 +4250,14 @@ var ADRS = [
   { num:"038b", title:"Multi-Worker Session Affinity for SSE and Streamable HTTP", status:"accepted", file:"docs/docs/architecture/adr/038-multi-worker-session-affinity.md" },
   { num:"039", title:"Fully Independent Plugin Crates Architecture", status:"accepted", file:"docs/docs/architecture/adr/039-adopt-fully-independent-plugin-crates-architecture.md" },
   { num:"040", title:"Flexible Admin UI Section Visibility", status:"accepted", file:"docs/docs/architecture/adr/040-flexible-admin-ui-sections.md" },
-  { num:"041", title:"Top-Level Rust Workspace (Cargo.toml at Repository Root)", status:"accepted", file:"docs/docs/architecture/adr/041-top-level-rust-workspace.md" },
-  { num:"042", title:"Enforce Rust in the Build Process", status:"proposed", file:"docs/docs/architecture/adr/042-enforce-rust-in-build-process.md" },
-  { num:"043", title:"Rust MCP Runtime Sidecar with Mode-Based Rollout", status:"accepted", file:"docs/docs/architecture/adr/043-rust-mcp-runtime-sidecar-mode-model.md" },
+  { num:"041", title:"Top-Level Rust Workspace (Cargo.toml at Repository Root)", status:"superseded", file:"docs/docs/architecture/adr/041-top-level-rust-workspace.md" },
+  { num:"042", title:"Enforce Rust in the Build Process", status:"superseded", file:"docs/docs/architecture/adr/042-enforce-rust-in-build-process.md" },
+  { num:"043", title:"Rust MCP Runtime Sidecar with Mode-Based Rollout", status:"superseded", file:"docs/docs/architecture/adr/043-rust-mcp-runtime-sidecar-mode-model.md" },
   { num:"044", title:"Module Communication Protocol", status:"proposed", file:"docs/docs/architecture/adr/044-module-communication-protocol.md" },
   { num:"045", title:"Authentication and Authorization Remain in Core", status:"proposed", file:"docs/docs/architecture/adr/045-auth-remains-in-core.md" },
   { num:"046", title:"Shared-Nothing Between Protocol Modules", status:"proposed", file:"docs/docs/architecture/adr/046-shared-nothing-between-modules.md" },
-  { num:"047", title:"Incremental Migration Over Rewrite", status:"proposed", file:"docs/docs/architecture/adr/047-incremental-migration-over-rewrite.md" }
+  { num:"047", title:"Incremental Migration Over Rewrite", status:"proposed", file:"docs/docs/architecture/adr/047-incremental-migration-over-rewrite.md" },
+  { num:"058", title:"Remove Rust Runtime Sidecars and Workspace", status:"accepted", file:"docs/docs/architecture/adr/058-remove-rust-runtime-and-workspace.md" }
 ];
 
 /* ================================================================
@@ -4998,7 +4988,7 @@ renderConfig();
         svg.appendChild(svgText(450,240,'ContextForge',{size:'16',weight:'800',fill:C.blue}));
         svg.appendChild(svgText(450,260,'MCP Gateway & Registry',{size:'11',fill:C.muted}));
         svg.appendChild(svgText(450,278,'FastAPI + SQLAlchemy + Redis',{size:'9',fill:C.muted}));
-        svg.appendChild(svgText(450,294,'Python 3.11+ / Optional Rust Sidecar',{size:'9',fill:C.muted}));
+        svg.appendChild(svgText(450,294,'Python Gateway',{size:'9',fill:C.muted}));
         // Clients (top)
         var clients = [
           {x:60,label:'MCP Clients',sub:'Claude, VS Code, CLI',color:C.cyan},
@@ -5034,7 +5024,7 @@ renderConfig();
         svg.setAttribute('viewBox','0 0 860 500');
         svg.appendChild(svgArrowDef());
         var layers = [
-          {y:10,h:55,label:'Transport Layer',color:C.cyan,items:['Streamable HTTP','SSE','WebSocket','STDIO','gRPC','Rust Sidecar']},
+          {y:10,h:55,label:'Transport Layer',color:C.cyan,items:['Streamable HTTP','SSE','WebSocket','STDIO','gRPC']},
           {y:80,h:55,label:'Middleware Pipeline',color:C.purple,items:['Auth','Token Scoping','RBAC','Logging','Observability','Security Headers','Compression']},
           {y:150,h:55,label:'Router Layer (19 routers)',color:C.green,items:['Auth','Teams','OAuth','LLM','Observability','Tools','Federation','Well-Known']},
           {y:220,h:80,label:'Service Layer (56 services)',color:C.orange,items:['Tool Svc','Resource Svc','Prompt Svc','Server Svc','Gateway Svc','Session Pool','A2A Svc','...']},
@@ -5070,7 +5060,7 @@ renderConfig();
         svg.appendChild(svgLine(690,420,750,455,{stroke:C.red+'66',dash:'4'}));
       }
     },
-    { id:'deployment', title:'Deployment Architecture', desc:'Production Kubernetes deployment topology with nginx reverse proxy, PostgreSQL, Redis, and optional Rust sidecar.',
+    { id:'deployment', title:'Deployment Architecture', desc:'Production Kubernetes deployment topology with nginx reverse proxy, Python gateway, PostgreSQL, and Redis.',
       render: function(svg) {
         svg.setAttribute('viewBox','0 0 860 440');
         svg.appendChild(svgArrowDef());
@@ -5085,9 +5075,6 @@ renderConfig();
         // Gateway pods
         svg.appendChild(labeledBox(60,230,240,100,'ContextForge Pod (x N)',C.orange,['FastAPI + Gunicorn','uvicorn workers','Alembic migrations job']));
         svg.appendChild(svgLine(370,190,180,230,{stroke:C.green+'88',arrow:true}));
-        // Rust sidecar
-        svg.appendChild(labeledBox(60,350,240,50,'Rust MCP Runtime (optional)',C.pink,['Streamable HTTP sidecar']));
-        svg.appendChild(svgLine(180,330,180,350,{stroke:C.pink+'66',dash:'4'}));
         svg.appendChild(svgLine(490,190,560,230,{stroke:C.green+'88',arrow:true}));
         // PostgreSQL
         svg.appendChild(labeledBox(440,230,170,70,'PostgreSQL',C.blue,['Primary DB','PgBouncer pool']));

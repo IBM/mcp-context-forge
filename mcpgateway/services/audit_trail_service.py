@@ -165,15 +165,23 @@ class AuditTrailService:
         if not settings.audit_trail_enabled:
             return None
 
+        import_batch_id = (details or {}).get("import_batch_id") or (context or {}).get("import_batch_id")
+        failure_context = {
+            "correlation_id": correlation_id,
+            "action": action,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "team_id": team_id,
+            "import_batch_id": import_batch_id if isinstance(import_batch_id, str) else None,
+        }
+
         # Use provided session or create new one
         close_db = False
         if db is None:
             try:
                 db = SessionLocal()
             except Exception as e:  # pragma: no cover - defensive
-                logger.error(
-                    "Failed to create audit trail session: %s", e, exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id}
-                )
+                logger.error("Failed to create audit trail session: %s", e, exc_info=True, extra=failure_context)
                 return None
             close_db = True
 
@@ -256,7 +264,7 @@ class AuditTrailService:
             return audit_entry
 
         except Exception as e:
-            logger.error("Failed to log audit trail: %s", e, exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id})
+            logger.error("Failed to log audit trail: %s", e, exc_info=True, extra=failure_context)
             if close_db:
                 db.rollback()
             return None

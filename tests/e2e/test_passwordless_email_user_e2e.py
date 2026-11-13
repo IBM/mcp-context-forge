@@ -38,7 +38,7 @@ from mcpgateway.db import EmailUser, PasswordResetToken, utc_now
 from mcpgateway.routers import email_auth as email_auth_router_mod
 from mcpgateway.services.email_auth_service import EmailAuthService
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.serial]
 
 TEST_JWT_SECRET = "passwordless-e2e-jwt-secret-with-minimum-32-bytes"  # pragma: allowlist secret
 TEST_AUTH_ENCRYPTION_SECRET = "passwordless-e2e-auth-encryption-secret-with-minimum-32-bytes"  # pragma: allowlist secret

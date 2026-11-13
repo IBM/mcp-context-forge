@@ -38,7 +38,9 @@ from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.http_client_service import get_default_verify
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -53,12 +55,18 @@ class _NoRedirectPyJWKClient(jwt.PyJWKClient):
     PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
     redirects transparently, bypassing the same-origin check on jwks_uri.
     Overriding with httpx (follow_redirects=False) closes the SSRF redirect bypass.
+    TLS verification follows get_default_verify(), so SKIP_SSL_VERIFY applies.
+    JWKS holds the signing keys that verify tokens, so a fetch with TLS
+    verification off logs a warning that names the jwks_uri.
     """
 
     def fetch_data(self) -> Any:
         """Fetch JWKS data without following redirects."""
+        verify = get_default_verify()
+        if not verify:
+            logger.warning("Fetching JWKS from %s with TLS verification disabled (SKIP_SSL_VERIFY=true). Token signing keys are not authenticated.", sanitize_for_log(self.uri))
         try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout, verify=verify) as _client:
                 resp = _client.get(self.uri, headers=self.headers)
                 resp.raise_for_status()
                 return resp.json()

@@ -481,6 +481,7 @@ def mock_gateway():
     gw.client_cert = None
     gw.client_key = None
     gw.signing_algorithm = None
+    gw.identity_propagation = None
 
     gw.enabled = True
     gw.reachable = True
@@ -3452,6 +3453,78 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_forwards_progress_callback_to_session(self, tool_service, mock_tool, test_db):
+        """invoke_tool hands the caller's progress callback to the upstream session."""
+        # Standard
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            if value is None:
+                m.all.return_value = []
+            else:
+                m.all.return_value = [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        callback = AsyncMock()
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None, progress_callback=callback)
+
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=callback, allow_input_required=True, input_responses=None, request_state=None)
+
+        assert result.content[0].text == "MCP response"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
         """Registry-not-initialised path must fall through to per-call streamablehttp client.
 
@@ -5299,6 +5372,138 @@ class TestToolService:
         # mcp_proxy_client auto-initializes internally; tool was called
         session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("gateway_setting", "expect_identity"),
+        [
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+            (None, True),
+        ],
+    )
+    async def test_invoke_tool_rest_identity_follows_gateway_setting(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db, monkeypatch, gateway_setting, expect_identity):
+        """REST tool calls honour the gateway's identity setting over the global one."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_gateway.identity_propagation = gateway_setting
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert any(k.startswith("X-Forwarded-User") for k in headers) is expect_identity
+        if not expect_identity:
+            assert "alice@example.com" not in headers.values()
+
+    @pytest.mark.parametrize(
+        ("gateway_setting", "expect_identity"),
+        [
+            ({"enabled": False}, False),
+            ({"enabled": True}, True),
+            (None, True),
+        ],
+    )
+    async def test_invoke_tool_mcp_identity_follows_gateway_setting(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db, monkeypatch, gateway_setting, expect_identity):
+        """MCP tool calls honour the gateway's identity setting for headers and _meta."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_gateway.identity_propagation = gateway_setting
+        mock_gateway.auth_value = None
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "sse"
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        session_mock.session.call_tool = session_mock.call_tool
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm) as proxy_client,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        sent_headers = proxy_client.call_args.kwargs["headers"]
+        sent_meta = session_mock.call_tool.call_args.kwargs.get("meta") or {}
+        assert any(k.startswith("X-Forwarded-User") for k in sent_headers) is expect_identity
+        assert ("user" in sent_meta) is expect_identity
+        if not expect_identity:
+            assert "alice@example.com" not in str(sent_headers) + str(sent_meta)
+
+    async def test_invoke_tool_cache_hit_without_identity_propagation_key_falls_back_to_global(self, tool_service, test_db, monkeypatch):
+        """A cache payload from an older worker lacks the key and must follow the global setting, not disable identity."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-1",
+                "name": "cached_tool",
+                "original_name": "cached_tool",
+                "url": "http://example.com/tool",
+                "integration_type": "REST",
+                "request_type": "POST",
+                "auth_type": None,
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-cache-1",
+            },
+            "gateway": {"id": "gw-cache-1", "name": "cached-gw", "url": "http://example.com/gateway", "auth_type": None, "passthrough_headers": []},
+        }
+        lookup_cache = SimpleNamespace(enabled=True, get=AsyncMock(return_value=cached_payload), set=AsyncMock(), set_negative=AsyncMock())
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com", is_admin=True, teams=["t1"]))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+        ):
+            await tool_service.invoke_tool(test_db, "cached_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
+
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert any(k.startswith("X-Forwarded-User") for k in headers)
 
     @pytest.mark.parametrize("gateway_id", ["f90870e0-bbbf-4e3c-80c5-69d72a1e6e21", None])
     @pytest.mark.parametrize("reuse_context", [False, True])
@@ -9016,6 +9221,8 @@ class TestToolServiceHelpers:
             input_schema=None,
             output_schema={"type": "object"},
             annotations=None,
+            tool_validation_policy=None,
+            validation_refusal=None,
             auth_type="bearer",
             auth_value="secret",
             oauth_config=None,
@@ -9071,6 +9278,7 @@ class TestToolServiceHelpers:
         assert payload["gateway"]["passthrough_headers"] == []
         # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
         assert payload["gateway"]["auth_value"] == "secret"
+        assert "identity_propagation" in payload["gateway"]
         assert "oauth_config" not in payload["gateway"]
         assert "auth_query_params" not in payload["gateway"]
 
@@ -9446,7 +9654,7 @@ class TestToolServiceBulkImport:
     def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_chunk")
-        db_tool = SimpleNamespace(id="tool-1")
+        db_tool = SimpleNamespace(id="tool-1", team_id=None)
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9484,11 +9692,13 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_create_tools"
         assert audit_kwargs["details"]["count"] == 1  # 1 added, 1 skipped — only adds counted
+        assert audit_kwargs["team_id"] is None
+        assert "db" not in audit_kwargs
 
     def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_update_only")
-        db_tool = SimpleNamespace(id="tool-2")
+        db_tool = SimpleNamespace(id="tool-2", team_id="team-1")
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9520,6 +9730,104 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_update_tools"
         assert audit_kwargs["details"]["count"] == 1
+        assert audit_kwargs["team_id"] == "team-1"
+        assert "db" not in audit_kwargs
+
+    def test_process_tool_chunk_audits_persisted_teams_with_group_counts(self, mock_logging_services):
+        """Mixed chunks audit successful resources by team with group-local counts and a shared batch ID."""
+        service = ToolService()
+        results = [
+            {"status": operation, "tool": SimpleNamespace(id=f"tool-{index}", name=f"chunk-tool-{index}", team_id=team_id)}
+            for index, (operation, team_id) in enumerate([("add", "team-a"), ("add", "team-a"), ("update", "team-a"), ("update", "team-b"), ("update", "team-b"), ("add", None)])
+        ]
+        results.extend([{"status": "skip"}, {"status": "fail", "error": "invalid tool"}])
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=results):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=f"chunk-tool-{index}") for index in range(len(results))],
+                conflict_strategy="update",
+                visibility="public",
+                team_id="request-team",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-team-groups",
+                federation_source=None,
+            )
+
+        assert (stats["created"], stats["updated"], stats["skipped"], stats["failed"]) == (3, 3, 1, 1)
+        db.commit.assert_called_once()
+        audit_calls = mock_logging_services["audit_trail"].log_action.call_args_list
+        assert len(audit_calls) == 3
+        assert {audit_call.kwargs["team_id"]: (audit_call.kwargs["action"], audit_call.kwargs["details"]["count"]) for audit_call in audit_calls} == {
+            "team-a": ("bulk_create_tools", 3),
+            "team-b": ("bulk_update_tools", 2),
+            None: ("bulk_create_tools", 1),
+        }
+        for audit_call in audit_calls:
+            assert audit_call.kwargs["details"]["import_batch_id"] == "batch-team-groups"
+            assert "db" not in audit_call.kwargs
+
+    def test_process_tool_chunk_commit_failure_emits_no_audit(self, mock_logging_services):
+        """A failed tool commit emits no success audit and rolls back the resource session."""
+        db = MagicMock()
+        db.commit.side_effect = RuntimeError("commit failed")
+        stats = ToolService()._process_tool_chunk(
+            db=db,
+            chunk=[_make_bulk_tool_create(name="commitfailure", team_id="team-a")],
+            conflict_strategy="skip",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="owner@example.com",
+            created_from_ip=None,
+            created_via="import",
+            created_user_agent=None,
+            import_batch_id="failed-batch",
+            federation_source=None,
+            existing_tools_map={},
+        )
+        assert stats["failed"] == 1
+        db.rollback.assert_called_once()
+        db.refresh.assert_not_called()
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
+
+    def test_process_tool_chunk_excludes_late_collisions_from_audit_groups(self, mock_logging_services):
+        """Late collisions cannot contribute rejected tools to successful team audit counts."""
+        service = ToolService()
+        rejected = SimpleNamespace(name="collision", team_id="team-a")
+        accepted = SimpleNamespace(name="accepted", team_id="team-b")
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [rejected]
+        audit = mock_logging_services["audit_trail"].log_action
+        db.commit.side_effect = audit.assert_not_called
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=[{"status": "add", "tool": rejected}, {"status": "add", "tool": accepted}]):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=name) for name in ("collision", "accepted")],
+                conflict_strategy="update",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="owner@example.com",
+                created_from_ip=None,
+                created_via="import",
+                created_user_agent=None,
+                import_batch_id="late-collision-batch",
+                federation_source=None,
+                existing_tools_map={},
+            )
+        assert (stats["created"], stats["failed"]) == (1, 1)
+        db.add_all.assert_called_once_with([accepted])
+        db.execute.assert_called_once()
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["team_id"] == "team-b"
+        assert audit.call_args.kwargs["details"] == {"count": 1, "import_batch_id": "late-collision-batch"}
+        assert "db" not in audit.call_args.kwargs
 
     def test_process_tool_chunk_private_exception_rolls_back(self):
         service = ToolService()
@@ -9803,6 +10111,7 @@ class TestToolServiceBulkImport:
         tool = _make_bulk_tool_create(name="owned-tool")
         existing_tool = SimpleNamespace(
             name=tool.name,
+            team_id="owner-team",
             url="https://old",
             headers={},
             version=1,
@@ -10065,7 +10374,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"}, progress_callback=None)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10107,6 +10416,41 @@ class TestInvokeToolDirect:
         assert result.meta == expected_meta
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("meta_data", [None, {"request_id": "abc-123"}])
+    async def test_invoke_tool_direct_passes_progress_callback(self, tool_service, mock_direct_gateway, meta_data):
+        """The progress callback reaches client.call_tool with and without _meta."""
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
+        callback = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+                progress_callback=callback,
+            )
+
+        assert session_mock.call_tool.await_args.kwargs["progress_callback"] is callback
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
         """Meta data should be forwarded to session.call_tool when provided."""
         expected_result = MagicMock()
@@ -10140,7 +10484,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
@@ -10195,6 +10539,7 @@ class TestInvokeToolDirect:
                 "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
                 "request_id": "abc-123",
             },
+            progress_callback=None,
         )
         assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
@@ -10412,7 +10757,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # The remote call should use the original_name, not the slugified prefixed name
-        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
@@ -10447,7 +10792,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
-        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
+        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):
@@ -10578,6 +10923,7 @@ class TestInvokeToolDirectProxyViaHeader:
             owner_email=None,
             signing_algorithm=None,
             transport="STREAMABLEHTTP",
+            identity_propagation=None,
         )
 
     @pytest.fixture
@@ -10689,6 +11035,60 @@ class TestInvokeToolDirectProxyViaHeader:
 
         # The result should come from the direct proxy path (returned as-is)
         assert result.content[0].text == "direct proxy result"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("gateway_setting", "expect_identity"), [({"enabled": False}, False), ({"enabled": True}, True)])
+    async def test_invoke_tool_direct_proxy_via_header_honours_gateway_identity_setting(self, tool_service, mock_direct_gateway, test_db, monkeypatch, gateway_setting, expect_identity):
+        """The DB gateway's identity_propagation reaches the identity helpers on the header-triggered direct_proxy path."""
+        # Third-Party
+        from cpex.framework import GlobalContext, UserContext
+
+        monkeypatch.setattr("mcpgateway.utils.identity_propagation.settings.identity_propagation_enabled", True)
+        mock_direct_gateway.identity_propagation = gateway_setting
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        session_mock.session.call_tool = session_mock.call_tool
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured["headers"] = kwargs.get("headers", {})
+            yield session_mock
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="alice@example.com", email="alice@example.com"))
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.tool_timeout = 60
+            mock_settings.mcp_session_pool_enabled = False
+            mock_settings.default_passthrough_headers = []
+
+            await tool_service.invoke_tool(
+                test_db,
+                "my_remote_tool",
+                {"arg": "value"},
+                request_headers={"x-context-forge-gateway-id": "gw-dp-1"},
+                user_email="alice@example.com",
+                token_teams=["team-1"],
+                plugin_global_context=context,
+            )
+
+        sent_meta = session_mock.call_tool.call_args.kwargs.get("meta") or {}
+        assert any(k.startswith("X-Forwarded-User") for k in captured["headers"]) is expect_identity
+        assert ("user" in sent_meta) is expect_identity
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_proxy_via_header_keeps_the_result_meta(self, tool_service, mock_direct_gateway, test_db):

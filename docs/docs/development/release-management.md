@@ -135,7 +135,7 @@ The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` i
 
 ```bash
 # uv sync + lockfile upgrade for every pyproject.toml
-# Skips: templates dirs (generated), .venv* dirs, Rust crates (no uv)
+# Skips: templates dirs (generated), .venv* dirs
 find . \
   -name "templates" -prune -o \
   -name ".venv*" -prune -o \
@@ -595,7 +595,7 @@ This produces a CycloneDX XML SBOM (`mcpgateway.sbom.xml`) listing all Python de
 
 ### 9.4 Container security scanning
 
-The CI pipeline (`docker-scan.yml`) builds the container image and generates an SBOM artifact for review. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
+The CI pipeline (`docker-scan.yml`) builds the container image and generates an SBOM artifact for review. For local verification, see also [Section 6.1](#61-production-container-build).
 
 ---
 

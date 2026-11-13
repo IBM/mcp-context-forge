@@ -275,6 +275,9 @@ async def test_delete_gateway_calls_registry_evict_gateway():
         patch("mcpgateway.services.gateway_service.audit_trail"),
     ):
         mock_registry_cache.return_value.invalidate_gateways = AsyncMock()
+        mock_registry_cache.return_value.invalidate_tools = AsyncMock()
+        mock_registry_cache.return_value.invalidate_resources = AsyncMock()
+        mock_registry_cache.return_value.invalidate_prompts = AsyncMock()
         mock_registry_cache.return_value.invalidate_catalog = AsyncMock()
         mock_lookup_cache.return_value.invalidate_gateway = AsyncMock()
         mock_stats_cache.invalidate_tags = AsyncMock()
@@ -347,6 +350,9 @@ async def test_update_gateway_with_url_change_calls_registry_evict_gateway():
         patch("mcpgateway.services.gateway_service.audit_trail"),
     ):
         mock_registry_cache.return_value.invalidate_gateways = AsyncMock()
+        mock_registry_cache.return_value.invalidate_tools = AsyncMock()
+        mock_registry_cache.return_value.invalidate_resources = AsyncMock()
+        mock_registry_cache.return_value.invalidate_prompts = AsyncMock()
         mock_lookup_cache.return_value.invalidate_gateway = AsyncMock()
         mock_stats_cache.invalidate_tags = AsyncMock()
         mock_validate.return_value.masked.return_value = MagicMock()

@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, cast, Dict, List, Optional, Tuple, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -132,12 +132,22 @@ from mcpgateway.routers.openapi_schema_router import router as openapi_schema_ro
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
+    A2APushNotificationConfigRequest,
+    A2ATaskMessageRequest,
+    A2ATaskState,
+    A2ATestErrorResponse,
+    A2ATestRequest,
+    A2ATestResponse,
+    AgentCard,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -177,8 +187,10 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
     CompletionError,
@@ -188,7 +200,7 @@ from mcpgateway.services.completion_service import (
     completion_error_code,
 )
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
@@ -221,6 +233,7 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
@@ -242,9 +255,18 @@ from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import PUBLIC_REASON_CODES, ErrorFormatter, extract_reason_code, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
+from mcpgateway.utils.error_formatter import (
+    PUBLIC_REASON_CODES,
+    ErrorFormatter,
+    extract_reason_code,
+    PublicValidationError,
+    safe_error_detail,
+    sanitize_validation_error_for_log,
+    unexpected_error_detail,
+)
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -262,6 +284,7 @@ from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
     get_auth_header_value,
+    get_request_auth_token,
     is_proxy_auth_trust_active,
     require_admin_auth,
     require_docs_auth_override,
@@ -277,11 +300,21 @@ logger = logging_service.get_logger("mcpgateway")
 # Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
 # startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
-# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
-# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
-if settings.plugins.enabled:
-    enable_plugins(True)
-    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+def _enable_plugin_subsystem_if_configured() -> None:
+    """Enable the in-memory plugin flag when plugin settings mark the subsystem enabled.
+
+    Runs at module load time, mirroring the old singleton pattern.
+    ``get_plugin_manager()`` guards on this flag, so it must be set before lifespan runs.
+    Plugin settings are only consulted when the subsystem is enabled, so invalid
+    plugin configuration never blocks startup while the feature is off.
+    """
+    if settings.plugins.enabled:
+        enable_plugins(True)
+        logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+
+_enable_plugin_subsystem_if_configured()
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -298,24 +331,33 @@ sampling_handler = SamplingHandler()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
-# Initialize A2A service only if A2A features are enabled
-a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+# Created only when A2A is enabled. A2A routes reach handlers only after require_a2a_enabled, so handlers treat it as present.
+a2a_service = cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
-# Wait for redis to be ready
-if settings.cache_type == "redis" and settings.redis_url is not None:
-    # First-Party
-    from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
-    wait_for_redis_ready(
-        redis_url=settings.redis_url,
-        max_retries=int(settings.redis_max_retries),
-        retry_interval_ms=int(settings.redis_retry_interval_ms),
-        ssl_kwargs=_build_ssl_kwargs(settings),
-        sync=True,
-    )
+def _wait_for_redis_at_startup() -> None:
+    """Block until Redis answers when the redis cache backend is configured.
+
+    Runs at module load; a no-op for non-redis backends.
+    """
+    if settings.cache_type == "redis" and settings.redis_url is not None:
+        # First-Party
+        from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+        wait_for_redis_ready(
+            redis_url=settings.redis_url,
+            max_retries=int(settings.redis_max_retries),
+            retry_interval_ms=int(settings.redis_retry_interval_ms),
+            ssl_kwargs=_build_ssl_kwargs(settings),
+            sync=True,
+        )
+
+
+# Wait for redis to be ready
+_wait_for_redis_at_startup()
 
 # Initialize session registry
 session_registry = SessionRegistry(
@@ -417,8 +459,8 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
         if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
-        if auth_context.get("email"):
-            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
+        if auth_context.get("email") or auth_context.get("user_id"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: identity not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -467,6 +509,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     )
 
     return {
+        "user_id": auth_context.get("user_id") or auth_context.get("email"),
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
@@ -512,6 +555,7 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     scoped_server_id = scopes.get("server_id")
 
     context: Dict[str, Any] = {
+        "user_id": email,
         "email": email,
         # Authenticated callers keep their token teams (None == admin bypass); public-only
         # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
@@ -1484,13 +1528,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.expose_error_details:
         logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
 
-    # Start the sandboxed jq worker pool before any service that might invoke
-    # tool response filters is initialised. A failure here (BrokenProcessPool,
-    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
-    # mode) is a hard startup failure and must propagate rather than letting
-    # the gateway boot with a broken or absent sandbox.
+    # Fork the sandbox pools while the process holds no sockets or threads.
+    # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
     start_jq_pool()
     start_validation_pool()
+    start_cel_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -1605,13 +1647,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
-    # Standing subscriptions/listen streams to modern (2026-07-28) servers
-    if settings.gateway_modern_listeners_enabled:
-        if settings.mcp_client_connect_mode == "legacy":
-            logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
-        else:
-            await init_modern_listener_service(_notification_svc).initialize()
-
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -1648,6 +1683,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await start_primary_worker_elector()
             logger.info("Primary-worker elector started (backend=redis)")
 
+        # Standing subscriptions/listen streams to modern (2026-07-28) servers
+        if settings.gateway_modern_listeners_enabled:
+            if settings.mcp_client_connect_mode == "legacy":
+                logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
+            else:
+                if settings.cache_type == "redis" and settings.primary_worker_election_backend == "filelock":
+                    logger.warning("Modern listeners run on the primary worker: one listener per host; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster")
+                await init_modern_listener_service(_notification_svc).initialize()
+
         try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
@@ -1655,7 +1699,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 hook_policies=HOOK_PAYLOAD_POLICIES,
                 observability=None,  # Will be set later if needed
                 db_factory=SessionLocal,
-                cache_ttl=settings.plugin_manager_cache_ttl,
             )
             logger.info("Plugin manager factory initialized")
         except Exception as init_exc:
@@ -2030,6 +2073,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             if modern_listener_service is not None:
                 services_to_shutdown.insert(0, modern_listener_service)
 
+        services_to_shutdown.insert(0, get_resource_subscription_relay())
+
         await shutdown_services(services_to_shutdown)
 
         # Stop the primary-worker elector (releases the redis lease if held).
@@ -2064,6 +2109,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Shut down the sandboxed schema-validation worker pool
         shutdown_validation_pool()
+
+        # Shut down the sandboxed CEL worker pool
+        shutdown_cel_pool()
 
         logger.info("Shutdown complete")
 
@@ -2952,20 +3000,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            raw_token = None
             auth_user_email = None
             auth_user_is_admin = False
 
-            auth_header = get_auth_header_value(request.headers)
-            cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-
-            # Preserve existing precedence: cookie first, then Authorization bearer.
-            if cookie_token:
-                raw_token = cookie_token
-            elif auth_header:
-                scheme, _, credentials_value = auth_header.partition(" ")
-                if scheme.lower() == "bearer" and credentials_value:
-                    raw_token = credentials_value.strip() or None
+            raw_token = get_request_auth_token(request)
 
             if raw_token:
                 try:
@@ -3319,214 +3357,235 @@ class MCPPathRewriteMiddleware:
         return new_path
 
 
-# Configure CORS with environment-aware origins
-cors_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # pylint: disable=redefined-outer-name
+    """Register the HTTP middleware stack on *app* in load-bearing order.
 
-# Ensure we never use wildcard in production
-if settings.environment == "production" and not cors_origins:
-    logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
-    cors_origins = []
+    Starlette executes user middleware in reverse registration order, so the
+    registration sequence below is the reverse of the desired execution order.
+    Extracted from module level so feature-flagged registration can be tested
+    against a bare FastAPI app without re-importing this module.
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["Content-Length", "X-Request-ID", "X-Password-Change-Required"],
-    max_age=600,  # Cache preflight requests for 10 minutes
-)
+    Args:
+        app: The FastAPI application to register middleware on.
 
-# Add response compression middleware (Brotli, Zstd, GZip)
-# Automatically negotiates compression algorithm based on client Accept-Encoding header
-# Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
-# Only compress responses larger than minimum_size to avoid overhead
-# NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
-# compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
-if settings.compression_enabled:
+    Returns:
+        The observability service (``None`` when observability is disabled),
+        the SSO user-provisioning registration flag, and the resolved CORS
+        origins, bound at module level to ``_service`` (read by ``lifespan()``),
+        ``SSO_USER_PROVISIONING_REGISTERED``, and ``cors_origins``.
+    """
+    # Configure CORS with environment-aware origins
+    resolved_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+
+    # Ensure we never use wildcard in production
+    if settings.environment == "production" and not resolved_origins:
+        logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
+        resolved_origins = []
+
     app.add_middleware(
-        SSEAwareCompressMiddleware,
-        minimum_size=settings.compression_minimum_size,
-        gzip_level=settings.compression_gzip_level,
-        brotli_quality=settings.compression_brotli_quality,
-        zstd_level=settings.compression_zstd_level,
-    )
-    logger.info(
-        f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
-        f"gzip_level={settings.compression_gzip_level}, "
-        f"brotli_quality={settings.compression_brotli_quality}, "
-        f"zstd_level={settings.compression_zstd_level}"
-    )
-else:
-    logger.info("🚫 Response compression disabled")
-
-# Add security headers middleware
-app.add_middleware(SecurityHeadersMiddleware)
-
-# Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
-if settings.header_size_validation_enabled:
-    app.add_middleware(HeaderSizeMiddleware)
-    logger.info(
-        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
+        CORSMiddleware,
+        allow_origins=resolved_origins,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["Content-Length", "X-Request-ID", "X-Password-Change-Required"],
+        max_age=600,  # Cache preflight requests for 10 minutes
     )
 
-# Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
-if settings.rate_limiting_enabled:
-    app.add_middleware(RateLimitMiddleware)
-    logger.info(
-        f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
-        f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
-        f"HIGH={settings.rate_limit_high_rpm}, "
-        f"MEDIUM={settings.rate_limit_medium_rpm}, "
-        f"LOW={settings.rate_limit_low_rpm}]"
+    # Add response compression middleware (Brotli, Zstd, GZip)
+    # Automatically negotiates compression algorithm based on client Accept-Encoding header
+    # Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
+    # Only compress responses larger than minimum_size to avoid overhead
+    # NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
+    # compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
+    if settings.compression_enabled:
+        app.add_middleware(
+            SSEAwareCompressMiddleware,
+            minimum_size=settings.compression_minimum_size,
+            gzip_level=settings.compression_gzip_level,
+            brotli_quality=settings.compression_brotli_quality,
+            zstd_level=settings.compression_zstd_level,
+        )
+        logger.info(
+            f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
+            f"gzip_level={settings.compression_gzip_level}, "
+            f"brotli_quality={settings.compression_brotli_quality}, "
+            f"zstd_level={settings.compression_zstd_level}"
+        )
+    else:
+        logger.info("🚫 Response compression disabled")
+
+    # Add security headers middleware
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
+    if settings.header_size_validation_enabled:
+        app.add_middleware(HeaderSizeMiddleware)
+        logger.info(
+            f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
+        )
+
+    # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
+    if settings.rate_limiting_enabled:
+        app.add_middleware(RateLimitMiddleware)
+        logger.info(
+            f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+            f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
+            f"HIGH={settings.rate_limit_high_rpm}, "
+            f"MEDIUM={settings.rate_limit_medium_rpm}, "
+            f"LOW={settings.rate_limit_low_rpm}]"
+        )
+
+    # Add validation middleware if explicitly enabled
+    if settings.validation_middleware_enabled:
+        app.add_middleware(ValidationMiddleware)
+        logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
+    else:
+        logger.info("🔒 Input validation and output sanitization middleware disabled")
+
+    # Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
+    app.add_middleware(MCPProtocolVersionMiddleware)
+
+    # Add token scoping middleware (only when email auth is enabled)
+    if settings.email_auth_enabled:
+        app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
+        # Add streamable HTTP middleware for /mcp routes with token scoping
+        app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
+    else:
+        # Add streamable HTTP middleware for /mcp routes
+        app.add_middleware(MCPPathRewriteMiddleware)
+
+    # Add HTTP authentication hook middleware for plugins (before auth dependencies)
+    # Middleware will get the global plugin manager at request time if factory exists
+    app.add_middleware(HttpAuthMiddleware)
+
+    # Add request logging middleware FIRST (always enabled for gateway boundary logging)
+    # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
+    # Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
+    # Detailed payload logging only runs if log_detailed_requests=True
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        enable_gateway_logging=True,
+        log_detailed_requests=settings.log_requests,
+        log_level=settings.log_level,
+        max_body_size=settings.log_detailed_max_body_size,
+        log_resolve_user_identity=settings.log_resolve_user_identity,
+        log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
+        log_detailed_sample_rate=settings.log_detailed_sample_rate,
     )
 
-# Add validation middleware if explicitly enabled
-if settings.validation_middleware_enabled:
-    app.add_middleware(ValidationMiddleware)
-    logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
-else:
-    logger.info("🔒 Input validation and output sanitization middleware disabled")
+    # Add custom DocsAuthMiddleware
+    app.add_middleware(DocsAuthMiddleware)
 
-# Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
-app.add_middleware(MCPProtocolVersionMiddleware)
+    # Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
+    # This ensures all /admin/* routes (except login/logout) require admin status
+    app.add_middleware(AdminAuthMiddleware)
 
-# Add token scoping middleware (only when email auth is enabled)
-if settings.email_auth_enabled:
-    app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
-    # Add streamable HTTP middleware for /mcp routes with token scoping
-    app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
-else:
-    # Add streamable HTTP middleware for /mcp routes
-    app.add_middleware(MCPPathRewriteMiddleware)
+    # Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
+    # Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
+    # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
+    # This ensures request.base_url reflects the proxy's public host, fixing the
+    # OAuth redirect_uri hint and other URL construction throughout the admin UI.
+    # Registered alongside ProxyHeadersMiddleware with the same trust model.
+    #
+    # Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
+    # ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
+    # already being corrected when deriving the default port for scope["server"].
+    app.add_middleware(ForwardedHostMiddleware)
 
-# Add HTTP authentication hook middleware for plugins (before auth dependencies)
-# Middleware will get the global plugin manager at request time if factory exists
-app.add_middleware(HttpAuthMiddleware)
+    # Trust all proxies (or lock down with a list of host patterns)
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Add request logging middleware FIRST (always enabled for gateway boundary logging)
-# IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
-# Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
-# Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(
-    RequestLoggingMiddleware,
-    enable_gateway_logging=True,
-    log_detailed_requests=settings.log_requests,
-    log_level=settings.log_level,
-    max_body_size=settings.log_detailed_max_body_size,
-    log_resolve_user_identity=settings.log_resolve_user_identity,
-    log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
-    log_detailed_sample_rate=settings.log_detailed_sample_rate,
-)
+    # Add correlation ID middleware if enabled
+    # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
+    if settings.correlation_id_enabled:
+        app.add_middleware(CorrelationIDMiddleware)
+        logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add custom DocsAuthMiddleware
-app.add_middleware(DocsAuthMiddleware)
+    register_auth_context_middleware(app)
 
-# Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
-# This ensures all /admin/* routes (except login/logout) require admin status
-app.add_middleware(AdminAuthMiddleware)
+    # Add token usage logging middleware
+    # This tracks API token usage for analytics and security monitoring
+    # Note: Runs after AuthContextMiddleware so request.state.auth_method is available
+    if settings.token_usage_logging_enabled:
+        # First-Party
+        from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # pylint: disable=import-outside-toplevel
 
-# Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
-# Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
-# but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
-# This ensures request.base_url reflects the proxy's public host, fixing the
-# OAuth redirect_uri hint and other URL construction throughout the admin UI.
-# Registered alongside ProxyHeadersMiddleware with the same trust model.
-#
-# Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
-# ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
-# already being corrected when deriving the default port for scope["server"].
-app.add_middleware(ForwardedHostMiddleware)
+        app.add_middleware(TokenUsageMiddleware)
+        logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
+    else:
+        logger.info("📊 Token usage logging middleware disabled")
 
-# Trust all proxies (or lock down with a list of host patterns)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    # Add observability middleware if enabled
+    # Note: Middleware runs in REVERSE order (last added runs first)
+    # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
+    # Execution order will be: AuthContext -> Observability -> Request Handler
+    # Wire observability adapter into the plugin manager when observability is enabled
+    # The returned service is bound to the module-level `_service` global read by
+    # lifespan(); it is None when this branch doesn't run.
+    observability_service: Optional[Any] = None
+    if settings.observability_enabled:
+        # First-Party
+        from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel
 
-# Add correlation ID middleware if enabled
-# Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
-if settings.correlation_id_enabled:
-    app.add_middleware(CorrelationIDMiddleware)
-    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
+        observability_service = ObservabilityService()
+        app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
+        # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
+        logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
+    else:
+        logger.info("🔍 Observability middleware disabled")
 
+    if otel_tracing_enabled():
+        app.add_middleware(OpenTelemetryRequestMiddleware)
+        logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
+    else:
+        logger.info("🧵 OTEL request tracing middleware disabled")
 
-register_auth_context_middleware(app)
+    # Add OTEL baggage middleware after request tracing middleware so it executes first
+    # and attaches baggage before the request-root span is created.
+    if settings.otel_baggage_enabled and otel_tracing_enabled():
+        # First-Party
+        from mcpgateway.middleware.baggage_middleware import BaggageMiddleware  # pylint: disable=import-outside-toplevel
 
-# Add token usage logging middleware
-# This tracks API token usage for analytics and security monitoring
-# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-if settings.token_usage_logging_enabled:
-    # First-Party
-    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
+        app.add_middleware(BaggageMiddleware)
+        logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
+    elif settings.otel_baggage_enabled and not otel_tracing_enabled():
+        logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
+    else:
+        logger.debug("🧳 OTEL baggage middleware disabled")
 
-    app.add_middleware(TokenUsageMiddleware)
-    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
-else:
-    logger.info("📊 Token usage logging middleware disabled")
+    # Database query logging middleware (for N+1 detection)
+    if settings.db_query_log_enabled:
+        # First-Party
+        from mcpgateway.db import engine  # pylint: disable=import-outside-toplevel
+        from mcpgateway.middleware.db_query_logging import setup_query_logging  # pylint: disable=import-outside-toplevel
 
-# Add observability middleware if enabled
-# Note: Middleware runs in REVERSE order (last added runs first)
-# If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
-# Execution order will be: AuthContext -> Observability -> Request Handler
-# Wire observability adapter into the plugin manager when observability is enabled
-# _service is a module-level global read later in lifespan(); it must always be bound
-# (even when this branch doesn't run at import time) so tests that flip
-# observability_enabled to True after import and then invoke lifespan() don't hit a
-# NameError on the module global.
-_service = None  # pylint: disable=invalid-name
-if settings.observability_enabled:
-    # First-Party
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-    from mcpgateway.services.observability_service import ObservabilityService
+        setup_query_logging(app, engine)
+        logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
+    else:
+        logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
 
-    _service = ObservabilityService()
-    app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
-    # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
-    logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
-else:
-    logger.info("🔍 Observability middleware disabled")
+    # Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
+    sso_user_provisioning_registered = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
+    app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=sso_user_provisioning_registered)
 
-if otel_tracing_enabled():
-    app.add_middleware(OpenTelemetryRequestMiddleware)
-    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
-else:
-    logger.info("🧵 OTEL request tracing middleware disabled")
+    # Client disconnect middleware — MUST be outermost (added last, runs first).
+    # Cancels in-flight request handlers when the client (nginx) closes the connection,
+    # preventing CLOSE_WAIT accumulation and associated memory leaks.
+    if settings.client_disconnect_middleware_enabled:
+        app.add_middleware(ClientDisconnectMiddleware)
+        logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
+    else:
+        logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
 
-# Add OTEL baggage middleware after request tracing middleware so it executes first
-# and attaches baggage before the request-root span is created.
-if settings.otel_baggage_enabled and otel_tracing_enabled():
-    # First-Party
-    from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
-
-    app.add_middleware(BaggageMiddleware)
-    logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
-elif settings.otel_baggage_enabled and not otel_tracing_enabled():
-    logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
-else:
-    logger.debug("🧳 OTEL baggage middleware disabled")
+    return observability_service, sso_user_provisioning_registered, resolved_origins
 
 
-# Database query logging middleware (for N+1 detection)
-if settings.db_query_log_enabled:
-    # First-Party
-    from mcpgateway.db import engine
-    from mcpgateway.middleware.db_query_logging import setup_query_logging
-
-    setup_query_logging(app, engine)
-    logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
-else:
-    logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
-
-# Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
-SSO_USER_PROVISIONING_REGISTERED = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
-app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=SSO_USER_PROVISIONING_REGISTERED)
-
-# Client disconnect middleware — MUST be outermost (added last, runs first).
-# Cancels in-flight request handlers when the client (nginx) closes the connection,
-# preventing CLOSE_WAIT accumulation and associated memory leaks.
-if settings.client_disconnect_middleware_enabled:
-    app.add_middleware(ClientDisconnectMiddleware)
-    logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
-else:
-    logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
+# Bind the globals consumed elsewhere: _service is read by lifespan();
+# SSO_USER_PROVISIONING_REGISTERED is shared with the v1 router build so the
+# pre-auth gate and router never diverge after runtime settings changes.
+_service, SSO_USER_PROVISIONING_REGISTERED, cors_origins = _register_middleware(app)  # pylint: disable=invalid-name
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
@@ -3617,7 +3676,23 @@ server_router = APIRouter(tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
-a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
+
+
+async def require_a2a_enabled(_user=Depends(get_current_user_with_permissions)) -> None:
+    """Reject A2A requests with a typed 404 when A2A is disabled.
+
+    Authentication runs first, so only authenticated callers learn that A2A is off.
+
+    Args:
+        _user: Authenticated user; resolved to enforce authentication before the flag check.
+
+    Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` when A2A is disabled.
+    """
+    raise_if_a2a_disabled()
+
+
+a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"], dependencies=[Depends(require_a2a_enabled)])
 
 # Basic Auth setup
 
@@ -4938,9 +5013,6 @@ async def list_a2a_agents(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    if a2a_service is None:
-        raise HTTPException(status_code=503, detail="A2A service not available")
-
     # Get filtering context from token (respects token scope)
     user_email, token_teams = get_scoped_resource_access_context(request, user)
 
@@ -4977,6 +5049,41 @@ async def list_a2a_agents(
     return data
 
 
+@a2a_router.get("/metrics", response_model=A2AAgentAggregateMetrics)
+@require_permission("a2a.read")
+async def get_a2a_agent_metrics(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AAgentAggregateMetrics:
+    """
+    Retrieve aggregate metrics for the A2A agents visible to the caller.
+
+    Registered before ``/{agent_id}`` so ``metrics`` is not read as an agent ID.
+
+    Args:
+        request (Request): The FastAPI request object for scope derivation.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentAggregateMetrics: Counts, success rate, and response times over visible agents.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. 404 when ``MCPGATEWAY_A2A_METRICS_ENABLED`` is false.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    if not settings.mcpgateway_a2a_metrics_enabled:
+        logger.debug(f"User {safe_log_user(user)} requested A2A metrics while MCPGATEWAY_A2A_METRICS_ENABLED is false")
+        raise HTTPException(status_code=404, detail="A2A metrics are disabled")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if user_email is None and token_teams is None:
+        token_teams = []  # (None, None) selects the unscoped aggregate; fail closed to public-only.
+    return await a2a_service.aggregate_metrics(db, user_email=user_email, token_teams=token_teams)
+
+
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.read")
 async def get_a2a_agent(
@@ -5002,8 +5109,6 @@ async def get_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} requested A2A agent with ID {agent_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
         user_email, token_teams = get_scoped_resource_access_context(request, user)
@@ -5016,6 +5121,52 @@ async def get_a2a_agent(
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@a2a_router.get("/{agent_id}/card", response_model=AgentCard)
+@require_permission("a2a.read")
+async def get_a2a_agent_card(
+    agent_id: str,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Retrieve the A2A AgentCard for an agent or agent-exposing virtual server.
+
+    Resolves ``agent_id`` against standalone A2A agents first, then against
+    virtual servers with an enabled A2A interface, mirroring the internal
+    ``/_internal/a2a/agents/{agent_name}/card`` lookup used by the Rust
+    sidecar. Layer-1 visibility is enforced inside the service calls.
+
+    Args:
+        agent_id (str): The ID of the agent or agent-exposing virtual server.
+        request (Request): The FastAPI request object for team_id retrieval.
+        response (Response): The response object used to set cache headers.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The AgentCard for the resolved agent.
+
+    Raises:
+        HTTPException: If the agent is not found or the caller lacks access.
+    """
+    logger.debug("User %s requested A2A agent card for ID %s", safe_log_user(user), agent_id)
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+
+    # SECURITY: visibility denial must look identical to not-found (PR #4341),
+    # so both branches fall through to the same 404 below.
+    card = await a2a_service.get_agent_card(db, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if card is None:
+        card = A2AServerService().get_server_agent_card(db, server_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if card is None:
+        logger.warning("A2A agent card not found or denied for user %s, ID %s", safe_log_user(user), agent_id)
+        raise HTTPException(status_code=404, detail="agent not found")
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return card
 
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
@@ -5078,8 +5229,6 @@ async def create_a2a_agent(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new A2A agent for team {team_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.register_agent(
             db,
             agent,
@@ -5103,6 +5252,32 @@ async def create_a2a_agent(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating A2A agent: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
+@require_permission("a2a.create")
+async def fetch_a2a_agent_card(
+    payload: A2AFetchCardRequest,
+    request: Request,  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),
+) -> A2AFetchCardResponse:
+    """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
+
+    A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
+    ``auth_required`` or ``unreachable``. A blocked address and a network failure both
+    return ``unreachable``. An unsafe ``path`` or ``baseUrl`` returns 422.
+
+    Args:
+        payload (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        request (Request): The FastAPI request object, used by the RBAC check.
+        user: The authenticated user making the request.
+
+    Returns:
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
+    """
+    result = await fetch_agent_card(str(payload.base_url), payload.path, payload.headers)
+    logger.info(f"User {safe_log_user(user)} fetched A2A agent card from {sanitize_url_for_logging(str(payload.base_url))}: {result.outcome}")
+    return result
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
@@ -5135,8 +5310,6 @@ async def update_a2a_agent(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = get_user_email(user)
         return await a2a_service.update_agent(
             db,
@@ -5190,8 +5363,6 @@ async def set_a2a_agent_state(
     try:
         user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -5252,8 +5423,6 @@ async def delete_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
@@ -5365,6 +5534,362 @@ def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = N
     return body_session_id if isinstance(body_session_id, str) and body_session_id else None
 
 
+A2A_TASKS_DEFAULT_PAGE_SIZE = 50
+A2A_TASKS_MAX_PAGE_SIZE = 100
+A2A_PAGE_TOKEN_MAX_ID_LENGTH = 36
+
+
+def _encode_a2a_page_token(updated_at: datetime, row_id: str) -> str:
+    """Encode the last row of a page as an opaque A2A ``pageToken``."""
+    return base64.urlsafe_b64encode(json.dumps({"u": updated_at.isoformat(), "i": row_id}).encode()).decode()
+
+
+def _decode_a2a_page_token(page_token: Optional[str]) -> Optional[Tuple[datetime, str]]:
+    """Decode an opaque A2A ``pageToken`` into a ``(updated_at, id)`` cursor.
+
+    Args:
+        page_token: Token returned as ``nextPageToken`` by a previous page.
+
+    Returns:
+        The cursor, or None when no token is given.
+
+    Raises:
+        HTTPException: If the token is malformed.
+    """
+    if not page_token:
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(page_token.encode()))
+        updated_at, row_id = payload["u"], payload["i"]
+        if not isinstance(updated_at, str) or not isinstance(row_id, str) or not row_id or len(row_id) > A2A_PAGE_TOKEN_MAX_ID_LENGTH:
+            raise ValueError("invalid cursor field")
+        return datetime.fromisoformat(updated_at), row_id
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid pageToken")
+
+
+def _require_a2a_service() -> A2AAgentService:
+    """Return the A2A service or raise 503 when A2A is disabled."""
+    return a2a_service
+
+
+async def _require_manageable_a2a_agent(service: A2AAgentService, db: Session, request: Request, user: Any, agent_id: str) -> Tuple[Optional[str], Optional[List[str]]]:
+    """Raise 404 unless the caller can see and manage the agent's tasks.
+
+    Returns:
+        The ``(user_email, token_teams)`` visibility scope of the caller.
+
+    Raises:
+        HTTPException: 404 if the agent does not exist, is not visible, or the caller does not own it.
+    """
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if not await service.check_agent_manage_access(db, agent_id, user_email, token_teams):
+        logger.warning("A2A task access denied: user=%s agent=%s path=%s", user_email, agent_id, request.url.path)
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    return user_email, token_teams
+
+
+def _audit_a2a_task_action(request: Request, user: Any, action: str, agent_id: str, task_id: str, details: Optional[Dict[str, Any]] = None) -> None:
+    """Record an audit entry for a mutating A2A task route."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action=action,
+        resource_type="a2a_task",
+        resource_id=task_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
+        details={"agent_id": agent_id, **(details or {})},
+    )
+
+
+@a2a_router.get("/{agent_id}/tasks")
+@require_permission("a2a.read")
+async def list_a2a_tasks(
+    agent_id: str,
+    request: Request,
+    state: Optional[A2ATaskState] = Query(None, description="Filter by task state"),
+    page_size: int = Query(A2A_TASKS_DEFAULT_PAGE_SIZE, alias="pageSize", ge=1, le=A2A_TASKS_MAX_PAGE_SIZE),
+    page_token: Optional[str] = Query(None, alias="pageToken"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List task summaries for an A2A agent with ``pageToken`` pagination.
+
+    Summaries omit ``history`` and ``artifacts``; fetch a single task for those.
+
+    Args:
+        agent_id: Owning agent ID.
+        request: The FastAPI request object.
+        state: Optional task state filter.
+        page_size: Maximum tasks per page.
+        page_token: Opaque token returned as ``nextPageToken`` by the previous page.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict with ``tasks`` and ``nextPageToken`` (empty string on the last page).
+    """
+    service = _require_a2a_service()
+    await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    cursor = _decode_a2a_page_token(page_token)
+    rows = service.list_tasks_page(db, agent_id, state=state.value if state else None, limit=page_size + 1, after=cursor)
+    page = rows[:page_size]
+    next_token = _encode_a2a_page_token(page[-1][1], page[-1][2]) if len(rows) > page_size else ""
+    return {"tasks": [wire for wire, _, _ in page], "nextPageToken": next_token}
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}")
+@require_permission("a2a.read")
+async def get_a2a_task(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get an A2A task.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The task in A2A wire format.
+
+    Raises:
+        HTTPException: 404 if the task does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    user_email, token_teams = await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    task = await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/cancel")
+@require_permission("a2a.invoke")
+async def cancel_a2a_task(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Cancel an A2A task in the gateway's task store.
+
+    The route changes local task state only and does not signal the remote agent.
+    Tasks already in a terminal state are returned unchanged.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The task in A2A wire format.
+
+    Raises:
+        HTTPException: 404 if the task does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    user_email, token_teams = await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    task = await service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _audit_a2a_task_action(request, user, "cancel_a2a_task", agent_id, task_id, {"state": task["status"]["state"]})
+    return task
+
+
+async def _require_visible_a2a_task(service: A2AAgentService, db: Session, request: Request, user: Any, agent_id: str, task_id: str) -> None:
+    """Raise 404 unless the caller can manage the agent and see the task."""
+    user_email, token_teams = await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    if await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams) is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/pushNotificationConfigs", status_code=201)
+@require_permission("a2a.update")
+async def create_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    body: A2APushNotificationConfigRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Create or update a push notification config for a task.
+
+    Returns 201 for a new config and 200 when the ``(agent, task, webhook_url)`` config already exists and is updated.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        body: Webhook configuration.
+        request: The FastAPI request object.
+        response: The FastAPI response object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The stored config. ``auth_token`` is never returned.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    if service.has_push_config(db, agent_id, task_id, body.webhook_url):
+        response.status_code = status.HTTP_200_OK
+    config = service.create_push_config(db, {**body.model_dump(), "a2a_agent_id": agent_id, "task_id": task_id})
+    _audit_a2a_task_action(request, user, "create_a2a_push_config", agent_id, task_id, {"config_id": config.get("id"), "webhook_url": body.webhook_url})
+    return config
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}/pushNotificationConfigs")
+@require_permission("a2a.read")
+async def list_a2a_push_configs(
+    agent_id: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List push notification configs for a task.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict with ``configs``.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    return {"configs": service.list_push_configs(db, agent_id=agent_id, task_id=task_id)}
+
+
+@a2a_router.get("/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}")
+@require_permission("a2a.read")
+async def get_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get one push notification config.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        config_id: Push config ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        The stored config.
+
+    Raises:
+        HTTPException: 404 if the config does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    config = service.find_push_config(db, agent_id, task_id, config_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
+    return config
+
+
+@a2a_router.delete("/{agent_id}/tasks/{task_id}/pushNotificationConfigs/{config_id}")
+@require_permission("a2a.update")
+async def delete_a2a_push_config(
+    agent_id: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Delete a push notification config.
+
+    Args:
+        agent_id: Owning agent ID.
+        task_id: Agent-side task ID.
+        config_id: Push config ID.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        ``{"deleted": True}``.
+
+    Raises:
+        HTTPException: 404 if the config does not exist or is not visible.
+    """
+    service = _require_a2a_service()
+    await _require_visible_a2a_task(service, db, request, user, agent_id, task_id)
+    if not service.delete_push_config(db, config_id, agent_id=agent_id, task_id=task_id):
+        raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
+    _audit_a2a_task_action(request, user, "delete_a2a_push_config", agent_id, task_id, {"config_id": config_id})
+    return {"deleted": True}
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/messages", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@require_permission("a2a.invoke")
+async def send_a2a_task_message(
+    agent_id: str,
+    task_id: str,
+    body: A2ATaskMessageRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Send a follow-up message to an existing task, such as the answer to an input-required task.
+
+    Args:
+        agent_id: Owning agent ID (UUID).
+        task_id: Agent-side task ID.
+        body: The follow-up message, as ``message`` or ``text``.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Tasks have no owner of their own, so the caller must own the agent, like on the cancel route.
+
+    Returns:
+        The agent response, unchanged.
+
+    Raises:
+        HTTPException: 404 if the caller does not own the agent or the task does not exist or is not visible,
+            409 if the task is in a terminal state, 400 if the message names a different task or the agent fails.
+    """
+    service = _require_a2a_service()
+    await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    try:
+        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ATaskStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_task_action(request, user, "continue_a2a_task", agent_id, task_id)
+    return response
+
+
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
 # actually returned are serialized, instead of the whole envelope with nulls filled in.
 @a2a_router.post("/{agent_name}/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
@@ -5396,8 +5921,6 @@ async def invoke_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /jsonrpc endpoint)
         context = _extract_a2a_request_context(request, user)
@@ -5413,6 +5936,51 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post(
+    "/{agent_id}/test",
+    response_model=A2ATestResponse,
+    responses={
+        404: {"model": A2ATestErrorResponse, "description": "Agent not found or not accessible"},
+        422: {"model": A2ATestErrorResponse, "description": "Invalid test parameters. Request body validation failures return the default FastAPI 422 with a list in detail"},
+        500: {"model": A2ATestErrorResponse, "description": "Unexpected error"},
+        502: {"model": A2ATestErrorResponse, "description": "Agent disabled, unreachable or returned an error"},
+    },
+)
+@require_permission("a2a.invoke")
+async def test_a2a_agent(
+    agent_id: str,
+    request: Request,
+    payload: Optional[A2ATestRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Invoke an A2A agent with a test message.
+
+    Error text is fixed and sanitized. ``result`` relays the upstream agent response unchanged. A test call counts in the agent metrics.
+
+    Args:
+        agent_id: Agent ID.
+        request: The FastAPI request object for scope derivation.
+        payload: Optional body carrying a custom test ``query``.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict[str, Any]: ``success``, ``result``, ``agent_name`` and ``test_timestamp``.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. Otherwise 404, 502, 422 or 500 with a
+            ``detail`` object holding ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    outcome = await a2a_service.test_agent(db, agent_id, query=payload.query if payload else None, **_extract_a2a_request_context(request, user))
+    if outcome.status_code != 200:
+        raise HTTPException(status_code=outcome.status_code, detail=outcome.body)
+    return outcome.body
 
 
 @a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
@@ -5448,8 +6016,6 @@ async def invoke_a2a_agent_by_id(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /invoke and /jsonrpc endpoints)
         context = _extract_a2a_request_context(request, user)
@@ -5625,9 +6191,6 @@ async def invoke_a2a_agent_jsonrpc(
             return ORJSONResponse(status_code=400, content=error_response)
 
         logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
-
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /invoke endpoint)
         context = _extract_a2a_request_context(request, user)
@@ -5873,6 +6436,8 @@ async def create_tool(
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ex))
         if isinstance(ex, ToolNameConflictError):
             if not ex.enabled and ex.tool_id:
                 raise HTTPException(
@@ -6603,7 +7168,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.common.models import ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.common.models import BlobResourceContents, ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
@@ -6611,6 +7176,9 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             if payload.get("meta") is None:
                 payload.pop("meta", None)
             return payload
+
+        if isinstance(content, BlobResourceContents):
+            return {"type": "resource", "id": resource_id, **content.model_dump(by_alias=True, exclude_none=True)}
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
@@ -7549,6 +8117,8 @@ async def register_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway registration rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -7690,6 +8260,9 @@ async def update_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway update rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
+
         # Config-validation failures wrap their ValueError/PublicValidationError
         # cause (see update_gateway's final wrap in gateway_service). Answer 400
         # like POST /gateways/ does for the same invalid payload (#7144).
@@ -11753,6 +12326,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
+        elif method == "subscriptions/listen":
+            # Streaming method: only the /mcp transport can serve it.
+            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
             if not mcp_method_registry.is_known_method(method):
@@ -12258,10 +12834,10 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     elif entity.lower() == "prompt":
         await prompt_service.reset_metrics(db)
     elif entity.lower() in ("a2a_agent", "a2a"):
-        if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-            await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
-        else:
-            raise HTTPException(status_code=400, detail="A2A features are disabled")
+        raise_if_a2a_disabled()
+        if not settings.mcpgateway_a2a_metrics_enabled:
+            raise HTTPException(status_code=400, detail="A2A metrics are disabled")
+        await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
@@ -12928,86 +13504,110 @@ app.include_router(server_well_known_router, prefix="/v1/virtual-servers")
 # prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
 app.include_router(openapi_schema_router)
 
-# OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
-try:
-    # First-Party
-    from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(oauth_router)
-    logger.info("OAuth router included")
-except ImportError:
-    logger.debug("OAuth router not available")
-
-# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
-if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
-    try:
-        # First-Party
-        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(vault_router)
-        logger.info(
-            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
-            settings.vault_addr,
-        )
-    except ImportError as e:
-        logger.error("Vault OAuth router not available: %s", e)
-else:
-    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
-
-# A2A agent plugin bindings router
-try:
-    # First-Party
-    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(a2a_agent_plugin_bindings_router)
-    logger.info("A2A agent plugin bindings router included")
-except ImportError as e:
-    logger.error(f"A2A agent plugin bindings router not available: {e}")
-
-# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
-try:
-    # First-Party
-    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(mcp_servers_router)
-    logger.info("MCP servers router included")
-except ImportError as e:
-    logger.error(f"MCP servers router not available: {e}")
-
-# Include log search router if structured logging is enabled
-if getattr(settings, "structured_logging_enabled", True):
-    try:
-        # First-Party
-        from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(log_search_router)
-        logger.info("Log search router included - structured logging enabled")
-    except ImportError as e:
-        logger.warning(f"Failed to import log search router: {e}")
-else:
-    logger.info("Log search router not included - structured logging disabled")
-
-# Include SIEM admin router for destination management and health endpoints
-if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
-    try:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
-        from mcpgateway.routers.siem import router as siem_router
-
-        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
-        logger.info("SIEM router included")
-    except ImportError as e:  # pragma: no cover - optional import guard
-        logger.warning(f"SIEM router not available: {e}")
-else:
-    logger.info("SIEM router not included - admin API or SIEM export disabled")
-
 # NOTE: observability_router and metrics_maintenance_router are mounted via
 # _assemble_routers() → build_v1_router / build_legacy_router above.
 # Direct app.include_router() calls were removed to prevent double-registration
 # and to ensure DeprecationHeadersMiddleware covers their legacy (unversioned) paths.
 
-# LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
-# cannot be nested inside the v1_router prefix
+
+def _include_optional_routers(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Mount unversioned optional routers on *app*.
+
+    Covers OAuth, Vault OAuth, A2A agent plugin bindings, MCP servers REST,
+    log search, SIEM admin, and the LLM proxy. Each mount is guarded by its
+    feature flag and/or import guard so missing optional dependencies degrade
+    to a log line. Extracted from module level so flag- and import-dependent
+    mounting can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to mount routers on.
+    """
+    # OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
+    try:
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(oauth_router)
+        logger.info("OAuth router included")
+    except ImportError:
+        logger.debug("OAuth router not available")
+
+    # Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+    if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+        try:
+            # First-Party
+            from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(vault_router)
+            logger.info(
+                "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+                settings.vault_addr,
+            )
+        except ImportError as e:
+            logger.error("Vault OAuth router not available: %s", e)
+    else:
+        logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
+
+    # A2A agent plugin bindings router
+    try:
+        # First-Party
+        from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(a2a_agent_plugin_bindings_router)
+        logger.info("A2A agent plugin bindings router included")
+    except ImportError as e:
+        logger.error(f"A2A agent plugin bindings router not available: {e}")
+
+    # MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+    try:
+        # First-Party
+        from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(mcp_servers_router)
+        logger.info("MCP servers router included")
+    except ImportError as e:
+        logger.error(f"MCP servers router not available: {e}")
+
+    # Include log search router if structured logging is enabled
+    if getattr(settings, "structured_logging_enabled", True):
+        try:
+            # First-Party
+            from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(log_search_router)
+            logger.info("Log search router included - structured logging enabled")
+        except ImportError as e:
+            logger.warning(f"Failed to import log search router: {e}")
+    else:
+        logger.info("Log search router not included - structured logging disabled")
+
+    # Include SIEM admin router for destination management and health endpoints
+    if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
+        try:
+            # First-Party
+            from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
+            from mcpgateway.routers.siem import router as siem_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
+            logger.info("SIEM router included")
+        except ImportError as e:  # pragma: no cover - optional import guard
+            logger.warning(f"SIEM router not available: {e}")
+    else:
+        logger.info("SIEM router not included - admin API or SIEM export disabled")
+
+    # LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
+    # cannot be nested inside the v1_router prefix
+    if settings.llmchat_enabled:
+        try:
+            # First-Party
+            from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
+
+            _warn_llm_prefix_collision(settings.llm_api_prefix)
+            app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
+            logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
+        except ImportError as e:
+            logger.debug(f"LLM proxy router not available: {e}")
 
 
 def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> None:
@@ -13020,16 +13620,7 @@ def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> 
         )
 
 
-if settings.llmchat_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
-
-        _warn_llm_prefix_collision(settings.llm_api_prefix)
-        app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
-    except ImportError as e:
-        logger.debug(f"LLM proxy router not available: {e}")
+_include_optional_routers(app)
 
 # Feature flags for admin UI (logged for visibility; admin router is inside v1_router)
 UI_ENABLED = settings.mcpgateway_ui_enabled
@@ -13121,76 +13712,93 @@ mcp_transport_app = _build_mcp_transport_app()
 # Streamable http Mount
 app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 
+
+def _register_ui_routes(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Register UI routes (static assets, root redirect, favicon) or the API-info root route.
+
+    When the Admin UI is enabled, static assets are mounted, "/" redirects to
+    "/admin/", and "/favicon.ico" redirects into the static mount. When the UI
+    is disabled, "/" serves basic API info instead. Extracted from module level
+    so the branch can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to register routes on.
+    """
+    # Conditional static files mounting and root redirect
+    if settings.mcpgateway_ui_enabled:
+        # Mount static files for UI
+        logger.info("Mounting static files - UI enabled")
+        try:
+            # Create a sub-application for static files that will respect root_path
+            static_app = StaticFiles(directory=str(settings.static_dir))
+            static_path = "/static"
+
+            app.mount(
+                static_path,
+                static_app,
+                name="static",
+            )
+            logger.info("Static assets served from %s at %s", settings.static_dir, static_path)
+        except RuntimeError as exc:
+            logger.warning(
+                "Static dir %s not found - Admin UI disabled (%s)",
+                settings.static_dir,
+                exc,
+            )
+
+        # Redirect root path to admin UI
+        @app.get("/")
+        async def root_redirect():  # pragma: no cover
+            """
+            Redirects the root path ("/") to "/admin/".
+
+            Logs a debug message before redirecting.
+
+            Returns:
+                RedirectResponse: Redirects to /admin/.
+
+            Raises:
+                HTTPException: If there is an error during redirection.
+            """
+            logger.debug("Redirecting root path to /admin/")
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/admin/", status_code=303)
+            # return RedirectResponse(request.url_for("admin_home"))
+
+        # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon_redirect() -> RedirectResponse:
+            """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
+
+            Returns:
+                RedirectResponse: 301 redirect to /static/favicon.ico.
+            """
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
+    else:
+        # If UI is disabled, provide API info at root
+        logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
+
+        @app.get("/")
+        async def root_info():
+            """
+            Returns basic API information at the root path.
+
+            Logs an info message indicating UI is disabled and provides details
+            about the app, including its name, version, and whether the UI and
+            admin API are enabled.
+
+            Returns:
+                dict: API info with app name, version, and UI/admin API status.
+            """
+            logger.info("UI disabled, serving API info at root path")
+            return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+
+
 # Conditional static files mounting and root redirect
-if UI_ENABLED:
-    # Mount static files for UI
-    logger.info("Mounting static files - UI enabled")
-    try:
-        # Create a sub-application for static files that will respect root_path
-        static_app = StaticFiles(directory=str(settings.static_dir))
-        STATIC_PATH = "/static"
-
-        app.mount(
-            STATIC_PATH,
-            static_app,
-            name="static",
-        )
-        logger.info("Static assets served from %s at %s", settings.static_dir, STATIC_PATH)
-    except RuntimeError as exc:
-        logger.warning(
-            "Static dir %s not found - Admin UI disabled (%s)",
-            settings.static_dir,
-            exc,
-        )
-
-    # Redirect root path to admin UI
-    @app.get("/")
-    async def root_redirect():  # pragma: no cover
-        """
-        Redirects the root path ("/") to "/admin/".
-
-        Logs a debug message before redirecting.
-
-        Returns:
-            RedirectResponse: Redirects to /admin/.
-
-        Raises:
-            HTTPException: If there is an error during redirection.
-        """
-        logger.debug("Redirecting root path to /admin/")
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
-        # return RedirectResponse(request.url_for("admin_home"))
-
-    # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
-    @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon_redirect() -> RedirectResponse:
-        """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
-
-        Returns:
-            RedirectResponse: 301 redirect to /static/favicon.ico.
-        """
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
-
-else:
-    # If UI is disabled, provide API info at root
-    logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
-
-    @app.get("/")
-    async def root_info():
-        """
-        Returns basic API information at the root path.
-
-        Logs an info message indicating UI is disabled and provides details
-        about the app, including its name, version, and whether the UI and
-        admin API are enabled.
-
-        Returns:
-            dict: API info with app name, version, and UI/admin API status.
-        """
-        logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+_register_ui_routes(app)
 
 
 # Expose some endpoints at the root level as well

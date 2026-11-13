@@ -7,3 +7,13 @@
     `/servers/<server_id>/mcp/` directly. stdio clients use the FastMCP
     bridge: `uvx fastmcp-remote <gateway-url>`. See
     [client configuration](using/clients/index.md).
+- Interface: "Rust MCP and A2A runtime sidecars"
+  Removed: "2026-10-29 (EPIC #5817)"
+  Notes: >-
+    Deprecated on 2026-06-11. The runtime proxies, mode-selection settings,
+    Rust build jobs, MCP crate, and Cargo workspace are removed.
+    Use the Python MCP transport and Python A2A invocation path. Remove old
+    Rust runtime settings and sidecars from deployments. See
+    [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md).
+    Deployment cleanup remains tracked in
+    [#7445](https://github.com/IBM/mcp-context-forge/issues/7445).
