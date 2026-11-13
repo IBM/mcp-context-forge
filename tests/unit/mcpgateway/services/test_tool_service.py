@@ -6464,8 +6464,12 @@ class TestInvokeToolCancellationOutcome:
             yield SimpleNamespace(metrics_buffer=metrics_buffer, observability=observability, otel_span=otel_span, set_span_attribute=set_span_attribute)
 
     @pytest.fixture
-    def mcp_session(self, mock_tool, test_db):
-        """Configure ``mock_tool`` as a streamable-HTTP MCP tool on a per-call client, and yield the upstream session mock."""
+    def mcp_session(self, request, mock_tool, test_db):
+        """Configure ``mock_tool`` as an MCP tool on a per-call client, and yield the upstream session mock.
+
+        The transport is ``StreamableHTTP`` unless the test passes ``SSE`` through indirect parametrization.
+        """
+        request_type = getattr(request, "param", "StreamableHTTP")
         # First-Party
         from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
 
@@ -6480,11 +6484,11 @@ class TestInvokeToolCancellationOutcome:
             auth_type="bearer",
             auth_value="Bearer abc123",
             capabilities={"tools": {"listChanged": True}},
-            transport="STREAMABLEHTTP",
+            transport=request_type.upper(),
             passthrough_headers=[],
         )
         mock_tool.integration_type = "MCP"
-        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.request_type = request_type
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_type = None
         mock_tool.auth_value = None
@@ -6675,8 +6679,9 @@ class TestInvokeToolCancellationOutcome:
         self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=None)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("mcp_session", ["StreamableHTTP", "SSE"], indirect=True)
     async def test_cancellation_in_mcp_timeout_post_invoke_keeps_timeout_failure(self, tool_service, mcp_session, test_db, recorders, mock_logging_services):
-        """A cancellation inside the MCP timeout post-invoke hook keeps the timeout's failure record."""
+        """A cancellation inside the MCP timeout post-invoke hook keeps the timeout's failure record on both transports."""
         mcp_session.call_tool.side_effect = TimeoutError()
 
         with (

@@ -349,8 +349,8 @@ def _wait_for_arrival() -> None:
     assert _ProbeUpstream.arrived.wait(timeout=_ARRIVAL_TIMEOUT), "the tool call did not reach the upstream"
 
 
-def _assert_cancellation_recorded(gateway: _Gateway, probe: _Probe, offset: int) -> dict[str, Any]:
-    """Assert one INFO cancellation record, no failure record and no failure metric for the probe tool.
+def _assert_cancellation_recorded(gateway: _Gateway, probe: _Probe, offset: int) -> None:
+    """Assert one INFO cancellation record, no failure record and no execution metric for the probe tool.
 
     The upstream stays blocked until the call outcome is logged. A client
     disconnect reaches the gateway asynchronously, so an earlier release lets the
@@ -360,9 +360,6 @@ def _assert_cancellation_recorded(gateway: _Gateway, probe: _Probe, offset: int)
         gateway: Running gateway.
         probe: Cancelled tool.
         offset: Log offset taken before the call.
-
-    Returns:
-        The tool's ``metrics`` mapping.
     """
     cancelled = f"Tool '{probe.name}' invocation cancelled"
     failed = f"Tool '{probe.name}' invocation failed"
@@ -373,7 +370,7 @@ def _assert_cancellation_recorded(gateway: _Gateway, probe: _Probe, offset: int)
     with _gateway_client(gateway.base_url, gateway.token) as client:
         metrics = _tool_metrics(client, probe)
     assert metrics["failedExecutions"] == 0, metrics
-    return metrics
+    assert metrics["totalExecutions"] == 0, metrics
 
 
 def test_rpc_cancel_records_cancellation(gateway: _Gateway, probe: _Probe):
@@ -397,8 +394,7 @@ def test_rpc_cancel_records_cancellation(gateway: _Gateway, probe: _Probe):
 
     cancelled_payload = call_responses[0].json()
     assert cancelled_payload["error"]["code"] == -32800, cancelled_payload
-    metrics = _assert_cancellation_recorded(gateway, probe, offset)
-    assert metrics["totalExecutions"] == 0, metrics
+    _assert_cancellation_recorded(gateway, probe, offset)
 
 
 async def _stream_until_arrival(url: str, headers: dict[str, str], body: dict[str, Any]) -> None:

@@ -5424,7 +5424,7 @@ class ToolService(BaseService):
         request_state: Optional[str] = None,
     ) -> ToolResult:
         """
-        Invoke a registered tool and record execution metrics, except for a call cancelled in flight.
+        Invoke a registered tool and record execution metrics, except for a call cancelled before a failure is known.
 
         Args:
             db: Database session.
@@ -7351,7 +7351,7 @@ class ToolService(BaseService):
                     )
                 raise
             except asyncio.CancelledError:
-                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
+                # Never wrap a cancellation as a ToolInvocationError.
                 # A failure known before the cancel stays a failure; otherwise the call is a cancellation.
                 cancelled = not (upstream_failed or (tool_result is not None and tool_result.is_error))
                 success = False
