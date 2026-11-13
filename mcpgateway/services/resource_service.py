@@ -43,7 +43,7 @@ from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
 import parse
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -169,17 +169,23 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Optional[Dict[str, Any]] = None) -> "ReadResourceRequest":
-    """Build a ReadResourceRequest that carries _meta when metadata is given.
+#: Upstream ``resources/read`` answers: the contents, or a 2026 MRTR request for input.
+_READ_RESOURCE_RESULT_ADAPTER: TypeAdapter = TypeAdapter(types.ReadResourceResult | types.InputRequiredResult)
+
+
+def _build_read_resource_request(uri: Any, meta_data: Optional[Dict[str, Any]], input_responses: Optional[Any] = None, request_state: Optional[str] = None) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta and any MRTR retry fields.
 
     Args:
         uri: The resource URI to read.
-        meta_data: Optional metadata to place in the request ``_meta``.
+        meta_data: Metadata to place in the request ``_meta``, or ``None``.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
         The request to send upstream.
     """
-    _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
+    _rp_dict = ReadResourceRequestParams(uri=uri, input_responses=input_responses, request_state=request_state).model_dump(by_alias=True)
     if meta_data:
         _rp_dict["_meta"] = meta_data
     return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
@@ -206,28 +212,53 @@ def set_upstream_cache_directive(result: Any) -> None:
     upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
-async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]], progress_callback: ProgressFnT | None = None) -> Any:
-    """Dispatch read_resource, injecting _meta and relaying upstream progress when requested.
+async def _read_resource_with_meta(
+    session: "ClientSession",
+    uri: Any,
+    meta_data: Optional[Dict[str, Any]],
+    progress_callback: ProgressFnT | None = None,
+    input_responses: Optional[Any] = None,
+    request_state: Optional[str] = None,
+) -> Any:
+    """Dispatch read_resource, injecting _meta, relaying upstream progress, and carrying any MRTR retry fields.
 
     The client's progress token never goes upstream. When a callback is set, the SDK stamps its own token.
 
     Args:
         session: The upstream client session.
         uri: The resource URI to read.
-        meta_data: Optional metadata to place in the request ``_meta``.
+        meta_data: Metadata to place in the request ``_meta``, or ``None``.
         progress_callback: Optional callback that receives upstream progress notifications.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
-        The upstream ``ReadResourceResult``.
+        The raw upstream result: a ``ReadResourceResult`` or an ``InputRequiredResult``.
     """
     meta_data = without_progress_token(meta_data)
-    if meta_data or progress_callback:
+    if meta_data or progress_callback or input_responses or request_state:
         return await session.send_request(
-            _build_read_resource_request(uri, meta_data),
-            types.ReadResourceResult,
+            _build_read_resource_request(uri, meta_data, input_responses, request_state),
+            _READ_RESOURCE_RESULT_ADAPTER,
             progress_callback=progress_callback,
         )
-    return await session.read_resource(uri=uri)
+    return await session.read_resource(uri=uri, allow_input_required=True)
+
+
+def _raise_if_input_required(remote_result: Any) -> None:
+    """Turn an upstream input-required answer into the ``ResourceInputRequired`` signal.
+
+    Args:
+        remote_result: The raw upstream result.
+
+    Raises:
+        ResourceInputRequired: If the upstream asks for input before serving the resource.
+
+    Examples:
+        >>> _raise_if_input_required(types.ReadResourceResult(contents=[]))
+    """
+    if isinstance(remote_result, types.InputRequiredResult):
+        raise ResourceInputRequired(remote_result)
 
 
 def _upstream_resource_content(result: types.ReadResourceResult) -> str | types.BlobResourceContents:
@@ -245,6 +276,22 @@ def _upstream_resource_content(result: types.ReadResourceResult) -> str | types.
 
 class ResourceError(Exception):
     """Base class for resource-related errors."""
+
+
+class ResourceInputRequired(ResourceError):
+    """Control-flow signal: the upstream answered ``resources/read`` with an input-required result (2026 MRTR).
+
+    The caller decides whether to relay the result to a modern client or refuse it for a legacy one.
+    """
+
+    def __init__(self, result: "types.InputRequiredResult") -> None:
+        """Keep the upstream result for the caller.
+
+        Args:
+            result: The ``InputRequiredResult`` the upstream returned.
+        """
+        super().__init__("Input required by the upstream resource")
+        self.result = result
 
 
 class ResourceUpstreamError(ResourceError):
@@ -1852,6 +1899,8 @@ class ResourceService(BaseService):
         server_id: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1897,6 +1946,10 @@ class ResourceService(BaseService):
                 the RFC 8693 subject_token from the caller's Authorization bearer.
             progress_callback (ProgressFnT | None):
                 Optional callback that receives upstream progress notifications for the read.
+            input_responses (Optional[Any]):
+                Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state (Optional[str]):
+                Opaque state from a prior input-required result, echoed to the upstream on the retry.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` when
@@ -2254,9 +2307,12 @@ class ResourceService(BaseService):
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
-                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None)
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None, input_responses, request_state)
+                                    _raise_if_input_required(resource_response)
                                     set_upstream_cache_directive(resource_response)
                                     return _upstream_resource_content(resource_response)
+                                except ResourceInputRequired:
+                                    raise
                                 except Exception as exc:
                                     if attempt == max_read_attempts:
                                         raise
@@ -2339,7 +2395,12 @@ class ResourceService(BaseService):
                                     ) as client:
                                         resource_content = await _read_resource_content_with_retry(client.session, uri, "SSE")
                                         resource_received = True
+                            except ResourceInputRequired:
+                                raise
                             except Exception as e:
+                                wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                                if isinstance(wrapped, ResourceInputRequired):
+                                    raise wrapped from e
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
@@ -2410,10 +2471,16 @@ class ResourceService(BaseService):
                                         timeout=settings.health_check_timeout,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as client:
-                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback, input_responses, request_state)
+                                        _raise_if_input_required(resource_response)
                                         set_upstream_cache_directive(resource_response)
                                         return _upstream_resource_content(resource_response)
+                            except ResourceInputRequired:
+                                raise
                             except Exception as e:
+                                wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                                if isinstance(wrapped, ResourceInputRequired):
+                                    raise wrapped from e
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
@@ -2435,6 +2502,10 @@ class ResourceService(BaseService):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_content}))
                         success = True  # Mark as successful before returning
                         return resource_content
+                    except ResourceInputRequired:
+                        # An upstream question is one round of a successful read, not a failure.
+                        success = True
+                        raise
                     except Exception as e:
                         success = False
                         error_message = str(e)
@@ -2473,6 +2544,8 @@ class ResourceService(BaseService):
         meta_data: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
@@ -2490,6 +2563,8 @@ class ResourceService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
             request_headers: Optional inbound request headers, forwarded to invoke_resource()
+            input_responses: Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state: Opaque state from a prior input-required result, echoed to the upstream on the retry.
                 so token-exchange gateways can resolve the RFC 8693 subject_token.
             progress_callback: Optional callback that receives upstream progress notifications, forwarded to invoke_resource().
 
@@ -2748,7 +2823,8 @@ class ResourceService(BaseService):
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
-                                result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
+                                result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback, input_responses, request_state)
+                                _raise_if_input_required(result)
                                 set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
@@ -2780,7 +2856,12 @@ class ResourceService(BaseService):
                                 )
                                 # Skip the rest of the DB lookup logic
 
+                        except ResourceInputRequired:
+                            raise
                         except Exception as e:
+                            wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                            if isinstance(wrapped, ResourceInputRequired):
+                                raise wrapped from e
                             sanitized_error = sanitize_exception_message(str(e))
                             logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, sanitized_error)
                             raise ResourceError(DIRECT_PROXY_RESOURCE_ERROR_MESSAGE) from e
@@ -2963,7 +3044,11 @@ class ResourceService(BaseService):
                             server_id=server_id,
                             request_headers=request_headers,
                             progress_callback=progress_callback,
+                            input_responses=input_responses,
+                            request_state=request_state,
                         )
+                    except ResourceInputRequired:
+                        raise
                     except ResourceError:
                         if has_valid_cached_fallback:
                             logger.warning("Gateway resource refresh failed; serving cached content for resource '%s'", getattr(resource_db, "id", None))
@@ -3023,6 +3108,10 @@ class ResourceService(BaseService):
 
                 success = True
                 return content
+            except ResourceInputRequired:
+                # An upstream question is one round of a successful read, not a failure.
+                success = True
+                raise
             except Exception as e:
                 success = False
                 error_message = str(e)

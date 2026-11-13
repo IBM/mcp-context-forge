@@ -12286,6 +12286,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12313,6 +12314,7 @@ class TestProxyFunctions:
         mock_result.cache_scope = "public"
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
         tr.request_headers_var.set({})
@@ -12341,6 +12343,8 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.send_request = AsyncMock(return_value=mock_result)  # _meta goes through send_request
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12353,8 +12357,9 @@ class TestProxyFunctions:
 
         assert len(result) == 1
         # Verify read_resource was called with meta kwarg
-        mock_session.read_resource.assert_called_once_with("file:///test.txt", meta=meta_data)
-        mock_session.send_request.assert_not_called()
+        request = mock_session.send_request.call_args[0][0]
+        assert request.params.uri == "file:///test.txt"
+        assert request.params.meta == meta_data
 
     @pytest.mark.asyncio
     async def test_proxy_read_resource_forwards_gateway_id_header(self):
@@ -12369,6 +12374,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12393,6 +12399,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12475,6 +12482,7 @@ class TestProxyUpstreamAuthorizationRename:
             mock_session.list_resources = AsyncMock(return_value=mock_result)
         else:
             mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
         return mock_session
