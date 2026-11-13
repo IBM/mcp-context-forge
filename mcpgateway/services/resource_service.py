@@ -89,6 +89,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
@@ -122,8 +123,9 @@ MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
 def _standing_stream_can_reach(gateway: DbGateway) -> bool:
     """Return whether a standing upstream stream reaches ``gateway`` with its stored headers alone.
 
-    SSE is legacy-only. OAuth needs a per-user token. Query-parameter auth, a private CA,
-    and mTLS need connection setup that the relay client does not perform.
+    SSE is legacy-only. OAuth needs a per-user token. SigV4 needs a per-request signature.
+    Query-parameter auth, a private CA, and mTLS need connection setup that the relay client
+    does not perform.
 
     Args:
         gateway: Registered upstream server row.
@@ -138,8 +140,10 @@ def _standing_stream_can_reach(gateway: DbGateway) -> bool:
         False
         >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", client_cert="pem"))
         False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="sigv4"))
+        False
     """
-    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param"):
+    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param", "sigv4"):
         return False
     return not (gateway.ca_certificate or gateway.client_cert)
 
@@ -2109,6 +2113,10 @@ class ResourceService(BaseService):
                         gateway_oauth_config = gateway.oauth_config
                         gateway_name = gateway.name
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
+                        try:
+                            gateway_sigv4_auth = build_gateway_sigv4_auth(gateway_auth_type, getattr(gateway, "sigv4_config", None))
+                        except SigV4ConfigError as sigv4_exc:
+                            raise ResourceError("Stored SigV4 credentials could not be loaded for the resource gateway") from sigv4_exc
 
                         # Apply query param auth to URL if applicable
                         auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -2324,7 +2332,7 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.SSE,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as upstream:
                                         resource_content = await _read_resource_content_with_retry(upstream.session, uri, "SSE")
                                         resource_received = True
@@ -2334,7 +2342,7 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         timeout=settings.health_check_timeout,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                         transport="sse",
                                     ) as client:
                                         resource_content = await _read_resource_content_with_retry(client.session, uri, "SSE")
@@ -2398,7 +2406,7 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.STREAMABLE_HTTP,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as upstream:
                                         resource_content = await _read_resource_content_with_retry(upstream.session, uri, "StreamableHTTP")
                                         resource_received = True
@@ -2408,7 +2416,7 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         timeout=settings.health_check_timeout,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as client:
                                         resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)
                                         set_upstream_cache_directive(resource_response)
@@ -2746,6 +2754,7 @@ class ResourceService(BaseService):
                                 url=gateway.url,
                                 headers=headers,
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
+                                httpx_client_factory=sigv4_client_factory(build_gateway_sigv4_auth(gateway.auth_type, getattr(gateway, "sigv4_config", None))),
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
                                 result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback)

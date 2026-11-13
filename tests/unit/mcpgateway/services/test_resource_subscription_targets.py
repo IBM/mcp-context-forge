@@ -111,10 +111,11 @@ async def test_uri_outside_virtual_server_is_dropped(db):
         ({"enabled": False}, {}),
         ({}, {"enabled": False}),
         ({"auth_type": "query_param"}, {}),
+        ({"auth_type": "sigv4"}, {}),
         ({"ca_certificate": "-----BEGIN CERTIFICATE-----"}, {}),
         ({"client_cert": "-----BEGIN CERTIFICATE-----"}, {}),
     ],
-    ids=["sse-gateway", "oauth-gateway", "disabled-gateway", "disabled-resource", "query-param-auth", "private-ca", "mtls"],
+    ids=["sse-gateway", "oauth-gateway", "disabled-gateway", "disabled-resource", "query-param-auth", "sigv4-auth", "private-ca", "mtls"],
 )
 async def test_unwatchable_resources_are_dropped(db, gateway_overrides, resource_overrides):
     """Upstreams a standing stream cannot reach with stored headers alone, disabled gateways, and disabled resources are not honored."""

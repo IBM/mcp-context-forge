@@ -3882,6 +3882,45 @@ class TestAdminGatewayRoutes:
         gateway_update = call_args[1].get("gateway") or call_args[0][2]
         assert gateway_update.team_id == existing_team_id
 
+    @pytest.mark.parametrize(
+        "stored_auth_type, form_auth_type, expected",
+        [
+            ("sigv4", "", None),
+            ("sigv4", "bearer", "bearer"),
+            ("bearer", "", ""),
+        ],
+        ids=["sigv4-empty-keeps-stored", "sigv4-explicit-switch-allowed", "other-type-empty-still-clears"],
+    )
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_empty_auth_type_keeps_sigv4(self, mock_update_gateway, mock_request, mock_db, monkeypatch, stored_auth_type, form_auth_type, expected):
+        """An empty auth_type from the edit form must not clear a stored SigV4 gateway."""
+        form = {"name": "gw", "url": "http://example.com:9000/mcp", "transport": "STREAMABLEHTTP", "visibility": "private", "auth_type": form_auth_type}
+        if form_auth_type == "bearer":
+            form["auth_token"] = "new-token"  # pragma: allowlist secret
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+
+        mock_existing_gw = MagicMock()
+        mock_existing_gw.team_id = "team-1"
+        mock_existing_gw.auth_type = stored_auth_type
+        mock_db.get.return_value = mock_existing_gw
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        result = await admin_edit_gateway("gateway-99", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        call_args = mock_update_gateway.call_args
+        gateway_update = call_args[1].get("gateway") or call_args[0][2]
+        assert gateway_update.auth_type == expected
+        assert gateway_update.sigv4_config is None
+
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
         """Test setting gateway state with simulated concurrent calls."""

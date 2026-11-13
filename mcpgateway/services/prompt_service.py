@@ -72,6 +72,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
@@ -478,6 +479,11 @@ class PromptService(BaseService):
         gateway_url = str(gateway.url)
         headers = build_gateway_auth_headers(gateway)
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        try:
+            signing_auth = build_gateway_sigv4_auth(getattr(gateway, "auth_type", None), getattr(gateway, "sigv4_config", None))
+        except SigV4ConfigError as exc:
+            raise PromptError(f"Stored SigV4 credentials could not be loaded for prompt gateway '{gateway.id}'") from exc
+        sigv4_factory = sigv4_client_factory(signing_auth)
 
         if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
             auth_query_params_decrypted = {}
@@ -515,6 +521,7 @@ class PromptService(BaseService):
                         url=gateway_url,
                         headers=headers,
                         transport_type=registry_transport_type,
+                        httpx_client_factory=sigv4_factory,
                     ) as upstream:
                         remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback)
                         return PromptResult(
@@ -530,6 +537,7 @@ class PromptService(BaseService):
                     url=gateway_url,
                     headers=headers,
                     timeout=settings.health_check_timeout,
+                    httpx_client_factory=sigv4_factory,
                     transport="sse",
                 ) as client:
                     remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
@@ -538,6 +546,7 @@ class PromptService(BaseService):
                     url=gateway_url,
                     headers=headers,
                     timeout=settings.health_check_timeout,
+                    httpx_client_factory=sigv4_factory,
                 ) as client:
                     remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
 

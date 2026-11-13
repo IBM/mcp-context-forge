@@ -121,6 +121,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -4334,6 +4335,16 @@ class ToolService(BaseService):
 
             gateway_url = gateway.url
 
+            # SigV4 gateways sign every upstream request; build the signer while the ORM row is loaded.
+            direct_proxy_sigv4_auth = None
+            if getattr(gateway, "auth_type", None) == "sigv4":
+                try:
+                    direct_proxy_sigv4_auth = build_stored_sigv4_auth(getattr(gateway, "sigv4_config", None))
+                except SigV4ConfigError as sigv4_exc:
+                    raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+                if direct_proxy_sigv4_auth is None:
+                    raise ToolInvocationError("SigV4 gateway has no stored credentials")
+
             # Snapshot auth_query_params while the ORM session is still open so
             # sanitize_exception_message can redact secrets if the downstream call fails.
             _gw_auth_type = getattr(gateway, "auth_type", None)
@@ -4425,7 +4436,7 @@ class ToolService(BaseService):
                     url=gateway_url,
                     headers=traced_headers,
                     timeout=settings.mcpgateway_direct_proxy_timeout,
-                    httpx_client_factory=get_httpx_client_factory,
+                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, direct_proxy_sigv4_auth),
                 ) as client:
                     with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                         pass  # Client auto-initializes on first RPC call
@@ -5237,6 +5248,7 @@ class ToolService(BaseService):
                     "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
+                    "sigv4_config": getattr(gateway, "sigv4_config", None),
                     "ca_certificate": gateway.ca_certificate,
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
@@ -5562,6 +5574,7 @@ class ToolService(BaseService):
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
         gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
+        gateway_sigv4_config = gateway_payload.get("sigv4_config") if has_gateway and isinstance(gateway_payload.get("sigv4_config"), dict) else None
         if has_gateway and gateway is not None:
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
             if isinstance(runtime_gateway_auth_value, dict):
@@ -5574,6 +5587,9 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+            runtime_gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
+            if isinstance(runtime_gateway_sigv4_config, dict):
+                gateway_sigv4_config = runtime_gateway_sigv4_config
         # MCP invoke path: cert params come from the serialized gateway_payload dict
         # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
@@ -5588,7 +5604,7 @@ class ToolService(BaseService):
         # (tool is None), hydrate auth-related fields from DB only when needed.
         if tool is None:
             requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
-            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
+            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param", "sigv4"}
             if requires_tool_auth_hydration or requires_gateway_auth_hydration:
                 tool_id_for_hydration = tool_payload.get("id")
                 if tool_id_for_hydration:
@@ -5612,6 +5628,9 @@ class ToolService(BaseService):
                             hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
                             if isinstance(hydrated_gateway_oauth_config, dict):
                                 gateway_oauth_config = hydrated_gateway_oauth_config
+                            hydrated_gateway_sigv4_config = getattr(tool_auth_row.gateway, "sigv4_config", None)
+                            if isinstance(hydrated_gateway_sigv4_config, dict):
+                                gateway_sigv4_config = hydrated_gateway_sigv4_config
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -5629,6 +5648,16 @@ class ToolService(BaseService):
             # Apply query params to gateway URL
             if gateway_auth_query_params_decrypted and gateway_url:
                 gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
+
+        # SigV4 gateways sign each upstream request; the signer lives for this invocation only.
+        gateway_sigv4_auth = None
+        if has_gateway and gateway_auth_type == "sigv4":
+            try:
+                gateway_sigv4_auth = build_stored_sigv4_auth(gateway_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+            if gateway_sigv4_auth is None:
+                raise ToolInvocationError("SigV4 gateway has no stored credentials")
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -6526,7 +6555,7 @@ class ToolService(BaseService):
                                     url=server_url,
                                     headers=headers,
                                     transport_type=TransportType.SSE,
-                                    httpx_client_factory=get_httpx_client_factory,
+                                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await _call_upstream_tool(
@@ -6573,7 +6602,7 @@ class ToolService(BaseService):
                                         url=server_url,
                                         headers=request_headers,
                                         timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                         transport="sse",
                                     ) as client:
                                         with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
@@ -6763,7 +6792,7 @@ class ToolService(BaseService):
                                     url=server_url,
                                     headers=headers,
                                     transport_type=registry_transport_type,
-                                    httpx_client_factory=get_httpx_client_factory,
+                                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await _call_upstream_tool(
@@ -6811,7 +6840,7 @@ class ToolService(BaseService):
                                         url=server_url,
                                         headers=request_headers,
                                         timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as client:
                                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                                             pass  # Client auto-initializes on first RPC call
