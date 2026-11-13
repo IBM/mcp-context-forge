@@ -10,11 +10,14 @@
 # reflect the tree at that pick), so the rebased baseline can drift from a
 # scan of the final tree. Refreshing once, at the end, closes the gap.
 #
-# Chaining: if <git-common-dir>/hooks/post-rewrite.chain exists, it is run
-# after this hook with the same arguments and a copy of stdin. The install
-# target (make install-post-rewrite-detect-secrets-hook) moves any pre-existing foreign
+# Chaining (file-based install, Git < 2.54): if
+# <git-common-dir>/hooks/post-rewrite.chain exists, it is run after this hook
+# with the same arguments and a copy of stdin. The install target (make
+# install-post-rewrite-detect-secrets-hook) moves any pre-existing foreign
 # post-rewrite hook there instead of overwriting it; the marker comment on
-# line 2 is how the target recognizes this hook as ours on reinstall.
+# line 2 is how the target recognizes this hook as ours on reinstall. On
+# Git >= 2.54 the target registers this script as a config hook instead
+# (hook.<name>.command/event) and Git runs other hooks itself.
 #
 # Like the merge driver, this hook is installed (copied into
 # <git-common-dir>/hooks/) and must not depend on the tree's Makefile: the
@@ -169,7 +172,13 @@ refresh_secrets_baseline() {
     fi
 
     git add .secrets.baseline
-    echo "✅ .secrets.baseline refreshed" >&2
+    # Runs after the rebase completes, so HEAD is the final rebased commit.
+    # Pathspec limits the amend to the baseline; other staged changes stay out.
+    if ! git commit --amend --no-edit -q -- .secrets.baseline; then
+        echo "⚠️  could not amend HEAD with refreshed .secrets.baseline; amend manually" >&2
+        return 0
+    fi
+    echo "✅ .secrets.baseline refreshed and amended into HEAD" >&2
 }
 
 # A post-rewrite hook must never fail the rebase; downgrade all failures
