@@ -1832,7 +1832,8 @@ class ToolService(BaseService):
             tool_dict["headers"] = _decrypt_tool_headers_for_runtime(headers)
             headers = tool_dict["headers"]
             can_view = requesting_user_is_admin
-            if not can_view and getattr(tool, "owner_email", None) == requesting_user_email:
+            owner_email = getattr(tool, "owner_email", None)
+            if not can_view and owner_email and requesting_user_email and owner_email == requesting_user_email:
                 can_view = True
             if (
                 not can_view
