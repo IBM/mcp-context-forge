@@ -643,6 +643,32 @@ class TestGetManager:
             result = await factory.get_manager("ctx")
             assert result is mock_manager
 
+    @pytest.mark.asyncio
+    async def test_cancelling_one_waiter_does_not_cancel_shared_build(self, factory):
+        """Cancelling one of two concurrent waiters must not cancel the shared initialization."""
+        release = asyncio.Event()
+        built = MagicMock()
+
+        async def blocking_build(context_id):
+            await release.wait()
+            factory._managers[context_id] = built
+            return built
+
+        with patch.object(factory, "_build_manager", side_effect=blocking_build):
+            first = asyncio.create_task(factory.get_manager("team::tool"))
+            second = asyncio.create_task(factory.get_manager("team::tool"))
+            for _ in range(5):
+                await asyncio.sleep(0)
+
+            first.cancel()
+            release.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            result = await second
+
+        assert result is built
+
 
 # ---------------------------------------------------------------------------
 # reload_tenant

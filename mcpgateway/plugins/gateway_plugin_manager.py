@@ -146,7 +146,9 @@ class TenantPluginManagerFactory:
                 self._inflight[context_id] = inflight
 
         try:
-            manager = await inflight
+            # Shield the shared build so cancelling this waiter does not cancel it for others.
+            # Explicit cancellation (shutdown/invalidation) still cancels `inflight` directly.
+            manager = await asyncio.shield(inflight)
             async with self._lock:
                 entry = self._managers.get(context_id)
                 if entry is not None:
