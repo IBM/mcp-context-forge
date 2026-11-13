@@ -5468,8 +5468,8 @@ class ToolService(BaseService):
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
-            asyncio.CancelledError: Propagated unchanged. A call cancelled before an upstream
-                result exists logs at INFO and records no execution metric.
+            asyncio.CancelledError: Propagated unchanged. A call cancelled before a failure is
+                known logs at INFO and records no execution metric.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -5753,6 +5753,7 @@ class ToolService(BaseService):
         start_time = time.monotonic()
         success = False
         cancelled = False
+        upstream_failed = False
         error_message = None
         tool_result: Optional[ToolResult] = None
         tool_team_scope = format_trace_team_scope(token_teams)
@@ -6097,6 +6098,7 @@ class ToolService(BaseService):
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6481,6 +6483,7 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
                         tracing_active = otel_context_active()
@@ -6630,6 +6633,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6723,6 +6727,7 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
                         tracing_active = otel_context_active()
@@ -6867,6 +6872,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -7019,11 +7025,12 @@ class ToolService(BaseService):
                             structured = dump.get("structuredContent")
                             if structured is None:
                                 structured = dump.get("structured_content")
-                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
-
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
+                            upstream_failed = bool(is_err)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
+
                             # A refused or timed-out filter must be reported as an error here
                             # too. Without this the refusal string was recorded as a successful
                             # invocation carrying it as if it were real tool output.
@@ -7141,6 +7148,7 @@ class ToolService(BaseService):
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -7201,6 +7209,7 @@ class ToolService(BaseService):
                         # PR #3202 review B7.
                         raise
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        upstream_failed = True
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
                             await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
@@ -7343,8 +7352,9 @@ class ToolService(BaseService):
                 raise
             except asyncio.CancelledError:
                 # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
-                # Once an upstream result exists, its success or failure stays the recorded outcome.
-                cancelled = tool_result is None
+                # A failure known before the cancel stays a failure; otherwise the call is a cancellation.
+                cancelled = not (upstream_failed or (tool_result is not None and tool_result.is_error))
+                success = False
                 raise
             except ToolInputRequired:
                 # 2026 MRTR control flow, not a failure - let the transport handle it.
