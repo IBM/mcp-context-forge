@@ -465,6 +465,16 @@ Notes on the suggested mapping:
 The fetch applies the SSRF settings (`SSRF_ALLOW_LOCALHOST`, `SSRF_ALLOW_PRIVATE_NETWORKS`, `SSRF_BLOCKED_NETWORKS`, `SSRF_ALLOWED_NETWORKS`), does not follow redirects,
 pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends after `FEDERATION_TIMEOUT` seconds in total, including DNS resolution and every candidate URL.
 
+## Stored Agent Cards
+
+`POST /a2a` accepts an optional `card_url`. The gateway fetches the card, as `POST /a2a/fetch-card` does, and stores it as the next version in the `a2a_agent_cards` table. A missing card fails the registration and creates nothing. A client cannot send a card document.
+
+The gateway sends the registration credentials (`basic`, `bearer`, `authheaders`) to `card_url` only when `card_url` has the same origin as `endpoint_url`.
+
+`GET /a2a/{agent_id}/stored-card` returns the current stored card. It needs `a2a.read` and applies the same visibility rules as the agent read. It returns 404 when the agent has no stored card.
+
+**Visibility of stored cards.** The route does not check how the card was fetched. A card fetched with registration credentials is readable by every caller who has `a2a.read` and can see the agent. For a `team` or `public` agent, that includes every team member or every user. Do not register a card behind credentials with a `team` or `public` agent if its content is confidential. Use `private` visibility instead.
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents

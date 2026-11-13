@@ -15,7 +15,7 @@ cannot reveal which hosts the gateway can or cannot reach.
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from urllib.parse import urlparse
 
 # Third-Party
@@ -42,6 +42,40 @@ _AUTH_SCHEME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,32}$")
 _DEFAULT_PROTOCOL_BINDING = "JSONRPC"
 
 _AUTH_TYPE_BY_HTTP_SCHEME = {"basic": "basic", "bearer": "bearer"}
+
+
+_MAX_AGE_RE = re.compile(r"(?:^|[,\s])max-age=(\d+)", re.IGNORECASE)
+
+
+class CardResponse(NamedTuple):
+    """Outcome of one guarded card GET."""
+
+    status: Optional[int]
+    document: Any = None
+    challenge: Optional[str] = None
+    etag: Optional[str] = None
+    max_age: Optional[int] = None
+
+
+def parse_max_age(cache_control: Optional[str]) -> Optional[int]:
+    """Extract ``max-age`` seconds from a ``Cache-Control`` header value.
+
+    Args:
+        cache_control: Raw header value, or ``None``.
+
+    Returns:
+        The max-age in seconds, or ``None`` when absent.
+
+    Examples:
+        >>> parse_max_age("public, max-age=300")
+        300
+        >>> parse_max_age("no-store") is None
+        True
+        >>> parse_max_age(None) is None
+        True
+    """
+    match = _MAX_AGE_RE.search(cache_control or "")
+    return int(match.group(1)) if match else None
 
 
 class CardPathError(ValueError):
@@ -615,7 +649,7 @@ def _challenge_scheme(challenge: Optional[str]) -> Optional[str]:
     return parts[0] if parts and _AUTH_SCHEME_RE.match(parts[0]) else None
 
 
-async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[str, str]) -> Tuple[Optional[int], Any, Optional[str]]:
+async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[str, str]) -> CardResponse:
     """Stream one response and parse it, bounding the raw (undecoded) bytes read.
 
     Args:
@@ -625,24 +659,24 @@ async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[s
         request_headers: Headers to send.
 
     Returns:
-        ``(status, document, challenge)`` as described by ``_get_json``.
+        A ``CardResponse`` as described by ``_get_json``.
     """
     async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
         if response.status_code != 200:
-            return response.status_code, None, response.headers.get("www-authenticate")
+            return CardResponse(response.status_code, challenge=response.headers.get("www-authenticate"))
         if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
             logger.warning("A2A card from %s is content-encoded and was discarded", sanitize_url_for_logging(url))
-            return 200, None, None
+            return CardResponse(200)
         body = bytearray()
         async for chunk in response.aiter_raw():
             body.extend(chunk)
             if len(body) > MAX_CARD_BYTES:
                 logger.warning("A2A card from %s exceeds %d bytes", sanitize_url_for_logging(url), MAX_CARD_BYTES)
-                return 200, None, None
-    return 200, orjson.loads(bytes(body)), None
+                return CardResponse(200)
+    return CardResponse(200, orjson.loads(bytes(body)), etag=response.headers.get("etag"), max_age=parse_max_age(response.headers.get("cache-control")))
 
 
-async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Optional[int], Any, Optional[str]]:
+async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> CardResponse:
     """GET one URL under the outbound policy and parse a size-capped JSON body.
 
     The request asks for an identity encoding and discards a content-encoded response, so
@@ -653,9 +687,10 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
         headers: Optional caller headers, sent only to this URL's pinned host.
 
     Returns:
-        ``(status, document, challenge)``. ``status`` is ``None`` when the request was blocked or failed;
+        A ``CardResponse``. ``status`` is ``None`` when the request was blocked or failed;
         ``document`` is ``None`` unless the response was a 200 JSON body; ``challenge`` is the
-        ``WWW-Authenticate`` value of a non-200 response.
+        ``WWW-Authenticate`` value of a non-200 response; ``etag`` and ``max_age`` come from the
+        ``ETag`` and ``Cache-Control`` headers of a card response.
     """
     try:
         async with asyncio.timeout(float(settings.federation_timeout)):
@@ -663,23 +698,25 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]]) -> Tuple[Option
                 target = await resolve_pinned_target(url, "A2A card URL")
             except ValueError as exc:
                 logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
-                return None, None, None
+                return CardResponse(None)
             request_headers = target.apply_headers({"Accept": "application/json", "Accept-Encoding": "identity", **(headers or {})})
             async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
                 return await _read_body(client, url, target, request_headers)
     except orjson.JSONDecodeError:
-        return 200, None, None
+        return CardResponse(200)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("A2A card fetch failed for %s: %s", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(type(exc).__name__))
-        return None, None, None
+        return CardResponse(None)
 
 
-def _build_found_response(url: str, document: Dict[str, Any]) -> Optional[A2AFetchCardResponse]:
+def _build_found_response(url: str, document: Dict[str, Any], etag: Optional[str] = None, max_age: Optional[int] = None) -> Optional[A2AFetchCardResponse]:
     """Normalize and map a fetched document.
 
     Args:
         url: URL the document came from.
         document: Parsed document that satisfies ``is_agent_card``.
+        etag: ``ETag`` the agent returned with the card.
+        max_age: ``Cache-Control`` max-age in seconds the agent returned with the card.
 
     Returns:
         The ``found`` response, or ``None`` when the document is malformed.
@@ -701,6 +738,8 @@ def _build_found_response(url: str, document: Dict[str, Any]) -> Optional[A2AFet
         raw_card=None if card is document else document,
         suggested_agent=fields,
         warnings=warnings,
+        etag=etag,
+        max_age=max_age,
     )
 
 
@@ -724,14 +763,15 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     try:
         async with asyncio.timeout(float(settings.federation_timeout)):
             for url in build_candidate_urls(base_url, path):
-                status, document, challenge = await _get_json(url, headers)
-                if status is None:
+                fetched = await _get_json(url, headers)
+                if fetched.status is None:
                     return _unreachable()
-                if status in (401, 403):
-                    return _auth_required(challenge)
+                if fetched.status in (401, 403):
+                    return _auth_required(fetched.challenge)
+                document = fetched.document
                 if document is None or not is_agent_card(document):
                     continue
-                found = _build_found_response(url, document)
+                found = _build_found_response(url, document, fetched.etag, fetched.max_age)
                 if found:
                     return found
     except TimeoutError:
