@@ -5971,6 +5971,7 @@ class A2AStoredCardRead(BaseModelWithConfigDict):
     """The current stored Agent Card of a registered agent, as fetched."""
 
     version: int = Field(..., description="Stored card version, starting at 1")
+    kind: Literal["public", "extended"] = Field("public", description="public for the card read without credentials, extended for the authenticated extended card")
     card: Dict[str, Any] = Field(..., description="Card document as fetched")
     detected_version: str = Field(..., description="Card format version detected at fetch time: 1.0 or 0.3")
     source_url: str = Field(..., description="URL the card was fetched from")
@@ -6064,6 +6065,14 @@ class A2AFetchCardResponse(BaseModelWithConfigDict):
     warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
     etag: Optional[str] = Field(None, description="ETag the agent returned with the card")
     max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds the agent returned with the card")
+    extended_outcome: Optional[Literal["found", "auth_rejected", "unavailable"]] = Field(
+        None, description="Result of fetching the authenticated extended card. Set only when credentials were supplied and the card declares one"
+    )
+    extended_card: Optional[Dict[str, Any]] = Field(None, description="Extended card normalized to the A2A 1.0 shape")
+    extended_raw_card: Optional[Dict[str, Any]] = Field(None, description="Extended card as fetched; omitted when identical to extended_card")
+    extended_etag: Optional[str] = Field(None, description="ETag the agent returned with the extended card")
+    extended_max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds the agent returned with the extended card")
+    extended_additions: List[str] = Field(default_factory=list, description="Dotted card field paths that the extended card adds or changes")
 
 
 class A2AAgentCreate(BaseModel):

@@ -5206,6 +5206,43 @@ async def get_a2a_agent_stored_card(
     return card
 
 
+@a2a_router.get("/{agent_id}/stored-card/extended", response_model=A2AStoredCardRead)
+@require_permission("a2a.update")
+async def get_a2a_agent_stored_extended_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the authenticated extended Agent Card stored for a registered agent.
+
+    The extended card is content the agent shows only to credentialed callers, so the route
+    needs ``a2a.update`` and the agent visibility check, not only ``a2a.read``.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored extended card.
+
+    Raises:
+        HTTPException: If the agent is not visible, or has no stored extended card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams, kind="extended")
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored extended Agent Card for this agent")
+    return card
+
+
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
 @require_permission("a2a.create")
