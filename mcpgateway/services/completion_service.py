@@ -46,6 +46,7 @@ from mcpgateway.services.upstream_session_registry import (
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory, with_sigv4_auth
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.url_auth import apply_query_param_auth
 
@@ -209,6 +210,11 @@ class CompletionService:
             ``.protocol_version``, and ``.complete(...)``.
         """
         gateway_url, headers, _auth_query_params = self._gateway_connection(gateway)
+        try:
+            signing_auth = build_gateway_sigv4_auth(getattr(gateway, "auth_type", None), getattr(gateway, "sigv4_config", None))
+        except SigV4ConfigError as exc:
+            raise CompletionInternalError(f"Stored SigV4 credentials could not be loaded for gateway '{getattr(gateway, 'id', '')}'") from exc
+        sigv4_factory = sigv4_client_factory(signing_auth)
 
         gateway_id = str(getattr(gateway, "id", ""))
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
@@ -229,6 +235,7 @@ class CompletionService:
                 url=gateway_url,
                 headers=headers,
                 transport_type=registry_transport_type,
+                httpx_client_factory=sigv4_factory,
             ) as upstream:
                 yield upstream.session
         else:
@@ -257,7 +264,7 @@ class CompletionService:
                 url=gateway_url,
                 headers=headers,
                 timeout=settings.health_check_timeout,
-                httpx_client_factory=get_httpx_client_factory,
+                httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth),
                 transport="sse" if transport == "sse" else "streamablehttp",
             ) as client:
                 yield client.session

@@ -41,7 +41,7 @@ from enum import Enum
 import ipaddress
 import re
 import time
-from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
+from typing import Any, assert_never, AsyncGenerator, Callable, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -118,6 +118,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.server_urls import build_server_mcp_url
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
@@ -1518,6 +1519,18 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
+def _gateway_sigv4_factory(gateway: Any) -> Optional[Callable[..., Any]]:
+    """Return a signing httpx2 client factory for a SigV4 gateway.
+
+    Args:
+        gateway: Authorized upstream gateway.
+
+    Returns:
+        A factory that signs every upstream request, or None for any other auth type.
+    """
+    return sigv4_client_factory(build_gateway_sigv4_auth(getattr(gateway, "auth_type", None), getattr(gateway, "sigv4_config", None)))
+
+
 def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, str]:
     """Build the effective upstream headers for direct-proxy catalog requests.
 
@@ -1585,6 +1598,7 @@ async def _proxy_list_tools_to_gateway(
             url=gateway.url,
             headers=headers,
             timeout=settings.mcpgateway_direct_proxy_timeout,
+            httpx_client_factory=_gateway_sigv4_factory(gateway),
         ) as client:
             if paginate:
                 collected = await collect_proxy_catalog(client, "tools/list", meta, serialized_items)
@@ -1642,6 +1656,7 @@ async def _proxy_list_resources_to_gateway(
             url=gateway.url,
             headers=headers,
             timeout=settings.mcpgateway_direct_proxy_timeout,
+            httpx_client_factory=_gateway_sigv4_factory(gateway),
         ) as client:
             if paginate:
                 collected = await collect_proxy_catalog(client, "resources/list", meta, serialized_items)
@@ -1722,6 +1737,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             url=gateway.url,
             headers=headers,
             timeout=settings.mcpgateway_direct_proxy_timeout,
+            httpx_client_factory=_gateway_sigv4_factory(gateway),
         ) as client:
             # read_resource with _meta forwarded (auto-initializes on first call)
             if meta:

@@ -1853,6 +1853,68 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
 
 
 @pytest.mark.asyncio
+async def test_export_gateways_skips_sigv4_gateway(export_service, mock_db, caplog):
+    """A SigV4 gateway is left out of the bulk export and the skip is logged."""
+    # First-Party
+    from mcpgateway.config import settings
+
+    sigv4_gateway = SimpleNamespace(
+        id="gw-sigv4",
+        name="aws-gw",
+        url="https://example.execute-api.us-east-1.amazonaws.com/mcp",
+        description=None,
+        transport="STREAMABLEHTTP",
+        capabilities={},
+        enabled=True,
+        tags=[],
+        passthrough_headers=None,
+        tool_validation_policy=None,
+        auth_type="sigv4",
+        auth_value=None,
+    )
+    bearer_gateway = SimpleNamespace(
+        id="gw-bearer",
+        name="plain-gw",
+        url="https://gw.example.com",
+        description=None,
+        transport="SSE",
+        capabilities={},
+        enabled=True,
+        tags=[],
+        passthrough_headers=None,
+        tool_validation_policy=None,
+        auth_type="bearer",
+        auth_value="encoded-value",  # pragma: allowlist secret
+    )
+    assert bearer_gateway.auth_value != settings.masked_auth_value
+    export_service.gateway_service.list_gateways.return_value = ([sigv4_gateway, bearer_gateway], None)
+
+    with caplog.at_level("WARNING"):
+        exported = await export_service._export_gateways(mock_db, None, False)
+
+    assert [g["name"] for g in exported] == ["plain-gw"]
+    assert "gw-sigv4" in caplog.text
+    assert "sigv4_config" not in str(exported)
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_skips_sigv4_gateway(export_service, mock_db):
+    """A SigV4 gateway is left out of the selective export."""
+    db_gateway = MagicMock()
+    db_gateway.id = "gw-sigv4"
+    db_gateway.name = "aws-gw"
+    db_gateway.url = "https://example.execute-api.us-east-1.amazonaws.com/mcp"
+    db_gateway.auth_type = "sigv4"
+    db_gateway.sigv4_config = {"access_key_id": "AKIAIOSFODNN7EXAMPLE"}  # pragma: allowlist secret
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
+
+    exported = await export_service._export_selected_gateways(mock_db, ["gw-sigv4"])
+
+    assert exported == []
+
+
+@pytest.mark.asyncio
 async def test_export_selected_servers_filters_deactivated_entities(export_service):
     """Test that _export_selected_servers filters out deactivated tools, prompts, resources, and agents."""
     mock_db = MagicMock()

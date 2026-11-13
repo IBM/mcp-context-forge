@@ -453,6 +453,7 @@ def _make_gateway(**overrides):
         "auth_query_param_value": None,
         "auth_query_params": None,
         "oauth_config": None,
+        "sigv4_config": None,
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
