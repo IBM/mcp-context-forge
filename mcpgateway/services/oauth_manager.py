@@ -37,6 +37,7 @@ from mcpgateway.common.oauth import (
     normalize_token_endpoint_auth_method,
     SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
     SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+    validate_extra_auth_params,
     validate_loaded_private_key,
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
@@ -2192,6 +2193,14 @@ class OAuthManager:
         resource = credentials.get("resource")
         if self._should_include_resource_parameter(credentials, scopes):
             params["resource"] = resource  # urlencode with doseq=True handles lists
+
+        # Provider-specific parameters, e.g. Google access_type=offline. Reserved
+        # names are rejected, so PKCE, state and redirect_uri stay gateway-controlled
+        # even for a stored config that skipped schema validation.
+        try:
+            params.update(validate_extra_auth_params(credentials.get("extra_auth_params")))
+        except ValueError as exc:
+            raise PublicValidationError(str(exc)) from exc
 
         # Build full URL (doseq=True handles list values like multiple resource params)
         query_string = urlencode(params, doseq=True)
