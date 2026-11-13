@@ -413,6 +413,17 @@ async def test_resource_read_relays_the_question_instead_of_serving_the_cached_c
     assert metrics.record_resource_metric.call_args.kwargs["success"] is True
 
 
+def test_mrtr_intake_ignores_the_snake_case_keys_the_sdk_never_validates():
+    """Only the camelCase wire keys count: the SDK validates those, and nothing else may reach the upstream."""
+    ctx = _request_context(MODERN, params={"input_responses": "x", "request_state": {"bad": 1}})
+
+    mrtr_allowed, input_responses, request_state = tr._mrtr_intake(ctx)
+
+    assert mrtr_allowed is True
+    assert input_responses is None
+    assert request_state is None
+
+
 def test_mrtr_intake_passes_a_non_elicitation_answer_through_raw():
     """An answer that is not an ElicitResult (a sampling reply, say) is forwarded as the client sent it."""
     ctx = _request_context(

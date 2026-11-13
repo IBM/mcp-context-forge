@@ -1773,8 +1773,9 @@ def _mrtr_intake(ctx: Any) -> tuple[bool, Optional[Dict[str, Any]], Optional[str
         return False, None, None
     mrtr_allowed = _is_modern_protocol(getattr(ctx, "protocol_version", None))
     raw_params = getattr(ctx, "params", None) or {}
-    raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
-    request_state = raw_params.get("requestState") or raw_params.get("request_state")
+    # Only the camelCase wire keys: those are the ones the SDK validated before this handler ran.
+    raw_responses = raw_params.get("inputResponses")
+    request_state = raw_params.get("requestState")
     input_responses = None
     if raw_responses:
         input_responses = {}
