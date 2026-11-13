@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.common.oauth import is_sensitive_oauth_key
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -338,6 +339,35 @@ def raise_if_a2a_disabled() -> None:
     if not a2a_enabled():
         logger.warning("A2A request rejected because A2A is disabled")
         raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+
+
+def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, Any]], stored_config: Optional[Dict[str, Any]]) -> None:
+    """Refuse to reuse a stored client secret for a different token URL.
+
+    A masked placeholder keeps the stored secret. If the token URL also changes, the
+    gateway would send that secret to the new host, so the caller must send the secret again.
+
+    Args:
+        new_config: Incoming ``oauth_config`` of an update.
+        stored_config: ``oauth_config`` stored for the agent.
+
+    Raises:
+        PublicValidationError: If a masked secret is kept while ``token_url`` changes.
+
+    Examples:
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "new"}, {"token_url": "https://b/t"})  # pragma: allowlist secret
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "*****"}, {"token_url": "https://a/t"})  # pragma: allowlist secret
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "*****"}, {"token_url": "https://b/t"})  # pragma: allowlist secret
+        Traceback (most recent call last):
+            ...
+        mcpgateway.utils.error_formatter.PublicValidationError: Send the OAuth client secret again when you change the token URL.
+    """
+    if not isinstance(new_config, dict) or not isinstance(stored_config, dict):
+        return
+    if new_config.get("token_url") == stored_config.get("token_url"):
+        return
+    if any(is_sensitive_oauth_key(key) and value == settings.masked_auth_value for key, value in new_config.items()):
+        raise PublicValidationError("Send the OAuth client secret again when you change the token URL.")
 
 
 class A2AAgentNotFoundError(A2AAgentError):
@@ -1805,6 +1835,7 @@ class A2AAgentService(BaseService):
                     continue
 
                 if field == "oauth_config":
+                    _require_secret_reentry_on_token_url_change(value, agent.oauth_config)
                     value = await protect_oauth_config_for_storage(value, existing_oauth_config=agent.oauth_config)
 
                 # Validate team reassignment before persisting

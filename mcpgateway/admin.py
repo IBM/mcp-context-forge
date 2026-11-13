@@ -16816,7 +16816,7 @@ async def admin_add_a2a_agent(
     form = await request.form()
     team_id = _form_team_id(form)
     try:
-        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+        LOGGER.info("A2A agent creation form fields: %s", sorted(str(key) for key in form.keys()))
 
         _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
@@ -16842,7 +16842,7 @@ async def admin_add_a2a_agent(
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info("DEBUG: oauth_config_json from form present: %s", oauth_config_json != "None")
         LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
 
         # Option 1: Pre-assembled oauth_config JSON (from API calls)

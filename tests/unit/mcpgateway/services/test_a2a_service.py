@@ -522,6 +522,37 @@ class TestA2AAgentService:
 
         assert sample_db_agent.oauth_config["client_secret"] == existing_secret
 
+    async def test_update_agent_masked_secret_with_changed_token_url_is_refused(self, service, mock_db, sample_db_agent):
+        """A masked secret cannot follow a changed token URL, so the stored secret never reaches a new host."""
+        sample_db_agent.version = 1
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("existing-secret")
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret, "token_url": "https://idp.example.com/token"}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            update_data = A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value, "token_url": "https://attacker.example.com/token"})
+            with pytest.raises(A2AAgentError, match="client secret again"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.oauth_config["token_url"] == "https://idp.example.com/token"
+        assert sample_db_agent.oauth_config["client_secret"] == existing_secret
+        mock_db.commit.assert_not_called()
+
+    async def test_update_agent_new_secret_with_changed_token_url_is_accepted(self, service, mock_db, sample_db_agent):
+        """Sending the secret again lets the token URL change."""
+        sample_db_agent.version = 1
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_secret": "old", "token_url": "https://idp.example.com/token"}  # pragma: allowlist secret
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "client_secret": "brand-new", "token_url": "https://idp2.example.com/token"})  # pragma: allowlist secret
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.oauth_config["token_url"] == "https://idp2.example.com/token"
+
     async def test_update_agent_oauth_clearing_resource_removes_stored_value(self, service, mock_db, sample_db_agent):
         """An update without Resource removes the stored resource, so the audience is derived again."""
         sample_db_agent.version = 1

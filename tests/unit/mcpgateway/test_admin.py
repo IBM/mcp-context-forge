@@ -20172,6 +20172,47 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_admin_add_a2a_agent_does_not_log_form_secrets(monkeypatch, mock_db, caplog):
+    """The creation handler logs form field names, never values such as the OAuth client secret."""
+    secret = "plaintext-client-secret-for-log-check"  # pragma: allowlist secret
+    form_data = FakeForm(
+        {
+            "name": "Agent_Log_Check",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_client_id": "client-id",
+            "oauth_client_secret": secret,
+            "oauth_config": json.dumps({"grant_type": "client_credentials", "client_id": "client-id", "client_secret": secret}),
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    with caplog.at_level("DEBUG", logger="mcpgateway.admin"):
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+
+    assert secret not in caplog.text
+    assert "oauth_client_secret" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_assembled_minimal_fields_covers_false_branches(monkeypatch, mock_db):
     """Cover false branches in A2A OAuth form-fields assembly logic."""
     form_data = FakeForm(
