@@ -12,6 +12,7 @@
 name: Web Lint & Static Analysis
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
@@ -107,27 +108,10 @@ jobs:
       # 1️⃣  Node.js Setup
       # -----------------------------------------------------------
       - name: 📦  Install Node.js 20
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl gnupg
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y nodejs
-          node --version
-          npm --version
-
-      # -----------------------------------------------------------
-      # 🔧  Configure npm
-      # -----------------------------------------------------------
-      - name: 🔧  Upgrade npm to minimum required version
-        run: sudo npm install -g npm@^11.10.0
-
-      - name: 🔧  Configure npm registry
-        run: npm config set registry https://registry.npmjs.org/
+        uses: actions/setup-node@101b3474143230c3562bd21f0b3c3f8254784571 # v7
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
 
       # -----------------------------------------------------------
       # 2️⃣  Run Linter (install and execute in one step)

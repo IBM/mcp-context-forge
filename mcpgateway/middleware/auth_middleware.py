@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse, Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.path_filter import should_skip_auth_context
@@ -166,11 +167,11 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
             user = await get_current_user(credentials, request=request)
 
-            # Note: EmailUser.id is the primary key (UUID); .email is used here as the
-            # CSRF/logging identity, matching CSRFMiddleware's binding.
+            # Note: EmailUser.id is the primary key (UUID). The canonical identity comes
+            # from get_user_id(); the e-mail stays the e-mail attribute.
             # User is already detached (created with fresh session that was closed)
             user_email = user.email
-            user_id = user_email  # CSRF/logging identity is the email, not EmailUser.id
+            user_id = get_user_id(user)
 
             # Store user in request state for downstream use
             request.state.user = user

@@ -2948,6 +2948,12 @@ class ToolService(BaseService):
             if tools_to_add:
                 db.add_all(tools_to_add)
 
+            audit_counts: dict[str | None, dict[str, int]] = {}
+            for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
+                for db_tool in tools:
+                    counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
+                    counts[operation] += 1
+
             # Commit the chunk
             db.commit()
             notify_dataplane()
@@ -2957,14 +2963,14 @@ class ToolService(BaseService):
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
 
-            # Log bulk audit trail entry
-            if tools_to_add or tools_to_update:
+            for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
                     user_id=created_by or "system",
-                    action="bulk_create_tools" if tools_to_add else "bulk_update_tools",
+                    action="bulk_create_tools" if counts["created"] else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
-                    details={"count": len(tools_to_add) + len(tools_to_update), "import_batch_id": import_batch_id},
+                    team_id=audit_team_id,
+                    details={"count": sum(counts.values()), "import_batch_id": import_batch_id},
                 )
 
         except Exception as e:

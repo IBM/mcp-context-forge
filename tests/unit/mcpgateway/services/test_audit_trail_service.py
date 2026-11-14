@@ -9,6 +9,9 @@ Tests for audit_trail_service.
 # Standard
 from unittest.mock import MagicMock
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.services import audit_trail_service as svc
 
@@ -194,6 +197,39 @@ def test_log_action_exception_rolls_back(monkeypatch):
     assert dummy_session.rolled_back is True
 
 
+@pytest.mark.parametrize("failure_stage", ["session", "write"])
+@pytest.mark.parametrize("batch_source", ["details", "context", "invalid"])
+def test_log_action_failure_identifies_team_and_batch_without_payload(monkeypatch, failure_stage, batch_source):
+    """Audit failures retain group identifiers without adding imported payloads to log context."""
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    monkeypatch.setattr(svc, "get_or_generate_correlation_id", lambda: "failure-correlation")
+    dummy_session = DummySession(fail_add=True)
+    factory = MagicMock(side_effect=RuntimeError("session unavailable")) if failure_stage == "session" else lambda: dummy_session
+    monkeypatch.setattr(svc, "SessionLocal", factory)
+    logger = MagicMock()
+    monkeypatch.setattr(svc, "logger", logger)
+    payload = {"imported_payload": {"value": "not-for-logs"}}
+    batch_id = payload if batch_source == "invalid" else "batch-1"
+    kwargs = {"context" if batch_source == "context" else "details": {"import_batch_id": batch_id, **payload}}
+    service = svc.AuditTrailService()
+    monkeypatch.setattr(service, "_emit_audit_event_to_siem", MagicMock())
+
+    result = service.log_action(action="bulk_create_tools", resource_type="tool", resource_id=None, user_id="actor", team_id="team-a", **kwargs)
+
+    assert result is None
+    logger.error.assert_called_once()
+    assert logger.error.call_args.kwargs["extra"] == {
+        "correlation_id": "failure-correlation",
+        "action": "bulk_create_tools",
+        "resource_type": "tool",
+        "resource_id": None,
+        "team_id": "team-a",
+        "import_batch_id": None if batch_source == "invalid" else "batch-1",
+    }
+    assert dummy_session.rolled_back is (failure_stage == "write")
+    assert dummy_session.closed is (failure_stage == "write")
+
+
 def test_log_crud_operation_changes(monkeypatch):
     service = svc.AuditTrailService()
     captured = {}
@@ -229,11 +265,14 @@ def test_log_data_access_requires_review(monkeypatch):
         resource_type="token",
         resource_id="tok-1",
         user_id="user-1",
+        team_id="team-a",
         data_classification=svc.DataClassification.CONFIDENTIAL.value,
     )
 
     assert captured["requires_review"] is True
     assert captured["action"] == "READ"
+    assert captured["team_id"] == "team-a"
+    assert captured["db"] is None
 
 
 def test_get_audit_trail_commits_and_returns(monkeypatch):
@@ -313,9 +352,12 @@ def test_log_audit_builds_context_from_description(monkeypatch):
         resource_id="tool-1",
         action="EXECUTE",
         description="ran tool",
+        team_id="team-a",
     )
 
     assert captured["context"]["description"] == "ran tool"
+    assert captured["team_id"] == "team-a"
+    assert captured["db"] is None
 
 
 def test_log_action_identity_context_exception_is_swallowed(monkeypatch):

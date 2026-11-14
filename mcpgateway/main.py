@@ -136,10 +136,13 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
+    A2ATaskMessageRequest,
     A2ATaskState,
     A2ATestErrorResponse,
     A2ATestRequest,
@@ -184,8 +187,9 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -455,8 +459,8 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
         if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
-        if auth_context.get("email"):
-            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
+        if auth_context.get("email") or auth_context.get("user_id"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: identity not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -505,6 +509,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     )
 
     return {
+        "user_id": auth_context.get("user_id") or auth_context.get("email"),
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
@@ -550,6 +555,7 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     scoped_server_id = scopes.get("server_id")
 
     context: Dict[str, Any] = {
+        "user_id": email,
         "email": email,
         # Authenticated callers keep their token teams (None == admin bypass); public-only
         # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
@@ -5248,6 +5254,32 @@ async def create_a2a_agent(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
+@a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
+@require_permission("a2a.create")
+async def fetch_a2a_agent_card(
+    payload: A2AFetchCardRequest,
+    request: Request,  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),
+) -> A2AFetchCardResponse:
+    """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
+
+    A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
+    ``auth_required`` or ``unreachable``. A blocked address and a network failure both
+    return ``unreachable``. An unsafe ``path`` or ``baseUrl`` returns 422.
+
+    Args:
+        payload (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        request (Request): The FastAPI request object, used by the RBAC check.
+        user: The authenticated user making the request.
+
+    Returns:
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
+    """
+    result = await fetch_agent_card(str(payload.base_url), payload.path, payload.headers)
+    logger.info(f"User {safe_log_user(user)} fetched A2A agent card from {sanitize_url_for_logging(str(payload.base_url))}: {result.outcome}")
+    return result
+
+
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.update")
 async def update_a2a_agent(
@@ -5813,6 +5845,49 @@ async def delete_a2a_push_config(
         raise HTTPException(status_code=404, detail=f"Push config '{config_id}' not found")
     _audit_a2a_task_action(request, user, "delete_a2a_push_config", agent_id, task_id, {"config_id": config_id})
     return {"deleted": True}
+
+
+@a2a_router.post("/{agent_id}/tasks/{task_id}/messages", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@require_permission("a2a.invoke")
+async def send_a2a_task_message(
+    agent_id: str,
+    task_id: str,
+    body: A2ATaskMessageRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Send a follow-up message to an existing task, such as the answer to an input-required task.
+
+    Args:
+        agent_id: Owning agent ID (UUID).
+        task_id: Agent-side task ID.
+        body: The follow-up message, as ``message`` or ``text``.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Tasks have no owner of their own, so the caller must own the agent, like on the cancel route.
+
+    Returns:
+        The agent response, unchanged.
+
+    Raises:
+        HTTPException: 404 if the caller does not own the agent or the task does not exist or is not visible,
+            409 if the task is in a terminal state, 400 if the message names a different task or the agent fails.
+    """
+    service = _require_a2a_service()
+    await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    try:
+        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ATaskStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_task_action(request, user, "continue_a2a_task", agent_id, task_id)
+    return response
 
 
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
