@@ -50,11 +50,11 @@ behavior should pass an explicit shorter `expires_in_minutes`.
 ```bash
 # Core testing
 make test                         # Run unit tests
-pytest -k "<name>" tests/unit/    # Run only tests matching <name>
+rstest -k "<name>" tests/unit/    # Run only tests matching <name>
 make doctest                      # Run doctests in modules
 make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html
-make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
+make coverage                     # Line and branch coverage (XML)
 make smoketest                    # Container build + simple E2E flow
 make test-e2e                     # Consolidated MCP protocol and RBAC E2E (needs live gateway)
 # test-mcp-cli and test-mcp-rbac are plain aliases for test-e2e.
@@ -63,10 +63,10 @@ make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack 
 make test-mcp-session-isolation-load  # Locust MCP session isolation correctness load test
 
 # Selective runs
-pytest -k "fragment"              # By name substring
-pytest -m "not slow"              # Exclude slow tests
-pytest -m "api"                   # Only API tests
-pytest tests/unit/path/test_mod.py::TestClass::test_method  # Single test
+rstest -k "fragment"              # By name substring
+rstest -m "not slow"              # Exclude slow tests
+rstest -m "api"                   # Only API tests
+rstest tests/unit/path/test_mod.py::TestClass::test_method  # Single test
 
 # Database performance
 make dev-query-log                # Dev server with query logging
@@ -75,7 +75,7 @@ make query-log-analyze            # Analyze for N+1 patterns
 make test-db-perf                 # Run performance tests
 
 # PR readiness
-make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
+make doctest test coverage smoketest lint-web bandit interrogate pylint verify
 ```
 
 ## Playwright (Browser E2E) Tests
@@ -108,7 +108,7 @@ make test-ui-headless
 make test-ui
 
 # Specific test file
-pytest tests/playwright/test_plugins_page.py -v
+rstest tests/playwright/test_plugins_page.py -v
 
 # Debug with Playwright Inspector
 make test-ui-debug
@@ -203,7 +203,7 @@ Use markers to categorize tests:
 - `smoke` - Smoke tests
 - `e2e` - End-to-end tests
 
-Filter with `-m`: `pytest -m "not slow"`, `pytest -m "api and not e2e"`
+Filter with `-m`: `rstest -m "not slow"`, `rstest -m "api and not e2e"`
 
 ## Writing Tests
 
@@ -251,10 +251,9 @@ For regression tests that assert a specific keyword argument was (or was not) pa
 
 ## Coverage Workflow
 
-1. Run coverage: `make coverage` or `make htmlcov`
-2. Open report: `docs/docs/coverage/index.html`
-3. Review annotated files (`.cover` markers)
-4. Target uncovered branches: error paths, exceptions, boundary conditions
+1. Run coverage: `make coverage` generates `coverage.xml`.
+2. Request a browsable report with `make htmlcov` when needed.
+3. Target uncovered branches: error paths, exceptions, boundary conditions.
 
 ## Database Safety
 
@@ -262,7 +261,7 @@ Tests must not affect the production database.
 
 ```bash
 # Use temporary database for tests requiring DB
-DATABASE_URL=sqlite:///./mcp-temp.db pytest -k 'your_test'
+DATABASE_URL=sqlite:///./mcp-temp.db rstest -k 'your_test'
 ```
 
 Prefer pure unit tests with mocked persistence layers for speed and determinism.

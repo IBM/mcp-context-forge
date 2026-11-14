@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 import socket
 from types import SimpleNamespace
+import copy
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
 
@@ -35,6 +36,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
     _adjust_pagination_for_conversion_failures,
+    _assemble_oauth_config_from_fields,
+    _require_token_exchange_client_secret,
     _build_admin_redirect,
     _build_auth_obj_from_form,
     _escape_like,
@@ -293,7 +296,9 @@ from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolS
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.error_formatter import PublicValidationError
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.schemas import GatewayCreate
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError
 
 
 class FakeForm(dict):
@@ -6500,11 +6505,11 @@ class TestA2AAgentManagement:
         mock_request.state = MagicMock()
         mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
-        assert isinstance(result, dict)
-        assert "data" in result
-        assert len(result["data"]) == 0
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @patch("mcpgateway.admin.a2a_service")
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
@@ -6613,8 +6618,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_set_a2a_agent_state_disabled_redirects(self, monkeypatch, mock_request, mock_db):
         """Cover disabled-features early redirect in admin_set_a2a_agent_state."""
-        monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
         mock_request.scope = {"root_path": "/root"}
 
         result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -6690,8 +6694,7 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_delete_a2a_agent_disabled_redirects(self, monkeypatch, mock_request, mock_db):
         """Cover disabled-features early redirect in admin_delete_a2a_agent."""
-        monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
         mock_request.scope = {"root_path": ""}
 
         result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -6699,7 +6702,7 @@ class TestA2AAgentManagement:
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#a2a-agents"
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_success(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Test testing A2A agent."""
@@ -6722,14 +6725,14 @@ class TestA2AAgentManagement:
         assert body["success"] is True
         assert "result" in body
         # Non-admin user without token_teams key → normalized to [] (public-only)
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=[])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "test-user", [])
         mock_invoke_agent.assert_called_once()
         # Verify invoke_agent receives correct user context
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "test-user"
         assert invoke_kwargs["token_teams"] == []
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_admin_bypass(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Admin user with token_teams=None gets full bypass (user_email=None)."""
@@ -6751,14 +6754,14 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         # Admin bypass: get_agent called with user_email=None, token_teams=None
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email=None, token_teams=None)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", None, None)
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] is None
         assert invoke_kwargs["token_teams"] is None
         # user_id still carries the real email for audit logging
         assert invoke_kwargs["user_id"] == "admin@example.com"
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_team_scoped(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Team-scoped user passes actual email and team list."""
@@ -6779,12 +6782,12 @@ class TestA2AAgentManagement:
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
         assert body["success"] is True
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="dev@example.com", token_teams=["team-1"])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "dev@example.com", ["team-1"])
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "dev@example.com"
         assert invoke_kwargs["token_teams"] == ["team-1"]
 
-    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "_load_accessible_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_proxy_auth_no_token_teams_key(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Proxy-auth user without token_teams key gets public-only scope, not admin bypass."""
@@ -6805,24 +6808,24 @@ class TestA2AAgentManagement:
 
         assert isinstance(result, JSONResponse)
         # Missing token_teams key normalizes to [] (public-only), not None (admin bypass)
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="proxy@example.com", token_teams=[])
+        mock_get_agent.assert_called_with(mock_db, "agent-1", "proxy@example.com", [])
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["token_teams"] == []
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
         monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False, raising=False)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert result.status_code == 403
-        body = json.loads(result.body)
-        assert body["success"] is False
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail["error"] == "a2a_disabled"
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_body_read_exception_uses_default_message(self, monkeypatch, mock_request, mock_db, allow_permission):
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6835,8 +6838,8 @@ class TestA2AAgentManagement:
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_generic_test_params_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6851,8 +6854,8 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test generic exception returns 500 with error_type field."""
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6872,8 +6875,8 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
-        service = MagicMock()
-        service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
@@ -6891,8 +6894,8 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with name: private-agent"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6910,8 +6913,8 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("A2A Agent 'test-agent' is disabled"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6931,8 +6934,8 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("HTTP 503: Service Unavailable"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -6948,8 +6951,8 @@ class TestA2AAgentManagement:
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_validation_error(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Test ValidationError returns 422 with validation_error type."""
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         # Simulate validation error during parameter processing
         service.invoke_agent = AsyncMock(side_effect=ValidationError.from_exception_data("test", []))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
@@ -6969,8 +6972,8 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        service = MagicMock()
-        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service = A2AAgentService()
+        service._load_accessible_agent = AsyncMock(return_value=SimpleNamespace(id="agent-1", name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Failed to invoke A2A agent: Connection refused"))
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
@@ -7970,6 +7973,738 @@ class TestOAuthFunctionality:
             gateway_update = mock_update_gateway.call_args.args[2]
             assert gateway_update.name == "Updated_Gateway"
             assert gateway_update.url == "https://updated.example.com"
+
+
+_TE_FORM_FIELDS = {
+    "oauth_grant_type": "token-exchange",
+    "oauth_token_url": "https://as.example.com/token",
+    "oauth_client_id": "te-client",
+    "oauth_client_secret": "te-secret",  # pragma: allowlist secret
+    "oauth_target_audience": "downstream-mcp",
+    "oauth_subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+    "oauth_requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "oauth_subject_token_source": "inbound_user_jwt",
+    "oauth_token_endpoint_auth_method": "client_secret_post",
+    "oauth_scopes": "openid mcp.tools",
+}
+
+_TE_STORED_CONFIG = {
+    "grant_type": "token-exchange",
+    "token_url": "https://as.example.com/token",
+    "client_id": "te-client",
+    "client_secret": "stored-ciphertext",  # pragma: allowlist secret
+    "token_endpoint_auth_method": "private_key_jwt",
+    "private_key": "stored-key-ciphertext",  # pragma: allowlist secret
+    "private_key_jwt_kid": "kid-1",
+    "token_endpoint_auth_signing_alg": "RS256",
+    "target_audience": "downstream-mcp",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "subject_token_source": "inbound_user_jwt",
+    "scopes": ["openid", "mcp.tools"],
+}
+
+
+class TestRegistrationMethodAdminForm:
+    """The Admin UI registration method select is stored on oauth_config."""
+
+    @pytest.mark.parametrize("method", ["auto", "cimd", "dcr"])
+    async def test_assemble_keeps_valid_registration_method(self, method):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_registration_method": method}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["registration_method"] == method
+
+    @pytest.mark.parametrize("method", ["", "bogus"])
+    async def test_assemble_drops_missing_or_unknown_registration_method(self, method):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_registration_method": method}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "registration_method" not in config
+
+
+class TestTokenExchangeAdminForms:
+    """Admin UI form handling for token-exchange gateways."""
+
+    async def test_assemble_reads_token_exchange_fields(self):
+        """Token-exchange keys are read for the token-exchange grant."""
+        config = await _assemble_oauth_config_from_fields(FakeForm(_TE_FORM_FIELDS), encrypt_secret=False)
+        assert config == {
+            "grant_type": "token-exchange",
+            "token_url": "https://as.example.com/token",
+            "client_id": "te-client",
+            "client_secret": "te-secret",  # pragma: allowlist secret
+            "scopes": ["openid", "mcp.tools"],
+            "target_audience": "downstream-mcp",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "subject_token_source": "inbound_user_jwt",
+            "token_endpoint_auth_method": "client_secret_post",
+        }
+
+    @pytest.mark.parametrize("include_resource", [True, False])
+    async def test_assemble_ignores_token_exchange_fields_for_other_grants(self, include_resource):
+        """Stray token-exchange inputs never leak into client_credentials or A2A configs."""
+        fields = dict(_TE_FORM_FIELDS, oauth_grant_type="client_credentials")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False, include_resource=include_resource)
+        for key in ("target_audience", "subject_token_type", "requested_token_type", "subject_token_source", "token_endpoint_auth_method"):
+            assert key not in config
+
+    async def test_assemble_masked_secret_kept_only_for_token_exchange(self):
+        """A masked secret is passed through for token-exchange and dropped for other grants."""
+        te = await _assemble_oauth_config_from_fields(FakeForm(dict(_TE_FORM_FIELDS, oauth_client_secret=settings.masked_auth_value)), encrypt_secret=False)
+        assert te["client_secret"] == settings.masked_auth_value
+        cc = await _assemble_oauth_config_from_fields(FakeForm({"oauth_grant_type": "client_credentials", "oauth_client_secret": settings.masked_auth_value}), encrypt_secret=True)
+        assert "client_secret" not in cc
+
+    def test_require_client_secret(self):
+        """The admin form check requires a secret unless the auth method needs none."""
+        with pytest.raises(PublicValidationError, match="client_secret is required"):
+            _require_token_exchange_client_secret({"grant_type": "token-exchange"})
+        with pytest.raises(PublicValidationError):
+            _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value})
+        _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": "x"})  # pragma: allowlist secret
+        _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "private_key_jwt"})
+        _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "none"})
+        _require_token_exchange_client_secret({"grant_type": "token-exchange", "client_secret": settings.masked_auth_value}, {"grant_type": "token-exchange", "client_secret": "stored"})  # pragma: allowlist secret
+        with pytest.raises(PublicValidationError):
+            _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"grant_type": "client_credentials", "client_secret": "stored"})  # pragma: allowlist secret
+        _require_token_exchange_client_secret({"grant_type": "client_credentials"})
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_from_token_exchange_fields(self, mock_register_gateway, mock_request, mock_db):
+        """The add form saves grant_type token-exchange and every submitted field."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS}))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        gateway_create = mock_register_gateway.call_args.args[1]
+        assert gateway_create.auth_type == "oauth"
+        assert gateway_create.oauth_config["grant_type"] == "token-exchange"
+        assert gateway_create.oauth_config["target_audience"] == "downstream-mcp"
+        assert gateway_create.oauth_config["client_secret"] == "enc-secret"
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_token_exchange_without_secret_rejected(self, mock_register_gateway, mock_request, mock_db):
+        """A token-exchange add without client_secret is rejected before registration."""
+        fields = {k: v for k, v in _TE_FORM_FIELDS.items() if k != "oauth_client_secret"}
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **fields}))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "client_secret is required" in json.loads(result.body)["message"]
+        mock_register_gateway.assert_not_called()
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_token_exchange_private_key_jwt_skips_secret_check(self, mock_register_gateway, mock_request, mock_db):
+        """private_key_jwt bypasses the client_secret check; the schema then requires the key itself."""
+        fields = {k: v for k, v in _TE_FORM_FIELDS.items() if k != "oauth_client_secret"}
+        fields["oauth_token_endpoint_auth_method"] = "private_key_jwt"
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **fields}))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 422
+        assert "client_secret is required" not in result.body.decode()
+        mock_register_gateway.assert_not_called()
+
+    async def _edit(self, mock_update_gateway, mock_request, mock_db, form_fields, stored_config):
+        """Run admin_edit_gateway against a stored gateway and return the submitted GatewayUpdate."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", "description": "new description", **form_fields}))
+        mock_db.get = MagicMock(return_value=SimpleNamespace(team_id="team-1", oauth_config=copy.deepcopy(stored_config)))
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata") as mock_meta,
+        ):
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="new-ciphertext")
+            mock_meta.return_value = {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}
+            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+        return result
+
+    def _edit_form_from_stored(self, stored_config):
+        """Build the form fields the edit UI submits for a stored token-exchange config."""
+        return {
+            "oauth_grant_type": "token-exchange",
+            "oauth_token_url": stored_config["token_url"],
+            "oauth_client_id": stored_config["client_id"],
+            "oauth_client_secret": "",
+            "oauth_token_endpoint_auth_method": stored_config["token_endpoint_auth_method"],
+            "oauth_target_audience": stored_config["target_audience"],
+            "oauth_subject_token_type": stored_config["subject_token_type"],
+            "oauth_requested_token_type": stored_config["requested_token_type"],
+            "oauth_subject_token_source": stored_config["subject_token_source"],
+            "oauth_scopes": " ".join(stored_config["scopes"]),
+        }
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_oauth_config(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit submits the stored oauth_config unchanged."""
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_from_stored(_TE_STORED_CONFIG), _TE_STORED_CONFIG)
+
+        assert result.status_code == 200
+        assert mock_update_gateway.call_args.args[2].oauth_config == _TE_STORED_CONFIG
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_keeps_private_key_fields(self, mock_update_gateway, mock_request, mock_db):
+        """Unrendered private_key_jwt keys survive a target_audience edit."""
+        form = dict(self._edit_form_from_stored(_TE_STORED_CONFIG), oauth_target_audience="other-mcp")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, _TE_STORED_CONFIG)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["target_audience"] == "other-mcp"
+        for key in ("private_key", "private_key_jwt_kid", "token_endpoint_auth_signing_alg", "client_secret"):
+            assert submitted[key] == _TE_STORED_CONFIG[key]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_masked_secret_keeps_stored_secret(self, mock_update_gateway, mock_request, mock_db):
+        """A masked client_secret is accepted and not re-encrypted."""
+        stored = dict(_TE_STORED_CONFIG, token_endpoint_auth_method="client_secret_post")
+        form = dict(self._edit_form_from_stored(stored), oauth_client_secret=settings.masked_auth_value)
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 200
+        assert mock_update_gateway.call_args.args[2].oauth_config["client_secret"] == settings.masked_auth_value
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_switch_from_token_exchange_drops_masked_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Switching away from token-exchange never stores the masked placeholder as the secret."""
+        form = {
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": _TE_STORED_CONFIG["token_url"],
+            "oauth_client_id": _TE_STORED_CONFIG["client_id"],
+            "oauth_client_secret": settings.masked_auth_value,
+        }
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, _TE_STORED_CONFIG)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["grant_type"] == "client_credentials"
+        assert "client_secret" not in submitted
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_switch_to_token_exchange_requires_new_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Switching to token-exchange rejects a masked secret that belongs to the previous grant."""
+        stored = {"grant_type": "client_credentials", "token_url": "https://as.example.com/token", "client_id": "cc-client", "client_secret": "cc-ciphertext"}  # pragma: allowlist secret
+        form = dict(self._edit_form_from_stored(dict(_TE_STORED_CONFIG, token_endpoint_auth_method="client_secret_post")), oauth_client_secret=settings.masked_auth_value)
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 400
+        assert "client_secret is required" in json.loads(result.body)["message"]
+        mock_update_gateway.assert_not_called()
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_rendered_field_clears_key(self, mock_update_gateway, mock_request, mock_db):
+        """A rendered text field submitted blank removes its key."""
+        stored = dict(_TE_STORED_CONFIG, audience="legacy-audience")
+        form = dict(self._edit_form_from_stored(stored), oauth_audience="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "audience" not in mock_update_gateway.call_args.args[2].oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_switch_to_client_credentials_drops_token_exchange_keys(self, mock_update_gateway, mock_request, mock_db):
+        """Switching away from token-exchange uses the submitted config alone."""
+        form = {"oauth_grant_type": "client_credentials", "oauth_token_url": "https://as.example.com/token", "oauth_client_id": "te-client", "oauth_client_secret": "s"}  # pragma: allowlist secret
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, _TE_STORED_CONFIG)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["grant_type"] == "client_credentials"
+        for key in ("target_audience", "subject_token_type", "requested_token_type", "subject_token_source", "private_key"):
+            assert key not in submitted
+
+    async def test_assemble_discovery_when_enabled(self):
+        """The discovery checkbox builds a client_credentials discovery object."""
+        fields = dict(_TE_FORM_FIELDS, oauth_discovery_present="1", oauth_discovery_enabled="on", oauth_discovery_scopes="mcp.discover")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["discovery"] == {"grant_type": "client_credentials", "scopes": ["mcp.discover"]}
+
+    async def test_assemble_discovery_overrides_and_encrypted_secret(self):
+        """Overrides are kept; a new discovery secret is encrypted like the parent secret."""
+        fields = dict(
+            _TE_FORM_FIELDS,
+            oauth_discovery_present="1",
+            oauth_discovery_enabled="on",
+            oauth_discovery_scopes="mcp.discover, mcp.list",
+            oauth_discovery_token_url="https://as.example.com/discovery-token",
+            oauth_discovery_client_id="svc-discovery",
+            oauth_discovery_client_secret="disc-secret",  # pragma: allowlist secret
+        )
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(side_effect=lambda v: f"enc({v})")
+            config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=True)
+        assert config["discovery"] == {
+            "grant_type": "client_credentials",
+            "scopes": ["mcp.discover", "mcp.list"],
+            "token_url": "https://as.example.com/discovery-token",
+            "client_id": "svc-discovery",
+            "client_secret": "enc(disc-secret)",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    async def test_assemble_discovery_ignored_for_other_grants(self, grant_type):
+        """A stray discovery checkbox never adds discovery to another grant."""
+        fields = dict(_TE_FORM_FIELDS, oauth_grant_type=grant_type, oauth_discovery_enabled="on")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "discovery" not in config
+
+    async def test_assemble_without_checkbox_has_no_discovery(self):
+        """Discovery inputs without the checkbox add nothing."""
+        fields = dict(_TE_FORM_FIELDS, oauth_discovery_present="1", oauth_discovery_scopes="mcp.discover")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "discovery" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_discovery_enabled(self, mock_register_gateway, mock_request, mock_db):
+        """Enabling discovery on the add form stores exactly the spec'd discovery object."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, "oauth_discovery_present": "1", "oauth_discovery_enabled": "on", "oauth_discovery_scopes": "mcp.discover"}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        assert mock_register_gateway.call_args.args[1].oauth_config["discovery"] == {"grant_type": "client_credentials", "scopes": ["mcp.discover"]}
+
+    _TE_STORED_DISCOVERY = {
+        "grant_type": "client_credentials",
+        "scopes": ["mcp.discover"],
+        "client_id": "svc-discovery",
+        "client_secret": "stored-discovery-ciphertext",  # pragma: allowlist secret
+        "token_endpoint_auth_method": "client_secret_basic",
+    }
+
+    def _edit_form_with_discovery(self, stored_config):
+        """Build the form fields the edit UI submits for a stored config with a discovery object."""
+        discovery = stored_config["discovery"]
+        return dict(
+            self._edit_form_from_stored(stored_config),
+            oauth_discovery_present="1",
+            oauth_discovery_enabled="on",
+            oauth_discovery_scopes=" ".join(discovery["scopes"]),
+            oauth_discovery_token_url="",
+            oauth_discovery_client_id=discovery["client_id"],
+            oauth_discovery_client_secret=settings.masked_auth_value,
+        )
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_discovery(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps discovery, its encrypted secret, and its API-only auth method."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_with_discovery(stored), stored)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["discovery"]["grant_type"] == "client_credentials"
+        assert submitted["discovery"]["scopes"] == ["mcp.discover"]
+        assert submitted["discovery"]["client_id"] == "svc-discovery"
+        assert submitted["discovery"]["token_endpoint_auth_method"] == "client_secret_basic"
+        # The masked placeholder is resolved to the stored ciphertext by protect_oauth_config_for_storage().
+        assert submitted["discovery"]["client_secret"] == settings.masked_auth_value
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        protected = await protect_oauth_config_for_storage(submitted, existing_oauth_config=stored)
+        assert protected["discovery"]["client_secret"] == "stored-discovery-ciphertext"  # pragma: allowlist secret
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_discovery_fields_keeps_discovery(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the discovery group (older client) keeps the stored object."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_from_stored(stored), stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["discovery"] == self._TE_STORED_DISCOVERY
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_disable_discovery_removes_it(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing the discovery checkbox removes the discovery object."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = self._edit_form_with_discovery(stored)
+        form.pop("oauth_discovery_enabled")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "discovery" not in mock_update_gateway.call_args.args[2].oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_discovery_override_clears_key(self, mock_update_gateway, mock_request, mock_db):
+        """A rendered discovery override submitted blank removes its key so the parent value is inherited."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "client_id" not in mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_clearing_discovery_overrides_drops_stored_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing both identity overrides with a blank secret drops the stored discovery secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY, token_url="https://discovery.example.com/token"))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="", oauth_discovery_token_url="", oauth_discovery_client_secret="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert "client_id" not in discovery
+        assert "token_url" not in discovery
+        assert "client_secret" not in discovery
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_changed_discovery_client_id_without_secret_rejected(self, mock_update_gateway, mock_request, mock_db):
+        """A new discovery client_id without a new secret returns 400 and saves nothing."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="svc-other")
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 400
+        assert "discovery client_secret is required" in result.body.decode()
+        mock_update_gateway.assert_not_called()
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_changed_discovery_client_id_with_new_secret_kept(self, mock_update_gateway, mock_request, mock_db):
+        """A new discovery client_id with a new secret keeps the submitted secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="svc-other", oauth_discovery_client_secret="new-discovery-secret")  # pragma: allowlist secret
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert discovery["client_id"] == "svc-other"
+        assert discovery["client_secret"] == "new-ciphertext"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("secret_field", ["", "masked"])
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_unchanged_discovery_identity_keeps_stored_secret(self, mock_update_gateway, mock_request, mock_db, secret_field):
+        """An unchanged discovery identity with a blank or masked secret keeps the stored secret."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        secret = settings.masked_auth_value if secret_field == "masked" else ""
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_secret=secret)
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        discovery = mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+        assert discovery["client_id"] == "svc-discovery"
+        assert discovery["client_secret"] in ("stored-discovery-ciphertext", settings.masked_auth_value)
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_token_exchange_without_any_secret_rejected(self, mock_update_gateway, mock_request, mock_db):
+        """Converting to token-exchange with no secret anywhere is rejected."""
+        form = {k: v for k, v in _TE_FORM_FIELDS.items() if k != "oauth_client_secret"}
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, {"grant_type": "client_credentials"})
+
+        assert result.status_code == 400
+        mock_update_gateway.assert_not_called()
+
+    async def test_assemble_reads_delegation_fields(self):
+        """The actor token source and type map to their oauth_config keys."""
+        fields = dict(_TE_FORM_FIELDS, oauth_actor_token_source="client_credentials", oauth_actor_token_type="urn:ietf:params:oauth:token-type:access_token")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["actor_token_source"] == "client_credentials"
+        assert config["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    async def test_assemble_delegation_ignored_for_other_grants(self, grant_type):
+        """A stray actor source never reaches another grant's oauth_config."""
+        fields = dict(_TE_FORM_FIELDS, oauth_grant_type=grant_type, oauth_actor_token_source="client_credentials")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "actor_token_source" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_delegation_enabled(self, mock_register_gateway, mock_request, mock_db):
+        """Selecting client_credentials on the add form stores that actor source."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, "oauth_actor_token_source": "client_credentials", "oauth_actor_token_type": ""}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        oauth_config = mock_register_gateway.call_args.args[1].oauth_config
+        assert oauth_config["actor_token_source"] == "client_credentials"
+        assert "actor_token_type" not in oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps actor_token_source and actor_token_type."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_assertion", actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_assertion", oauth_actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert result.status_code == 200
+        assert mock_update_gateway.call_args.args[2].oauth_config == stored
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_delegation_fields_keeps_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the delegation fields (older client) keeps the stored keys."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor_token_type="urn:ietf:params:oauth:token-type:access_token")
+        await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_from_stored(stored), stored)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor_token_source"] == "client_credentials"
+        assert submitted["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_actor_token_type_clears_it(self, mock_update_gateway, mock_request, mock_db):
+        """A blank actor token type field removes the key so the service applies the source default."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor_token_type="urn:ietf:params:oauth:token-type:jwt")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_credentials", oauth_actor_token_type="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor_token_source"] == "client_credentials"
+        assert "actor_token_type" not in submitted
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_select_none_disables_delegation(self, mock_update_gateway, mock_request, mock_db):
+        """Selecting none submits actor_token_source none."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials")
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="none", oauth_actor_token_type="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["actor_token_source"] == "none"
+
+
+    _ACTOR_FORM = {"oauth_actor_token_source": "client_credentials", "oauth_actor_present": "1", "oauth_actor_client_id": "contextforge", "oauth_actor_client_secret": "actor-secret"}  # pragma: allowlist secret
+    _TE_STORED_ACTOR = {"client_id": "contextforge", "client_secret": "stored-actor-ciphertext", "token_endpoint_auth_method": "client_secret_basic"}  # pragma: allowlist secret
+
+    def _edit_form_with_actor(self, stored_config):
+        """Build the form fields the edit UI submits for a stored config with an actor object."""
+        actor = stored_config["actor"]
+        return dict(
+            self._edit_form_from_stored(stored_config),
+            oauth_actor_token_source="client_credentials",
+            oauth_actor_present="1",
+            oauth_actor_client_id=actor["client_id"],
+            oauth_actor_client_secret=settings.masked_auth_value,
+            oauth_actor_token_url="",
+            oauth_actor_token_endpoint_auth_method=actor.get("token_endpoint_auth_method", ""),
+        )
+
+    async def test_assemble_actor_overrides_and_encrypted_secret(self):
+        """Actor fields build the actor object; a new secret is encrypted like the parent secret."""
+        fields = dict(_TE_FORM_FIELDS, **self._ACTOR_FORM, oauth_actor_token_url="https://as.example.com/actor-token", oauth_actor_token_endpoint_auth_method="client_secret_basic")
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(side_effect=lambda v: f"enc({v})")
+            config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=True)
+        assert config["actor"] == {
+            "client_id": "contextforge",
+            "token_url": "https://as.example.com/actor-token",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "client_secret": "enc(actor-secret)",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.parametrize("override", [{"oauth_actor_client_id": ""}, {"oauth_actor_token_source": "none"}, {"oauth_grant_type": "client_credentials"}])
+    async def test_assemble_without_actor_client_or_source_has_no_actor(self, override):
+        """An empty client ID, another source, or another grant adds no actor."""
+        fields = {**_TE_FORM_FIELDS, **self._ACTOR_FORM, **override}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "actor" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_actor(self, mock_register_gateway, mock_request, mock_db):
+        """Entering an actor client on the add form stores oauth_config.actor."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, **self._ACTOR_FORM}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        actor = mock_register_gateway.call_args.args[1].oauth_config["actor"]
+        assert actor["client_id"] == "contextforge"
+        assert actor["client_secret"] == "actor-secret"  # pragma: allowlist secret
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_actor(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps the actor, and the masked secret resolves to the stored ciphertext."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_with_actor(stored), stored)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["actor"]["client_id"] == "contextforge"
+        assert submitted["actor"]["token_endpoint_auth_method"] == "client_secret_basic"
+        assert submitted["actor"]["client_secret"] == settings.masked_auth_value
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        protected = await protect_oauth_config_for_storage(submitted, existing_oauth_config=stored)
+        assert protected["actor"] == self._TE_STORED_ACTOR
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_actor_fields_keeps_actor(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the actor group (older client) keeps the stored object."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_from_stored(stored), oauth_actor_token_source="client_credentials")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["actor"] == self._TE_STORED_ACTOR
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_cleared_actor_client_id_removes_actor(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing the actor client ID removes the actor object."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_with_actor(stored), oauth_actor_client_id="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "actor" not in mock_update_gateway.call_args.args[2].oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_actor_override_clears_key(self, mock_update_gateway, mock_request, mock_db):
+        """A rendered actor override submitted blank removes its key so the parent value is inherited."""
+        stored = dict(_TE_STORED_CONFIG, actor_token_source="client_credentials", actor=dict(self._TE_STORED_ACTOR))
+        form = dict(self._edit_form_with_actor(stored), oauth_actor_token_endpoint_auth_method="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        actor = mock_update_gateway.call_args.args[2].oauth_config["actor"]
+        assert "token_endpoint_auth_method" not in actor
+        assert actor["client_id"] == "contextforge"
+
+
+class TestTokenExchangeDelegationTemplate:
+    """The delegation fields render in both token-exchange groups, with client_assertion disabled by default."""
+
+    @staticmethod
+    def _template_source():
+        # Standard
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[3] / "mcpgateway" / "templates" / "admin.html").read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("suffix", ["gw", "gw-edit"])
+    def test_delegation_fields_render_in_token_exchange_group(self, suffix):
+        source = self._template_source()
+        group = source.index(f'id="oauth-token-exchange-fields-{suffix}"')
+        select = source.index(f'id="oauth-actor-token-source-{suffix}"')
+        discovery = source.index(f'id="oauth-discovery-section-{suffix}"')
+        assert group < select < discovery
+        assert f'id="oauth-actor-token-type-{suffix}"' in source
+        option = source[select : source.index("</select>", select)]
+        assert '<option value="none" selected>' in option
+        assert '<option value="client_assertion" disabled>' in option
+
+
+class TestTokenExchangeAdminFormDenyPaths:
+    """Deny paths for token-exchange Admin UI submissions, exercising the real service gates."""
+
+    @staticmethod
+    def _deny_platform_admin():
+        """Patch PermissionService so the caller may edit the gateway but is not a platform admin."""
+        permission_service = MagicMock()
+        permission_service.check_permission = AsyncMock(return_value=False)
+        permission_service.check_resource_ownership = AsyncMock(return_value=True)
+        return patch("mcpgateway.services.permission_service.PermissionService", return_value=permission_service)
+
+    @staticmethod
+    def _add_form(**overrides):
+        return FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **dict(_TE_FORM_FIELDS, **overrides)})
+
+    async def test_non_admin_add_rejected_with_403(self, mock_request, mock_db, monkeypatch):
+        """A non-admin add with grant type token-exchange returns 403 and saves nothing."""
+        mock_request.form = AsyncMock(return_value=self._add_form())
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        service = GatewayService()
+        initialize = AsyncMock()
+        monkeypatch.setattr(service, "_initialize_gateway", initialize)
+        monkeypatch.setattr(service, "_check_gateway_uniqueness", MagicMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.admin.gateway_service", service)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock(verify_team_for_user=AsyncMock(return_value=None)))
+
+        with self._deny_platform_admin():
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "dev@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        assert "platform administrator" in json.loads(result.body)["message"]
+        initialize.assert_not_called()
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    async def _edit_with_real_update(self, mock_request, mock_db, monkeypatch, *, stored_config, form_fields, user_email):
+        """Run admin_edit_gateway with the real update_gateway oauth branch."""
+        stored = SimpleNamespace(team_id="team-1", oauth_config=copy.deepcopy(stored_config))
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **form_fields}))
+        mock_db.get = MagicMock(return_value=stored)
+        db_gateway = MagicMock(spec=DbGateway)
+        db_gateway.id = "gateway-1"
+        db_gateway.name = "TE_Gateway"
+        db_gateway.url = "https://mcp.example.com"
+        db_gateway.team_id = "team-1"
+        db_gateway.owner_email = "owner@example.com"
+        db_gateway.visibility = "team"
+        db_gateway.auth_type = "oauth"
+        db_gateway.oauth_config = copy.deepcopy(stored_config)
+        db_gateway.tools = []
+        db_gateway.resources = []
+        db_gateway.prompts = []
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=db_gateway)))
+        service = GatewayService()
+        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [], None)))
+        monkeypatch.setattr("mcpgateway.admin.gateway_service", service)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock(verify_team_for_user=AsyncMock(return_value="team-1")))
+        with (
+            self._deny_platform_admin(),
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata", return_value={"modified_by": user_email, "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}),
+            patch("mcpgateway.services.gateway_service.get_for_update", return_value=db_gateway),
+        ):
+            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": user_email, "db": mock_db})
+        return result, db_gateway
+
+    async def test_non_admin_edit_rejected_with_403(self, mock_request, mock_db, monkeypatch):
+        """A non-admin who converts a gateway to token-exchange gets 403 and the stored config is unchanged."""
+        stored_config = {"grant_type": "client_credentials", "client_id": "cid", "client_secret": "stored", "token_url": "https://as.example.com/token"}  # pragma: allowlist secret
+        result, db_gateway = await self._edit_with_real_update(mock_request, mock_db, monkeypatch, stored_config=stored_config, form_fields=_TE_FORM_FIELDS, user_email="dev@example.com")
+
+        assert result.status_code == 403
+        assert db_gateway.oauth_config == stored_config
+        mock_db.commit.assert_not_called()
+
+    async def test_team_admin_edit_of_team_gateway_rejected_with_403(self, mock_request, mock_db, monkeypatch):
+        """A team_admin of the owning team, without platform admin, cannot change token-exchange settings."""
+        form = dict(_TE_FORM_FIELDS, oauth_target_audience="attacker-audience")
+        result, db_gateway = await self._edit_with_real_update(mock_request, mock_db, monkeypatch, stored_config=_TE_STORED_CONFIG, form_fields=form, user_email="team-admin@example.com")
+
+        assert result.status_code == 403
+        assert db_gateway.oauth_config == _TE_STORED_CONFIG
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.parametrize("missing_field,expected", [("oauth_target_audience", "target_audience"), ("oauth_token_url", "token_url")])
+    @patch.object(GatewayService, "_initialize_gateway")
+    async def test_missing_required_field_rejected(self, mock_initialize, mock_request, mock_db, monkeypatch, missing_field, expected):
+        """An admin submission without target_audience or token_url returns a validation error that names it."""
+        fields = {k: v for k, v in _TE_FORM_FIELDS.items() if k != missing_field}
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "TE_Gateway", "url": "https://mcp.example.com", **fields}))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        service = GatewayService()
+        monkeypatch.setattr(service, "_check_gateway_uniqueness", MagicMock(return_value=None))
+        monkeypatch.setattr(service, "_enforce_token_exchange_admin_only", AsyncMock())
+        monkeypatch.setattr("mcpgateway.admin.gateway_service", service)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock(verify_team_for_user=AsyncMock(return_value=None)))
+
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code in (400, 422)
+        assert expected in result.body.decode()
+        mock_initialize.assert_not_called()
+        mock_db.add.assert_not_called()
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_disallowed_token_url_matches_rest_error(self, mock_register_gateway, mock_request, mock_db):
+        """A metadata-address token_url is rejected with the same message the REST schema produces."""
+        blocked = "http://169.254.169.254/latest/token"
+        mock_request.form = AsyncMock(return_value=self._add_form(oauth_token_url=blocked))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        rest_payload = {"name": "TE_Gateway", "url": "https://mcp.example.com", "auth_type": "oauth", "oauth_config": dict(_TE_STORED_CONFIG, token_url=blocked, token_endpoint_auth_method="client_secret_post")}
+        rest_payload["oauth_config"].pop("private_key")
+        with pytest.raises(ValidationError) as rest_error:
+            GatewayCreate(**rest_payload)
+        assert result.status_code == 422
+        assert json.loads(result.body) == ErrorFormatter.format_validation_error(rest_error.value)
+        mock_register_gateway.assert_not_called()
 
 
 class TestPassthroughHeadersParsing:
@@ -17050,6 +17785,10 @@ async def test_get_plugin_details_success_and_not_found(monkeypatch, mock_reques
 
     detail = await get_plugin_details("alpha", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert detail.name == "alpha"
+    audit_service.log_audit.assert_called_once()
+    audit_kwargs = audit_service.log_audit.call_args.kwargs
+    assert audit_kwargs.get("team_id") is None
+    assert "db" not in audit_kwargs
 
     with pytest.raises(HTTPException) as excinfo:
         await get_plugin_details("missing", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -17554,6 +18293,20 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
     assert "details" not in response.body
 
 
+@pytest.fixture
+def grant_stored_credential_authority(monkeypatch):
+    """Grant the caller ``gateways.update`` and gateway ownership for stored-credential gateway tests.
+
+    Returns:
+        Tuple of the ``check_permission_inline`` and ``check_resource_ownership`` mocks.
+    """
+    permission = AsyncMock(return_value=True)
+    ownership = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.check_permission_inline", permission)
+    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", ownership)
+    return permission, ownership
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
@@ -17650,7 +18403,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, mock_db):
     """Cover client-credentials OAuth branch in admin_test_gateway."""
 
@@ -17677,7 +18430,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
             captured.update(kwargs)
             return MockResponse()
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, ca_certificate=None, client_cert=None, client_key=None)
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, ca_certificate=None, client_cert=None, client_key=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
@@ -17697,7 +18450,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypatch, mock_db):
     """Cover OAuthManager exception path in client-credentials flow."""
     # Third-Party
@@ -17713,7 +18466,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
         async def request(self, **_kwargs):
             raise httpx.RequestError("boom", request=httpx.Request("GET", "https://api.example.com/test"))
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"}, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
@@ -17785,7 +18538,7 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a dict (raw DbGateway)."""
 
@@ -17815,7 +18568,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None)
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -17828,7 +18581,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a str (decode_auth path)."""
 
@@ -17859,7 +18612,7 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
     monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda val: {"Authorization": "Basic decoded"})
 
-    gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None)
+    gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -17915,7 +18668,7 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("configure_gateway_test_allowlist")
+@pytest.mark.usefixtures("configure_gateway_test_allowlist", "grant_stored_credential_authority")
 async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db):
     """Stored gateway auth merges with (and overrides) caller-supplied headers."""
 
@@ -17945,7 +18698,7 @@ async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db)
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None)
+    gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None, team_id=None, owner_email="user@example.com", visibility="public")
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(
@@ -19234,12 +19987,12 @@ async def test_get_performance_endpoints(monkeypatch, allow_permission):
 async def test_admin_add_a2a_agent_disabled_features(monkeypatch, mock_db, allow_permission):
     request = MagicMock(spec=Request)
     monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
-    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 403
-    payload = json.loads(response.body)
-    assert payload["success"] is False
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
 
 
 @pytest.mark.asyncio
@@ -27792,3 +28545,67 @@ class TestCatalogPermissionErrorBranches:
         with pytest.raises(HTTPException) as exc_info:
             await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler,kwargs",
+    [
+        (admin_get_agent, {"agent_id": "agent-1"}),
+        (admin_get_all_agent_ids, {"include_inactive": False, "team_id": None}),
+        (admin_search_a2a_agents, {"q": "x", "tags": None, "include_inactive": False, "limit": 10, "team_id": None}),
+    ],
+)
+async def test_admin_a2a_read_routes_return_typed_404_when_disabled(monkeypatch, mock_request, mock_db, handler, kwargs):
+    """The admin A2A read routes answer with the typed a2a_disabled 404 instead of reading the database."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    if handler is admin_get_agent:
+        kwargs = {**kwargs, "request": mock_request}
+
+    with pytest.raises(HTTPException) as excinfo:
+        await handler(db=mock_db, user={"email": "user@example.com", "db": mock_db}, **kwargs)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_a2a_partial_html_returns_typed_404_when_disabled(monkeypatch, mock_request, mock_db):
+    """The partial route answers with the typed 404 even when agent rows remain in the database."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_a2a_partial_html(mock_request, page=1, per_page=10, include_inactive=False, render=None, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_returns_typed_404_when_disabled(monkeypatch, mock_request, mock_db):
+    """The edit route answers with the typed 404 instead of failing on a missing service."""
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"
+    mock_request.form.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_name, kwargs", [("get_a2a_plugin_bindings_partial", {}), ("admin_create_a2a_plugin_binding", {}), ("admin_delete_a2a_plugin_binding", {"binding_id": "b-1"})])
+async def test_admin_a2a_plugin_binding_routes_return_typed_404_when_disabled(monkeypatch, mock_request, mock_db, handler_name, kwargs):
+    """The plugin-binding routes answer with the typed 404 when A2A is disabled."""
+    from mcpgateway import admin as admin_module
+
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await getattr(admin_module, handler_name)(request=mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db}, **kwargs)
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail["error"] == "a2a_disabled"

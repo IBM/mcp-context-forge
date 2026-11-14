@@ -3453,6 +3453,78 @@ class TestToolService:
         # Now, simulate the actual method call
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_forwards_progress_callback_to_session(self, tool_service, mock_tool, test_db):
+        """invoke_tool hands the caller's progress callback to the upstream session."""
+        # Standard
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            if value is None:
+                m.all.return_value = []
+            else:
+                m.all.return_value = [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        callback = AsyncMock()
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None, progress_callback=callback)
+
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=callback, allow_input_required=True, input_responses=None, request_state=None)
+
+        assert result.content[0].text == "MCP response"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):
         """Registry-not-initialised path must fall through to per-call streamablehttp client.
 
@@ -9149,6 +9221,8 @@ class TestToolServiceHelpers:
             input_schema=None,
             output_schema={"type": "object"},
             annotations=None,
+            tool_validation_policy=None,
+            validation_refusal=None,
             auth_type="bearer",
             auth_value="secret",
             oauth_config=None,
@@ -9580,7 +9654,7 @@ class TestToolServiceBulkImport:
     def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_chunk")
-        db_tool = SimpleNamespace(id="tool-1")
+        db_tool = SimpleNamespace(id="tool-1", team_id=None)
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9618,11 +9692,13 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_create_tools"
         assert audit_kwargs["details"]["count"] == 1  # 1 added, 1 skipped — only adds counted
+        assert audit_kwargs["team_id"] is None
+        assert "db" not in audit_kwargs
 
     def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_update_only")
-        db_tool = SimpleNamespace(id="tool-2")
+        db_tool = SimpleNamespace(id="tool-2", team_id="team-1")
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9654,6 +9730,104 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_update_tools"
         assert audit_kwargs["details"]["count"] == 1
+        assert audit_kwargs["team_id"] == "team-1"
+        assert "db" not in audit_kwargs
+
+    def test_process_tool_chunk_audits_persisted_teams_with_group_counts(self, mock_logging_services):
+        """Mixed chunks audit successful resources by team with group-local counts and a shared batch ID."""
+        service = ToolService()
+        results = [
+            {"status": operation, "tool": SimpleNamespace(id=f"tool-{index}", name=f"chunk-tool-{index}", team_id=team_id)}
+            for index, (operation, team_id) in enumerate([("add", "team-a"), ("add", "team-a"), ("update", "team-a"), ("update", "team-b"), ("update", "team-b"), ("add", None)])
+        ]
+        results.extend([{"status": "skip"}, {"status": "fail", "error": "invalid tool"}])
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=results):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=f"chunk-tool-{index}") for index in range(len(results))],
+                conflict_strategy="update",
+                visibility="public",
+                team_id="request-team",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-team-groups",
+                federation_source=None,
+            )
+
+        assert (stats["created"], stats["updated"], stats["skipped"], stats["failed"]) == (3, 3, 1, 1)
+        db.commit.assert_called_once()
+        audit_calls = mock_logging_services["audit_trail"].log_action.call_args_list
+        assert len(audit_calls) == 3
+        assert {audit_call.kwargs["team_id"]: (audit_call.kwargs["action"], audit_call.kwargs["details"]["count"]) for audit_call in audit_calls} == {
+            "team-a": ("bulk_create_tools", 3),
+            "team-b": ("bulk_update_tools", 2),
+            None: ("bulk_create_tools", 1),
+        }
+        for audit_call in audit_calls:
+            assert audit_call.kwargs["details"]["import_batch_id"] == "batch-team-groups"
+            assert "db" not in audit_call.kwargs
+
+    def test_process_tool_chunk_commit_failure_emits_no_audit(self, mock_logging_services):
+        """A failed tool commit emits no success audit and rolls back the resource session."""
+        db = MagicMock()
+        db.commit.side_effect = RuntimeError("commit failed")
+        stats = ToolService()._process_tool_chunk(
+            db=db,
+            chunk=[_make_bulk_tool_create(name="commitfailure", team_id="team-a")],
+            conflict_strategy="skip",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="owner@example.com",
+            created_from_ip=None,
+            created_via="import",
+            created_user_agent=None,
+            import_batch_id="failed-batch",
+            federation_source=None,
+            existing_tools_map={},
+        )
+        assert stats["failed"] == 1
+        db.rollback.assert_called_once()
+        db.refresh.assert_not_called()
+        mock_logging_services["audit_trail"].log_action.assert_not_called()
+
+    def test_process_tool_chunk_excludes_late_collisions_from_audit_groups(self, mock_logging_services):
+        """Late collisions cannot contribute rejected tools to successful team audit counts."""
+        service = ToolService()
+        rejected = SimpleNamespace(name="collision", team_id="team-a")
+        accepted = SimpleNamespace(name="accepted", team_id="team-b")
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [rejected]
+        audit = mock_logging_services["audit_trail"].log_action
+        db.commit.side_effect = audit.assert_not_called
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=[{"status": "add", "tool": rejected}, {"status": "add", "tool": accepted}]):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=name) for name in ("collision", "accepted")],
+                conflict_strategy="update",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="owner@example.com",
+                created_from_ip=None,
+                created_via="import",
+                created_user_agent=None,
+                import_batch_id="late-collision-batch",
+                federation_source=None,
+                existing_tools_map={},
+            )
+        assert (stats["created"], stats["failed"]) == (1, 1)
+        db.add_all.assert_called_once_with([accepted])
+        db.execute.assert_called_once()
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["team_id"] == "team-b"
+        assert audit.call_args.kwargs["details"] == {"count": 1, "import_batch_id": "late-collision-batch"}
+        assert "db" not in audit.call_args.kwargs
 
     def test_process_tool_chunk_private_exception_rolls_back(self):
         service = ToolService()
@@ -9937,6 +10111,7 @@ class TestToolServiceBulkImport:
         tool = _make_bulk_tool_create(name="owned-tool")
         existing_tool = SimpleNamespace(
             name=tool.name,
+            team_id="owner-team",
             url="https://old",
             headers={},
             version=1,
@@ -10199,7 +10374,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"}, progress_callback=None)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10241,6 +10416,41 @@ class TestInvokeToolDirect:
         assert result.meta == expected_meta
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("meta_data", [None, {"request_id": "abc-123"}])
+    async def test_invoke_tool_direct_passes_progress_callback(self, tool_service, mock_direct_gateway, meta_data):
+        """The progress callback reaches client.call_tool with and without _meta."""
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
+        callback = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+                progress_callback=callback,
+            )
+
+        assert session_mock.call_tool.await_args.kwargs["progress_callback"] is callback
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
         """Meta data should be forwarded to session.call_tool when provided."""
         expected_result = MagicMock()
@@ -10274,7 +10484,7 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
@@ -10329,6 +10539,7 @@ class TestInvokeToolDirect:
                 "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
                 "request_id": "abc-123",
             },
+            progress_callback=None,
         )
         assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
@@ -10546,7 +10757,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # The remote call should use the original_name, not the slugified prefixed name
-        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
@@ -10581,7 +10792,7 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
-        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
+        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={}, progress_callback=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):

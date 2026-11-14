@@ -451,6 +451,21 @@ async def test_connect_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_connect_forwards_authenticated_bearer_not_cookie(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+
+    request = MagicMock()
+    request.cookies = {"jwt_token": "cookie_tok"}
+    request.headers = {"authorization": "Bearer bearer_tok"}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token=""))
+
+    await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert input_data.server.auth_token == "bearer_tok"
+
+
+@pytest.mark.asyncio
 async def test_connect_rejects_ssrf_server_url(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
 

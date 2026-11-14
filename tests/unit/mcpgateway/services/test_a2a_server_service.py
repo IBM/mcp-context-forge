@@ -154,6 +154,22 @@ class TestA2AServerService:
         assert len(card["skills"]) == 1
         assert card["skills"][0]["id"] == "summarize"
 
+    def test_get_server_agent_card_reads_skills_field_and_legacy_capabilities(self, service, mock_db):
+        """New agents publish skills from the skills field; old agents keep publishing capabilities.skills."""
+        new_agent = _make_agent(capabilities={"streaming": True})
+        new_agent.skills = [{"id": "new-skill"}]
+        legacy_agent = _make_agent(capabilities={"skills": [{"id": "legacy-skill"}]})
+        legacy_agent.skills = None
+        server = _make_server(a2a_agents=[new_agent, legacy_agent])
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": _make_interface()}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert [skill["id"] for skill in card["skills"]] == ["new-skill", "legacy-skill"]
+
     def test_get_server_agent_card_omits_skills_of_agents_hidden_from_caller(self, service, mock_db):
         """A caller who can see a public server never reads skills of private or other-team agents (#6700)."""
         public_agent = _make_agent(capabilities={"skills": [{"id": "public-skill"}]})

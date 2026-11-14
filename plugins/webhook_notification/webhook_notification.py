@@ -18,7 +18,7 @@ from enum import Enum
 import hashlib
 import hmac
 import logging
-import time
+from time import time
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -297,7 +297,7 @@ class WebhookNotificationPlugin(Plugin):
             attempt_headers = dict(headers)
             if hmac_signing:
                 # Sign each attempt so retries carry a fresh timestamp
-                timestamp = str(int(time.time())) if auth_config.hmac_include_timestamp else None
+                timestamp = str(int(time())) if auth_config.hmac_include_timestamp else None
                 attempt_headers[auth_config.hmac_header] = self._create_hmac_signature(payload_json, auth_config.hmac_secret, auth_config.hmac_algorithm, timestamp, delivery_id if timestamp else None)
                 if timestamp:
                     attempt_headers[auth_config.hmac_timestamp_header] = timestamp

@@ -131,6 +131,31 @@ async def test_token_from_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_auth_context_prefers_bearer_over_cookie():
+    """The Authorization bearer token wins over the jwt_token cookie."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "cookie_token"}
+    request.headers = {"authorization": "Bearer header_token"}
+    request.state.db = None
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_get_user = AsyncMock(return_value=mock_user)
+
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", mock_get_user),
+    ):
+        await middleware.dispatch(request, call_next)
+
+    assert mock_get_user.await_args.args[0].credentials == "header_token"
+    assert request.state.bearer_token == "header_token"
+
+
+@pytest.mark.asyncio
 async def test_token_from_header(monkeypatch):
     """Token extracted from Authorization header triggers authentication."""
     middleware = AuthContextMiddleware(app=AsyncMock())

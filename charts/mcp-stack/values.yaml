@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.1.0"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    tag: "v1.1.1"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -214,7 +214,7 @@ mcpContextForge:
     # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
     # Example:
     #   kubectl create secret generic my-gateway-tls-pass \
-    #     --from-literal=keyFilePassword=my-passphrase
+    #     --from-literal=keyFilePassword=my-passphrase # pragma: allowlist secret
     keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
 
   ####################################################################
@@ -585,7 +585,13 @@ mcpContextForge:
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     MAX_CONCURRENT_HEALTH_CHECKS: "10" # maximum concurrent health checks per worker
     AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
+    GATEWAY_MODERN_LISTENERS_ENABLED: "false" # standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
+
+    # ─ MCP subscriptions/listen ─
+    MCP_LISTEN_MAX_LIFETIME_SECONDS: "3600" # max lifetime of a subscriptions/listen stream (60-86400)
+    MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL: "32" # max concurrent listen streams per principal per worker (1-1024)
+    MCP_LISTEN_MAX_ANONYMOUS_STREAMS: "256" # max concurrent listen streams shared by all anonymous callers per worker (0-1024; 0 refuses)
 
     # ─ MCP Session Pool (disabled) ─
     # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.
@@ -718,6 +724,9 @@ mcpContextForge:
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
+    CEL_EXECUTION: "subprocess" # where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess
+    CEL_TIMEOUT_SECONDS: "1.0" # wall-clock limit for one policy evaluation (seconds, at most 1.0)
+    CEL_WORKERS: "2" # policy sandbox worker processes per gateway process
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
     ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
 
@@ -1007,7 +1016,7 @@ mcpContextForge:
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─
-    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL # pragma: allowlist secret
     # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
 
     # - Bootstrap additional system roles -
@@ -1058,7 +1067,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.1.0"                            # Should match mcpContextForge.image.tag
+    tag: "v1.1.1"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job
@@ -1111,10 +1120,10 @@ postgres:
   # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
   existingSecret: ""
 
-  credentials:                  # used only when existingSecret is blank
+  credentials:                  # used only when existingSecret is blank # pragma: allowlist secret
     database: postgresdb
     user: admin
-    password: test123           # CHANGE ME in production!
+    password: test123           # CHANGE ME in production! # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1281,7 +1290,7 @@ redis:
     existingSecret: ""
     passwordKey: "REDIS_PASSWORD"
     #checkov:skip=CKV_SECRET_6:Redis example pass
-    password: "change-me-redis"      # CHANGE ME in production!
+    password: "change-me-redis"      # CHANGE ME in production! # pragma: allowlist secret
   # Transport recommendation:
   # For production, prefer TLS (for example rediss:// via redis.external.url
   # or a managed Redis endpoint with TLS enabled).
@@ -1303,7 +1312,7 @@ redis:
         - sh
         - -c
         - |
-          if [ -n "${REDIS_PASSWORD:-}" ]; then
+          if [ -n "${REDIS_PASSWORD:-}" ]; then # pragma: allowlist secret
             redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
           else
             redis-cli PING
@@ -1320,7 +1329,7 @@ redis:
         - sh
         - -c
         - |
-          if [ -n "${REDIS_PASSWORD:-}" ]; then
+          if [ -n "${REDIS_PASSWORD:-}" ]; then # pragma: allowlist secret
             redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
           else
             redis-cli PING
@@ -1374,7 +1383,7 @@ pgadmin:
 
   env:
     email: admin@example.com
-    password: admin123           # CHANGE ME in production!
+    password: admin123           # CHANGE ME in production! # pragma: allowlist secret
 
   # ─── Resource limits & requests ───
   resources:
@@ -1470,7 +1479,7 @@ minio:
   credentials:
     rootUser: minioadmin
     #checkov:skip=CKV_SECRET_6:Example password
-    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION! # pragma: allowlist secret
 
   service:
     type: ClusterIP
@@ -1841,7 +1850,7 @@ monitoring:
     service:
       type: ClusterIP
       port: 3000
-    adminPassword: changeme
+    adminPassword: changeme # pragma: allowlist secret
     allowSignUp: false
     persistence:
       enabled: true

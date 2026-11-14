@@ -76,6 +76,7 @@ ROUTER_PERMISSIONS = [
     ("mcpgateway/routers/sso.py", "admin.sso_providers:delete"),
     ("mcpgateway/routers/sso.py", "admin.user_management"),
     ("mcpgateway/routers/llm_config_router.py", "admin.system_config"),
+    ("mcpgateway/routers/llm_config_router.py", "llm.read"),
     ("mcpgateway/routers/llm_admin_router.py", "admin.system_config"),
     ("mcpgateway/routers/llm_proxy_router.py", "llm.read"),
     ("mcpgateway/routers/llm_proxy_router.py", "llm.invoke"),
