@@ -527,6 +527,12 @@ export const editGateway = async function (gatewayId) {
     const authTypeField = safeGetElement("auth-type-gw-edit");
 
     if (authTypeField) {
+      // The form cannot edit SigV4 credentials. Offer the option only for SigV4
+      // gateways, so saving keeps them instead of posting an empty auth type.
+      const sigv4Option = authTypeField.querySelector('option[value="sigv4"]');
+      if (sigv4Option) {
+        sigv4Option.hidden = gateway.authType !== "sigv4";
+      }
       authTypeField.value = gateway.authType || ""; // falls back to None
     }
 

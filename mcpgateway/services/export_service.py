@@ -536,6 +536,9 @@ class ExportService:
 
         exported_gateways = []
         for gateway in gateways:
+            if gateway.auth_type == "sigv4":
+                logger.warning("Gateway %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", gateway.id)
+                continue
             gateway_data = {
                 "name": gateway.name,
                 "url": str(gateway.url),
@@ -967,6 +970,9 @@ class ExportService:
 
         exported_gateways = []
         for db_gateway in db_gateways:
+            if db_gateway.auth_type == "sigv4":
+                logger.warning("Gateway %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", db_gateway.id)
+                continue
             gateway_data = {
                 "name": db_gateway.name,
                 "url": str(db_gateway.url) if db_gateway.url else None,

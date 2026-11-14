@@ -792,6 +792,7 @@ class TestUpdateGatewayPollSchedule:
         gateway_update.auth_headers = None
         gateway_update.auth_value = None
         gateway_update.oauth_config = None
+        gateway_update.sigv4_config = None
         gateway_update.auth_query_param_key = None
         gateway_update.auth_query_param_value = None
         gateway_update.ca_certificate = None

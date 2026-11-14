@@ -79,7 +79,7 @@ _INBOUND_PASSTHROUGH_DENYLIST: frozenset[str] = frozenset(
 
 # Gateway auth types whose upstream Authorization credential is owned by the gateway.
 # A caller-supplied X-Upstream-Authorization must never replace it.
-_GATEWAY_MANAGED_AUTH_TYPES: frozenset[str] = frozenset({"oauth", "bearer", "basic", "authheaders"})
+_GATEWAY_MANAGED_AUTH_TYPES: frozenset[str] = frozenset({"oauth", "bearer", "basic", "authheaders", "sigv4"})
 
 
 class PassthroughHeadersError(Exception):
@@ -347,6 +347,9 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                     if gateway.auth_type == "bearer" and header_lower == "authorization":
                         logger.warning(f"Skipping Authorization header passthrough due to bearer auth configuration on gateway {gateway.name}")
                         continue
+                    if gateway.auth_type == "sigv4" and header_lower == "authorization":
+                        logger.warning(f"Skipping Authorization header passthrough due to sigv4 auth configuration on gateway {gateway.name}")
+                        continue
 
                 # Use original header name casing from configuration, sanitized value from request
                 passthrough_headers[header_name] = sanitized_value
@@ -484,7 +487,7 @@ def compute_passthrough_headers_cached(
                     continue
 
                 # Skip if header would conflict with gateway auth
-                if gateway_auth_type in ("basic", "bearer") and header_lower == "authorization":
+                if gateway_auth_type in ("basic", "bearer", "sigv4") and header_lower == "authorization":
                     logger.warning(f"Skipping Authorization header passthrough due to {gateway_auth_type} auth configuration")
                     continue
 

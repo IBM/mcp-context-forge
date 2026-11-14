@@ -905,6 +905,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         client_key=None,
         initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
         gateway_id="gw-1",
+        sigv4_config=None,
     )
 
 

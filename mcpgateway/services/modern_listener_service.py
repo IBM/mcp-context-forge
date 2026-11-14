@@ -218,6 +218,9 @@ class ModernListenerService:
                 if gw.auth_type == "oauth":
                     logger.debug("Skipping modern listener for OAuth server %s (token lifecycle not supported on standing streams)", gw.name)
                     continue
+                if gw.auth_type == "sigv4":
+                    logger.debug("Skipping modern listener for SigV4 server %s (per-request signing not supported on standing streams)", gw.name)
+                    continue
                 snapshots.append(_GatewaySnapshot(id=gw.id, name=gw.name, url=gw.url, headers=gateway_listen_headers(gw)))
         return snapshots
 

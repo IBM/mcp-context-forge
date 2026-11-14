@@ -94,6 +94,7 @@ from pydantic import SecretStr
 # First-Party
 from mcpgateway.common.oauth import is_sensitive_oauth_key
 from mcpgateway.config import settings
+from mcpgateway.utils.sigv4 import encrypt_sigv4_secret, is_encrypted_sigv4_secret, SIGV4_SENSITIVE_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -654,3 +655,43 @@ async def decrypt_oauth_config_for_runtime(oauth_config: Any, encryption: Option
 
     active_encryption = encryption or get_encryption_service(settings.auth_encryption_secret)
     return await _decrypt_oauth_config_value(oauth_config, active_encryption)
+
+
+def _protect_sigv4_secret(field: str, value: Any, existing_value: Any) -> Any:
+    """Encrypt one SigV4 secret field while preserving masked placeholders.
+
+    Args:
+        field: Name of the config field being protected.
+        value: Incoming secret, a masked placeholder, or an already encrypted value.
+        existing_value: Stored value of the same field, used to resolve a masked placeholder.
+
+    Returns:
+        Any: Value suitable for persistence.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    if value == settings.masked_auth_value:
+        return existing_value if isinstance(existing_value, str) and existing_value else None
+    if is_encrypted_sigv4_secret(field, value):
+        return value
+    return encrypt_sigv4_secret(field, value)
+
+
+async def protect_sigv4_config_for_storage(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
+    """Encrypt the secret fields of a ``sigv4_config`` before persistence.
+
+    A masked placeholder keeps the stored ciphertext of the same field, so a client that
+    echoes a masked read back on update does not overwrite the credential.
+
+    Args:
+        sigv4_config: Incoming plaintext configuration.
+        existing_sigv4_config: Stored configuration, used to resolve masked placeholders.
+
+    Returns:
+        Optional[dict]: Configuration whose ``secret_access_key`` and ``session_token`` are encrypted.
+    """
+    if sigv4_config is None:
+        return None
+
+    existing = existing_sigv4_config if isinstance(existing_sigv4_config, dict) else {}
+    return {key: (_protect_sigv4_secret(key, value, existing.get(key)) if key in SIGV4_SENSITIVE_KEYS else value) for key, value in sigv4_config.items()}
