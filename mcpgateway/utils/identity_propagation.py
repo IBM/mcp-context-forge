@@ -9,6 +9,21 @@ This module provides functions to build HTTP headers and MCP ``_meta`` payloads
 carrying user identity, as well as filtering of sensitive attributes before
 propagation.
 
+Header value encoding:
+    HTTP header values are ASCII on the wire and httpx rejects values it cannot
+    encode as ASCII, so a single identity attribute with an accented, Cyrillic,
+    CJK or other non-ASCII character used to make every upstream request fail to
+    build. Values that are not pure ASCII are therefore sent percent-encoded as
+    UTF-8 (``urllib.parse.quote(value, safe="")``); upstream servers decode them
+    with ``urllib.parse.unquote``. Pure ASCII values, which is the common case,
+    are sent unchanged and remain byte-identical to earlier releases.
+
+    Comma-separated headers (``-Groups``, ``-Teams``, ``-Roles``,
+    ``-Delegation-Chain``) encode each element separately, so the commas stay
+    unambiguous separators. The HMAC claims signature (``-Claims-Signature``) is
+    computed over the unencoded ``user_id`` and ``email``: decode the headers
+    first, then verify the signature over the decoded values.
+
 Examples:
     >>> from mcpgateway.transports.context import UserContext
     >>> uc = UserContext(user_id="alice@co.com", email="alice@co.com", is_admin=False, groups=["eng"], auth_method="bearer")
@@ -22,12 +37,52 @@ import hashlib
 import hmac
 import logging
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.context import UserContext
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_header_value(value: str) -> str:
+    """Percent-encode a value as UTF-8 when it is not pure ASCII.
+
+    ASCII values are returned untouched so existing deployments keep seeing the
+    same header bytes; httpx would raise ``UnicodeEncodeError`` for anything else.
+
+    Args:
+        value: Identity attribute value to put into a header.
+
+    Returns:
+        The value unchanged when ASCII, otherwise its percent-encoded UTF-8 form.
+
+    Examples:
+        >>> _encode_header_value("Alice Test")
+        'Alice Test'
+        >>> _encode_header_value("José Núñez")
+        'Jos%C3%A9%20N%C3%BA%C3%B1ez'
+    """
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError:
+        return quote(value, safe="")
+    return value
+
+
+def _encode_header_list(values: list[str]) -> str:
+    """Join list values into one header, percent-encoding only non-ASCII elements.
+
+    Encoding each element separately keeps the comma an unambiguous separator.
+
+    Args:
+        values: List of identity attribute values (groups, teams, roles, hops).
+
+    Returns:
+        Comma-separated header value that is ASCII by construction.
+    """
+    return ",".join(_encode_header_value(value) for value in values)
 
 
 def _resolve_config(gateway: Optional[Any] = None, identity_propagation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -97,29 +152,30 @@ def build_identity_headers(
 
     prefix = cfg["headers_prefix"]
     headers: Dict[str, str] = {
-        f"{prefix}-Id": user_context.user_id,
+        f"{prefix}-Id": _encode_header_value(user_context.user_id),
     }
 
     if user_context.email:
-        headers[f"{prefix}-Email"] = user_context.email
+        headers[f"{prefix}-Email"] = _encode_header_value(user_context.email)
     if user_context.full_name:
-        headers[f"{prefix}-Full-Name"] = user_context.full_name
+        headers[f"{prefix}-Full-Name"] = _encode_header_value(user_context.full_name)
     if user_context.groups:
-        headers[f"{prefix}-Groups"] = ",".join(user_context.groups)
+        headers[f"{prefix}-Groups"] = _encode_header_list(user_context.groups)
     if user_context.teams:
-        headers[f"{prefix}-Teams"] = ",".join(user_context.teams)
+        headers[f"{prefix}-Teams"] = _encode_header_list(user_context.teams)
     if user_context.roles:
-        headers[f"{prefix}-Roles"] = ",".join(user_context.roles)
+        headers[f"{prefix}-Roles"] = _encode_header_list(user_context.roles)
     headers[f"{prefix}-Admin"] = str(user_context.is_admin).lower()
     if user_context.auth_method:
-        headers[f"{prefix}-Auth-Method"] = user_context.auth_method
+        headers[f"{prefix}-Auth-Method"] = _encode_header_value(user_context.auth_method)
     if user_context.service_account:
-        headers[f"{prefix}-Service-Account"] = user_context.service_account
+        headers[f"{prefix}-Service-Account"] = _encode_header_value(user_context.service_account)
     if user_context.delegation_chain:
-        headers[f"{prefix}-Delegation-Chain"] = ",".join(user_context.delegation_chain)
+        headers[f"{prefix}-Delegation-Chain"] = _encode_header_list(user_context.delegation_chain)
 
     if cfg["sign_claims"]:
-        # Sign the user_id + email combination
+        # Sign the user_id + email combination. Both are signed before any header
+        # encoding, so an upstream that decodes the headers verifies this value.
         sig_payload = f"{user_context.user_id}:{user_context.email or ''}"
         headers[f"{prefix}-Claims-Signature"] = _sign_claims(sig_payload)
 
