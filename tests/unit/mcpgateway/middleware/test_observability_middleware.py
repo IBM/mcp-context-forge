@@ -102,6 +102,26 @@ async def test_dispatch_sets_span_id_on_request_state(mock_request, mock_call_ne
 
 
 @pytest.mark.asyncio
+async def test_dispatch_records_canonical_user_id_on_trace(mock_request, mock_call_next):
+    """The trace identity field holds the canonical user_id, not the e-mail."""
+    import types
+
+    mock_request.state = types.SimpleNamespace(user=types.SimpleNamespace(user_id="u-123", email="diverged@example.com"))
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+    assert response.status_code == 200
+    assert mock_start_trace.call_args.kwargs["user_email"] == "u-123"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_trace_setup_failure(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):

@@ -83,6 +83,7 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+    get_user_id,
     import_envelope_includes_roots,
     is_trusted_internal_mcp_request,
     is_unrestricted_platform_admin,
@@ -6430,6 +6431,7 @@ async def create_tool(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_user_id(user),
         )
         db.commit()
         db.close()
@@ -6655,6 +6657,7 @@ async def update_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_user_id(user),
         )
         db.commit()
         db.close()
@@ -6702,7 +6705,7 @@ async def delete_tool(
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
         user_email = get_user_email(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics, user_id=get_user_id(user))
         db.commit()
         db.close()
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
@@ -6741,7 +6744,7 @@ async def set_tool_state(
     try:
         logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = get_user_email(user)
-        tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
+        tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email, user_id=get_user_id(user))
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -7912,6 +7915,7 @@ async def set_gateway_state(
             gateway_id,
             activate,
             user_email=user_email,
+            user_id=get_user_id(user),
         )
         return {
             "status": "success",
@@ -8101,6 +8105,7 @@ async def register_gateway(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_user_id(user),
         )
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
@@ -8240,6 +8245,7 @@ async def update_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_user_id(user),
         )
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
@@ -8310,7 +8316,7 @@ async def delete_gateway(
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_user_id(user))
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both

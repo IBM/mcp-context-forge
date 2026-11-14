@@ -1582,6 +1582,24 @@ class TestToolEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
+    @patch("mcpgateway.main.tool_service.delete_tool")
+    def test_delete_tool_passes_canonical_user_id(self, mock_delete, test_client, auth_headers):
+        """The router passes the canonical user_id to the service next to the caller e-mail."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        mock_delete.return_value = None
+        overrides = test_client.app.dependency_overrides
+        original = overrides[get_current_user_with_permissions]
+        overrides[get_current_user_with_permissions] = lambda: {"email": "diverged@example.com", "user_id": "u-123", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+        try:
+            response = test_client.delete("/tools/1", headers=auth_headers)
+        finally:
+            overrides[get_current_user_with_permissions] = original
+        assert response.status_code == 200
+        assert mock_delete.call_args.kwargs["user_email"] == "diverged@example.com"
+        assert mock_delete.call_args.kwargs["user_id"] == "u-123"
+
 
 # ----------------------------------------------------- #
 # Resource Management Tests                             #
