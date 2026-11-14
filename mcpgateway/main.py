@@ -5459,6 +5459,8 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
 def _extract_a2a_request_context(
     request: Request,
     user: Any,
+    *,
+    include_authenticated_bearer_token: bool = True,
 ) -> Dict[str, Any]:
     """
     Extract authentication and request context for A2A agent invocation.
@@ -5470,6 +5472,7 @@ def _extract_a2a_request_context(
     Args:
         request: FastAPI Request object
         user: Authenticated user (from get_current_user_with_permissions)
+        include_authenticated_bearer_token: Set to False for service methods that do not accept ``authenticated_bearer_token``.
 
     Returns:
         Dict containing:
@@ -5478,6 +5481,7 @@ def _extract_a2a_request_context(
         - token_teams: Optional[List[str]]
         - hop_count: int
         - bearer_token: Optional[str]
+        - authenticated_bearer_token: Optional[str]
         - content_type: Optional[str]
         - request_headers: Dict[str, str]
     """
@@ -5497,6 +5501,7 @@ def _extract_a2a_request_context(
     # Extract bearer token for cross-gateway forwarding
     # Prefer token extracted by auth middleware (validated and normalized)
     bearer_token = getattr(request.state, "bearer_token", None)
+    authenticated_bearer_token = getattr(request.state, "authenticated_bearer_token", None)
 
     # Fallback: extract from Authorization header if middleware didn't set it
     if not bearer_token:
@@ -5515,7 +5520,7 @@ def _extract_a2a_request_context(
     content_type = request.headers.get("content-type")
     request_headers = _prepare_request_headers(request.headers)
 
-    return {
+    context = {
         "user_id": user_id,
         "user_email": user_email,
         "token_teams": token_teams,
@@ -5524,6 +5529,9 @@ def _extract_a2a_request_context(
         "content_type": content_type,
         "request_headers": request_headers,
     }
+    if include_authenticated_bearer_token:
+        context["authenticated_bearer_token"] = authenticated_bearer_token
+    return context
 
 
 def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -5880,7 +5888,7 @@ async def send_a2a_task_message(
     service = _require_a2a_service()
     await _require_manageable_a2a_agent(service, db, request, user, agent_id)
     try:
-        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user, include_authenticated_bearer_token=False))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2ATaskStateError as e:
@@ -5978,7 +5986,7 @@ async def test_a2a_agent(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
-    outcome = await a2a_service.test_agent(db, agent_id, query=payload.query if payload else None, **_extract_a2a_request_context(request, user))
+    outcome = await a2a_service.test_agent(db, agent_id, query=payload.query if payload else None, **_extract_a2a_request_context(request, user, include_authenticated_bearer_token=False))
     if outcome.status_code != 200:
         raise HTTPException(status_code=outcome.status_code, detail=outcome.body)
     return outcome.body
