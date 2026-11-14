@@ -1137,8 +1137,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
       :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
       (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
       Pass ``include_resource=False`` for entity types that do not consume
-      ``oauth_config["resource"]`` (A2A agents) so the value is neither
-      assembled nor able to trigger assembly on its own.
+      ``oauth_config["resource"]`` so the value is neither assembled nor able
+      to trigger assembly on its own.
     * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
       (UI edit/add handlers); ``False`` stores it as submitted (the gateway
       create path, where encryption happens downstream in the service layer).
@@ -16816,7 +16816,7 @@ async def admin_add_a2a_agent(
     form = await request.form()
     team_id = _form_team_id(form)
     try:
-        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+        LOGGER.info("A2A agent creation form fields: %s", sorted(str(key) for key in form.keys()))
 
         _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
@@ -16842,7 +16842,7 @@ async def admin_add_a2a_agent(
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info("DEBUG: oauth_config_json from form present: %s", oauth_config_json != "None")
         LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
 
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
@@ -16858,11 +16858,8 @@ async def admin_add_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
@@ -17087,11 +17084,8 @@ async def admin_edit_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 

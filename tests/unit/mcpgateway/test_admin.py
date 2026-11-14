@@ -8040,6 +8040,12 @@ class TestTokenExchangeAdminForms:
             "token_endpoint_auth_method": "client_secret_post",
         }
 
+    async def test_assemble_keeps_resource_for_a2a_client_credentials_form(self):
+        """A2A form handlers assemble ``oauth_resource`` into ``oauth_config["resource"]``."""
+        fields = {"oauth_grant_type": "client_credentials", "oauth_client_id": "c", "oauth_resource": "https://agent.example.com"}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["resource"] == "https://agent.example.com"
+
     @pytest.mark.parametrize("include_resource", [True, False])
     async def test_assemble_ignores_token_exchange_fields_for_other_grants(self, include_resource):
         """Stray token-exchange inputs never leak into client_credentials or A2A configs."""
@@ -20128,7 +20134,7 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",
@@ -20163,6 +20169,47 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     assert agent_data.oauth_config["audience"] == "api.atlassian.com"
     assert agent_data.oauth_config["client_id"] == "client-id"
     assert agent_data.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
+
+
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_does_not_log_form_secrets(monkeypatch, mock_db, caplog):
+    """The creation handler logs form field names, never values such as the OAuth client secret."""
+    secret = "plaintext-client-secret-for-log-check"  # pragma: allowlist secret
+    form_data = FakeForm(
+        {
+            "name": "Agent_Log_Check",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_client_id": "client-id",
+            "oauth_client_secret": secret,
+            "oauth_config": json.dumps({"grant_type": "client_credentials", "client_id": "client-id", "client_secret": secret}),
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    with caplog.at_level("DEBUG", logger="mcpgateway.admin"):
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+
+    assert secret not in caplog.text
+    assert "oauth_client_secret" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -20404,7 +20451,7 @@ async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",

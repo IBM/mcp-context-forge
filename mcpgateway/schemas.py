@@ -385,6 +385,43 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
     return v
 
 
+_A2A_OAUTH_GRANT_TYPE = "client_credentials"
+
+
+def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate the OAuth configuration of an A2A agent.
+
+    The gateway requests an agent-level token with the ``client_credentials`` grant,
+    so ``token_url`` is an outbound target that receives the client secret.
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a URL fails the core URL rules or the grant type is not supported.
+
+    Examples:
+        >>> _validate_a2a_oauth_config(None) is None
+        True
+        >>> _validate_a2a_oauth_config({"grant_type": "client_credentials"})["grant_type"]
+        'client_credentials'
+        >>> _validate_a2a_oauth_config({"grant_type": "authorization_code"})
+        Traceback (most recent call last):
+            ...
+        ValueError: A2A agents support only the client_credentials OAuth grant type, got 'authorization_code'
+    """
+    v = _validate_oauth_config_urls(v)
+    if v is None:
+        return v
+    grant_type = v.get("grant_type", _A2A_OAUTH_GRANT_TYPE)
+    if grant_type != _A2A_OAUTH_GRANT_TYPE:
+        raise ValueError(f"A2A agents support only the {_A2A_OAUTH_GRANT_TYPE} OAuth grant type, got '{grant_type}'")
+    return v
+
+
 def _validate_mapping_size(v: dict | None) -> dict | None:
     """Validate that a mapping dict does not exceed size limits.
 
@@ -6151,6 +6188,19 @@ class A2AAgentCreate(BaseModel):
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the OAuth configuration URLs and grant type.
+
+        Args:
+            v: OAuth configuration dict or ``None``.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_a2a_oauth_config(v)
+
     @field_validator("passthrough_headers")
     @classmethod
     def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
@@ -6485,6 +6535,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the OAuth configuration URLs and grant type.
+
+        Args:
+            v: OAuth configuration dict or ``None``.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_a2a_oauth_config(v)
 
     @field_validator("passthrough_headers")
     @classmethod
