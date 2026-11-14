@@ -467,6 +467,95 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 
 ---
 
+## Trust-Mode Inline-Groups Live Gateway Tests
+
+A second Entra test suite covers external-IdP trust mode
+(`JWT_TRUST_MODE=jwt-trust`). The module
+`tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py` reproduces
+the four inline-groups access cases plus one app-only case:
+The tests run against a real Entra tenant. They use real tokens, the real
+issuer and JWKS, and real Microsoft Graph for group-overage resolution. The
+tests do not mock any Entra component. With `AZURE_*` credentials exported,
+all five cases run without operator input in three to four minutes. Use
+case 4 provisions 201 throwaway groups. Use case 5 self-provisions a
+throwaway v2 application (`api.requestedAccessTokenVersion = 2` plus the
+`idtyp` optional claim, Microsoft Graph manifest format), its service
+principal, a client secret, and a security group holding the service
+principal, then presents an app-only token (`idtyp == "app"`, no `groups`
+claim). The gateway resolves the service-principal groups through Graph
+and maps them to a team. Use case 5 deletes every object after the
+session and needs no extra permission.
+
+This suite is separate from the SSO role-sync suite above. It exercises token
+dispatch, group-to-team mapping, and A2A agent visibility and invocation
+authorization. See [Token Dispatch Rule](../architecture/auth-token-dispatch.md).
+
+### Start the stack
+
+```bash
+# Start the testing stack with the gateway in Entra trust mode.
+# The docker-compose.entra.yml override applies trust mode.
+# The base compose file does not change.
+make testing-up-entra
+```
+
+### Token and environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` | Preferred (self-provisioning) | Self-provisioning mode. The harness provisions a user and one group for use cases 1-3. For use case 4 it provisions a user in 201 groups. It deletes every object after the session. Requires admin-consented Graph permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`, `Application.ReadWrite.All`. |
+| `ENTRA_LIVE_TOKEN_FILE` | Alternative to `AZURE_*` | Path to a non-overage, unexpired Entra v2 end-user token with inline `groups` claims |
+| `ENTRA_OVERAGE_TOKEN_FILE` | Use case 4 alternative | Pre-acquired token for a user in more than 200 groups, with the group-overage marker. With `AZURE_*` set, the harness provisions a user in 201 groups and deletes it after the session |
+| `ENTRA_GRAPH_CLIENT_ID`, `ENTRA_GRAPH_CLIENT_SECRET` | Use case 4 only | App Registration with the admin-consented `GroupMember.Read.All` permission. The tests use `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` or `ENTRA_CLIENT_ID`/`ENTRA_CLIENT_SECRET` when these variables are unset. |
+| `ENTRA_OVERAGE_MAPPED_GROUP` | Use case 4 operator mode only | Group GUID that Microsoft Graph resolves. The operator token mode needs it when the token carries no inline groups. The self-provisioning mode supplies the GUID itself. |
+
+
+### Required Microsoft Graph permissions
+
+Grant these **application permissions** to the App Registration, with admin
+consent. The self-provisioning mode needs all four. Use case 4 also needs
+the fifth permission. `GroupMember.ReadWrite.All` already covers it.
+
+| Permission | Used for |
+|-----------|----------|
+| `User.ReadWrite.All` | Create and delete the throwaway test user |
+| `Group.ReadWrite.All` | Create and delete the security group |
+| `GroupMember.ReadWrite.All` | Add the test user to the group |
+| `Application.ReadWrite.All` | Read and set `groupMembershipClaims` on the App Registration |
+| `GroupMember.Read.All` | Use case 4 only: the gateway resolves group overage through Graph. `GroupMember.ReadWrite.All` already covers this. |
+
+Without `Application.ReadWrite.All`, the harness cannot set
+`groupMembershipClaims` itself. Set it to `"SecurityGroup"` in the App
+Registration manifest by hand, or the token never carries the `groups` claim.
+
+### Run the tests
+
+```bash
+TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" \
+JWT_TRUST_MODE=jwt-trust \
+JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
+JWT_TRUST_OVERAGE_POLICY=graph_lookup \
+    uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
+```
+
+`TESTS_DNS_PASSTHROUGH_HOSTS` is required: `tests/conftest.py` blackholes
+external DNS by default, and the passthrough list lets the harness reach the
+Entra token endpoint and Microsoft Graph.
+
+### Entra v1 issuers and single-gateway topology
+
+The trust-mode suite works with v1-format tokens (`sts.windows.net`
+issuers). The seeding helper records a same-origin `jwks_uri` on the
+provider (`<issuer>/discovery/keys`). V1 discovery documents point at a
+cross-origin JWKS by design. The gateway rejects those URIs.
+`make testing-up-entra` scales the gateway to one replica. The suite
+changes the group mapping between requests, and a single gateway gives
+deterministic cache-invalidation semantics.
+
+A missing prerequisite causes a skip, not a failure. The skip message names
+the exact missing variables. The module docstring is the authoritative
+runbook.
+
 ## Summary
 
 | Step | Action |
@@ -487,3 +576,4 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 - [Microsoft Graph API - Groups](https://learn.microsoft.com/en-us/graph/api/resources/group)
 - [Azure AD App Registration](https://learn.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app)
 - [ContextForge SSO Configuration](../manage/sso.md)
+- [Token Dispatch Rule](../architecture/auth-token-dispatch.md)
