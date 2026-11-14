@@ -592,6 +592,7 @@ async def test_register_forwards_identity_to_gateway_service(service):
     assert kwargs["team_id"] is None
     assert kwargs["visibility"] == "private"
 
+
 @pytest.mark.asyncio
 async def test_register_oauth_skip_init_stamps_owner(service):
     """The OAuth skip-initialization path stamps the caller onto the gateway row."""
@@ -622,6 +623,46 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.owner_email == "u@x.com"
     assert db_gateway.team_id is None
     assert db_gateway.visibility == "private"
+
+
+@pytest.mark.parametrize("credentials", [None, {}, {"resource": "https://override.example.com/mcp", "scopes": ["custom"]}])
+@pytest.mark.asyncio
+async def test_register_oauth_uses_catalog_defaults(service, credentials):
+    """Registration preserves catalog OAuth defaults and applies caller overrides."""
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]}
+
+    defaults = {
+        "resource": "https://oauth.example.com/mcp",
+        "scopes": ["read", "write"],
+        "audience": "https://api.example.com",
+        "redirect_uri": "https://gateway.example.com/oauth/callback",
+    }
+    fake_catalog["catalog_servers"][0]["oauth"] = dict(defaults)
+    request = CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials=credentials) if credentials is not None else None
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with patch("mcpgateway.services.catalog_service.select"), patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"):
+            result = await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert result.success is True
+    for key, value in {**defaults, **(credentials or {})}.items():
+        assert db_gateway.oauth_config[key] == value
+    assert fake_catalog["catalog_servers"][0]["oauth"] == defaults
 
 
 @pytest.mark.asyncio
