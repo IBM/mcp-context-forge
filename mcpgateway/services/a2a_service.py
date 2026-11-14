@@ -236,6 +236,28 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         )
 
 
+def _jsonrpc_error_message(response: Any) -> Optional[str]:
+    """Describe a JSON-RPC error carried in an A2A response.
+
+    A2A runs JSON-RPC over HTTP, so an agent can reject a call while the
+    transport still answers 200. Returns None for a response without an error.
+
+    Args:
+        response: The decoded A2A response body.
+
+    Returns:
+        A human-readable error message, or None when the response is not a
+        JSON-RPC error.
+    """
+    if not isinstance(response, dict):
+        return None
+    error = response.get("error")
+    if error is None:
+        return None
+    detail = error.get("message") if isinstance(error, dict) else error
+    return f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}"
+
+
 def _is_jwt_token(token: str) -> bool:
     """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
 
@@ -2641,17 +2663,10 @@ class A2AAgentService(BaseService):
 
                 if status_code == 200:
                     response = response_json if response_json is not None else {"response": response_text}
-                    # A2A carries JSON-RPC over HTTP: an agent that rejects the
-                    # call still answers 200 with a JSON-RPC error member.
-                    # Record that as a failed invocation so the metric (and the
-                    # published success_rate) reflects the agent verdict, not the
-                    # transport status. The caller still receives the envelope
-                    # unchanged below.
-                    jsonrpc_error = response.get("error") if isinstance(response, dict) else None
+                    jsonrpc_error = _jsonrpc_error_message(response)
                     if jsonrpc_error is not None:
                         success = False
-                        detail = jsonrpc_error.get("message") if isinstance(jsonrpc_error, dict) else jsonrpc_error
-                        error_message = sanitize_exception_message(f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}", prepared.sensitive_query_param_names)
+                        error_message = sanitize_exception_message(jsonrpc_error, prepared.sensitive_query_param_names)[: settings.rest_response_text_max_length]
                     else:
                         success = True
                     if span and is_output_capture_enabled("a2a.invoke"):
@@ -2760,7 +2775,7 @@ class A2AAgentService(BaseService):
                             AgentHookType.AGENT_POST_INVOKE,
                             payload=AgentPostInvokePayload(
                                 agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response and success else [],
+                                messages=[{"role": "assistant", "content": response}] if response is not None else [],
                                 tool_calls=None,
                             ),
                             global_context=global_context,

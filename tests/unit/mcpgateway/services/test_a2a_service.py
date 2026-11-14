@@ -779,17 +779,38 @@ class TestA2AAgentService:
         # last_interaction updated via fresh_db_session
         mock_ts_db.commit.assert_called()
 
+    @pytest.mark.parametrize(
+        "response,expected",
+        [
+            ({"error": {"message": "boom"}}, "boom"),
+            ({"error": "flat error"}, "flat error"),
+            ({"error": {"code": -1}}, "unknown error"),
+            ({"error": None}, None),
+            ({"result": "ok"}, None),
+            ("not-an-object", None),
+        ],
+    )
+    def test_jsonrpc_error_message_shapes(self, response, expected):
+        """Only a non-null error member produces a message."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _jsonrpc_error_message
+
+        message = _jsonrpc_error_message(response)
+        if expected is None:
+            assert message is None
+        else:
+            assert expected in message
+
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_invoke_agent_jsonrpc_error_body_is_recorded_as_failure(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
-        """A JSON-RPC error delivered over HTTP 200 must not count as a success.
+        """A JSON-RPC error delivered over HTTP 200 is a failed invocation.
 
-        A2A carries JSON-RPC over the wire: an agent that rejects a call answers
-        HTTP 200 with an ``error`` member. The invocation currently records
-        ``success=True`` for any 200, so ``GET /v1/metrics`` reports every
-        agent-reported failure as a success in ``a2aAgents.successRate`` (#7348).
+        A2A carries JSON-RPC over the wire, so an agent can reject a call while
+        the transport still answers 200. The metric must follow the agent's
+        verdict so ``a2aAgents.successRate`` does not count it as a success.
         """
         jsonrpc_error = {
             "jsonrpc": "2.0",
