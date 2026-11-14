@@ -818,6 +818,7 @@ export const editServer = async function (serverId) {
     const oauthTokenEndpointField = safeGetElement(
       "edit-server-oauth-token-endpoint"
     );
+    const oauthResourceField = safeGetElement("edit-server-oauth-resource");
 
     if (oauthEnabledCheckbox) {
       oauthEnabledCheckbox.checked = server.oauthEnabled || false;
@@ -840,7 +841,7 @@ export const editServer = async function (serverId) {
         server.oauthConfig.authorization_servers &&
         server.oauthConfig.authorization_servers.length > 0
       ) {
-        authServer = server.oauthConfig.authorization_servers[0];
+        authServer = server.oauthConfig.authorization_servers.join(", ");
       } else if (server.oauthConfig.authorization_server) {
         authServer = server.oauthConfig.authorization_server;
       }
@@ -861,11 +862,20 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+
+      // Extract resource (RFC 8707 audience indicator)
+      if (oauthResourceField) {
+        const resource = server.oauthConfig.resource;
+        oauthResourceField.value = Array.isArray(resource)
+          ? resource.join(" ")
+          : resource || "";
+      }
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";
       if (oauthScopesField) oauthScopesField.value = "";
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+      if (oauthResourceField) oauthResourceField.value = "";
     }
 
     // Store server data for modal population
