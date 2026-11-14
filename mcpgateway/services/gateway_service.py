@@ -1285,9 +1285,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts: Prompts returned by initialization.
 
         Returns:
-            True when initialization skipped discovery and returned nothing.
+            True when the empty result reflects discovery we skipped or could not
+            authenticate rather than an authoritative empty upstream catalog.
         """
-        return not tools and not resources and not prompts and cls._initialize_skips_discovery(gateway.oauth_config)
+        if tools or resources or prompts:
+            return False
+        oauth_config = gateway.oauth_config
+        if isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code":
+            # ``_initialize_gateway()`` short-circuits with empty lists for authorization_code
+            # gateways unless the caller opts into a fetch (``oauth_auto_fetch_tool_flag``), and
+            # even a real fetch comes back empty until the user completes the OAuth flow.
+            # An empty result therefore never proves the upstream catalog is empty (issue #7512).
+            return True
+        return cls._initialize_skips_discovery(oauth_config)
 
     @staticmethod
     def _validate_token_exchange_config(oauth_config: Optional[dict]) -> Optional[dict]:
@@ -4884,9 +4894,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # a missing auth token rather than genuine removal of all items.
                         # Skip stale cleanup to prevent destructive deletion of tools,
                         # resources, prompts, and their virtual server associations.
-                        # Mirrors the guard in _refresh_gateway_tools_resources_prompts.
-                        is_auth_code_gateway = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
-                        skip_stale_cleanup = (not tools and not resources and not prompts and is_auth_code_gateway) or self._discovery_result_is_unusable(gateway, tools, resources, prompts)
+                        # The auth_code term lives in _discovery_result_is_unusable so every
+                        # reconciliation call site shares one guard and they cannot drift.
+                        skip_stale_cleanup = self._discovery_result_is_unusable(gateway, tools, resources, prompts)
                         if skip_stale_cleanup:
                             logger.debug(f"Empty response from auth_code or token-exchange gateway {gateway.name} during reactivation, preserving existing items")
                         self._reconcile_gateway_catalog(
