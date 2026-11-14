@@ -47,6 +47,25 @@ from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+_ANTHROPIC_STOP_REASON_MAP = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+}
+
+
+def _map_anthropic_stop_reason(stop_reason: Optional[str]) -> str:
+    """Map an Anthropic ``stop_reason`` to an OpenAI ``finish_reason``.
+
+    Args:
+        stop_reason: Anthropic stop reason, or None when absent.
+
+    Returns:
+        OpenAI-style finish reason; unknown values fall back to ``stop``.
+    """
+    return _ANTHROPIC_STOP_REASON_MAP.get(stop_reason or "", "stop")
+
 
 def _provider_trace_system(provider: LLMProvider) -> str:
     """Map provider type to a stable ``gen_ai.system`` label.
@@ -753,7 +772,7 @@ class LLMProxyService:
                 ChatChoice(
                     index=0,
                     message=ChatMessage(role="assistant", content=content),
-                    finish_reason=data.get("stop_reason", "stop"),
+                    finish_reason=_map_anthropic_stop_reason(data.get("stop_reason")),
                 )
             ],
             usage=UsageStats(
@@ -838,15 +857,18 @@ class LLMProxyService:
                 }
                 return orjson.dumps(chunk).decode()
 
-        elif event_type == "message_stop":
-            chunk = {
-                "id": response_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model_id,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            }
-            return orjson.dumps(chunk).decode()
+        elif event_type == "message_delta":
+            # Anthropic reports the stop reason on message_delta (message_stop carries none).
+            stop_reason = data.get("delta", {}).get("stop_reason")
+            if stop_reason:
+                chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_id,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": _map_anthropic_stop_reason(stop_reason)}],
+                }
+                return orjson.dumps(chunk).decode()
 
         return None
 
