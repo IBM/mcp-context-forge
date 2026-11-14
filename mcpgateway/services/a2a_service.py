@@ -242,6 +242,28 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         )
 
 
+def _jsonrpc_error_message(response: Any) -> Optional[str]:
+    """Describe a JSON-RPC error carried in an A2A response.
+
+    A2A runs JSON-RPC over HTTP, so an agent can reject a call while the
+    transport still answers 200. Returns None for a response without an error.
+
+    Args:
+        response: The decoded A2A response body.
+
+    Returns:
+        A human-readable error message, or None when the response is not a
+        JSON-RPC error.
+    """
+    if not isinstance(response, dict):
+        return None
+    error = response.get("error")
+    if error is None:
+        return None
+    detail = error.get("message") if isinstance(error, dict) else error
+    return f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}"
+
+
 def _is_jwt_token(token: str) -> bool:
     """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
 
@@ -2922,7 +2944,12 @@ class A2AAgentService(BaseService):
 
                 if status_code == 200:
                     response = response_json if response_json is not None else {"response": response_text}
-                    success = True
+                    jsonrpc_error = _jsonrpc_error_message(response)
+                    if jsonrpc_error is not None:
+                        success = False
+                        error_message = sanitize_exception_message(jsonrpc_error, prepared.sensitive_query_param_names)[: settings.rest_response_text_max_length]
+                    else:
+                        success = True
                     if span and is_output_capture_enabled("a2a.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(response))
 
@@ -2981,7 +3008,7 @@ class A2AAgentService(BaseService):
                         user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
-                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": True},
+                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": success},
                     )
 
                 else:
@@ -3029,7 +3056,7 @@ class A2AAgentService(BaseService):
                             AgentHookType.AGENT_POST_INVOKE,
                             payload=AgentPostInvokePayload(
                                 agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response and success else [],
+                                messages=[{"role": "assistant", "content": response}] if response is not None else [],
                                 tool_calls=None,
                             ),
                             global_context=global_context,

@@ -821,6 +821,86 @@ class TestA2AAgentService:
         # last_interaction updated via fresh_db_session
         mock_ts_db.commit.assert_called()
 
+    @pytest.mark.parametrize(
+        "response,expected",
+        [
+            ({"error": {"message": "boom"}}, "boom"),
+            ({"error": "flat error"}, "flat error"),
+            ({"error": {"code": -1}}, "unknown error"),
+            ({"error": None}, None),
+            ({"result": "ok"}, None),
+            ("not-an-object", None),
+        ],
+    )
+    def test_jsonrpc_error_message_shapes(self, response, expected):
+        """Only a non-null error member produces a message."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _jsonrpc_error_message
+
+        message = _jsonrpc_error_message(response)
+        if expected is None:
+            assert message is None
+        else:
+            assert expected in message
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_jsonrpc_error_body_is_recorded_as_failure(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+        """A JSON-RPC error delivered over HTTP 200 is a failed invocation.
+
+        A2A carries JSON-RPC over the wire, so an agent can reject a call while
+        the transport still answers 200. The metric must follow the agent's
+        verdict so ``a2aAgents.successRate`` does not count it as a success.
+        """
+        jsonrpc_error = {
+            "jsonrpc": "2.0",
+            "id": "req-1",
+            "error": {"code": -32000, "message": "agent rejected the task"},
+        }
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = jsonrpc_error
+        mock_response.text = '{"jsonrpc": "2.0", "id": "req-1", "error": {"code": -32000, "message": "agent rejected the task"}}'
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = sample_db_agent.endpoint_url
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
+
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+
+        # The caller still receives the JSON-RPC envelope exactly as the agent sent it.
+        assert result == jsonrpc_error
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
+        metric_kwargs = mock_metrics_buffer.record_a2a_agent_metric_with_duration.call_args.kwargs
+        assert metric_kwargs["success"] is False, "a JSON-RPC error response is a failed invocation"
+        assert "agent rejected the task" in (metric_kwargs["error_message"] or ""), "the metric must carry the JSON-RPC error message"
+
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.a2a_service.get_for_update")
