@@ -16,6 +16,14 @@ external-issuer bearers to the trusted-OIDC-issuer (JWKS) verifier when
     missing_revocation_claim     -> 401  (no jti -> unrevocable -> reject, fail-closed)
     nonexistent_agent_with_role  -> 404  (authn + RBAC ok, agent lookup terminates at 404)
 
+The same tokens drive the streamable-HTTP MCP endpoint of a team-visible
+virtual server (``POST /servers/<id>/mcp``), the path MCP clients use:
+
+    mapped_user_mcp              -> 200  (initialize, then tools/list)
+    unmapped_user_mcp            -> 403  (authn ok, no role -> RBAC deny)
+    wrong_audience_mcp           -> 401  (fail-closed at the MCP ingress)
+    missing_revocation_claim_mcp -> 401  (no jti -> reject at the MCP ingress)
+
 Branch note (PR #6750): rows 1 and 5 were marked ``xfail(strict=False)``
 because TokenScopingMiddleware validated claim-derived teams against local
 ``email_team_members`` and 403'd trust-only principals ("User is no longer
@@ -84,7 +92,7 @@ import pytest
 # Local
 from .helpers.local_oidc_issuer import local_oidc_issuer  # noqa: F401  # fixture re-export
 from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
-from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_team
+from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_server, seed_team
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
@@ -104,6 +112,14 @@ API_AUDIENCE = "api://local-oidc-test-audience"
 MAPPED_GROUP = "local-issuer-group-1"
 UNMAPPED_GROUP = "local-issuer-group-unmapped"
 NONEXISTENT_AGENT = "Agent-A-that-does-not-exist"
+SERVER_NAME = "trust-ingress-virtual-server"
+MCP_HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18"}
+MCP_INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "trust-ingress-e2e", "version": "1"}},
+}
 
 MATRIX = [
     # (scenario, expected status)
@@ -117,6 +133,14 @@ MATRIX = [
     # Previously xfail(strict=False): blocked upstream of agent lookup by the same
     # membership check; Task 10 (#5904, PR #6751) closed it (XPASS at 404).
     ("nonexistent_agent_with_role", 404),  # authenticated + authorized -> agent lookup 404
+]
+
+MCP_MATRIX = [
+    # (scenario, token key, expected initialize status)
+    ("mapped_user_mcp", "mapped", 200),
+    ("unmapped_user_mcp", "unmapped", 403),
+    ("wrong_audience_mcp", "wrong_audience", 401),
+    ("missing_revocation_claim_mcp", "missing_jti", 401),
 ]
 
 
@@ -156,14 +180,16 @@ def _invoke_agent(agent_name: str, token: str) -> httpx.Response:
 def seeded_gateway(local_oidc_issuer) -> dict[str, str]:
     """Seed the trust root, team, agent, and mapping; mint scenario tokens.
 
-    Returns a scenario -> bearer-token mapping. Token material stays inside
-    the fixture; tests only forward it in the Authorization header.
+    Returns a scenario -> bearer-token mapping plus the virtual server ID
+    under ``server_id``. Token material stays inside the fixture; tests only
+    forward it in the Authorization header.
     """
     with httpx.Client(headers=admin_headers(), timeout=20) as client:
         team_id = seed_team(client, TEAM_NAME, "T9 ingress matrix team")
         seed_provider(client, PROVIDER_ID, local_oidc_issuer.issuer, API_AUDIENCE)
         seed_agent(client, AGENT_NAME, team_id, local_oidc_issuer.stub_agent_url, "T9 ingress matrix stub agent")
         seed_mapping(client, local_oidc_issuer.issuer, None, MAPPED_GROUP, team_id, "developer")
+        server_id = seed_server(client, SERVER_NAME, team_id, "Trust ingress MCP endpoint server")
 
     mapped_token = _mint_user_token(local_oidc_issuer, "oid-mapped-user-0001", groups=[MAPPED_GROUP])
     unmapped_token = _mint_user_token(local_oidc_issuer, "oid-unmapped-user-0001", groups=[UNMAPPED_GROUP])
@@ -183,6 +209,7 @@ def seeded_gateway(local_oidc_issuer) -> dict[str, str]:
         "unmapped": unmapped_token,
         "wrong_audience": wrong_audience_token,
         "missing_jti": missing_jti_token,
+        "server_id": server_id,
     }
 
 
@@ -209,3 +236,23 @@ def test_ingress_matrix(scenario, expected, local_oidc_issuer, seeded_gateway):
         # (public-only), so "no longer a member" here would mean claim
         # extraction fabricated a team grant.
         assert "no longer a member" not in response.text, f"{scenario}: deny came from the wrong layer: {response.text[:200]}"
+
+
+@pytest.mark.parametrize("scenario,token_key,expected", MCP_MATRIX)
+def test_streamable_mcp_ingress_matrix(scenario, token_key, expected, seeded_gateway):
+    """External-issuer ingress on the streamable-HTTP MCP endpoint of a virtual server."""
+    url = f"{BASE_URL}/servers/{seeded_gateway['server_id']}/mcp"
+    headers = {**MCP_HEADERS, "Authorization": f"Bearer {seeded_gateway[token_key]}"}
+    with httpx.Client(timeout=20) as client:
+        response = client.post(url, headers=headers, json=MCP_INITIALIZE)
+        assert response.status_code == expected, f"{scenario}: expected {expected}, got {response.status_code} {response.text[:200]}"
+        if expected != 200:
+            return
+
+        session_id = response.headers.get("mcp-session-id")
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+        client.post(url, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        listing = client.post(url, headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert listing.status_code == 200, f"{scenario}: tools/list got {listing.status_code} {listing.text[:200]}"
+        assert '"tools"' in listing.text, f"{scenario}: tools/list returned no result: {listing.text[:200]}"

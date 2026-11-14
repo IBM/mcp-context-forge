@@ -28,7 +28,7 @@ roots applies:
 ## Ingress dispatch
 
 `get_current_user()` in `mcpgateway/auth.py` is the authentication choke
-point for every bearer token. When trust mode is ON it first calls
+point for bearer tokens on REST routes. When trust mode is ON it first calls
 `_try_external_verification()`, which reads the token's `iss` claim
 UNVERIFIED (`verify_signature: False`) solely to choose the verification
 path — no other claim from this peek is ever trusted — then delegates to
@@ -46,6 +46,19 @@ the external verification chain (`_maybe_verify_external` ->
 - **Issuer is not a configured trust root** (or is the internal issuer,
   or the token is not a JWT at all) -> `None`; the caller falls through
   to the internal verifier exactly as before.
+
+The streamable-HTTP MCP transport (`/servers/<id>/mcp` and `/mcp`) does
+not use `get_current_user()`. Its handler,
+`_StreamableHttpAuthHandler._auth_jwt` in
+`mcpgateway/transports/streamablehttp_transport.py`, calls
+`_auth_trusted_issuer()` when trust mode is ON and the target server's own
+OAuth path does not handle the token (the server is not `oauth_enabled`, or
+its `authorization_servers` do not list the issuer). That method runs the
+REST steps (`_try_external_verification()`, `_is_trust_eligible()`,
+`_resolve_trusted_principal()`), so it has the same three outcomes and checks
+the configured revocation claim on every request. RBAC on this transport
+(`_check_streamable_permission`) receives the claims-derived roles and admin
+flag only for a principal that `_auth_trusted_issuer()` built.
 
 ## Marked tokens get HTTP 401 when trust mode is OFF
 
@@ -111,3 +124,13 @@ untrusted-issuer fall-through, not the pre-fix wiring failure where the
 external JWKS path was unreachable even for a seeded trust root. The
 seeded-trust-root denial paths (`403` unmapped, `404` nonexistent agent)
 are proven by the ingress matrix above.
+
+App-only tokens (`idtyp == "app"`) carry no `groups` claim. Entra emits no
+overage markers for them. Under `JWT_TRUST_OVERAGE_POLICY=graph_lookup`,
+both trust funnels resolve the service principal's groups through
+`/servicePrincipals/{oid}/getMemberObjects`. The funnels are
+`get_current_user` (bearer) and `build_trusted_external_identity`
+(external IdP). The lookup uses the provider's client-credentials token;
+the inbound bearer token is never used. Under `fail_closed` (default) and
+`proceed_without_groups`, app-only tokens authenticate with no team
+visibility.
