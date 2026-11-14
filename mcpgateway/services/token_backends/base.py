@@ -32,6 +32,7 @@ class AccessTokenDetails:
     access_token: str
     expires_at: datetime | None
     scopes: list[str]
+    token_type: str = "Bearer"  # nosec B105 - OAuth token_type default, not a credential
 
 
 class TokenReauthorizationRequired(OAuthError):
@@ -151,6 +152,7 @@ class AbstractTokenBackend(ABC):
             TokenRecord with plain-text tokens for immediate use
         """
 
+    @abstractmethod
     async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
         """Return token metadata together, preserving retrieval failure reasons.
 
@@ -164,11 +166,9 @@ class AbstractTokenBackend(ABC):
             Access token details, or None when no token exists.
 
         Raises:
-            NotImplementedError: The backend does not support strict retrieval.
             TokenReauthorizationRequired: The user must authorize again.
             OAuthError: The provider cannot refresh an expired token.
         """
-        raise NotImplementedError
 
     @abstractmethod
     async def get_user_token(

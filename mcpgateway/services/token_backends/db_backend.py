@@ -222,11 +222,29 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             return await self._get_user_token_details_locked(gateway_id, app_user_email, threshold_seconds)
 
     async def _get_user_token_details_locked(self, gateway_id: str, app_user_email: str, threshold_seconds: int) -> AccessTokenDetails | None:
-        """Read the latest token and refresh it while holding the local lock."""
-        statement = select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email).execution_options(populate_existing=True)
-        token_record = self.db.execute(statement).scalar_one_or_none()
+        """Read the latest token row and refresh it while holding the in-process lock.
+
+        The row is also locked with ``SELECT ... FOR UPDATE`` where the database supports it,
+        so concurrent workers serialize on the same row.
+
+        Args:
+            gateway_id: Gateway identifier.
+            app_user_email: Authenticated caller's email.
+            threshold_seconds: Refresh window in seconds.
+
+        Returns:
+            Access token details, or None when no row exists.
+
+        Raises:
+            TokenReauthorizationRequired: The stored grant needs authorization.
+            OAuthError: The provider cannot refresh an expired token.
+            ValueError: The stored access token cannot be decrypted.
+        """
+        token_record = self._select_token_record(gateway_id, app_user_email, for_update=True)
         if token_record is None:
             return None
+        if self._is_non_bearer(token_record):
+            raise TokenReauthorizationRequired("Stored token is not a Bearer token")
         access_token = None
         if self._is_token_expired(token_record, threshold_seconds) and token_record.refresh_token:
             try:
@@ -235,16 +253,51 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 raise TokenReauthorizationRequired() from exc
             except TokenReauthorizationRequired:
                 raise
-            except Exception:
+            except Exception as exc:
                 if self._is_token_expired(token_record, 0):
                     raise
+                logger.warning(
+                    "OAuth token refresh failed for gateway %s, user %s; returning the current token: %s",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                    type(exc).__name__,
+                )
         if access_token is None:
             if self._is_token_expired(token_record, 0):
                 raise TokenReauthorizationRequired()
             access_token = await self.encryption.decrypt_secret_async(token_record.access_token) if self.encryption else token_record.access_token
         if not access_token:
             raise ValueError("Stored access token cannot be decrypted")
-        return AccessTokenDetails(access_token=access_token, expires_at=token_record.expires_at, scopes=token_record.scopes)
+        return AccessTokenDetails(access_token=access_token, expires_at=token_record.expires_at, scopes=token_record.scopes, token_type=token_record.token_type or "Bearer")
+
+    def _select_token_record(self, gateway_id: str, app_user_email: str, for_update: bool = False) -> OAuthToken | None:
+        """Load the stored token row for a gateway and user.
+
+        Args:
+            gateway_id: Gateway identifier.
+            app_user_email: Authenticated caller's email.
+            for_update: Re-read the row from the database and lock it where supported.
+
+        Returns:
+            The token row, or None when no row exists.
+        """
+        statement = select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
+        if for_update:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.db.execute(statement).scalar_one_or_none()
+
+    @staticmethod
+    def _is_non_bearer(token_record: OAuthToken) -> bool:
+        """Return True when the stored token declares a type other than Bearer.
+
+        Args:
+            token_record: OAuth token record to inspect.
+
+        Returns:
+            True for a non-empty token type other than ``bearer`` (case-insensitive).
+        """
+        token_type = getattr(token_record, "token_type", None)
+        return bool(token_type) and token_type.lower() != "bearer"
 
     async def get_user_token(
         self,
@@ -268,7 +321,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         """
         try:
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            token_record = self._select_token_record(gateway_id, app_user_email)
 
             if not token_record:
                 logger.debug(
@@ -279,7 +332,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 return None
 
             # Verify token_type is Bearer
-            if hasattr(token_record, "token_type") and token_record.token_type and token_record.token_type.lower() != "bearer":
+            if self._is_non_bearer(token_record):
                 logger.warning(
                     "Unexpected token_type '%s' for gateway %s, app user %s; expected 'Bearer'",
                     token_record.token_type,
@@ -321,12 +374,12 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         Returns:
             Token status and valid access token, or None when authorization is absent.
         """
-        record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+        record = self._select_token_record(gateway_id, app_user_email)
         if record is None:
             return None
         if self._is_token_expired(record, 0):
             return ValidationToken("expired")
-        if record.token_type and record.token_type.lower() != "bearer":
+        if self._is_non_bearer(record):
             return ValidationToken("invalid")
         token = await self.encryption.decrypt_secret_async(record.access_token) if self.encryption else record.access_token
         return ValidationToken("valid", token) if token else ValidationToken("invalid")

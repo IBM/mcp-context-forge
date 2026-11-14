@@ -1012,7 +1012,8 @@ class Settings(  # pylint: disable=too-many-ancestors
             "current OAuth access_token for a gateway (auto-refreshed if it is within "
             "OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS of expiring). The refresh_token is never returned by this "
             "endpoint. Disabled by default since it exposes a live bearer credential "
-            "to the caller."
+            "to the caller. The Vault backend serializes refreshes per process only, so "
+            "concurrent workers can reuse a rotating refresh token."
         ),
     )
 

@@ -90,29 +90,46 @@ curl --fail-with-body \
 ```
 
 The response contains `gateway_id`, `access_token`, `token_type`, `expires_at`, and `scopes`.
-`expires_at` and `scopes` can be `null` when unavailable. The response excludes `refresh_token`
-and sets `Cache-Control: no-store`. Treat the returned access token as a secret.
+`token_type` is the stored token type. The endpoint refuses a stored token that is not a Bearer token.
+`expires_at` and `scopes` can be `null` when unavailable. The response excludes `refresh_token`.
+The gateway marks the response non-cacheable with `Cache-Control: no-store, private`, `Pragma: no-cache`, and `Expires: 0`.
+Treat the returned access token as a secret. A leaked API token that holds `gateways.token_read` yields a provider token
+that works outside ContextForge governance, so grant that permission sparingly.
 
 Operators set `OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS` to a value from `0` through `3600` seconds.
 The default is `600` seconds. This is a server setting; there is no `threshold_seconds` query parameter.
+A threshold at or above the provider's token lifetime refreshes the token on every call.
 The endpoint refreshes a token within this expiry window when a refresh token exists.
 A transient refresh failure preserves a still-valid access token. An invalid refresh grant requires reauthorization.
 The endpoint never returns an expired token.
 
-For the database token backend, concurrent retrievals for the same gateway and user are serialized within
-one event loop. This lock does not coordinate separate workers or gateway instances. Concurrent refreshes
-across them can reuse a rotating refresh token; some providers may revoke the grant and require the user to
-authorize again. Other token refresh paths do not use this retrieval lock.
+!!! warning "A GET request can change stored tokens"
+    A retrieval inside the refresh window calls the provider and stores the new tokens.
+    When the provider answers `invalid_grant`, the database backend deletes the stored grant
+    and the Vault backend revokes it. The caller must then authorize again.
+
+The audit trail records every retrieval outcome after the feature check as `gateway.oauth_token_issuance`.
+A refused request carries a reason code in `error_message`. The audit entry and the logs never contain token values.
+
+`/oauth/*` is in the `HIGH` rate-limit tier of `RateLimitMiddleware`.
+The tier applies when `RATE_LIMITING_ENABLED=true`. Enable rate limiting before you enable token retrieval.
+
+Concurrent retrievals for the same gateway and user are serialized within one event loop.
+The database backend also locks the stored token row with `SELECT ... FOR UPDATE` on databases that support it,
+such as PostgreSQL. SQLite ignores the row lock.
+The Vault backend has no cross-process lock. Concurrent refreshes across workers or gateway instances can reuse a
+rotating refresh token. Some providers then revoke the grant and the user must authorize again.
+Other token refresh paths do not use this retrieval lock.
 
 | HTTP status | Meaning |
 |-------------|---------|
 | `400` | The gateway lacks Authorization Code OAuth configuration. |
 | `401` | The caller is unauthenticated or has no usable identity. |
 | `403` | The caller lacks gateway access or the required permission. |
-| `404` | The gateway or the caller's stored OAuth token does not exist. |
-| `409` | OAuth reauthorization is required. |
+| `404` | Retrieval is disabled, or the gateway or the caller's stored OAuth token does not exist. |
+| `409` | OAuth reauthorization is required, or the stored token is not a Bearer token. |
 | `502` | The provider cannot refresh an expired access token. |
-| `503` | Retrieval is disabled or token storage is unavailable. |
+| `503` | Token storage is unavailable or holds an unreadable token. |
 
 ## Configure a Gateway (Admin UI)
 

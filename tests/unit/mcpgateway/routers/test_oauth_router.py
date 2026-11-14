@@ -32,7 +32,7 @@ from mcpgateway.routers.oauth_router import (
     get_registered_client_for_gateway,
     list_registered_oauth_clients,
 )
-from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.schemas import EmailUserResponse, OAuthAccessTokenResponse
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
 from mcpgateway.services.token_backends.base import AccessTokenDetails, TokenReauthorizationRequired
 from mcpgateway.utils.oauth_resource import derive_resource_origin
@@ -6078,36 +6078,70 @@ async def test_callback_preserves_safe_exchange_codes(mock_db, mock_request_popu
 class TestGetGatewayOauthToken:
     """Tests for GET /oauth/token/{gateway_id} (get_gateway_oauth_token)."""
 
+    @pytest.fixture
+    def mock_current_user(self):
+        """A dict-typed user, as ``@require_permission`` requires at runtime."""
+        return _AttrDict(email="test@example.com", full_name="Test User", is_active=True, is_admin=False)
+
+    @pytest.fixture
+    def audit(self):
+        """Replace the audit trail service and expose its ``log_action`` mock."""
+        with patch("mcpgateway.routers.oauth_router.get_audit_trail_service") as service:
+            yield service.return_value.log_action
+
+    @pytest.fixture
+    def enabled(self):
+        """Enable token retrieval on the router settings with the default refresh threshold."""
+        with patch("mcpgateway.routers.oauth_router.settings") as router_settings:
+            router_settings.oauth_token_retrieval_enabled = True
+            router_settings.oauth_token_refresh_threshold_seconds = 600
+            yield router_settings
+
+    @staticmethod
+    def _call(mock_request, user, db):
+        return get_gateway_oauth_token("gateway123", mock_request, current_user=user, db=db)
+
+    @staticmethod
+    def _assert_refused(audit, reason):
+        audit.assert_called_once()
+        kwargs = audit.call_args.kwargs
+        assert kwargs["action"] == "gateway.oauth_token_issuance"
+        assert kwargs["resource_type"] == "gateway"
+        assert kwargs["resource_id"] == "gateway123"
+        assert kwargs["success"] is False
+        assert kwargs["error_message"] == reason
+
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("error_type,status", [(TokenReauthorizationRequired, 409), (OAuthError, 502), (RuntimeError, 503)])
-    async def test_backend_errors_hide_tokens(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, caplog, error_type, status):
-        """Backend failures map to HTTP errors without disclosing exception contents."""
+    @pytest.mark.parametrize(
+        "error,status,reason",
+        [
+            (TokenReauthorizationRequired("secret-value"), 409, "reauth_required"),
+            (OAuthError("secret-value"), 502, "provider_error"),
+            (ValueError("secret-value"), 503, "token_unreadable"),
+            (RuntimeError("secret-value"), 503, "storage_error"),
+        ],
+    )
+    async def test_backend_errors_hide_tokens_and_are_audited(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog, error, status, reason):
+        """Backend failures map to HTTP errors and audit entries without disclosing exception contents."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        secret = "example-access-and-refresh-value"  # pragma: allowlist secret
-        error = error_type(secret)
-        error.__cause__ = ValueError(secret)
+        error.__cause__ = ValueError("secret-value")
         storage = AsyncMock()
         storage.get_user_token_details.side_effect = error
 
-        with (
-            patch("mcpgateway.routers.oauth_router.settings") as settings,
-            patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage),
-        ):
-            settings.oauth_token_retrieval_enabled = True
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
             with pytest.raises(HTTPException) as raised:
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+                await self._call(mock_request, mock_current_user, mock_db)
 
         assert raised.value.status_code == status
-        assert secret not in raised.value.detail
-        assert secret not in caplog.text
+        assert "secret-value" not in raised.value.detail
+        assert "secret-value" not in caplog.text
+        assert "secret-value" not in repr(audit.call_args)
+        self._assert_refused(audit, reason)
         if status == 503:
-            records = [record for record in caplog.records if record.msg == "OAuth token storage retrieval failed"]
-            assert len(records) == 1
-            assert records[0].exc_info[2] is not None
-            assert "RuntimeError" in caplog.text
+            assert type(error).__name__ in caplog.text
 
     @pytest.mark.asyncio
-    async def test_vault_invalid_grant_revokes_and_returns_409(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, caplog):
+    async def test_vault_invalid_grant_revokes_and_returns_409(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog):
         """A rejected Vault refresh grant revokes stored tokens and requires authorization."""
         from pydantic import SecretStr
 
@@ -6126,212 +6160,213 @@ class TestGetGatewayOauthToken:
             patch.object(VaultTokenBackend, "_resolve_mcp_url", return_value="https://provider.example/mcp"),
             patch.object(VaultTokenBackend, "_vault_request", new_callable=AsyncMock) as vault_request,
             patch.object(VaultTokenBackend, "_refresh_token_details", new_callable=AsyncMock) as refresh,
-            patch("mcpgateway.routers.oauth_router.settings") as router_settings,
         ):
             storage = TokenStorageService(mock_db, {"email": "test@example.com", "teams": ["team-1"]})
             vault_request.return_value = {"data": {"data": data}}
             refresh.side_effect = OAuthInvalidGrantError("example-access example-refresh")
-            router_settings.oauth_token_retrieval_enabled = True
-            router_settings.oauth_token_refresh_threshold_seconds = 600
             with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
                 with pytest.raises(HTTPException) as raised:
-                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+                    await self._call(mock_request, mock_current_user, mock_db)
 
         assert raised.value.status_code == 409
         assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE"]
         for token in ("example-access", "example-refresh"):
             assert token not in raised.value.detail
             assert token not in caplog.text
-
-    @pytest.fixture
-    def mock_current_user(self):
-        """A dict-typed user, as ``@require_permission`` requires at runtime."""
-        return _AttrDict(email="test@example.com", full_name="Test User", is_active=True, is_admin=False)
-
-    @pytest.fixture
-    def mock_response(self):
-        """A real Response so header-mutation assertions exercise real header semantics."""
-        return Response()
+        self._assert_refused(audit, "reauth_required")
 
     @pytest.mark.asyncio
-    async def test_denied_without_gateway_token_read_permission(self, mock_db, mock_request, mock_response):
+    async def test_denied_without_gateway_token_read_permission(self, mock_db, mock_request):
         """A caller without gateways.token_read cannot start a gateway lookup."""
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
         with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
             mock_permission_service = Mock()
             mock_permission_service.check_permission = AsyncMock(return_value=False)
             mock_permission_service_class.return_value = mock_permission_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user={"email": "no-perms@example.com", "is_admin": False}, db=mock_db)
+                await self._call(mock_request, {"email": "no-perms@example.com", "is_admin": False}, mock_db)
 
         assert exc_info.value.status_code == 403
         mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_flag_disabled_returns_503(self, mock_db, mock_current_user, mock_request, mock_response):
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
+    async def test_flag_disabled_returns_plain_404(self, mock_db, mock_current_user, mock_request, audit):
+        """A disabled feature looks like a missing route and does not name the setting."""
         with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.oauth_token_retrieval_enabled = False
             with pytest.raises(HTTPException) as exc:
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+                await self._call(mock_request, mock_current_user, mock_db)
 
-        assert exc.value.status_code == 503
-        assert "not enabled" in exc.value.detail
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Not Found"
+        assert "OAUTH_TOKEN_RETRIEVAL_ENABLED" not in exc.value.detail
+        mock_db.execute.assert_not_called()
+        audit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_gateway_not_found_returns_404(self, mock_db, mock_current_user, mock_request, mock_response):
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
+    async def test_gateway_not_found_returns_404(self, mock_db, mock_current_user, mock_request, audit, enabled):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with pytest.raises(HTTPException) as exc:
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with pytest.raises(HTTPException) as exc:
+            await self._call(mock_request, mock_current_user, mock_db)
 
         assert exc.value.status_code == 404
         assert "Gateway not found" in exc.value.detail
+        self._assert_refused(audit, "gateway_not_found")
 
     @pytest.mark.asyncio
-    async def test_no_gateway_access_returns_403(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
+    async def test_no_gateway_access_returns_403(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with patch(
-                "mcpgateway.routers.oauth_router._enforce_gateway_access",
-                new=AsyncMock(side_effect=HTTPException(status_code=403, detail="You don't have access to this gateway")),
-            ):
-                with pytest.raises(HTTPException) as exc:
-                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with patch(
+            "mcpgateway.routers.oauth_router._enforce_gateway_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403, detail="You don't have access to this gateway")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
 
         assert exc.value.status_code == 403
+        self._assert_refused(audit, "access_denied")
 
     @pytest.mark.asyncio
-    async def test_no_oauth_config_returns_400(self, mock_db, mock_current_user, mock_request, mock_response):
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
+    async def test_identity_without_email_returns_401_before_token_lookup(self, mock_db, mock_request, mock_gateway, audit, enabled):
+        """An identity with no email is refused with 401 before any token lookup runs."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        storage = AsyncMock()
 
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, _AttrDict(is_admin=False), mock_db)
+
+        assert exc.value.status_code == 401
+        storage.get_user_token_details.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_oauth_config_returns_400(self, mock_db, mock_current_user, mock_request, audit, enabled):
         gateway = Mock(spec=Gateway)
         gateway.oauth_config = None
         gateway.visibility = "public"
         gateway.team_id = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with pytest.raises(HTTPException) as exc:
-                await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with pytest.raises(HTTPException) as exc:
+            await self._call(mock_request, mock_current_user, mock_db)
 
         assert exc.value.status_code == 400
         assert "not configured for OAuth" in exc.value.detail
+        self._assert_refused(audit, "not_oauth")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("grant_type", ["client_credentials", "password", "token-exchange", None])
-    async def test_non_authorization_code_grant_returns_400(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, grant_type):
+    async def test_non_authorization_code_grant_returns_400(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, grant_type):
         """Grant types without a per-user token row are rejected before any token lookup."""
-
         mock_gateway.oauth_config = {**mock_gateway.oauth_config, "grant_type": grant_type}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                with pytest.raises(HTTPException) as exc:
-                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
 
         assert exc.value.status_code == 400
         assert "Authorization Code flow" in exc.value.detail
-        mock_storage.get_user_token.assert_not_called()
+        mock_storage.get_user_token_details.assert_not_called()
+        self._assert_refused(audit, "unsupported_grant")
 
     @pytest.mark.asyncio
-    async def test_no_stored_token_returns_404(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
+    async def test_no_stored_token_returns_404(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
         mock_storage.get_user_token_details = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                with pytest.raises(HTTPException) as exc:
-                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
 
         assert exc.value.status_code == 404
         assert "No OAuth token found" in exc.value.detail
+        self._assert_refused(audit, "no_token")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("threshold", [0, 600, 3600])
-    async def test_happy_path_returns_access_token_only(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, threshold):
-        """Returns a fresh access_token, refreshing within the 10-minute threshold, and never a refresh_token."""
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
+    async def test_happy_path_returns_access_token_only(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, threshold):
+        """Returns the access token and its stored type, passes the operator threshold, and never carries a refresh token."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        enabled.oauth_token_refresh_threshold_seconds = threshold
 
         mock_storage = AsyncMock()
         mock_storage.get_user_token_details = AsyncMock(
-            return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc), scopes=["read", "write"])
+            return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc), scopes=["read", "write"], token_type="bearer")
         )
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            mock_settings.oauth_token_refresh_threshold_seconds = threshold
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                result = await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            result = await self._call(mock_request, mock_current_user, mock_db)
 
-        assert result["gateway_id"] == "gateway123"
-        assert result["access_token"] == "live-access-tok"
-        assert result["token_type"] == "Bearer"
-        assert result["expires_at"] == "2026-01-01T00:00:00+00:00"
-        assert result["scopes"] == ["read", "write"]
-        assert "refresh_token" not in result
-
+        assert isinstance(result, OAuthAccessTokenResponse)
+        body = result.model_dump()
+        assert body == {
+            "gateway_id": "gateway123",
+            "access_token": "live-access-tok",
+            "token_type": "bearer",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+            "scopes": ["read", "write"],
+        }
         mock_storage.get_user_token_details.assert_awaited_once_with("gateway123", "test@example.com", threshold_seconds=threshold)
 
-        # The credential-bearing response must not be cached by an intermediary.
-        assert mock_response.headers["Cache-Control"] == "no-store"
+    @pytest.mark.asyncio
+    async def test_happy_path_audits_success_without_token(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
+        """A successful issuance writes one audit entry that never contains the token value."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="super-secret-live-token", expires_at=None, scopes=["read"]))
 
-    def test_refresh_threshold_is_not_caller_controllable(self):
-        """The route declares no query parameters, so a caller cannot choose the refresh threshold."""
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token, oauth_router
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            await self._call(mock_request, mock_current_user, mock_db)
+
+        audit.assert_called_once()
+        kwargs = audit.call_args.kwargs
+        assert kwargs["action"] == "gateway.oauth_token_issuance"
+        assert kwargs["resource_type"] == "gateway"
+        assert kwargs["resource_id"] == "gateway123"
+        assert kwargs["user_id"] == "test@example.com"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["request_path"] == "/oauth/token/gateway123"
+        assert kwargs["request_method"] == "GET"
+        assert kwargs["success"] is True
+        assert kwargs["error_message"] is None
+        assert "super-secret-live-token" not in repr(audit.call_args)
+
+    def test_route_declares_no_query_parameters_or_refresh_token(self):
+        """A caller cannot choose the refresh threshold, and the response schema has no refresh_token field."""
+        from mcpgateway.routers.oauth_router import oauth_router
 
         route = next(r for r in oauth_router.routes if r.endpoint is get_gateway_oauth_token)
 
         assert route.dependant.query_params == []
+        assert route.response_model is OAuthAccessTokenResponse
+        assert "refresh_token" not in OAuthAccessTokenResponse.model_fields
 
     @pytest.mark.asyncio
-    async def test_happy_path_missing_token_info_defaults_to_none(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway):
+    async def test_happy_path_missing_token_info_defaults_to_none(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
         """Missing token metadata (e.g. backend returns None) shouldn't blow up the response."""
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
-
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         mock_storage = AsyncMock()
         mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=None, scopes=None))
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-            mock_settings.oauth_token_retrieval_enabled = True
-            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                result = await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            result = await self._call(mock_request, mock_current_user, mock_db)
 
-        assert result["access_token"] == "live-access-tok"
-        assert result["expires_at"] is None
-        assert result["scopes"] is None
-        assert mock_response.headers["Cache-Control"] == "no-store"
+        assert result.access_token == "live-access-tok"
+        assert result.token_type == "Bearer"
+        assert result.expires_at is None
+        assert result.scopes is None
 
     @pytest.mark.asyncio
-    async def test_happy_path_logs_issuance_without_leaking_token(self, mock_db, mock_current_user, mock_request, mock_response, mock_gateway, caplog):
+    async def test_happy_path_logs_issuance_without_leaking_token(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog):
         """Successful issuance is logged for forensic traceability, but the token value itself must never appear in logs."""
         import logging
-
-        from mcpgateway.routers.oauth_router import get_gateway_oauth_token
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -6339,10 +6374,8 @@ class TestGetGatewayOauthToken:
         mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="super-secret-live-token", expires_at=None, scopes=["read"]))
 
         with caplog.at_level(logging.INFO, logger="mcpgateway.routers.oauth_router"):
-            with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
-                mock_settings.oauth_token_retrieval_enabled = True
-                with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
-                    await get_gateway_oauth_token("gateway123", mock_request, mock_response, current_user=mock_current_user, db=mock_db)
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+                await self._call(mock_request, mock_current_user, mock_db)
 
         issuance_logs = [r.message for r in caplog.records if "gateway123" in r.message and "issued" in r.message]
         assert len(issuance_logs) == 1

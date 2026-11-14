@@ -88,6 +88,39 @@ async def test_token_details_return_none_without_access_token(details_backend, d
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_token_details_return_stored_token_type(details_backend):
+    """The stored token type travels with the access token."""
+    expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+    data = {"token": {"access_token": "caller-access", "scopes": ["read"]}, "token_type": "bearer", "expires_at": expiry.isoformat()}
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result.token_type == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_token_details_reject_non_bearer_token(details_backend):
+    """A stored token that is not a Bearer token requires authorization."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    data = {"token": {"access_token": "caller-access"}, "token_type": "mac"}
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
+        with pytest.raises(TokenReauthorizationRequired):
+            await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+
+@pytest.mark.asyncio
+async def test_token_details_accept_naive_expiry_as_utc(details_backend):
+    """A stored expiry without a timezone is read as UTC instead of raising."""
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
+    data = {"token": {"access_token": "caller-access", "scopes": ["read"]}, "expires_at": expiry.isoformat()}
+    with patch.object(details_backend, "_vault_request", new=AsyncMock(return_value={"data": {"data": data}})):
+        result = await details_backend.get_user_token_details("gw", "team", "caller@example.com")
+
+    assert result.expires_at == expiry.replace(tzinfo=timezone.utc)
+
+
 class TestVaultTokenBackendInit:
     """Test suite for VaultTokenBackend initialization."""
 

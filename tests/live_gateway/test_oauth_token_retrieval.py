@@ -11,12 +11,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 # Third-Party
@@ -31,6 +34,8 @@ pytestmark = pytest.mark.e2e
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEAM = "oauth-retrieval-team"
 _GATEWAY = "oauth-retrieval-gateway"
+_REFRESH_GATEWAY = "oauth-refresh-gateway"
+_REFRESHED_ACCESS_TOKEN = "refreshed-access-token"  # pragma: allowlist secret
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +61,9 @@ class TokenGateway:
 def _seed() -> None:
     """Seed users, real role assignments, and encrypted tokens in the subprocess database."""
     # First-Party
+    from mcpgateway.config import settings
     from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Gateway, OAuthToken, Role, SessionLocal, UserRole
+    from mcpgateway.services.encryption_service import get_encryption_service
 
     with SessionLocal() as db:
         for user in ("owner", "other", "empty", "viewer", "platform_viewer", "team_admin", "outsider"):
@@ -100,11 +107,74 @@ def _seed() -> None:
                     scopes=["files.read"],
                 )
             )
+        db.add(
+            Gateway(
+                id=_REFRESH_GATEWAY,
+                name="OAuth refresh",
+                slug="oauth-refresh",
+                url="https://provider.example/refresh-mcp",
+                capabilities={},
+                enabled=False,
+                auth_type="oauth",
+                oauth_config={"grant_type": "authorization_code", "client_id": "test-client", "token_url": os.environ["LIVE_IDP_TOKEN_URL"]},
+                team_id=_TEAM,
+                owner_email="owner@example.com",
+                visibility="team",
+            )
+        )
+        db.flush()
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        db.add(
+            OAuthToken(
+                gateway_id=_REFRESH_GATEWAY,
+                user_id="owner",
+                app_user_email="owner@example.com",
+                access_token=encryption.encrypt_secret("nearly-expired-access"),
+                refresh_token=encryption.encrypt_secret("owner-refresh"),
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                scopes=["files.read"],
+            )
+        )
         db.commit()
 
 
+class _IdentityProvider:
+    """Local OAuth token endpoint that counts refresh requests."""
+
+    def __init__(self) -> None:
+        """Start the endpoint on a free loopback port."""
+        provider = self
+
+        class Handler(BaseHTTPRequestHandler):
+            """Answer every POST with a fresh token response."""
+
+            def do_POST(self) -> None:  # noqa: N802
+                """Return a refreshed token response."""
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                provider.requests += 1
+                body = json.dumps({"access_token": _REFRESHED_ACCESS_TOKEN, "refresh_token": "refreshed-refresh-token", "expires_in": 3600, "token_type": "Bearer"}).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                """Silence request logging."""
+
+        self.requests = 0
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.token_url = f"http://127.0.0.1:{self._server.server_address[1]}/token"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        """Stop the endpoint."""
+        self._server.shutdown()
+        self._server.server_close()
+
+
 @contextmanager
-def _running_gateway(directory: Path, enabled: bool) -> Iterator[TokenGateway]:
+def _running_gateway(directory: Path, enabled: bool, idp_token_url: str = "http://127.0.0.1:9/token") -> Iterator[TokenGateway]:
     """Run a gateway with isolated settings, storage, and signing keys."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -128,6 +198,8 @@ def _running_gateway(directory: Path, enabled: bool) -> Iterator[TokenGateway]:
         "PLUGINS_ENABLED": "false",
         "OBSERVABILITY_ENABLED": "false",
         "OAUTH_TOKEN_RETRIEVAL_ENABLED": str(enabled).lower(),
+        "LIVE_IDP_TOKEN_URL": idp_token_url,
+        "SSRF_ALLOW_LOCALHOST": "true",
         "LOG_LEVEL": "ERROR",
     }
     log_path = directory / "gateway.log"
@@ -173,23 +245,35 @@ def _running_gateway(directory: Path, enabled: bool) -> Iterator[TokenGateway]:
 
 
 @pytest.fixture(scope="module")
-def token_gateway(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TokenGateway]:
+def identity_provider() -> Iterator[_IdentityProvider]:
+    """Run a local OAuth token endpoint for the module."""
+    provider = _IdentityProvider()
+    try:
+        yield provider
+    finally:
+        provider.close()
+
+
+@pytest.fixture(scope="module")
+def token_gateway(tmp_path_factory: pytest.TempPathFactory, identity_provider: _IdentityProvider) -> Iterator[TokenGateway]:
     """Start the feature-enabled gateway once for the module."""
-    with _running_gateway(tmp_path_factory.mktemp("oauth-token-live"), True) as gateway:
+    with _running_gateway(tmp_path_factory.mktemp("oauth-token-live"), True, identity_provider.token_url) as gateway:
         yield gateway
 
 
-def _get(gateway: TokenGateway, headers: dict[str, str] | None = None) -> httpx.Response:
-    """Request the seeded gateway's token through the real HTTP middleware stack."""
+def _get(gateway: TokenGateway, headers: dict[str, str] | None = None, gateway_id: str = _GATEWAY) -> httpx.Response:
+    """Request a seeded gateway's token through the real HTTP middleware stack."""
     with httpx.Client(base_url=gateway.url, timeout=15, trust_env=False) as client:
-        return client.get(f"/oauth/token/{_GATEWAY}", headers=headers)
+        return client.get(f"/oauth/token/{gateway_id}", headers=headers)
 
 
-def test_disabled_feature_returns_503(tmp_path: Path) -> None:
-    """An authorized caller receives 503 when token retrieval is disabled."""
+def test_disabled_feature_returns_plain_404(tmp_path: Path) -> None:
+    """An authorized caller sees a plain 404 that does not name the setting when retrieval is disabled."""
     with _running_gateway(tmp_path, False) as gateway:
         response = _get(gateway, gateway.headers("owner"))
-    assert response.status_code == 503, response.text
+    assert response.status_code == 404, response.text
+    assert response.json() == {"detail": "Not Found"}
+    assert "access-for-" not in response.text
 
 
 def test_unauthenticated_request_is_denied(token_gateway: TokenGateway) -> None:
@@ -210,6 +294,8 @@ def test_returns_only_callers_token(token_gateway: TokenGateway, user: str) -> N
     assert payload["scopes"] == ["files.read"]
     assert datetime.fromisoformat(payload["expires_at"]).replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
     assert "no-store" in response.headers["cache-control"]
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
     assert "refresh-for-" not in response.text
 
 
@@ -249,3 +335,20 @@ def test_viewer_cannot_elevate_permissions_with_api_token_scopes(token_gateway: 
     response = _get(token_gateway, token_gateway.headers(user, ["gateways.token_read"]))
     assert response.status_code == 403, response.text
     assert "access-for-" not in response.text
+
+
+def test_token_near_expiry_is_refreshed_once(token_gateway: TokenGateway, identity_provider: _IdentityProvider) -> None:
+    """A token inside the refresh threshold is refreshed, and the refreshed token is reused."""
+    first = _get(token_gateway, token_gateway.headers("owner"), _REFRESH_GATEWAY)
+    assert first.status_code == 200, first.text
+    payload = first.json()
+    assert payload["access_token"] == _REFRESHED_ACCESS_TOKEN
+    assert "nearly-expired-access" not in first.text
+    assert "refreshed-refresh-token" not in first.text
+    assert datetime.fromisoformat(payload["expires_at"]).replace(tzinfo=timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=30)
+    assert identity_provider.requests == 1
+
+    second = _get(token_gateway, token_gateway.headers("owner"), _REFRESH_GATEWAY)
+    assert second.status_code == 200, second.text
+    assert second.json()["access_token"] == _REFRESHED_ACCESS_TOKEN
+    assert identity_provider.requests == 1

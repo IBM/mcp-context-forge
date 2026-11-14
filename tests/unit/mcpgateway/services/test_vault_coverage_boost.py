@@ -106,6 +106,9 @@ class TestAbstractTokenBackendGetOAuthCredentials:
             async def get_user_token(self, **kw):
                 return None
 
+            async def get_user_token_details(self, **kw):
+                return None
+
             async def get_token_info(self, **kw):
                 return None
 

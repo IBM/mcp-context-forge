@@ -482,6 +482,61 @@ async def test_token_details_propagate_database_failure(backend_no_encryption, m
 
 
 @pytest.mark.asyncio
+async def test_token_details_return_stored_token_type(backend_no_encryption, mock_db):
+    """The stored token type travels with the access token."""
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="bearer")
+
+    result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.token_type == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_token_details_reject_non_bearer_token(backend_no_encryption, mock_db):
+    """A stored token that is not a Bearer token requires authorization."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="mac")
+
+    with pytest.raises(TokenReauthorizationRequired):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_still_returns_non_bearer_token(backend_no_encryption, mock_db):
+    """The legacy reader keeps its warn-only behavior for a non-Bearer token."""
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="mac", access_token="legacy-access")
+
+    assert await backend_no_encryption.get_user_token("gw-1", None, "user@test.com") == "legacy-access"
+
+
+@pytest.mark.asyncio
+async def test_token_details_lock_the_token_row(backend_no_encryption, mock_db):
+    """The strict reader locks the row so concurrent workers serialize on it."""
+    from sqlalchemy.dialects import postgresql
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    statement = mock_db.execute.call_args.args[0]
+    assert "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+    assert statement.get_execution_options()["populate_existing"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_does_not_lock_the_token_row(backend_no_encryption, mock_db):
+    """The legacy reader stays lock-free."""
+    from sqlalchemy.dialects import postgresql
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    await backend_no_encryption.get_user_token("gw-1", None, "user@test.com")
+
+    assert "FOR UPDATE" not in str(mock_db.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
+
+
+@pytest.mark.asyncio
 async def test_get_user_token_not_found(backend_with_encryption, mock_db):
     """Test that None is returned when no token exists."""
     mock_db.execute.return_value.scalar_one_or_none.return_value = None

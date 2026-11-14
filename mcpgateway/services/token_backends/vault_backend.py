@@ -32,6 +32,27 @@ from .refresh_helpers import apply_omit_resource_and_normalize, check_private_ga
 logger = logging.getLogger(__name__)
 
 
+def _parse_expires_at(raw: str) -> datetime:
+    """Parse a stored ISO-8601 expiry as a timezone-aware UTC datetime.
+
+    Args:
+        raw: ISO-8601 timestamp, optionally ending in ``Z``.
+
+    Returns:
+        A timezone-aware datetime. A naive value is read as UTC.
+
+    Examples:
+        >>> _parse_expires_at("2030-01-01T00:00:00Z").tzinfo is not None
+        True
+        >>> _parse_expires_at("2030-01-01T00:00:00").utcoffset().total_seconds()
+        0.0
+    """
+    expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at
+
+
 class VaultConnectionError(Exception):
     """Raised when Vault is unreachable or returns server errors."""
 
@@ -450,7 +471,10 @@ class VaultTokenBackend(AbstractTokenBackend):
             token = data.get("token")
             if not isinstance(token, dict) or not token.get("access_token"):
                 return None
-            expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00")) if data.get("expires_at") else None
+            token_type = data.get("token_type") or "Bearer"
+            if token_type.lower() != "bearer":
+                raise TokenReauthorizationRequired("Stored token is not a Bearer token")
+            expires_at = _parse_expires_at(data["expires_at"]) if data.get("expires_at") else None
             if expires_at and (expires_at - datetime.now(timezone.utc)).total_seconds() < threshold_seconds and token.get("refresh_token"):
                 try:
                     return await self._refresh_token_details(gateway_id, team_id, app_user_email, token["refresh_token"], data)
@@ -459,12 +483,18 @@ class VaultTokenBackend(AbstractTokenBackend):
                     raise TokenReauthorizationRequired() from exc
                 except TokenReauthorizationRequired:
                     raise
-                except Exception:
+                except Exception as exc:
                     if expires_at <= datetime.now(timezone.utc):
                         raise
+                    logger.warning(
+                        "OAuth token refresh failed for gateway %s, user %s; returning the current token: %s",
+                        SecurityValidator.sanitize_log_message(gateway_id),
+                        SecurityValidator.sanitize_log_message(app_user_email),
+                        type(exc).__name__,
+                    )
             if expires_at and expires_at <= datetime.now(timezone.utc):
                 raise TokenReauthorizationRequired()
-            return AccessTokenDetails(access_token=token["access_token"], expires_at=expires_at, scopes=token.get("scopes", []))
+            return AccessTokenDetails(access_token=token["access_token"], expires_at=expires_at, scopes=token.get("scopes", []), token_type=token_type)
 
     async def get_user_token(
         self,
@@ -643,10 +673,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         if data.get("gateway_id") != gateway_id or data.get("email") != app_user_email or data.get("mcp_url") != mcp_url:
             return ValidationToken("unbound")
         if data.get("expires_at"):
-            expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            if expires_at <= datetime.now(timezone.utc):
+            if _parse_expires_at(data["expires_at"]) <= datetime.now(timezone.utc):
                 return ValidationToken("expired")
         token = data.get("token", {}).get("access_token")
         if not isinstance(token, str) or not token or data.get("token_type", "Bearer").lower() != "bearer":
@@ -1266,4 +1293,4 @@ class VaultTokenBackend(AbstractTokenBackend):
             SecurityValidator.sanitize_log_message(app_user_email),
         )
 
-        return AccessTokenDetails(access_token=stored.access_token, expires_at=stored.expires_at, scopes=stored.scopes)
+        return AccessTokenDetails(access_token=stored.access_token, expires_at=stored.expires_at, scopes=stored.scopes, token_type=stored.token_type)

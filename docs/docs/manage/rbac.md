@@ -526,6 +526,9 @@ tool call but never actually invoke it.
 Viewers hold `tokens.create` for API-token self-service, so that permission alone does not authorize OAuth token retrieval.
 The built-in `developer` and `team_admin` roles receive `gateways.token_read`; `platform_admin` retains its wildcard grant.
 Explicit API token scopes must grant `gateways.token_read` directly or through a wildcard. Gateway visibility checks still apply.
+The wildcards `gateways.*` and `*` grant `gateways.token_read` through `token_scope_grants()`.
+When the feature flag turns on, every custom role and API token that holds one of these wildcards can retrieve provider tokens.
+Review those roles and tokens before you set `OAUTH_TOKEN_RETRIEVAL_ENABLED=true`.
 The token lookup uses the authenticated caller's identity, so callers can retrieve only their own stored token.
 The endpoint is disabled unless `OAUTH_TOKEN_RETRIEVAL_ENABLED=true`.
 See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for configuration and response details.
