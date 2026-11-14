@@ -483,6 +483,10 @@ class TestTokenScopeGrants:
             (["tools.read"], "tools.read", True),
             (["tools.read"], "tools.execute", False),
             (["tools.read", "a2a.read"], "a2a.read", True),
+            (["admin.oauth_clients:create"], "admin.oauth_clients:create", True),
+            (["admin.oauth_clients:create"], "admin.oauth_clients:read", False),
+            (["admin.oauth_clients:read"], "admin.oauth_clients:create", False),
+            (["admin.*"], "admin.oauth_clients:create", True),
             # Permissions without a category separator fall back to exact match
             (["tools.read"], "standalone", False),
             (["standalone"], "standalone", True),

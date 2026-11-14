@@ -1026,6 +1026,9 @@ class Settings(BaseSettings):
     # Auto-register when missing credentials
     dcr_auto_register_on_missing_credentials: bool = Field(default=True, description="Automatically register with AS when gateway has issuer but no client_id")
 
+    # Preserve existing implicit registration behavior while allowing deployments to disable it.
+    dcr_allow_implicit_registration_on_authorize: bool = Field(default=True, description="Allow DCR registration to be triggered implicitly by the OAuth authorize endpoint")
+
     # Default scopes for DCR
     dcr_default_scopes: List[str] = Field(default=["mcp:read"], description="Default MCP scopes to request during DCR")
 
