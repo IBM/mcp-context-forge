@@ -337,6 +337,9 @@ def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any
     return v
 
 
+_MAX_TOKEN_ISSUERS = 5
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -365,6 +368,13 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    raw_token_issuer = v.get("token_issuer")
+    if raw_token_issuer not in (None, ""):
+        token_issuers = raw_token_issuer if isinstance(raw_token_issuer, list) else [raw_token_issuer]
+        if not token_issuers or len(token_issuers) > _MAX_TOKEN_ISSUERS or not all(isinstance(item, str) and item for item in token_issuers):
+            raise ValueError(f"oauth_config.token_issuer must be a URL string or a list of 1-{_MAX_TOKEN_ISSUERS} URL strings")
+        for item in token_issuers:
+            validate_core_url(item, "OAuth config token_issuer")
     _validate_oauth_discovery(v.get("discovery"))
     _validate_oauth_actor_token(v)
     if "redirect_uri_after_oauth" in v:

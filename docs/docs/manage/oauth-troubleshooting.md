@@ -169,6 +169,23 @@ For `authorization_code` gateways, both status endpoints attach a `user_token_st
 - Different worker handled callback (multi-worker with in-memory)
 - State never stored (storage failure during authorization)
 
+### "Token issuer mismatch: token iss='...', expected '...'"
+
+**Location**: `mcpgateway/services/token_validation_service.py`
+
+**Cause**: The authorization server (AS) publishes tokens signed by a different IdP, so the token `iss` differs from `oauth_config.issuer`.
+
+`issuer` is the AS identity. It drives Client ID Metadata Document (CIMD) registration, with Dynamic Client Registration (DCR) as the deprecated fallback, endpoint discovery and the RFC 9207 callback check. Do not change it to the IdP.
+
+**Fix**: Set `oauth_config.token_issuer` to the `iss` the access tokens carry. It accepts one URL or a list of up to five. The Admin UI field takes comma-separated URLs. Without `token_issuer`, validation uses `issuer`, then the `token_url` host.
+
+```json
+{
+  "issuer": "https://mcp.example.com",
+  "token_issuer": "https://login.example.com/oidc/endpoint/default"
+}
+```
+
 ---
 
 ## Common Causes and Fixes

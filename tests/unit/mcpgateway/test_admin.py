@@ -8020,6 +8020,20 @@ class TestRegistrationMethodAdminForm:
         config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
         assert "registration_method" not in config
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"), [("https://idp.example.com", "https://idp.example.com"), (" https://a.example.com, https://b.example.com ", ["https://a.example.com", "https://b.example.com"])]
+    )
+    async def test_assemble_token_issuer(self, raw, expected):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_token_issuer": raw}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["token_issuer"] == expected
+        assert config["issuer"] == "https://as.example.com"
+
+    async def test_assemble_omits_blank_token_issuer(self):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_token_issuer": "  "}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "token_issuer" not in config
+
 
 class TestTokenExchangeAdminForms:
     """Admin UI form handling for token-exchange gateways."""
