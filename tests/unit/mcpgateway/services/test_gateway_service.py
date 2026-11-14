@@ -2288,6 +2288,11 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
 
+        # ``_reconcile_gateway_catalog`` expires the gateway object when it prunes rows, and
+        # expiring an object that carries a pending change discards that change, which is why
+        # the ``description`` edit in the issue never persisted. No prune means no expire, so
+        # the field update made earlier in ``update_gateway`` survives the request's commit.
+        test_db.expire.assert_not_called()
         assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
         # A cosmetic edit whose discovery result is unusable must not delete catalog
         # rows or sever virtual-server (server_tool_association) links.
