@@ -113,7 +113,7 @@ pins the observable results:
 |--------|---------|
 | `200` | External authentication succeeded, the group mapping resolved team + role, RBAC granted, and the team-visible agent was invoked. |
 | `401` | Untrusted issuer (fall-through to the internal verifier, which rejects the externally-signed token) OR a trust-root token that failed verification definitively (bad signature, wrong audience, expiry, missing revocation claim). |
-| `403` | Authenticated, but no group mapping/role resolved — RBAC Layer-2 deny (deny without disclosing agent existence). |
+| `403` | Authenticated, but no group mapping/role resolved — RBAC Layer-2 deny (deny without disclosing agent existence).  With `JWT_TRUST_PUBLIC_A2A_ACCESS_ENABLED=true`, `public` enabled agents are the exception: an unmapped trusted principal reads and invokes them (`200`). |
 | `404` | Authenticated and authorized, but the named agent does not exist — the agent lookup terminates at 404. |
 
 `tests/live_gateway/test_trust_mode_entra_barrier.py` is pinned to the

@@ -45,6 +45,7 @@ class TestJwtTrustDefaults:
         assert s.jwt_trust_revocation_claim == "jti"
         assert s.jwt_trust_entra_group_admin_enabled is False
         assert s.jwt_trust_admin_groups == []
+        assert s.jwt_trust_public_a2a_access_enabled is False
 
 
 class TestJwtTrustModeBoot:
@@ -198,3 +199,16 @@ class TestEntraGroupAdminConfig:
     def test_groups_without_flag_are_inert(self):
         s = _settings(jwt_trust_admin_groups=["not-a-guid"])
         assert s.jwt_trust_entra_group_admin_enabled is False
+
+
+class TestPublicA2AAccessConfig:
+    """Startup contract for the trusted public A2A access flag."""
+
+    def test_enabled_in_trust_mode_boots(self):
+        assert _settings(jwt_trust_mode="jwt-trust", jwt_trust_public_a2a_access_enabled=True).jwt_trust_public_a2a_access_enabled is True
+
+    def test_flag_requires_trust_mode(self):
+        with pytest.raises(ValidationError) as exc_info:
+            _settings(jwt_trust_mode="db", jwt_trust_public_a2a_access_enabled=True)
+        assert "jwt_trust_public_a2a_access_enabled" in str(exc_info.value)
+        assert "jwt-trust" in str(exc_info.value)

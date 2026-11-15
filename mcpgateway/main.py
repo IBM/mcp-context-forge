@@ -113,7 +113,15 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import (
+    _ACCESS_DENIED_MSG,
+    check_permission_inline,
+    get_current_user_with_permissions,
+    PermissionChecker,
+    PUBLIC_A2A_LIST_SCOPE,
+    require_permission,
+    TRUSTED_PUBLIC_A2A_GRANT_STATE,
+)
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
@@ -4975,7 +4983,7 @@ async def server_get_prompts(
 ##################
 @a2a_router.get("", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
 @a2a_router.get("/", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
-@require_permission("a2a.read")
+@require_permission("a2a.read", public_a2a_param=PUBLIC_A2A_LIST_SCOPE)
 async def list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
@@ -5015,7 +5023,9 @@ async def list_a2a_agents(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    user_email, token_teams = _a2a_access_scope(request, user)
+    if _has_public_a2a_grant(request):
+        include_inactive = False
 
     # Check team_id from request.state (set during auth)
     token_team_id = getattr(request.state, "team_id", None)
@@ -5086,7 +5096,7 @@ async def get_a2a_agent_metrics(
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
-@require_permission("a2a.read")
+@require_permission("a2a.read", public_a2a_param="agent_id")
 async def get_a2a_agent(
     agent_id: str,
     request: Request,
@@ -5112,7 +5122,7 @@ async def get_a2a_agent(
         logger.debug(f"User {safe_log_user(user)} requested A2A agent with ID {agent_id}")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        user_email, token_teams = _a2a_access_scope(request, user)
 
         return await a2a_service.get_agent(
             db,
@@ -5125,7 +5135,7 @@ async def get_a2a_agent(
 
 
 @a2a_router.get("/{agent_id}/card", response_model=AgentCard)
-@require_permission("a2a.read")
+@require_permission("a2a.read", public_a2a_param="agent_id")
 async def get_a2a_agent_card(
     agent_id: str,
     request: Request,
@@ -5155,7 +5165,7 @@ async def get_a2a_agent_card(
     """
     logger.debug("User %s requested A2A agent card for ID %s", safe_log_user(user), agent_id)
 
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    user_email, token_teams = _a2a_access_scope(request, user)
 
     # SECURITY: visibility denial must look identical to not-found (PR #4341),
     # so both branches fall through to the same 404 below.
@@ -5456,6 +5466,37 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
     return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
+def _has_public_a2a_grant(request: Request) -> bool:
+    """Return whether the trusted public A2A grant admitted this request.
+
+    Args:
+        request: FastAPI Request object
+
+    Returns:
+        True only when the RBAC decorator set the grant marker to ``True``.
+    """
+    return getattr(request.state, TRUSTED_PUBLIC_A2A_GRANT_STATE, False) is True
+
+
+def _a2a_access_scope(request: Request, user: Any) -> Tuple[Optional[str], Optional[List[str]]]:
+    """Resolve the Layer-1 scope for an A2A route.
+
+    A request admitted only by the trusted public A2A grant gets public-only scope,
+    whatever its token teams say.
+
+    Args:
+        request: FastAPI Request object
+        user: Authenticated user context
+
+    Returns:
+        Tuple of ``(user_email, token_teams)``.
+    """
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if _has_public_a2a_grant(request):
+        return user_email, []
+    return user_email, token_teams
+
+
 def _extract_a2a_request_context(
     request: Request,
     user: Any,
@@ -5486,7 +5527,7 @@ def _extract_a2a_request_context(
         - request_headers: Dict[str, str]
     """
     # Get filtering context from token (respects token scope)
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    user_email, token_teams = _a2a_access_scope(request, user)
 
     # Extract user ID
     user_id = None
@@ -5513,6 +5554,11 @@ def _extract_a2a_request_context(
     if bearer_token and not _is_jwt_token(bearer_token):
         logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
         bearer_token = None
+
+    # A grant-only caller holds no role the upstream could verify, so the token stays here.
+    if _has_public_a2a_grant(request):
+        bearer_token = None
+        authenticated_bearer_token = None
 
     # Extract inbound request metadata for plugin context
     # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
@@ -5902,7 +5948,7 @@ async def send_a2a_task_message(
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
 # actually returned are serialized, instead of the whole envelope with nulls filled in.
 @a2a_router.post("/{agent_name}/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
-@require_permission("a2a.invoke")
+@require_permission("a2a.invoke", public_a2a_param="agent_name")
 async def invoke_a2a_agent(
     agent_name: str,
     request: Request,
@@ -5993,7 +6039,7 @@ async def test_a2a_agent(
 
 
 @a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
-@require_permission("a2a.invoke")
+@require_permission("a2a.invoke", public_a2a_param="agent_id")
 async def invoke_a2a_agent_by_id(
     request: Request,
     agent_id: str = Body(..., description="Agent UUID or UAID"),
@@ -6044,7 +6090,7 @@ async def invoke_a2a_agent_by_id(
 
 
 @a2a_router.post("/{agent_name}/jsonrpc", response_model=A2AJsonRpcResponse, response_model_exclude_unset=True)
-@require_permission("a2a.invoke")
+@require_permission("a2a.invoke", public_a2a_param="agent_name")
 async def invoke_a2a_agent_jsonrpc(
     agent_name: str,
     request: Request,
