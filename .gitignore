@@ -356,3 +356,5 @@ docker-compose.perf.yml
 
 # Git worktrees
 .worktrees/
+.omp/
+docs/mcpgateway-docs.html
