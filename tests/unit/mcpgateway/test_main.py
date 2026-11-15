@@ -4913,6 +4913,7 @@ class TestA2AAgentEndpoints:
         kwargs = mock_service.test_agent.call_args.kwargs
         assert kwargs["query"] == "hi"
         assert "interaction_type" not in kwargs
+        assert "authenticated_bearer_token" not in kwargs
 
     @patch("mcpgateway.main.a2a_service")
     def test_test_a2a_agent_no_body_uses_service_default(self, mock_service, test_client, auth_headers):

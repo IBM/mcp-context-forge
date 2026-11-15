@@ -1387,6 +1387,18 @@ class TestRequestContextTokenScoping:
             assert context["token_teams"] is None  # Admin bypass
             assert context["user_email"] == "admin@example.com"
 
+    def test_authenticated_bearer_token_omitted_on_request(self, mock_request_for_context, mock_user_dict_for_context):
+        """The context omits ``authenticated_bearer_token`` for services that do not accept it."""
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
+            with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
+                from mcpgateway.main import _extract_a2a_request_context
+
+                default_context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
+                trimmed_context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context, include_authenticated_bearer_token=False)
+
+        assert "authenticated_bearer_token" in default_context
+        assert "authenticated_bearer_token" not in trimmed_context
+
     def test_non_admin_with_no_teams_gets_public_only(self, mock_request_for_context, mock_user_dict_for_context):
         """Test non-admin without teams gets public-only access (empty list)."""
         with patch("mcpgateway.main.get_scoped_resource_access_context") as mock_get_filter:
