@@ -147,7 +147,9 @@ def make_trusted_test_jwt(
         claims.update(extra_payload)
 
     if not secret:
-        secret = settings.jwt_secret_key.get_secret_value()
+        secret = settings.jwt_secret_key
+        if hasattr(secret, "get_secret_value"):
+            secret = secret.get_secret_value()
     if not algorithm:
         algorithm = settings.jwt_algorithm
     return jwt.encode(claims, secret, algorithm=algorithm)

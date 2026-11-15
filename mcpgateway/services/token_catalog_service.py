@@ -919,7 +919,8 @@ class TokenCatalogService:
         Args:
             token_id: Token ID to revoke
             user_email: Caller's email - must own the token or be a member of the token's team
-            revoked_by: Email of user performing revocation (for audit)
+            revoked_by: Canonical user_id of the revoking principal, or a system
+                sentinel string (for audit). No foreign key is enforced (#5901).
             reason: Optional reason for revocation
 
         Returns:
@@ -983,7 +984,8 @@ class TokenCatalogService:
 
         Args:
             token_id: Token ID to revoke
-            revoked_by: Admin email for audit
+            revoked_by: Canonical user_id of the admin principal, or a system
+                sentinel string (for audit). No foreign key is enforced (#5901).
             reason: Revocation reason
 
         Returns:
