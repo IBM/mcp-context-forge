@@ -1,0 +1,11 @@
+{
+  "name": "asd-ste100-skill",
+  "description": "The asd-ste100 skill as a Claude Code plugin",
+  "owner": { "name": "danyuchn" },
+  "plugins": [
+    {
+      "name": "asd-ste100",
+      "source": "./"
+    }
+  ]
+}
