@@ -928,6 +928,8 @@ async def check_permission_inline(
             resource_type=resource_type,
             team_id=team_id,
             token_teams=user_context.get("token_teams"),
+            token_roles=user_context.get("roles", []),
+            token_is_admin=user_context.get("token_is_admin", False),
             ip_address=user_context.get("ip_address"),
             user_agent=user_context.get("user_agent"),
             allow_admin_bypass=allow_admin_bypass,
@@ -943,6 +945,8 @@ async def check_permission_inline(
                 resource_type=resource_type,
                 team_id=team_id,
                 token_teams=user_context.get("token_teams"),
+                token_roles=user_context.get("roles", []),
+                token_is_admin=user_context.get("token_is_admin", False),
                 ip_address=user_context.get("ip_address"),
                 user_agent=user_context.get("user_agent"),
                 allow_admin_bypass=allow_admin_bypass,
@@ -1071,7 +1075,7 @@ def require_admin_permission():
         >>> class DummyPS:
         ...     def __init__(self, db):
         ...         pass
-        ...     async def check_admin_permission(self, email, token_teams=None):
+        ...     async def check_admin_permission(self, email, token_teams=None, token_is_admin=False):
         ...         return True
         >>> @require_admin_permission()
         ... async def demo(user=None):
@@ -1115,15 +1119,16 @@ def require_admin_permission():
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
             token_teams = user_context.get("token_teams")  # Forward token scope
+            token_is_admin = user_context.get("token_is_admin", False)  # Forward claims-derived admin flag (#5902)
             if db_session:
                 # Use existing session from endpoint or user_context
                 permission_service = PermissionService(db_session)
-                has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
+                has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams, token_is_admin=token_is_admin)
             else:
                 # Create fresh db session for permission check
                 with fresh_db_session() as db:
                     permission_service = PermissionService(db)
-                    has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
+                    has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams, token_is_admin=token_is_admin)
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -1226,6 +1231,8 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         resource_type=resource_type,
                         team_id=team_id,
                         token_teams=user_context.get("token_teams"),
+                        token_roles=user_context.get("roles", []),
+                        token_is_admin=user_context.get("token_is_admin", False),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -1246,6 +1253,8 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             resource_type=resource_type,
                             team_id=team_id,
                             token_teams=user_context.get("token_teams"),
+                            token_roles=user_context.get("roles", []),
+                            token_is_admin=user_context.get("token_is_admin", False),
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
                             allow_admin_bypass=allow_admin_bypass,
@@ -1311,6 +1320,8 @@ class PermissionChecker:
                 resource_id=resource_id,
                 team_id=team_id,
                 token_teams=self.user_context.get("token_teams"),
+                token_roles=self.user_context.get("roles", []),
+                token_is_admin=self.user_context.get("token_is_admin", False),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
                 check_any_team=check_any_team,
@@ -1325,6 +1336,8 @@ class PermissionChecker:
                 resource_id=resource_id,
                 team_id=team_id,
                 token_teams=self.user_context.get("token_teams"),
+                token_roles=self.user_context.get("roles", []),
+                token_is_admin=self.user_context.get("token_is_admin", False),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
                 check_any_team=check_any_team,
@@ -1337,14 +1350,15 @@ class PermissionChecker:
             bool: True if user has admin permissions
         """
         token_teams = self.user_context.get("token_teams")
+        token_is_admin = self.user_context.get("token_is_admin", False)  # Claims-derived admin flag (#5902)
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams, token_is_admin=token_is_admin)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams, token_is_admin=token_is_admin)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
@@ -1367,6 +1381,8 @@ class PermissionChecker:
                     resource_type=resource_type,
                     team_id=team_id,
                     token_teams=self.user_context.get("token_teams"),
+                    token_roles=self.user_context.get("roles", []),
+                    token_is_admin=self.user_context.get("token_is_admin", False),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
@@ -1382,6 +1398,8 @@ class PermissionChecker:
                     resource_type=resource_type,
                     team_id=team_id,
                     token_teams=self.user_context.get("token_teams"),
+                    token_roles=self.user_context.get("roles", []),
+                    token_is_admin=self.user_context.get("token_is_admin", False),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
