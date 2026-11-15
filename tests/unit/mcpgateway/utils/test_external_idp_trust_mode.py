@@ -33,6 +33,7 @@ from sqlalchemy.pool import StaticPool
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailTeam, EmailUser, ExternalGroupMapping, Role, SSOProvider
 from mcpgateway.utils import verify_credentials as vc
+from mcpgateway.utils.entra_graph_client import EntraGraphError
 
 ISSUER = "https://login.example.com/tenant-1/v2.0"
 TENANT = "tenant-1"
@@ -302,6 +303,80 @@ class TestOveragePolicies:
         assert payload["token_use"] == "trusted"
         assert any(CALLER_ID in record.message for record in caplog.records)
 
+
+class TestAppOnlyGroupInquiry:
+    """App-only tokens without a groups claim dispatch on the overage policy."""
+
+    @pytest.mark.asyncio
+    async def test_app_only_fail_closed_skips_graph(self, db, monkeypatch):
+        """App-only token + fail_closed -> identity with no teams, no Graph call."""
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "jwt_trust_overage_policy", "fail_closed")
+        claims = _claims(email=CALLER_EMAIL, idtyp="app")
+
+        client = MagicMock()
+        client.get_member_groups = AsyncMock(return_value=["entra-group-guid-1"])
+        monkeypatch.setattr("mcpgateway.utils.trusted_claims.EntraGraphClient", lambda: client)
+
+        payload = await vc.build_external_identity(_provider(db), claims, "rawtoken", db)
+
+        assert payload is not None
+        assert payload["teams"] == []
+        client.get_member_groups.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_app_only_graph_lookup_resolves_service_principal_groups(self, db, monkeypatch):
+        """App-only token + graph_lookup -> service-principal lookup feeds the mapping resolver."""
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "jwt_trust_overage_policy", "graph_lookup")
+        claims = _claims(email=CALLER_EMAIL, idtyp="app")
+
+        client = MagicMock()
+        client.get_member_groups = AsyncMock(return_value=["entra-group-guid-1"])
+        monkeypatch.setattr("mcpgateway.utils.trusted_claims.EntraGraphClient", lambda: client)
+
+        payload = await vc.build_external_identity(_provider(db), claims, "rawtoken", db)
+
+        assert payload is not None
+        client.get_member_groups.assert_awaited_once()
+        assert client.get_member_groups.await_args.args[1] == CALLER_ID
+        assert client.get_member_groups.await_args.kwargs.get("app_only") is True
+        assert payload["teams"] == ["team-a"]
+        assert payload["roles"] == ["developer"]
+
+    @pytest.mark.asyncio
+    async def test_app_only_graph_lookup_failure_denies(self, db, monkeypatch):
+        """App-only token + graph_lookup + Graph failure -> None with the denial reason recorded."""
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "jwt_trust_overage_policy", "graph_lookup")
+        claims = _claims(email=CALLER_EMAIL, idtyp="app")
+
+        client = MagicMock()
+        client.get_member_groups = AsyncMock(side_effect=EntraGraphError("graph down"))
+        monkeypatch.setattr("mcpgateway.utils.trusted_claims.EntraGraphClient", lambda: client)
+        recorded: list[tuple] = []
+        monkeypatch.setattr(vc, "_record_external_auth_metric", lambda *a, **k: recorded.append((a, k)))
+
+        payload = await vc.build_external_identity(_provider(db), claims, "rawtoken", db)
+
+        assert payload is None
+        assert recorded == [(("denied", "entra"), {"reason": "service_principal_groups_unresolved"})]
+
+    @pytest.mark.asyncio
+    async def test_user_token_without_groups_skips_graph(self, db, monkeypatch):
+        """A user token without a groups claim makes no Graph call under graph_lookup."""
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "jwt_trust_overage_policy", "graph_lookup")
+        claims = _claims(email=CALLER_EMAIL)
+
+        client = MagicMock()
+        client.get_member_groups = AsyncMock(return_value=["entra-group-guid-1"])
+        monkeypatch.setattr("mcpgateway.utils.trusted_claims.EntraGraphClient", lambda: client)
+
+        payload = await vc.build_external_identity(_provider(db), claims, "rawtoken", db)
+
+        assert payload is not None
+        assert payload["teams"] == []
 
 class TestTrustIdentityCache:
     """invalidate_external_identity_cache covers the claims-derived path."""
