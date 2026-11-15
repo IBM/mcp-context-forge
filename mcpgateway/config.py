@@ -1338,6 +1338,9 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
+    # MCP Events application-owner dispatch (disabled by default)
+    mcpgateway_mcp_events_enabled: bool = Field(default=False, description="Enable authenticated MCP Events dispatch to explicitly registered virtual-server providers")
+
     # MCP Apps support (disabled by default)
     mcpgateway_mcp_apps_enabled: bool = Field(default=False, description="Enable MCP Apps support through capabilities.extensions")
     mcpgateway_mcp_apps_session_ttl: int = Field(default=900, ge=1, le=86400, description="AppBridge session TTL in seconds")
@@ -3871,7 +3874,9 @@ Disallow: /
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    validation_dangerous_html_pattern: str = (
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    )
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 

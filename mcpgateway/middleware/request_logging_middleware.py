@@ -181,6 +181,8 @@ def mask_sensitive_data(data, max_depth: int = 10):
         return "<nested too deep>"
 
     if isinstance(data, dict):
+        if isinstance(data.get("method"), str) and data["method"] in {"events/list", "events/subscribe", "events/unsubscribe"}:
+            return {"method": data["method"], "params": "<MCP Events parameters omitted>"}
         return {k: ("******" if _is_sensitive_key(k) else mask_sensitive_data(v, max_depth - 1)) for k, v in data.items()}
     if isinstance(data, list):
         return [mask_sensitive_data(i, max_depth - 1) for i in data]

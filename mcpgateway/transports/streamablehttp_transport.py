@@ -79,13 +79,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import SessionLocal
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, token_scope_grants
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
+from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -95,6 +94,7 @@ from mcpgateway.services.mcp_apps import (
     serialize_resource_content_for_mcp,
 )
 from mcpgateway.services.mcp_catalog_service import collect_proxy_catalog, list_catalog_page, log_proxy_catalog_failure
+from mcpgateway.services.mcp_events import EVENT_METHOD_PERMISSIONS, EventRequestContext, EventRequestParams, get_event_provider
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -114,12 +114,12 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -2104,9 +2104,7 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 # via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
 # argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
 # so the gateway's existing tool_service.py schema validation is the only path.
-async def call_tool(
-    name: str, arguments: dict
-) -> Union[
+async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
@@ -4251,10 +4249,140 @@ async def _send_listen_teardown(ctx: Any) -> None:
             logger.debug("Listen teardown notification for %r not sent: %s", ctx.request_id, exc)
 
 
+async def _authorized_event_provider(method: str) -> tuple[Any, EventRequestContext]:
+    """Resolve one registered provider under both gateway authorization layers.
+
+    Args:
+        method: Exact Events method requiring authorization.
+
+    Returns:
+        The authorized provider and current request context.
+
+    Raises:
+        MCPError: If the feature, provider, or current caller is unavailable.
+    """
+    if not settings.mcpgateway_mcp_events_enabled:
+        raise MCPError(code=-32601, message="Method not found")
+    server_id, headers, user = await _get_request_context_or_default()
+    provider = get_event_provider(server_id)
+    if provider is None or user.get("is_authenticated") is not True or not user.get("email"):
+        raise MCPError(code=-32601, message="Method not found")
+    permission = EVENT_METHOD_PERMISSIONS[method]
+    if not token_scope_grants(user.get("scoped_permissions"), permission) or not await _check_streamable_permission(
+        user_context=user,
+        permission=permission,
+        check_any_team=_check_any_team_for_server_scoped_rbac(user, server_id),
+    ):
+        raise MCPError(code=-32001, message="Access denied")
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+    email, teams = get_scoped_visibility_from_user_context(user)
+    async with get_db() as db:
+        server = await server_service.get_server(db, server_id, user_email=email, token_teams=teams)
+        if not server.enabled:
+            raise MCPError(code=-32601, message="Method not found")
+    context = EventRequestContext(server_id=server_id, user=dict(user), headers=dict(headers))
+    if not await provider.authorize(context, method):
+        raise MCPError(code=-32001, message="Access denied")
+    return provider, context
+
+
+async def _event_capabilities(ctx: Any, call_next: Any) -> Any:
+    """Advertise Events only after current scoped provider authorization.
+
+    Args:
+        ctx: Native SDK request context.
+        call_next: Next native middleware handler.
+
+    Returns:
+        The original result with authorized Events capability when applicable.
+    """
+    result = await call_next(ctx)
+    if ctx.method not in {"initialize", "server/discover"} or not isinstance(result, dict):
+        return result
+    token = _v2_request_ctx.set(ctx)
+    try:
+        try:
+            await _authorized_event_provider("events/list")
+        except Exception:  # noqa: BLE001 - Discovery must fail closed without provider details.
+            return result
+        capabilities = result.get("capabilities")
+        if isinstance(capabilities, dict):
+            result = {**result, "capabilities": {**capabilities, "events": {}}}
+        return result
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_event_request(ctx: Any, params: EventRequestParams) -> dict[str, Any]:
+    """Dispatch one Events method without tracing secret-bearing parameters.
+
+    Args:
+        ctx: Native SDK request context.
+        params: Provider-owned method parameters.
+
+    Returns:
+        The event owner's protocol result.
+
+    Raises:
+        MCPError: With a safe error that excludes provider payloads and secrets.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        provider, context = await _authorized_event_provider(ctx.method)
+        result = await provider.request(context, ctx.method, params.model_dump(by_alias=True, exclude_unset=True))
+        if get_event_provider(context.server_id) is not provider:
+            raise MCPError(code=-32001, message="Access denied")
+        # Fresh rights after provider I/O; the owner also guards its commit.
+        current_provider, current_context = await _authorized_event_provider(ctx.method)
+        if current_provider is not provider or current_context.user.get("user_id") != context.user.get("user_id"):
+            raise MCPError(code=-32001, message="Access denied")
+        if not isinstance(result, dict):
+            raise ValueError("Invalid event provider result")
+        if ctx.method == "events/unsubscribe" and result:
+            raise ValueError("Invalid unsubscribe result")
+        if ctx.method == "events/subscribe":
+            if set(result) != {"id", "refreshBefore", "cursor", "truncated"} or not isinstance(result["id"], str) or not result["id"]:
+                raise ValueError("Invalid subscription result")
+            if type(result["truncated"]) is not bool or result["cursor"] is not None and not isinstance(result["cursor"], str):
+                raise ValueError("Invalid subscription replay result")
+            if result["refreshBefore"] is not None:
+                # Standard
+                from datetime import datetime  # pylint: disable=import-outside-toplevel
+
+                if not isinstance(result["refreshBefore"], str) or datetime.fromisoformat(result["refreshBefore"].replace("Z", "+00:00")).tzinfo is None:
+                    raise ValueError("Invalid subscription expiration")
+        if ctx.method == "events/list":
+            if set(result) - {"events", "nextCursor"} or not isinstance(result.get("events"), list):
+                raise ValueError("Invalid event catalog result")
+            for event in result["events"]:
+                if not isinstance(event, dict) or not isinstance(event.get("name"), str) or not event["name"]:
+                    raise ValueError("Invalid event definition")
+                if event.get("delivery") != ["webhook"] or any(not isinstance(event.get(key), dict) for key in ("inputSchema", "payloadSchema")):
+                    raise ValueError("Invalid webhook event definition")
+        return result
+    except MCPError as exc:
+        code = exc.error.code
+        reason = (exc.error.data or {}).get("reason") if isinstance(exc.error.data, dict) else None
+        if code == -32015:
+            safe_reason = reason if isinstance(reason, str) and reason in {"challenge_failed", "timeout", "invalid_url", "private_address", "redirect"} else "callback_failed"
+            raise MCPError(code=code, message="Callback verification failed", data={"reason": safe_reason}) from None
+        if code in {-32601, -32001, -32602}:
+            raise MCPError(code=code, message={-32601: "Method not found", -32001: "Access denied", -32602: "Invalid request parameters"}[code]) from None
+        raise MCPError(code=-32603, message="Event provider unavailable") from None
+    except Exception:  # noqa: BLE001 - Provider failures must never expose subscription secrets.
+        raise MCPError(code=-32603, message="Event provider unavailable") from None
+    finally:
+        _v2_request_ctx.reset(token)
+
+
 # Register all handlers via the v2 add_request_handler API. set_logging_level
 # was already migrated to (_ctx, params) form so it registers directly.
 mcp_app.add_request_handler("server/discover", types.RequestParams, _adapt_discover_with_ttl_cache_scope)
 mcp_app.middleware.append(_legacy_initialize_instructions)
+mcp_app.middleware.append(_event_capabilities)
 mcp_app.add_request_handler("tools/list", types.PaginatedRequestParams, _adapt_list_tools)
 mcp_app.add_request_handler("tools/call", types.CallToolRequestParams, _adapt_call_tool)
 mcp_app.add_request_handler("prompts/list", types.PaginatedRequestParams, _adapt_list_prompts)
@@ -4265,6 +4393,9 @@ mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestPa
 mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
 mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
 mcp_app.add_request_handler("subscriptions/listen", types.SubscriptionsListenRequestParams, _adapt_subscriptions_listen)
+mcp_app.add_request_handler("events/list", EventRequestParams, _adapt_event_request)
+mcp_app.add_request_handler("events/subscribe", EventRequestParams, _adapt_event_request)
+mcp_app.add_request_handler("events/unsubscribe", EventRequestParams, _adapt_event_request)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------
@@ -4483,6 +4614,9 @@ _MCP_KNOWN_REQUEST_METHODS = frozenset(
     {
         "initialize",
         "server/discover",
+        "events/list",
+        "events/subscribe",
+        "events/unsubscribe",
         "tools/list",
         "list_tools",
         "list_gateways",
