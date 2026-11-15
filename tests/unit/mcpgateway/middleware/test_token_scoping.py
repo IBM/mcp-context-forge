@@ -387,6 +387,22 @@ class TestTokenScopingMiddleware:
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("teams_claim", [[], ["some-team"], None])
+    async def test_trusted_marker_rejected_401_when_trust_mode_off(self, middleware, mock_request, monkeypatch, teams_claim):
+        """A token_use=trusted marker gets 401 in db mode before Layer-1 interprets its claims."""
+        monkeypatch.setattr(settings, "jwt_trust_mode", "db")
+        mock_request.headers = {"Authorization": "Bearer token"}
+        payload = {"sub": "user@example.com", "token_use": "trusted", "teams": teams_claim, "scopes": {"permissions": ["*"]}}
+
+        with patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert b"Trusted tokens require JWT trust mode" in response.body
+        call_next.assert_not_called()
+
     def test_plugin_discovery_requires_plugins_read(self, middleware):
         """Versioned plugin discovery uses explicit least-privilege permission."""
         assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
