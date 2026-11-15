@@ -34,11 +34,11 @@ Both layers must pass for an operation to succeed.
 
 | Method | Priority | Description |
 |--------|----------|-------------|
-| JWT Token | 1 (Primary) | Signature verified, supports teams/scopes claims |
-| Plugin Auth | 0 (Before JWT) | `HTTP_AUTH_RESOLVE_USER` hook can provide custom auth |
-| API Token (DB) | 2 (Fallback) | Legacy database-stored tokens |
-| Proxy Header | 3 | When `MCP_CLIENT_AUTH_ENABLED=false` AND `TRUST_PROXY_AUTH=true` |
-| Anonymous | 4 | When `AUTH_REQUIRED=false` (development only) |
+| JWT Token | 1 (Primary) | Signature verified. Supports teams and scopes claims. |
+| Plugin Auth | 0 (Before JWT) | `HTTP_AUTH_RESOLVE_USER` hook can provide custom auth. |
+| API Token (DB) | 2 (Fallback) | Legacy database-stored tokens. |
+| Proxy Header | 3 | When `MCP_CLIENT_AUTH_ENABLED` is false and `TRUST_PROXY_AUTH` is true. |
+| Anonymous | 4 | When `AUTH_REQUIRED` is false (development only). |
 
 ---
 
@@ -150,7 +150,11 @@ Protected entities:
 
 ## Token Scoping Model
 
-Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload. The `normalize_token_teams()` function is the **single source of truth** for interpreting JWT team claims into a canonical form. For session tokens, `resolve_session_teams()` is the **single policy point** — it resolves teams from the database first (so revoked memberships take effect immediately), then narrows the result to the intersection with any JWT-embedded `teams` claim (so callers can scope a session to a subset of their memberships). If the intersection is empty (e.g. all JWT-claimed teams have been revoked), an empty list is returned, demoting the session to public-only scope — the user can still access public resources and their own private resources, but loses access to all team-scoped resources. An explicit `teams: []` in a session JWT is treated as "no restriction requested" and returns the full DB membership.
+Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload.
+
+The `normalize_token_teams()` function is the single source of truth for interpreting JWT team claims into canonical form.
+
+For session tokens, `resolve_session_teams()` is the single policy point. It resolves teams from the database first. If the JWT contains team claims, it narrows the result to the intersection of database teams and JWT teams. When the intersection is empty, it returns `[]` (public-only). An explicit empty list `teams: []` in a session token requests no restriction and returns all database teams.
 
 ### Token Scoping Contract
 
@@ -172,7 +176,7 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
 └───────────────────────────┴───────────────────────┴─────────────────────────┘
 ```
 
-**Session tokens** — DB is the authority; JWT `teams` only narrows (never broadens):
+**Session tokens** — Database is the authority. JWT `teams` only narrows:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
@@ -196,7 +200,9 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
     **Session tokens:** Admin bypass is determined by the **database** `is_admin` flag, not the JWT `teams` claim. If the DB user is admin, `resolve_session_teams()` returns `None` (admin bypass) regardless of the JWT `teams` state. The JWT `teams` claim cannot narrow an admin session — it only narrows non-admin sessions.
 
 !!! note "External IdP tokens use session semantics"
-    Access tokens accepted from trusted external SSO providers (`SSO_API_TOKEN_AUTH_ENABLED`, see [SSO documentation](sso.md#machine-to-machine-api-auth-with-external-idp-tokens)) are provisioned to a `token_use="session"` identity. `is_admin` and `teams` are resolved exactly as in the **Session tokens** row above — from the persisted local user record via `resolve_session_teams()` — never from claims inside the external token itself.
+    Access tokens from trusted external SSO providers (`SSO_API_TOKEN_AUTH_ENABLED`, see [SSO documentation](sso.md#machine-to-machine-api-auth-with-external-idp-tokens)) map to a `token_use="session"` identity.
+    The gateway resolves `is_admin` and `teams` from the persisted local user record with `resolve_session_teams()`.
+    It never reads these values from claims in the external token.
 
 ### `is_admin`, `teams`, and `token_use` (Mental Model)
 
@@ -253,14 +259,14 @@ Key points:
 
 1. **Secure-First Defaults**
 
-   - API/legacy tokens: missing `teams` key always returns `[]` (public-only access), preventing accidental exposure when tokens are misconfigured
-   - Session tokens: missing/null/empty `teams` returns full DB membership (no narrowing requested); the DB is the authority
+   - API and legacy tokens: missing `teams` key always returns `[]` (public-only access).
+   - Session tokens: missing, null, or empty `teams` returns full database team membership.
 
 2. **Explicit Admin Bypass**
 
-   - API/legacy tokens: admin bypass requires explicit `teams: null` AND `is_admin: true`
-   - Session tokens: admin bypass is DB-derived (DB `is_admin` flag); JWT `teams` only narrows non-admin sessions
-   - Empty teams `[]` disables bypass even for admins (API/legacy tokens)
+   - API and legacy tokens: admin bypass requires explicit `teams: null` and `is_admin: true`.
+   - Session tokens: admin bypass comes from the database `is_admin` flag.
+   - Empty teams `[]` disables bypass even for admins on API and legacy tokens.
 
 3. **Scoped Automation Tokens**
 
@@ -514,21 +520,18 @@ which validates and resolves a tool call without dispatching it (no REST/MCP/A2A
 tool call but never actually invoke it.
 
 !!! note "Registered OAuth clients require un-narrowed admin scope"
-    `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate the DCR management routes
+    `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate DCR management routes
     (`GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`,
-    `DELETE /oauth/registered-clients/{client_id}`). Registered clients are stored globally with no
-    team column, so these routes additionally require an admin identity whose token is **not**
-    team-narrowed — a constraint that cannot be expressed as a permission. Admin bypass is disabled
-    on these routes, so the caller's roles must carry the permission — directly, via `*`, or through
-    role inheritance. The DB `is_admin` flag alone is not sufficient.
+    `DELETE /oauth/registered-clients/{client_id}`). Registered clients have no team column.
+    These routes require an admin identity without team narrowing.
+    Admin bypass is disabled on these routes. The caller roles must carry the permission directly, through `*`, or through role inheritance.
+    The database `is_admin` flag alone is not sufficient.
 
-    Scoped API tokens cannot yet carry `admin.oauth_clients:read` / `admin.oauth_clients:delete`:
-    `TokenScopeRequest`'s permission-format validator only accepts plain `resource.action` or `*` —
-    colon-form and wildcard-suffix permissions are rejected at token-creation time. So today only
-    session tokens and `*`-scoped tokens reach these routes via Layer 1; the Layer 1 mapping for the
-    colon-form permissions is defensive rather than reachable today, matching the existing
-    `<category>.*` wildcard delegation precedent described in `token_scope_grants()`'s docstring in
-    `mcpgateway/middleware/rbac.py`.
+    Scoped API tokens cannot carry `admin.oauth_clients:read` or `admin.oauth_clients:delete`.
+    `TokenScopeRequest` validator only accepts plain `resource.action` or `*`.
+    It rejects colon-form and wildcard-suffix permissions at token creation time.
+    Only session tokens and `*`-scoped tokens reach these routes through Layer 1.
+    The Layer 1 mapping for colon-form permissions matches the `<category>.*` wildcard delegation precedent in `token_scope_grants()` (`mcpgateway/middleware/rbac.py`).
 
     Grant `admin.oauth_clients:read` / `admin.oauth_clients:delete` via a **global**-scope role
     (such as `platform_admin`) rather than a team-scoped role. Registered OAuth clients are global
@@ -557,10 +560,9 @@ check (Layer 2). Both must allow the operation. `token_scope_grants()` in
     allow. To restrict a token, grant it an explicit, minimal permission list.
 
 !!! note "Changing a token's scope requires reissuing it"
-    Layer 1 reads the permissions embedded in the token's signed claim. Updating a token's
-    scope records the change in the database but does not re-sign the existing token, so a
-    token already in circulation keeps the scopes it was issued with. Issue a new token to
-    apply a scope change.
+    Layer 1 reads permissions from the signed token claim.
+    Updating token scope in the database does not re-sign existing tokens.
+    An active token keeps its original scopes. Issue a new token to apply scope changes.
 
 **Category wildcards (`tools.*`)** are *not* accepted when creating a token — the token API
 requires each entry to be either `*` or an exact `resource.action` pair. Category wildcards
@@ -568,9 +570,9 @@ are meaningful only for RBAC *role* permissions, where they are used to decide w
 may delegate into a new token.
 
 **Transport access:** a token holding any MCP method permission (`tools.*`, `resources.*`,
-`prompts.*`) implicitly satisfies `servers.use`, which guards the MCP transport endpoints.
-Without this, an execute-only token could not open the transport it needs. New tokens receive
-`servers.use` explicitly at creation; the implicit grant covers tokens issued earlier.
+`prompts.*`) implicitly satisfies `servers.use`, which guards MCP transport endpoints.
+Without this, an execute-only token cannot open its transport. New tokens receive
+`servers.use` explicitly at creation. The implicit grant covers legacy tokens.
 
 ### Permission Checking Flow
 
@@ -672,15 +674,15 @@ The following configuration combinations require careful consideration:
 | Setting | Value | Impact | Recommended Use |
 |---------|-------|--------|-----------------|
 | `AUTH_REQUIRED` | `false` | All requests granted admin access | Development only |
-| `TRUST_PROXY_AUTH` | `true` + `MCP_CLIENT_AUTH_ENABLED=false` | Trust `X-Forwarded-User` header without verification | Behind trusted reverse proxy only |
+| `TRUST_PROXY_AUTH` | `true` with `MCP_CLIENT_AUTH_ENABLED` false | Trust `X-Forwarded-User` header without verification | Behind trusted reverse proxy only |
 
 ### Proxy Authentication Mode
 
-When `MCP_CLIENT_AUTH_ENABLED=false` and `TRUST_PROXY_AUTH=true`:
+When `MCP_CLIENT_AUTH_ENABLED` is false and `TRUST_PROXY_AUTH` is true:
 
-- The gateway trusts the `X-Forwarded-User` header from upstream proxy
-- No JWT validation or database verification is performed
-- **Only use** when deployed behind a trusted reverse proxy that handles authentication
+- The gateway trusts the `X-Forwarded-User` header from upstream proxy.
+- The gateway performs no JWT validation or database check.
+- Use only when deployed behind a trusted reverse proxy that handles authentication.
 
 !!! danger "Security Warning"
     Proxy authentication mode should only be used in trusted network environments where the reverse proxy is the only entry point to the gateway. Exposing the gateway directly to untrusted networks with this configuration allows header injection attacks.
@@ -723,13 +725,13 @@ When `AUTH_REQUIRED=false`:
 
 | Use Case | Recommended Token Scope |
 |----------|------------------------|
-| Admin UI access | Session token (admin bypass is DB-derived; no `teams` claim needed) |
+| Admin UI access | Session token (admin bypass is database-derived, no `teams` claim needed) |
 | Public-only CI/CD pipeline | `teams: []` (public resources only) |
 | Team-scoped CI/CD pipeline | Team-scoped token provisioned by an un-narrowed platform admin |
-| Service integration | Specific team(s) |
-| Developer access | Personal team + project teams |
-| Monitoring/alerting | `teams: []` with read permissions |
-| Service account provisioning | Un-narrowed platform admin (`is_admin: true`, `teams: null`) can create and list team tokens without joining the team |
+| Service integration | Specific team |
+| Developer access | Personal team and project teams |
+| Monitoring and alerting | `teams: []` with read permissions |
+| Service account provisioning | Un-narrowed platform admin (`is_admin: true`, `teams: null`) |
 
 **Service Account Provisioning**: Un-narrowed platform admins (tokens with `is_admin: true` and `teams: null`) can create and list team-scoped tokens without being active team members. This enables:
 
@@ -769,24 +771,17 @@ If an admin token is unexpectedly restricted:
 
 ### Registered OAuth Client Routes Return 403 After Upgrade
 
-The `/oauth/registered-clients*` routes require `admin.oauth_clients:read` /
-`admin.oauth_clients:delete` with admin bypass disabled, so the DB `is_admin` flag alone no longer
-grants access — the caller's roles must carry the permission (directly, via `*`, or through role
-inheritance).
+The `/oauth/registered-clients*` routes require `admin.oauth_clients:read` or `admin.oauth_clients:delete` with admin bypass disabled.
+The database `is_admin` flag alone does not grant access.
+The caller roles must carry the permission directly, through `*`, or through role inheritance.
 
 Every supported path to `is_admin = true` also assigns `DEFAULT_ADMIN_ROLE` (default
 `platform_admin`, permissions `["*"]`), so most deployments are unaffected. Two cases are not
 covered: an `is_admin` flag set by direct SQL, and a custom `DEFAULT_ADMIN_ROLE` with no inherited
 path to `*`.
 
-This query lists every affected admin. It expands role inheritance, so a custom role inheriting
-`platform_admin` is correctly excluded. A user is **excluded** from the affected list only if they
-hold `*` outright, or hold **both** `:read` and `:delete` (possibly from two different role
-assignments) — holding only one of the two still leaves them 403'd on the route gated by the other,
-so they must stay on the list. Because all three routes now enforce `global_only=True` (team
-derivation skipped; see the note above), a role is only counted if it's global, personal, or a
-team role with no specific team (`scope_id IS NULL`) — a role scoped to one specific team no longer
-satisfies the permission on these routes and must not count toward compatibility here either:
+This query lists every affected admin. It expands role inheritance. A user is excluded from the affected list only if they hold `*` or hold both `:read` and `:delete`.
+Because all three routes enforce `global_only=True`, a role counts only if it is global, personal, or a team role with `scope_id IS NULL`:
 
 ```sql
 WITH RECURSIVE effective(role_id, cur_id, perms) AS (
@@ -938,9 +933,9 @@ mcpContextForge:
 
 ### Error Handling
 
-- **File not found**: Bootstrap continues with default roles only; warning logged
-- **Invalid JSON**: Bootstrap continues with default roles only; error logged
-- **Malformed entries**: Invalid role entries are skipped with warnings; valid entries are processed
+- **File not found**: Bootstrap continues with default roles only. The system logs a warning.
+- **Invalid JSON**: Bootstrap continues with default roles only. The system logs an error.
+- **Malformed entries**: The system skips invalid entries with warnings and processes valid entries.
 
 !!! tip "Idempotent Bootstrap"
     Bootstrap is idempotent - running it multiple times won't duplicate roles. Existing roles are detected and skipped.

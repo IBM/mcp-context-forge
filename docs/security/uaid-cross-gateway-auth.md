@@ -1,270 +1,171 @@
-# UAID Cross-Gateway Authentication & Security
+# UAID Cross-Gateway Authentication and Security
 
-This document describes the security architecture, trust model, and configuration for UAID cross-gateway routing.
+Universal Agent ID (UAID) enables cross-gateway routing by embedding endpoint and protocol details in the agent identifier.
+This document describes security controls, trust models, and configuration for UAID routing.
 
-## Overview
+## Security Controls
 
-UAID (Universal Agent ID) enables zero-config cross-gateway routing by embedding endpoint and protocol information in the agent identifier. This document covers the security controls that protect cross-gateway communications.
+### Domain Allowlist (SSRF Protection)
 
-## Security Layers
-
-### Layer 1: Fail-Closed Domain Allowlist
-
-**Purpose:** Prevent SSRF attacks by restricting which domains can be reached via cross-gateway routing.
-
-**Configuration:**
+The gateway uses a fail-closed domain allowlist to prevent Server-Side Request Forgery (SSRF) attacks.
 
 ```bash
-# Required for production
+# Production configuration
 UAID_ALLOWED_DOMAINS=["gateway1.example.com", "gateway2.example.com"]
 
-# Default behavior (empty list)
-UAID_ALLOWED_DOMAINS=[]  # DENIES all cross-gateway routing (fail-closed)
+# Default behavior (empty list denies all cross-gateway routing)
+UAID_ALLOWED_DOMAINS=[]
 
-# Unsafe bypass (dev/testing only)
-UAID_ALLOW_ALL_DOMAINS=true  # Allows routing to ANY domain
+# Development bypass only (unsafe for production)
+UAID_ALLOW_ALL_DOMAINS=true
 ```
 
-**Enforcement:**
+Allowlist rules:
 
-1. **Startup Validation:** Logs ERROR if allowlist empty when A2A enabled
-2. **Runtime Check:** Rejects cross-gateway calls if allowlist not configured
-3. **Subdomain Matching:** Supports wildcard matching (e.g., `example.com` matches `agent.example.com`)
+- **Startup check:** The gateway logs an error when `MCPGATEWAY_A2A_ENABLED` is `true` and `UAID_ALLOWED_DOMAINS` is empty. Set `UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true` to abort startup instead.
+- **Runtime validation:** The gateway checks the destination endpoint against `UAID_ALLOWED_DOMAINS`.
+- **Subdomain support:** A domain entry matches its subdomains (for example, `example.com` matches `agent.example.com`).
 
-**Error Messages:**
+### Bearer Token Forwarding
 
-```
-Cross-gateway routing to 'agent.untrusted.com' blocked: UAID_ALLOWED_DOMAINS not configured.
-Configure UAID_ALLOWED_DOMAINS with trusted domains or set UAID_ALLOW_ALL_DOMAINS=true (unsafe for production).
-```
-
-### Layer 2: Bearer Token Forwarding
-
-**Purpose:** Preserve user authentication and RBAC context across gateway hops.
-
-**Configuration:**
+The gateway forwards user bearer tokens across hops to preserve authentication and RBAC context.
 
 ```bash
-# Enable token forwarding (default: true)
+# Enable token forwarding (default)
 UAID_FORWARD_AUTH=true
 
-# Disable if using alternative auth mechanism
-UAID_FORWARD_AUTH=false
+# Disable token forwarding
+UAID_FORWARD_AUTH=false <!-- pragma: allowlist secret -->
 ```
 
-**Authentication Flow:**
+Authentication flow:
 
-```
-1. User authenticates to Gateway A → receives JWT token
-2. User invokes UAID agent → Gateway A extracts token from request.state.bearer_token
-3. Gateway A makes cross-gateway call → includes Authorization: Bearer <token>
-4. Gateway B receives request → validates token via auth middleware
-5. Gateway B enforces user's RBAC permissions → invokes agent
-6. Response returns through Gateway A → forwarded to user
-```
+1. User authenticates to Gateway A and receives a JWT.
+2. User invokes a UAID agent.
+3. Gateway A extracts the bearer token from the request context.
+4. Gateway A sends the request to Gateway B with an `Authorization: Bearer <token>` header.
+5. Gateway B checks the token and enforces RBAC permissions.
+6. Gateway B invokes the agent and returns the response through Gateway A.
 
-**Headers:**
+Forwarded request headers:
 
 ```http
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Authorization: Bearer <token>
 X-Contextforge-Source-Gateway: gateway-primary
 X-Contextforge-Source-User: user@example.com
 X-Contextforge-Correlation-ID: corr-abc-123-xyz
 ```
 
-## Trust Model
+### Hop Limit (Loop Prevention)
 
-### Shared JWT Secret (Simple)
+The gateway sets `UAID_MAX_FEDERATION_HOPS` (default `5`) to stop routing loops.
+Each outbound hop increments the `X-Contextforge-UAID-Hop` header.
+Inbound requests that meet or exceed the limit return a `404` status code.
+
+## Trust Models
+
+Cross-gateway token forwarding requires both gateways to accept the forwarded JWT.
+
+### Shared JWT Secret
 
 Both gateways use the same `JWT_SECRET_KEY`:
 
 ```bash
-# Gateway A .env
-JWT_SECRET_KEY=shared-secret-value-xyz
-
-# Gateway B .env
-JWT_SECRET_KEY=shared-secret-value-xyz
+# Gateway A and Gateway B
+JWT_SECRET_KEY=shared-secret-value-xyz <!-- pragma: allowlist secret -->
 ```
 
-**Pros:**
-- Simple to configure
-- Works immediately
-- No external dependencies
+Characteristics:
 
-**Cons:**
-- Key rotation requires coordination
-- Single key compromise affects all gateways
-- Not suitable for untrusted gateway federation
+- Fast setup with no external dependencies.
+- Key rotation requires coordinated updates across all gateways.
+- Key compromise affects all gateways that share the key.
 
-### Federated SSO (Recommended for Production)
+### Federated SSO
 
-Both gateways validate tokens from the same identity provider:
+Both gateways accept tokens from a shared identity provider:
 
-**Google Workspace:**
 ```bash
-# Both gateways
+# Google Workspace
 SSO_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-SSO_GOOGLE_CLIENT_SECRET=your-secret
-```
+SSO_GOOGLE_CLIENT_SECRET=your-secret <!-- pragma: allowlist secret -->
 
-**GitHub:**
-```bash
-# Both gateways
+# GitHub
 SSO_GITHUB_CLIENT_ID=your-github-client-id
-SSO_GITHUB_CLIENT_SECRET=your-github-secret
-```
+SSO_GITHUB_CLIENT_SECRET=your-github-secret <!-- pragma: allowlist secret -->
 
-**Microsoft Entra ID (Azure AD):**
-```bash
-# Both gateways
+# Microsoft Entra ID
 SSO_ENTRA_CLIENT_ID=your-app-client-id
 SSO_ENTRA_TENANT_ID=your-tenant-id
-SSO_ENTRA_CLIENT_SECRET=your-secret
+SSO_ENTRA_CLIENT_SECRET=your-secret <!-- pragma: allowlist secret -->
 ```
 
-**Pros:**
-- Centralized identity management
-- Key rotation handled by IdP
-- Works across organizational boundaries
-- Supports conditional access policies
+Characteristics:
 
-**Cons:**
-- Requires IdP setup
-- External dependency
-- Token expiration considerations
+- Central identity management across organizations.
+- Identity provider manages key rotation.
+- Requires external identity provider configuration.
 
 ## Configuration Examples
 
-### Single Trust Domain (Shared Secret)
+### Shared Secret Setup
 
 ```bash
-# Gateway A (gateway-primary.example.com)
-A2A_ENABLED=true
-AUTH_REQUIRED=true
-JWT_SECRET_KEY=shared-secret-xyz-789
-UAID_ALLOWED_DOMAINS=["gateway-secondary.example.com"]
-UAID_FORWARD_AUTH=true
+# Gateway A (gateway-a.example.com)
+MCPGATEWAY_A2A_ENABLED=true
+AUTH_REQUIRED=true <!-- pragma: allowlist secret -->
+JWT_SECRET_KEY=shared-secret-xyz-789 <!-- pragma: allowlist secret -->
+UAID_ALLOWED_DOMAINS=["gateway-b.example.com"]
+UAID_FORWARD_AUTH=true <!-- pragma: allowlist secret -->
 
-# Gateway B (gateway-secondary.example.com)
-A2A_ENABLED=true
-AUTH_REQUIRED=true
-JWT_SECRET_KEY=shared-secret-xyz-789
-UAID_ALLOWED_DOMAINS=["gateway-primary.example.com"]
-UAID_FORWARD_AUTH=true
+# Gateway B (gateway-b.example.com)
+MCPGATEWAY_A2A_ENABLED=true
+AUTH_REQUIRED=true <!-- pragma: allowlist secret -->
+JWT_SECRET_KEY=shared-secret-xyz-789 <!-- pragma: allowlist secret -->
+UAID_ALLOWED_DOMAINS=["gateway-a.example.com"]
+UAID_FORWARD_AUTH=true <!-- pragma: allowlist secret -->
 ```
 
-### Federated SSO (Google)
+### Development Setup (Unsafe)
 
 ```bash
-# Gateway A
-A2A_ENABLED=true
-AUTH_REQUIRED=true
-SSO_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-SSO_GOOGLE_CLIENT_SECRET=your-google-secret
-UAID_ALLOWED_DOMAINS=["gateway-b.partner.com"]
-UAID_FORWARD_AUTH=true
-
-# Gateway B (partner organization)
-A2A_ENABLED=true
-AUTH_REQUIRED=true
-SSO_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-SSO_GOOGLE_CLIENT_SECRET=your-google-secret
-UAID_ALLOWED_DOMAINS=["gateway-a.yourorg.com"]
-UAID_FORWARD_AUTH=true
-```
-
-### Development/Testing (Unsafe)
-
-```bash
-# ⚠️  WARNING: Never use this in production
-A2A_ENABLED=true
-AUTH_REQUIRED=false  # UNSAFE: Disables auth entirely
-UAID_ALLOW_ALL_DOMAINS=true  # UNSAFE: Allows routing to any domain
-UAID_FORWARD_AUTH=false  # Optional: Disable if no auth available
+# Development and testing only
+MCPGATEWAY_A2A_ENABLED=true
+AUTH_REQUIRED=false <!-- pragma: allowlist secret -->
+UAID_ALLOW_ALL_DOMAINS=true
+UAID_FORWARD_AUTH=false <!-- pragma: allowlist secret -->
 ```
 
 ## Troubleshooting
 
-### Error: "UAID_ALLOWED_DOMAINS not configured"
+### Allowlist Rejection
 
-**Symptom:** Cross-gateway calls fail immediately with configuration error.
-
-**Cause:** Domain allowlist not configured (fail-closed default).
-
-**Solution:**
-```bash
-# Add trusted domains to .env
-UAID_ALLOWED_DOMAINS=["gateway1.example.com", "gateway2.example.com"]
-
-# OR for dev/testing ONLY (unsafe)
-UAID_ALLOW_ALL_DOMAINS=true
-```
-
-### Error: "Cross-gateway authentication failed: remote gateway returned 401"
-
-**Symptom:** Remote gateway rejects request with 401 Unauthorized.
-
-**Possible Causes:**
-
-1. **JWT trust mismatch:**
-   - Gateway A and B use different `JWT_SECRET_KEY`
-   - Gateway B not configured for federated SSO
-   - IdP configuration mismatch
-
-   **Solution:** Verify both gateways trust same JWT issuer (shared key or SSO)
-
-2. **Token expired:**
-   - User token expired before cross-gateway call completed
-   - Long-running operations hit token TTL
-
-   **Solution:** Increase JWT expiration or implement token refresh
-
-3. **Token not forwarded:**
-   - `UAID_FORWARD_AUTH=false` on source gateway
-   - Auth middleware not extracting token to `request.state.bearer_token`
-
-   **Solution:** Enable `UAID_FORWARD_AUTH=true`, verify auth middleware
-
-4. **Remote gateway requires auth:**
-   - Gateway B has `AUTH_REQUIRED=true` but token validation fails
-
-   **Solution:** Verify remote gateway auth configuration, check logs
-
-### Warning: "proceeding without authentication token"
-
-**Symptom:** Logged warning on cross-gateway calls, remote gateway receives unauthenticated request.
-
-**Cause:** Source gateway did not extract bearer token from request.
+**Problem:** Cross-gateway calls fail with `UAID_ALLOWED_DOMAINS not configured` or `endpoint not in allowlist`.
 
 **Solution:**
 
-1. Verify auth middleware extracts token:
-   ```python
-   # Auth middleware should set:
-   request.state.bearer_token = extracted_token
-   ```
+1. Add the destination domain to `UAID_ALLOWED_DOMAINS`.
+2. Check that the UAID native endpoint matches the allowed domain.
 
-2. Check request has authentication:
-   ```bash
-   # User must be authenticated when making request
-   curl -H "Authorization: Bearer <token>" ...
-   ```
+### Remote Gateway Returns 401
 
-### Error: "Cross-gateway routing blocked: endpoint not in allowlist"
-
-**Symptom:** Call fails with allowlist rejection.
-
-**Cause:** UAID endpoint domain not in `UAID_ALLOWED_DOMAINS`.
+**Problem:** The target gateway rejects the cross-gateway call with HTTP `401 Unauthorized`.
 
 **Solution:**
-```bash
-# Add the domain to allowlist
-UAID_ALLOWED_DOMAINS=["trusted.example.com", "another-gateway.example.com"]
 
-# UAID format must match:
-# uaid:aid:hash;registry=X;proto=Y;nativeId=agent.trusted.example.com
-#                                              ^^^^^ must be in allowlist
-```
+1. **Check JWT trust:** Ensure both gateways use the same `JWT_SECRET_KEY` or the same SSO identity provider.
+2. **Check token expiration:** Ensure the token does not expire during long operations.
+3. **Check token forwarding:** Check that `UAID_FORWARD_AUTH` is `true` on the source gateway.
+4. **Inspect remote auth configuration:** Check logs on the target gateway for validation errors.
+
+### Missing Bearer Token Warning
+
+**Problem:** Logs display `proceeding without authentication token`.
+
+**Solution:**
+
+1. Authenticate the initial client request with a bearer token.
+2. Ensure authentication middleware sets `request.state.bearer_token`.
 
 ## Security Best Practices
 
@@ -292,50 +193,8 @@ UAID_ALLOWED_DOMAINS=["trusted.example.com", "another-gateway.example.com"]
    - Never expose gateways without authentication
    - Even "internal" gateways should enforce auth
 
-## Future Enhancements
-
-### Mutual TLS (mTLS)
-
-**Timeline:** Week 4+
-
-**Features:**
-- Certificate-based gateway identity
-- Cryptographic trust without shared secrets
-- Certificate rotation support
-
-**Configuration (planned):**
-```bash
-UAID_GATEWAY_CERT_PATH=/path/to/gateway.crt
-UAID_GATEWAY_KEY_PATH=/path/to/gateway.key
-UAID_GATEWAY_CA_PATH=/path/to/ca.crt
-```
-
-### Gateway Trust Token
-
-**Timeline:** Future release
-
-**Features:**
-- HMAC-signed requests for gateway-to-gateway trust
-- Works with mixed auth systems
-- Per-gateway secret rotation
-
-**Configuration (planned):**
-```bash
-UAID_GATEWAY_TRUST_TOKEN=gateway-shared-secret
-```
-
-### Gateway Registry
-
-**Timeline:** Long-term roadmap
-
-**Features:**
-- Trusted gateway registry with public key verification
-- HCS-14 compliant discovery
-- Automatic allowlist population
-
 ## Related Documentation
 
-- UAID Implementation: PR #4125
-- Security Hardening: Issue #4236
-- General Authentication: `docs/docs/manage/rbac.md`
-- Multi-tenancy: `docs/docs/architecture/multitenancy.md`
+- [Multi-Tenancy Architecture](../docs/architecture/multitenancy.md)
+- [RBAC Configuration](../docs/manage/rbac.md)
+- [SSO Configuration](../docs/manage/sso.md)
