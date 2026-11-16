@@ -31,7 +31,7 @@ def _trusted_internal_runtime_headers() -> dict[str, str]:
     secret = settings.auth_encryption_secret.get_secret_value()
     expected = hashlib.sha256(f"{secret}:contextforge-internal-mcp-runtime-v1".encode("utf-8")).hexdigest()
     return {
-        "x-contextforge-mcp-runtime": "rust",
+        "x-contextforge-mcp-runtime": "affinity",
         "x-contextforge-mcp-runtime-auth": expected,
         "x-contextforge-auth-context": "trusted-payload",
     }
@@ -156,7 +156,7 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_trusted_internal_mcp_runtime_request_bypasses_token_scoping(self, middleware, mock_request):
-        """Trusted loopback Rust sidecar hops should bypass token-scoping path checks."""
+        """Trusted loopback Python affinity hops should bypass token-scoping path checks."""
         mock_request.url.path = "/_internal/mcp/rpc"
         mock_request.scope["path"] = "/_internal/mcp/rpc"
         mock_request.method = "POST"
@@ -222,7 +222,7 @@ class TestTokenScopingMiddleware:
         mock_request.method = "POST"
         mock_request.headers = {
             "Authorization": "Bearer scoped-token",
-            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime": "affinity",
             "x-contextforge-mcp-runtime-auth": _trusted_internal_runtime_headers()["x-contextforge-mcp-runtime-auth"],
         }
 
