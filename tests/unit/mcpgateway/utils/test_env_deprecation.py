@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for environment variable deprecation warnings."""
+"""Location: ./tests/unit/mcpgateway/utils/test_env_deprecation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for environment variable deprecation warnings.
+"""
 
 import logging
 

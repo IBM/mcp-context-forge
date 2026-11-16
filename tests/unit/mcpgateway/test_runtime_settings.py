@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for runtime environment settings."""
+"""Location: ./tests/unit/mcpgateway/test_runtime_settings.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for runtime environment settings.
+"""
 
 import pytest
 from pydantic import ValidationError
