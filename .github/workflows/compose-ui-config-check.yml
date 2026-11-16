@@ -44,7 +44,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare .env
-        run: make setup
+        run: cp .env.example .env
 
       - name: Validate 'ui' profile compose config
         run: make compose-ui-config-check
