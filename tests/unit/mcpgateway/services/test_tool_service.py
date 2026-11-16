@@ -4179,7 +4179,7 @@ class TestToolService:
 
         secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
         stored_config = {
-            "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+            "access_key_id": "AKIAIOSFODNN7EXAMPLE",  # pragma: allowlist secret
             "secret_access_key": encrypt_sigv4_secret("secret_access_key", secret),
             "region": "us-east-1",
             "service": "execute-api",
