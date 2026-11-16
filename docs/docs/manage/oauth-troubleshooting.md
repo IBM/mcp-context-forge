@@ -78,6 +78,7 @@ state_data = {
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
 | `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status; for `authorization_code` gateways also includes the caller's own `user_token_status` (valid/near_expiry/expired/missing/unknown) |
 | `/oauth/status?gateway_ids=a&gateway_ids=b` | GET | Batch equivalent of the above, keyed by gateway id, so a grid of cards issues one request instead of N |
+| `/oauth/tokens/{gateway_id}` | DELETE | Deletes the caller's own stored token for the gateway ("disconnect"); idempotent, answers `{"deleted": true\|false}`. An un-narrowed platform admin may pass `app_user_email` to delete another user's token (database token backend only; Vault answers `501`) |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
 | `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
 | `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
