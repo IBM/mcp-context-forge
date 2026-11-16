@@ -4048,6 +4048,185 @@ class TestToolService:
         assert gateway_ids[0] == gateway_ids[1]
         assert gateway_ids[0]  # non-empty
 
+    @staticmethod
+    def _prepare_mcp_invocation(mock_tool, test_db, transport="STREAMABLEHTTP", **gateway_fields):
+        """Wire ``mock_tool`` and ``test_db`` for one MCP invocation and return the gateway stand-in."""
+        gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport=transport,
+            passthrough_headers=[],
+            description=None,
+            tags=[],
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+        )
+        for field, value in gateway_fields.items():
+            setattr(gateway, field, value)
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE" if transport == "SSE" else "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = gateway.id
+        mock_tool.id = "tool-123"
+        mock_tool.gateway = gateway
+        returns = [mock_tool, gateway, gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+        return gateway
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"])
+    @pytest.mark.parametrize("allow_input_required", [True, False])
+    async def test_invoke_tool_mcp_input_required_result(self, tool_service, mock_tool, test_db, transport, allow_input_required):
+        """An upstream InputRequiredResult is surfaced only when the caller allows it."""
+        # Third-Party
+        import mcp_types
+
+        # First-Party
+        from mcpgateway.services.tool_service import ToolInputRequired
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        self._prepare_mcp_invocation(mock_tool, test_db, transport=transport)
+        input_required = mcp_types.InputRequiredResult(request_state="state-1")
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(return_value=input_required)
+
+        @asynccontextmanager
+        async def mock_acquire(**_kwargs):
+            yield SimpleNamespace(session=upstream_session)
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_acquire
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-input-required"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+            ):
+                if allow_input_required:
+                    with pytest.raises(ToolInputRequired) as exc_info:
+                        await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None, allow_input_required=True)
+                    assert exc_info.value.result is input_required
+                else:
+                    result = await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+                    assert result.is_error
+                    assert "Elicitation not supported" in result.content[0].text
+        finally:
+            request_headers_var.reset(headers_token)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_upstream_exception_returns_error_result(self, tool_service, mock_tool, test_db):
+        """An exception raised by the upstream call becomes an error result."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+        self._prepare_mcp_invocation(mock_tool, test_db)
+        upstream_session = AsyncMock()
+        upstream_session.call_tool = AsyncMock(side_effect=RuntimeError("upstream exploded"))
+
+        @asynccontextmanager
+        async def mock_acquire(**_kwargs):
+            yield SimpleNamespace(session=upstream_session)
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = mock_acquire
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-failure"})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result.is_error
+        assert "upstream exploded" in result.content[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pooled", [True, False])
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"])
+    async def test_invoke_tool_mcp_sigv4_gateway_signs_pooled_and_per_call_sessions(self, tool_service, mock_tool, test_db, transport, pooled):
+        """A SigV4 gateway hands a signing client factory to the registry and to the per-call client."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+        from mcpgateway.utils.sigv4 import encrypt_sigv4_secret, SigV4Auth
+
+        secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
+        stored_config = {
+            "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+            "secret_access_key": encrypt_sigv4_secret("secret_access_key", secret),
+            "region": "us-east-1",
+            "service": "execute-api",
+        }
+        self._prepare_mcp_invocation(mock_tool, test_db, transport=transport, auth_type="sigv4", auth_value=None, sigv4_config=stored_config)
+        upstream = SimpleNamespace(session=AsyncMock(), upstream_session_id=None)
+        upstream.session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="signed")]))
+        captured: dict = {}
+
+        @asynccontextmanager
+        async def capture_connection(**kwargs):
+            captured.update(kwargs)
+            yield upstream
+
+        mock_registry = MagicMock()
+        mock_registry.acquire = capture_connection
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sigv4"} if pooled else {})
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=mock_registry),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", capture_connection),
+            ):
+                result = await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result.content[0].text == "signed"
+        client = captured["httpx_client_factory"]()
+        try:
+            assert isinstance(client.auth, SigV4Auth)
+            assert client.auth.signer.credentials.secret_access_key == secret
+        finally:
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_sigv4_gateway_fails_closed_without_credentials(self, tool_service, mock_tool, test_db):
+        """A SigV4 gateway without stored credentials fails before any connection opens."""
+        self._prepare_mcp_invocation(mock_tool, test_db, auth_type="sigv4", auth_value=None, sigv4_config=None)
+        proxy = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", proxy),
+            pytest.raises(ToolInvocationError, match="SigV4"),
+        ):
+            await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
+        proxy.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
         """Test MCP tool invocation falls back to isError when is_error is None."""

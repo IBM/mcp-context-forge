@@ -29,6 +29,7 @@ from mcpgateway.observability import (
     otel_context_active,
     otel_tracing_enabled,
     trace_operation,
+    upstream_request_context,
 )
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
@@ -1072,3 +1073,11 @@ class TestLegacyInstanaContextCompat:
         monkeypatch.setitem(sys.modules, "instana.span_context", span_context_mod)
         assert observability.ensure_legacy_instana_context_compat() is False
         assert InstanaTracer.start_span is print
+
+
+def test_upstream_request_context_is_a_noop_without_otel_baggage(monkeypatch):
+    """Without OTEL baggage support the context manager yields without touching the context."""
+    monkeypatch.setattr(observability, "otel_baggage", None)
+    with upstream_request_context():
+        reached = True
+    assert reached

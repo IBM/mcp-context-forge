@@ -4842,7 +4842,7 @@ class ToolService(BaseService):
             return None
         try:
             # First-Party
-            from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
             with fresh_db_session() as token_db:
                 token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
@@ -6299,7 +6299,7 @@ class ToolService(BaseService):
 
                                 with fresh_db_session() as token_db:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
                                     # build_token_user_context uses token_teams as-is (JWT sole authority)
                                     # and only queries DB for the non-scoped is_admin flag.
