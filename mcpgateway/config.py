@@ -4037,7 +4037,7 @@ Disallow: /
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
     validation_max_json_depth: int = Field(
-        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        default=30,
         description=(
             "Maximum allowed JSON nesting depth for tool/resource schemas. "
             "Increased from 10 to 30 for compatibility with deeply nested schemas "

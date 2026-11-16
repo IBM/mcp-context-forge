@@ -2691,3 +2691,26 @@ def test_mcp_allowed_hosts_default_empty():
     """mcp_allowed_hosts defaults to empty set."""
     s = Settings(environment="development", _env_file=None)
     assert s.mcp_allowed_hosts == set()
+
+
+# --------------------------------------------------------------------------- #
+#                    validation_max_json_depth                                 #
+# --------------------------------------------------------------------------- #
+def test_validation_max_json_depth_default():
+    """Default value is 30."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.validation_max_json_depth == 30
+
+
+def test_validation_max_json_depth_env_override(monkeypatch):
+    """Override via VALIDATION_MAX_JSON_DEPTH environment variable."""
+    monkeypatch.setenv("VALIDATION_MAX_JSON_DEPTH", "45")
+    s = Settings(environment="development", _env_file=None)
+    assert s.validation_max_json_depth == 45
+
+
+@pytest.mark.parametrize("invalid_depth", [0, 101, -5])
+def test_validation_max_json_depth_bounds_validation(invalid_depth):
+    """VALIDATION_MAX_JSON_DEPTH enforces 1 <= depth <= 100."""
+    with pytest.raises(ValidationError):
+        Settings(validation_max_json_depth=invalid_depth, environment="development", _env_file=None)

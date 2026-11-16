@@ -15,6 +15,7 @@ from prometheus_client import REGISTRY
 
 # First-Party
 from mcpgateway.services.metrics import (
+    _get_registry_collector,
     circuit_breaker_open_counter,
     setup_metrics,
     tool_timeout_counter,
@@ -68,6 +69,7 @@ def test_setup_metrics_enabled_sqlite():
     ):
         mock_settings.database_url = "sqlite:///./test.db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -86,6 +88,7 @@ def test_setup_metrics_enabled_postgresql():
     ):
         mock_settings.database_url = "postgresql://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -103,6 +106,7 @@ def test_setup_metrics_enabled_postgresql_psycopg():
     ):
         mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -119,6 +123,7 @@ def test_setup_metrics_enabled_unknown_db():
     ):
         mock_settings.database_url = "cockroachdb://localhost/db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -135,10 +140,13 @@ def test_setup_metrics_with_custom_labels():
     ):
         mock_settings.database_url = "sqlite:///./test.db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = "env=prod,region=us-east"
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
     inst.instrument.assert_called_once()
+    app_info = _get_registry_collector("app_info")
+    assert app_info is not None
 
 
 def test_setup_metrics_with_excluded_handlers():
@@ -151,6 +159,7 @@ def test_setup_metrics_with_excluded_handlers():
     ):
         mock_settings.database_url = "sqlite:///./test.db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = "/health,/ready"
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -167,6 +176,7 @@ def test_setup_metrics_postgres_prefix():
     ):
         mock_settings.database_url = "postgres://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)
@@ -198,6 +208,7 @@ def test_update_http_pool_metrics_function_stored():
     ):
         mock_settings.database_url = "sqlite:///./test.db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_settings.METRICS_CUSTOM_LABELS = ""
         mock_inst_cls.return_value = MagicMock()
         setup_metrics(app)
 
