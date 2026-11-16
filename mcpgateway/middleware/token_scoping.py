@@ -520,9 +520,9 @@ class TokenScopingMiddleware:
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request.
 
-        Only trusts X-Forwarded-For / X-Real-IP headers when a trusted proxy
-        configuration is in place (ProxyHeadersMiddleware with specific hosts).
-        Otherwise, uses the direct connection IP to prevent header spoofing.
+        ``ProxyHeadersMiddleware`` resolves ``request.client`` from
+        X-Forwarded-For only when the direct peer is listed in
+        ``FORWARDED_ALLOW_IPS``; otherwise it is the socket peer.
 
         Args:
             request: FastAPI request object
@@ -530,11 +530,6 @@ class TokenScopingMiddleware:
         Returns:
             str: Client IP address
         """
-        # Use direct client IP as the secure default.
-        # Proxy headers are only trustworthy when Uvicorn/Starlette's
-        # ProxyHeadersMiddleware has already rewritten request.client from a
-        # trusted upstream.  That middleware replaces request.client.host with
-        # the real client IP, so we can rely on it directly.
         return request.client.host if request.client else "unknown"
 
     def _check_ip_restrictions(self, client_ip: str, ip_restrictions: list) -> bool:

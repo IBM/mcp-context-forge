@@ -3257,15 +3257,16 @@ def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # p
     # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
     # This ensures request.base_url reflects the proxy's public host, fixing the
     # OAuth redirect_uri hint and other URL construction throughout the admin UI.
-    # Registered alongside ProxyHeadersMiddleware with the same trust model.
+    # It does not apply the FORWARDED_ALLOW_IPS peer check below.
     #
     # Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
     # ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
     # already being corrected when deriving the default port for scope["server"].
     app.add_middleware(ForwardedHostMiddleware)
 
-    # Trust all proxies (or lock down with a list of host patterns)
-    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    # Honor X-Forwarded-For/Proto only from peers in FORWARDED_ALLOW_IPS; any other
+    # peer could otherwise spoof the client IP that IP restrictions and rate limits use.
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
     # Add correlation ID middleware if enabled
     # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes

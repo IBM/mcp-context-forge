@@ -21,6 +21,7 @@ def main() -> None:
         port=int(settings.port),
         reload=bool(settings.reload),
         log_level=str(settings.log_level).lower(),
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )
 
 

@@ -49,6 +49,7 @@ Examples:
 # Standard
 from functools import lru_cache
 from importlib.resources import files
+import ipaddress
 import logging
 import os
 from pathlib import Path, PurePosixPath
@@ -619,6 +620,36 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    forwarded_allow_ips: str = Field(
+        default="127.0.0.1,::1",
+        description="Comma-separated proxy IPs/CIDRs allowed to set X-Forwarded-For/Proto. '*' trusts every peer and lets clients spoof their IP.",
+    )
+
+    @field_validator("forwarded_allow_ips")
+    @classmethod
+    def validate_forwarded_allow_ips(cls, v: str) -> str:
+        """Reject entries that are neither ``*`` nor a strict IP address or CIDR.
+
+        Uvicorn silently ignores malformed entries, and gunicorn rejects them at startup.
+
+        Args:
+            v: Comma-separated proxy addresses.
+
+        Returns:
+            The unchanged value.
+
+        Raises:
+            ValueError: If an entry is not a valid IP address or network.
+        """
+        if v.strip() == "*":
+            return v
+        for entry in filter(None, (e.strip() for e in v.split(","))):
+            try:
+                ipaddress.ip_network(entry)
+            except ValueError as exc:
+                raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} is not a valid IP address or CIDR network") from exc
+        return v
+
     mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
         default="auto",
         description=(
