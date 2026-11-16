@@ -420,6 +420,9 @@ services:
       - MCP_CLIENT_AUTH_ENABLED=true
       - MCP_REQUIRE_AUTH=true
       - TRUST_PROXY_AUTH=false
+      # Proxies allowed to set X-Forwarded-For/Proto. nginx on mcpnet is the only ingress;
+      # narrow this to the mcpnet subnet if other containers on it are not trusted.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=${LOG_LEVEL:-ERROR}  # Required for SQLALCHEMY_ECHO output during load testing
