@@ -14,6 +14,7 @@ from __future__ import annotations
 
 # Standard
 import socket
+import sys
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -98,6 +99,33 @@ def _reset_plugin_framework_redis_provider():
     set_shared_redis_provider(None)
     yield
     set_shared_redis_provider(None)
+
+
+_SANDBOX_POOL_HOOKS = (
+    "start_jq_pool",
+    "start_validation_pool",
+    "start_cel_pool",
+    "shutdown_jq_pool",
+    "shutdown_validation_pool",
+    "shutdown_cel_pool",
+)
+
+
+@pytest.fixture(autouse=True)
+def _skip_sandbox_pools_in_lifespan(monkeypatch):
+    """Keep ``main.lifespan`` from forking sandbox worker pools.
+
+    On Linux each lifespan entry forks a jq, a validation and a CEL pool. That
+    costs seconds per entry and no lifespan test checks the pools. The sandbox
+    pools build their executors lazily on first use, so skipping the start
+    hooks is safe. Tests of the pools call ``jq_runner``, ``cel_runner`` and
+    ``safe_jsonschema`` directly and do not go through ``main``.
+    """
+    main_mod = sys.modules.get("mcpgateway.main")
+    if main_mod is None:
+        return
+    for hook in _SANDBOX_POOL_HOOKS:
+        monkeypatch.setattr(main_mod, hook, lambda: None, raising=False)
 
 
 @pytest.fixture(autouse=True)
