@@ -47,6 +47,7 @@ Examples:
 """
 
 # Standard
+from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 import logging
@@ -169,6 +170,19 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
+
+
+@dataclass(frozen=True)
+class EnvDeprecation:
+    """Startup warning for an environment variable the gateway no longer reads or will stop reading.
+
+    Attributes:
+        pattern: Exact variable name or ``fnmatch`` glob, matched case-insensitively.
+        message: Reason and replacement guidance, shown after the matched names.
+    """
+
+    pattern: str
+    message: str
 
 
 class SecurityConfigurationError(Exception):
@@ -1544,6 +1558,112 @@ class Settings(BaseSettings):
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+
+    # ToolOps / LLM Provider Settings
+    llm_provider: str = Field(default="", description="LLM provider selection (openai, azure_openai, anthropic, aws_bedrock, ollama, watsonx)")
+    toolops_temperature: float = Field(default=0.1, description="Sampling temperature for ToolOps LLM calls")
+
+    # OpenAI Provider Settings
+    openai_api_key: str = Field(default="", description="OpenAI API key")
+    openai_base_url: str = Field(default="", description="Base URL for OpenAI-compatible endpoints")
+    openai_model: str = Field(default="", description="OpenAI model name")
+    openai_max_retries: int = Field(default=2, description="Maximum number of retries for OpenAI requests")
+    openai_max_tokens: int = Field(
+        default=600,
+        validation_alias=AliasChoices("openai_max_tokens", "OPENAI_MAX_TOKENS", "openai_max_toekns", "OPENAI_MAX_TOEKNS"),
+        description="Maximum tokens for OpenAI requests",
+    )
+
+    # Azure OpenAI Provider Settings
+    azure_openai_api_key: str = Field(default="", description="Azure OpenAI API key")
+    azure_openai_endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
+    azure_openai_api_version: str = Field(default="", description="Azure OpenAI API version")
+    azure_openai_deployment: str = Field(default="", description="Azure OpenAI deployment name")
+    azure_openai_model: str = Field(default="", description="Azure OpenAI model name")
+    azure_openai_max_retries: int = Field(default=2, description="Maximum number of retries for Azure OpenAI requests")
+    azure_openai_max_tokens: int = Field(
+        default=600,
+        validation_alias=AliasChoices("azure_openai_max_tokens", "AZURE_OPENAI_MAX_TOKENS", "azure_openai_max_toekns", "AZURE_OPENAI_MAX_TOEKNS"),
+        description="Maximum tokens for Azure OpenAI requests",
+    )
+
+    # Anthropic Provider Settings
+    anthropic_api_key: str = Field(default="", description="Anthropic API key")
+    anthropic_model: str = Field(default="", description="Anthropic Claude model name")
+    anthropic_max_tokens: int = Field(default=4096, description="Maximum tokens for Anthropic requests")
+    anthropic_max_retries: int = Field(default=2, description="Maximum number of retries for Anthropic requests")
+
+    # AWS Bedrock Provider Settings
+    aws_bedrock_model_id: str = Field(default="", description="AWS Bedrock model ID")
+    aws_bedrock_region: str = Field(default="", description="AWS region for Bedrock")
+    aws_bedrock_max_tokens: int = Field(default=4096, description="Maximum tokens for AWS Bedrock requests")
+    aws_access_key_id: str = Field(default="", description="AWS Access Key ID")
+    aws_secret_access_key: str = Field(default="", description="AWS Secret Access Key")
+    aws_session_token: str = Field(default="", description="AWS Session Token")
+
+    # Ollama Provider Settings
+    ollama_model: str = Field(default="", description="Ollama model name")
+    ollama_base_url: str = Field(default="", description="Ollama base URL")
+
+    # IBM watsonx.ai Provider Settings
+    watsonx_apikey: str = Field(
+        default="",
+        validation_alias=AliasChoices("watsonx_apikey", "WATSONX_APIKEY", "watsonx_api_key", "WATSONX_API_KEY"),
+        description="IBM Cloud API key for watsonx.ai",
+    )
+    watsonx_url: str = Field(default="", description="IBM watsonx.ai service endpoint URL")
+    watsonx_model_id: str = Field(default="", description="IBM watsonx.ai model ID")
+    watsonx_project_id: str = Field(default="", description="IBM watsonx.ai project ID")
+    watsonx_max_new_tokens: int = Field(default=1000, description="Maximum new tokens for watsonx.ai requests")
+    watsonx_decoding_method: str = Field(default="greedy", description="Decoding method for watsonx.ai requests")
+
+    # Database query logging
+    sqlalchemy_echo: bool = Field(default=False, description="Log all SQL queries (useful for N+1 detection and performance analysis)")
+
+    # SSL context caching
+    ssl_context_cache_max_size: PositiveInt = Field(default=100, description="Maximum number of cached SSL contexts")
+    ssl_context_cache_ttl: Optional[PositiveInt] = Field(default=None, description="SSL context cache TTL in seconds. None or empty disables expiration.")
+
+    # Loopback client cert / key for internal HTTP calls
+    loopback_client_cert: Optional[str] = Field(default=None, description="Path to client certificate for loopback HTTP calls")
+    loopback_client_key: Optional[str] = Field(default=None, description="Path to client key for loopback HTTP calls")
+
+    # Gateway replicas
+    gateway_replicas: PositiveInt = Field(default=1, description="Number of gateway replicas in deployment (used for multi-replica warnings with SQLite)")
+
+    # SSL / HTTPS flag
+    ssl: bool = Field(default=False, description="Enable SSL for the server and loopback calls")
+
+    # Forge Content-Type
+    forge_content_type: str = Field(default="application/json", description="Content-Type for outgoing requests to Forge")
+
+    @field_validator("ssl_context_cache_ttl", mode="before")
+    @classmethod
+    def parse_ssl_context_cache_ttl(cls, v: Any) -> Optional[int]:
+        """Parse SSL_CONTEXT_CACHE_TTL preserving None for empty or unset values."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str:
+                return None
+            try:
+                val = int(v_str)
+            except ValueError as e:
+                raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds") from e
+            if val <= 0:
+                raise ValueError("SSL_CONTEXT_CACHE_TTL must be a positive integer")
+            return val
+        return v
+
+    @model_validator(mode="after")
+    def validate_loopback_cert_key_pair(self) -> Self:
+        """Validate that loopback client cert and key are supplied together."""
+        has_cert = bool(self.loopback_client_cert and str(self.loopback_client_cert).strip())
+        has_key = bool(self.loopback_client_key and str(self.loopback_client_key).strip())
+        if has_cert != has_key:
+            raise ValueError("LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY must be provided together")
+        return self
 
     @field_validator("allowed_roots", mode="before")
     @classmethod
