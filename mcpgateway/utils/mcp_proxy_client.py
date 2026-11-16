@@ -27,25 +27,22 @@ from __future__ import annotations
 # Standard
 import contextlib
 import logging
-from typing import Callable, Literal
+from typing import AsyncGenerator, Callable, Literal
 
 # Third-Party
 import httpx2
 from mcp import Client
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
+from mcpgateway.observability import create_span, upstream_request_context
+from mcpgateway.utils.streamable_http_compat import ErrorResponseHook, UpstreamSessionInfo
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["mcp_proxy_client"]
-
-# Third-Party
-# Re-export for use by transport code that still references streamable_http_client
-# from the SDK directly when needed.
-from mcp.client.streamable_http import streamable_http_client  # noqa: E402  # SDK-only re-export for this module.
 
 
 @contextlib.asynccontextmanager
@@ -56,7 +53,8 @@ async def mcp_proxy_client(
     httpx_client_factory: Callable[..., httpx2.AsyncClient] | None = None,
     transport: Literal["streamablehttp", "sse"] = "streamablehttp",
     mode: str | None = None,
-) -> "Client":  # type: ignore[misc]
+    session_info: UpstreamSessionInfo | None = None,
+) -> AsyncGenerator[Client, None]:
     """Yield an MCP v2 ``Client`` connected via streamable-http transport.
 
     The ``Client`` auto-initializes (via ``initialize()`` or auto-negotiation)
@@ -77,21 +75,30 @@ async def mcp_proxy_client(
         mode: MCP connect mode passed to ``Client``.  ``None`` (default)
             resolves to ``settings.mcp_client_connect_mode``.
 
+        session_info: Optional connection-local upstream session ID tracker.
+
     Yields:
         An ``mcp.Client`` instance with an established transport.
 
     Raises:
         RuntimeError: If the transport initialization fails.
     """
+    session_info = session_info if session_info is not None else UpstreamSessionInfo()
     resolved_mode = settings.mcp_client_connect_mode if mode is None else mode
 
     if transport == "sse":
         # sse_client owns its httpx client lifecycle internally.
         if httpx_client_factory is not None:
-            sse_acm = sse_client(url, headers=headers, timeout=timeout, httpx_client_factory=httpx_client_factory)
+            sse_acm = sse_client(url, headers=headers, timeout=timeout, httpx_client_factory=httpx_client_factory, on_session_created=session_info.capture_sse)
         else:
-            sse_acm = sse_client(url, headers=headers, timeout=timeout)
-        async with Client(sse_acm, mode=resolved_mode) as client:
+            sse_acm = sse_client(url, headers=headers, timeout=timeout, on_session_created=session_info.capture_sse)
+        async with contextlib.AsyncExitStack() as stack:
+            with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}) as init_span:
+                try:
+                    with upstream_request_context():
+                        client = await stack.enter_async_context(Client(sse_acm, mode=resolved_mode))
+                finally:
+                    session_info.annotate(init_span)
             yield client
         return
 
@@ -115,13 +122,20 @@ async def mcp_proxy_client(
             ),
         )
 
+    session_info.install(http_client)
     error_hook = ErrorResponseHook().install(http_client)
     async with http_client:
         # SDK b1: Client takes the transport context manager directly.
         # It owns the transport lifecycle and performs auto-initialization.
         transport_acm = streamable_http_client(url, http_client=http_client)
         try:
-            async with Client(transport_acm, mode=resolved_mode) as client:
+            async with contextlib.AsyncExitStack() as stack:
+                with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}) as init_span:
+                    try:
+                        with upstream_request_context():
+                            client = await stack.enter_async_context(Client(transport_acm, mode=resolved_mode))
+                    finally:
+                        session_info.annotate(init_span)
                 yield client
         except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
             # an error the SDK made up stands for a transport failure: surface that instead

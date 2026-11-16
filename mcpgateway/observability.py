@@ -10,15 +10,18 @@ OTEL_AVAILABLE indicates core tracing support. Baggage support remains independe
 
 # Standard
 import base64
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import Context, ContextVar
 from dataclasses import dataclass
 from importlib import import_module as _im
 import inspect
 import logging
 import os
 import sys
-from typing import Any, Callable, cast, Dict, Mapping, MutableMapping, Optional
+from typing import Any, Callable, cast, Dict, Generator, Mapping, MutableMapping, Optional
 from urllib.parse import urlparse
+
+_UPSTREAM_LOCAL_BAGGAGE: ContextVar[Optional[Mapping[str, Any]]] = ContextVar("upstream_local_baggage", default=None)
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
@@ -237,7 +240,7 @@ class RequestRootFilteringSpanProcessor(_SpanProcessorBase):  # type: ignore[mis
         """
         if otel_baggage is not None:
             try:
-                for key, value in _baggage_span_attributes(otel_baggage.get_all()).items():
+                for key, value in _baggage_span_attributes(_UPSTREAM_LOCAL_BAGGAGE.get() or otel_baggage.get_all()).items():
                     set_span_attribute(span, key, value)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.debug("Failed to inject baggage into auto-instrumented span: %s", exc)
@@ -1036,6 +1039,54 @@ def otel_context_active() -> bool:
         return False
 
 
+def upstream_transport_context(span: Any) -> Context:
+    """Return lifecycle task context without request identity or baggage.
+
+    Args:
+        span: Initialization span for connection setup.
+
+    Returns:
+        A fresh task context containing only the initialization span.
+    """
+    context = Context()
+    if OTEL_AVAILABLE and trace is not None and span is not None:
+        # Third-Party
+        from opentelemetry.context import attach
+        from opentelemetry.context import Context as OTELContext
+
+        context.run(attach, trace.set_span_in_context(span, context=OTELContext()))
+    return context
+
+
+@contextmanager
+def upstream_request_context() -> Generator[None, None, None]:
+    """Limit SDK propagation to policy-approved baggage for this operation.
+
+    Yields:
+        Control with sanitized baggage and the current trace parent.
+    """
+    if not OTEL_AVAILABLE or otel_baggage is None:
+        yield
+        return
+    # Third-Party
+    from opentelemetry.context import attach, detach
+
+    # First-Party
+    from mcpgateway.baggage import parse_w3c_baggage_header
+
+    carrier = inject_trace_context_headers({})
+    context = otel_baggage.clear()
+    for key, value in parse_w3c_baggage_header(carrier.get("baggage", "")).items():
+        context = otel_baggage.set_baggage(key, value, context=context)
+    local_token = _UPSTREAM_LOCAL_BAGGAGE.set(_UPSTREAM_LOCAL_BAGGAGE.get() or otel_baggage.get_all())
+    token = attach(context)
+    try:
+        yield
+    finally:
+        detach(token)
+        _UPSTREAM_LOCAL_BAGGAGE.reset(local_token)
+
+
 # W3C propagation header names owned by trace-context injection. Pre-existing
 # occurrences (any casing) are replaced when the active span is injected, so
 # prepared headers from auth mappings or plugins cannot conflict with it.
@@ -1788,7 +1839,7 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                 if exc_type is not None and self.span:
                     set_span_error(self.span, exc_val or exc_type.__name__, exc_type=exc_type, record_exception=True)
                 elif self.span:
-                    if OTEL_AVAILABLE and Status and StatusCode:
+                    if OTEL_AVAILABLE and Status and StatusCode and getattr(getattr(self.span, "status", None), "status_code", None) != StatusCode.ERROR:
                         self.span.set_status(Status(StatusCode.OK))
                 return self.span_context.__exit__(exc_type, exc_val, exc_tb)
 
