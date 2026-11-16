@@ -7469,23 +7469,29 @@ class TestExportImportEndpoints:
             assert result["status"] == "ok"
 
     @pytest.mark.parametrize("dry_run", [True, False])
-    async def test_import_configuration_denies_root_payload_before_service(self, monkeypatch, dry_run):
+    async def test_import_configuration_excludes_roots_for_non_admin(self, monkeypatch, dry_run):
         # First-Party
         import mcpgateway.main as main_mod
 
-        import_service = MagicMock(import_configuration=AsyncMock())
+        status = MagicMock()
+        status.warnings = []
+        status.to_dict.return_value = {"status": "ok"}
+        import_service = MagicMock(import_configuration=AsyncMock(return_value=status))
         monkeypatch.setattr(main_mod, "import_service", import_service)
         monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
-        import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]}}
+        import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}], "tools": [{"name": "t"}]}}
 
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(
-                import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
-            )
+        result = await main_mod.import_configuration.__wrapped__(
+            import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "user@example.com"}
+        )
 
-        assert excinfo.value.status_code == 403
-        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
-        import_service.import_configuration.assert_not_awaited()
+        assert result == {"status": "ok"}
+        import_service.import_configuration.assert_awaited_once()
+        sent = import_service.import_configuration.await_args.kwargs["import_data"]
+        assert "roots" not in sent["entities"]
+        assert sent["entities"]["tools"] == [{"name": "t"}]
+        assert "roots" in import_data["entities"]
+        assert status.warnings and "excluded" in status.warnings[0]
 
     @pytest.mark.parametrize("dry_run", [True, False])
     async def test_import_configuration_allows_root_free_payload_when_root_gate_denies(self, monkeypatch, dry_run):
