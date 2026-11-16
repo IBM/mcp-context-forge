@@ -251,6 +251,10 @@ def _sync_meta_traceparent(
 def _upstream_call_meta(meta_data: Optional[Dict[str, Any]], carrier: Mapping[str, str]) -> Optional[Dict[str, Any]]:
     """Copy metadata and replace propagation fields with this call's context.
 
+    A caller field is removed only when the carrier supplies its replacement.
+    Caller ``baggage`` is always removed, because it bypasses the ``OTEL_BAGGAGE_*`` policy.
+    A carrier ``traceparent`` also replaces the caller ``tracestate`` that belongs to it.
+
     Args:
         meta_data: Caller metadata to preserve without mutation.
         carrier: Current outbound propagation fields.
@@ -259,8 +263,11 @@ def _upstream_call_meta(meta_data: Optional[Dict[str, Any]], carrier: Mapping[st
         Metadata with current trace context and policy-filtered baggage.
     """
     propagation_fields = {"traceparent", "tracestate", "baggage"}
-    metadata = {key: value for key, value in (meta_data or {}).items() if key.lower() not in propagation_fields}
     normalized = {key.lower(): value for key, value in carrier.items() if key.lower() in propagation_fields}
+    replaced = {"baggage", *normalized}
+    if "traceparent" in normalized:
+        replaced.add("tracestate")
+    metadata = {key: value for key, value in (meta_data or {}).items() if key.lower() not in replaced}
     metadata = _sync_meta_traceparent(metadata, normalized) or {}
     if "traceparent" in metadata:
         metadata.update(normalized)

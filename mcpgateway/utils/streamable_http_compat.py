@@ -30,6 +30,7 @@ from __future__ import annotations
 # Standard
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import hashlib
 from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
@@ -78,15 +79,19 @@ class UpstreamSessionInfo:
         client.event_hooks.setdefault("response", []).append(self.capture_response)
 
     def annotate(self, *spans: Any) -> None:
-        """Add the assigned upstream session ID to available spans.
+        """Add a correlation hash of the upstream session ID to available spans.
+
+        The raw ID is a session handle and never leaves the gateway. The span
+        attribute is the first 16 hex characters of its SHA-256 digest.
 
         Args:
             spans: Spans to annotate when an upstream ID is available.
         """
         if self.session_id:
+            session_hash = hashlib.sha256(self.session_id.encode("utf-8")).hexdigest()[:16]
             for span in spans:
                 if span is not None:
-                    set_span_attribute(span, "gateway.upstream.session_id", self.session_id)
+                    set_span_attribute(span, "gateway.upstream.session_id", session_hash)
 
 
 class ErrorResponseHook:

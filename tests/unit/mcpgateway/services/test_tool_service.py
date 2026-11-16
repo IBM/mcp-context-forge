@@ -3937,7 +3937,7 @@ class TestToolService:
             sent_meta = invocation.kwargs["meta"]
             assert sent_meta == {"source": "client", "traceparent": f"00-{request_span.context.trace_id:032x}-{request_span.context.span_id:016x}-{int(request_span.context.trace_flags):02x}"}
             for item in (request_span, call_span, invoke_span):
-                assert item.attributes["gateway.upstream.session_id"] == "upstream-assigned"
+                assert item.attributes["gateway.upstream.session_id"] == "b0241fbdef1b27b4"  # sha256("upstream-assigned")[:16]; raw ID is never exported
                 assert item.status.status_code == (StatusCode.ERROR if failed else StatusCode.OK)
         provider.shutdown()
 
@@ -12333,7 +12333,7 @@ class TestGrpcToolInvocation:
 #   (gRPC) is sufficient to detect a regression that would affect all three.
 
 
-@pytest.mark.parametrize("carrier", [{}, {"traceparent": "invalid"}, {"traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01", "tracestate": "vendor=current", "baggage": "tenant.id=current"}])
+@pytest.mark.parametrize("carrier", [{"traceparent": "invalid"}, {"traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01", "tracestate": "vendor=current", "baggage": "tenant.id=current"}])
 def test_upstream_call_metadata_replaces_reserved_fields_without_mutation(carrier):
     """Drop stale propagation fields while preserving unrelated caller metadata."""
     # First-Party
@@ -12343,3 +12343,15 @@ def test_upstream_call_metadata_replaces_reserved_fields_without_mutation(carrie
     result = _upstream_call_meta(original, carrier)
     assert result == {"source": "client", **(carrier if carrier.get("tracestate") else {})}
     assert original == {"TraceParent": "old", "TraceState": "old", "Baggage": "old", "source": "client"}
+
+
+def test_upstream_call_metadata_keeps_client_trace_context_when_carrier_is_empty():
+    """Keep client traceparent and tracestate with gateway OTEL off; still drop client baggage."""
+    # First-Party
+    from mcpgateway.services.tool_service import _upstream_call_meta
+
+    original = {"traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01", "tracestate": "vendor=client", "baggage": "password=stale", "tenant": "t1"}
+    result = _upstream_call_meta(original, {})
+    assert result == {"traceparent": original["traceparent"], "tracestate": "vendor=client", "tenant": "t1"}
+    assert _upstream_call_meta({"tenant": "t1"}, {}) == {"tenant": "t1"}
+    assert _upstream_call_meta(None, {}) is None

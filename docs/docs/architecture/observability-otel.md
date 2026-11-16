@@ -511,6 +511,8 @@ then links to the SDK send span within the same call trace.
 Existing identity capture settings control user and team attributes.
 
 `gateway.upstream.session_id` identifies the upstream session on tool and client spans once the upstream assigns it.
+The value is the first 16 hex characters of the SHA-256 digest of the upstream session ID. The raw ID is a session
+handle and never reaches the trace backend. The digest still correlates all spans of one upstream session.
 Streamable HTTP IDs come from upstream `Mcp-Session-Id` response headers. SSE IDs come from the SDK session callback.
 Reused connections retain the ID. Recreated connections report their new ID. Stateless upstreams omit this attribute.
 The conditional `langfuse.session.id` attribute continues to identify the downstream session.
@@ -528,7 +530,9 @@ individual messages retain their sender context through the MCP SDK.
 
 `OTEL_BAGGAGE_ENABLED` and `OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL` continue to control external baggage propagation.
 Baggage uses the existing sanitization and allowlist policy. Caller metadata is copied before propagation fields
-are replaced. Unrelated metadata remains intact.
+are replaced. Unrelated metadata remains intact. The gateway removes a caller `_meta.traceparent` or `_meta.tracestate`
+only when it supplies the replacement. With gateway OTEL off, the caller values pass through unchanged.
+The gateway always removes caller `_meta.baggage`, so callers cannot bypass the `OTEL_BAGGAGE_*` policy.
 
 Per-call fallback connections retain HTTP trace propagation and current MCP trace metadata.
 `OTEL_HTTPX_INSTRUMENTATION_ENABLED` remains optional. HTTP auto-instrumentation can add HTTP spans and headers;

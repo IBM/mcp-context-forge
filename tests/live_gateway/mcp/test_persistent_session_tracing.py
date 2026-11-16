@@ -156,7 +156,7 @@ def test_reused_sessions_have_independent_traces(traced_gateway: Any) -> None:
 
 @pytest.mark.parametrize("traced_gateway", [_configuration("STREAMABLEHTTP", "legacy", False)], indirect=True)
 def test_session_reuse_without_gateway_tracing(traced_gateway: Any) -> None:
-    """Retain state with gateway tracing disabled and remove stale metadata propagation fields."""
+    """Retain state with gateway tracing disabled, keep client trace metadata, and drop client baggage."""
     client, server_id, tool_name, snapshot, _, _, _ = traced_gateway
 
     async def exercise() -> None:
@@ -169,7 +169,7 @@ def test_session_reuse_without_gateway_tracing(traced_gateway: Any) -> None:
                         assert not result.is_error
                         payload = json.loads(next(item.text for item in result.content if hasattr(item, "text")))
                         assert payload["counter"] == counter
-                        assert "traceparent" not in payload["meta"]
+                        assert payload["meta"]["traceparent"] == "stale"
                         assert "baggage" not in payload["meta"]
 
     asyncio.run(exercise())

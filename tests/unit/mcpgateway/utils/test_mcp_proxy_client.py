@@ -19,6 +19,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import hashlib
 import json
 from unittest.mock import MagicMock, patch
 
@@ -466,7 +467,7 @@ async def test_session_capture_and_real_initialization_span(monkeypatch, transpo
             spans = exporter.get_finished_spans()
             assert len(spans) == 1
             assert spans[0].name == "mcp.client.initialize"
-            assert spans[0].attributes.get("gateway.upstream.session_id") == assigned_id
+            assert spans[0].attributes.get("gateway.upstream.session_id") == (hashlib.sha256(assigned_id.encode()).hexdigest()[:16] if assigned_id else None)
             assert info.session_id == assigned_id
         if transport == "sse":
             assert sse_mock.call_args.kwargs["on_session_created"] == info.capture_sse
