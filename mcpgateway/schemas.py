@@ -69,6 +69,7 @@ from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRE
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sigv4 import SIGV4_SENSITIVE_KEYS, SigV4ConfigError, validate_sigv4_config
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,45 @@ def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any
         if v.get(key) is not None:
             raise ValueError(f"oauth_config.{key} is only supported for the token-exchange grant type")
     return v
+
+
+def _validate_sigv4_config_input(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate a ``sigv4_config`` payload, keeping masked placeholders on update.
+
+    Args:
+        v: The sigv4_config value, or None.
+
+    Returns:
+        The validated configuration, or None.
+
+    Raises:
+        ValueError: If the configuration is malformed.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("sigv4_config must be an object")
+    placeholders = {key for key in SIGV4_SENSITIVE_KEYS if v.get(key) == settings.masked_auth_value}
+    candidate = {key: ("placeholder-secret" if key in placeholders else value) for key, value in v.items()}
+    try:
+        validate_sigv4_config(candidate)
+    except SigV4ConfigError as exc:
+        raise ValueError(str(exc)) from exc
+    return v
+
+
+def _mask_sigv4_config(sigv4_config: Any) -> Any:
+    """Mask the secret fields of a ``sigv4_config`` dict.
+
+    Args:
+        sigv4_config: The sigv4_config value to mask.
+
+    Returns:
+        The masked copy, or the input when it is not a dict.
+    """
+    if not isinstance(sigv4_config, dict):
+        return sigv4_config
+    return {key: (settings.masked_auth_value if key in SIGV4_SENSITIVE_KEYS and value else value) for key, value in sigv4_config.items()}
 
 
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -3642,7 +3682,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, sigv4, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -3657,6 +3697,12 @@ class GatewayCreate(BaseModelWithConfigDict):
         description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
         "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
         "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
+    )
+
+    # AWS Signature V4 configuration
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for auth_type 'sigv4': access_key_id, secret_access_key, region, service and optional session_token. Secrets are stored encrypted.",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3816,6 +3862,19 @@ class GatewayCreate(BaseModelWithConfigDict):
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
 
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_sigv4_config_input(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -3968,11 +4027,34 @@ class GatewayCreate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
+        if auth_type == "sigv4":
+            # SigV4 signs each request; credentials live in sigv4_config, not in a stored header.
+            return None
+
         # Handle no authentication (None or already normalized from "none")
         if auth_type is None or auth_type == "":
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, sigv4, or none.")
+
+    @model_validator(mode="after")
+    def validate_sigv4_auth(self) -> "GatewayCreate":
+        """Require a complete sigv4_config when auth_type is 'sigv4', and reject it otherwise.
+
+        Returns:
+            GatewayCreate: The validated instance.
+
+        Raises:
+            ValueError: If the SigV4 configuration is missing, incomplete or unexpected.
+        """
+        if self.auth_type == "sigv4":
+            if not self.sigv4_config:
+                raise ValueError("sigv4_config is required when auth_type is 'sigv4'")
+            if settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
+                raise ValueError("sigv4_config must carry the real secret_access_key on registration")
+        elif self.sigv4_config:
+            raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")
+        return self
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -4054,6 +4136,25 @@ class GatewayUpdate(BaseModelWithConfigDict):
             The normalised policy, or None when empty.
         """
         return check_tool_validation_policy(v)
+
+    # AWS Signature V4 configuration
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
+    )
+
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_sigv4_config_input(v)
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -4337,11 +4438,15 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
+        if auth_type == "sigv4":
+            # SigV4 signs each request; credentials live in sigv4_config, not in a stored header.
+            return None
+
         # Handle no authentication (None or already normalized from "none")
         if auth_type is None or auth_type == "":
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, sigv4, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -4490,6 +4595,9 @@ class GatewayRead(BaseModelWithConfigDict):
         None,
         description="How the gateway registered as an OAuth client: auto, cimd, or dcr. Mirrors oauth_config.registration_method; null when none is recorded",
     )
+
+    # AWS Signature V4 configuration (secret fields masked on every read)
+    sigv4_config: Optional[Dict[str, Any]] = Field(None, description="AWS SigV4 configuration. secret_access_key and session_token are masked.")
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -4708,6 +4816,10 @@ class GatewayRead(BaseModelWithConfigDict):
             # One-time auth gateways don't store auth_value
             return self
 
+        if auth_type == "sigv4":
+            # SigV4 gateways keep credentials in sigv4_config; there is no auth_value to decode
+            return self
+
         if auth_type == "query_param":
             # Query param auth is handled by the before validator
             # (auth_query_params from DB model is processed there)
@@ -4791,6 +4903,10 @@ class GatewayRead(BaseModelWithConfigDict):
         # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
         if masked_data.get("oauth_config"):
             masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+
+        # Mask SigV4 secret access key and session token
+        if masked_data.get("sigv4_config"):
+            masked_data["sigv4_config"] = _mask_sigv4_config(masked_data["sigv4_config"])
 
         # SECURITY: Never expose unmasked credentials in API responses
         masked_data["auth_password_unmasked"] = None

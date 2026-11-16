@@ -121,6 +121,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -264,6 +265,8 @@ perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+SYSTEM_ACTOR = "system"
 
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
@@ -2356,6 +2359,7 @@ class ToolService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        user_id: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2371,6 +2375,7 @@ class ToolService(BaseService):
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Created tool information.
@@ -2539,7 +2544,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=user_id or created_by or SYSTEM_ACTOR,
                 action="create_tool",
                 resource_type="tool",
                 resource_id=db_tool.id,
@@ -2666,6 +2671,7 @@ class ToolService(BaseService):
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2692,6 +2698,7 @@ class ToolService(BaseService):
             user_email: Email of the authenticated caller. The "update" strategy modifies
                 an existing tool only when this caller owns it. Without it, no existing
                 tool is modified.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Dict with statistics:
@@ -2751,6 +2758,7 @@ class ToolService(BaseService):
                 unowned_names=unowned_names,
                 existing_tools_map=existing_tools_map,
                 may_set_policy=may_set_policy,
+                user_id=user_id,
             )
 
             # Aggregate stats
@@ -2864,6 +2872,7 @@ class ToolService(BaseService):
         unowned_names: frozenset = frozenset(),
         existing_tools_map: Optional[dict] = None,
         may_set_policy: bool = False,
+        user_id: Optional[str] = None,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2884,6 +2893,7 @@ class ToolService(BaseService):
             existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
             may_set_policy: Whether the caller holds the permission to set a tool validation policy.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2965,7 +2975,7 @@ class ToolService(BaseService):
 
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
-                    user_id=created_by or "system",
+                    user_id=user_id or created_by or SYSTEM_ACTOR,
                     action="bulk_create_tools" if counts["created"] else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
@@ -3913,7 +3923,7 @@ class ToolService(BaseService):
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False, user_id: Optional[str] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -3922,6 +3932,7 @@ class ToolService(BaseService):
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
             purge_metrics (bool): If True, delete raw + rollup metrics for this tool.
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
@@ -3985,7 +3996,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
-                user_id=user_email or "system",
+                user_id=user_id or user_email or SYSTEM_ACTOR,
                 action="delete_tool",
                 resource_type="tool",
                 resource_id=tool_info["id"],
@@ -4060,7 +4071,9 @@ class ToolService(BaseService):
             )
             raise ToolError(f"Failed to delete tool: {unexpected_error_detail(e)}")
 
-    async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
+    async def set_tool_state(
+        self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False, user_id: Optional[str] = None
+    ) -> ToolRead:
         """
         Set the activation status of a tool.
 
@@ -4071,6 +4084,7 @@ class ToolService(BaseService):
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
             skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             ToolRead: The updated tool object.
@@ -4165,7 +4179,7 @@ class ToolService(BaseService):
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or SYSTEM_ACTOR,
                     action="set_tool_state",
                     resource_type="tool",
                     resource_id=tool.id,
@@ -4334,6 +4348,16 @@ class ToolService(BaseService):
 
             gateway_url = gateway.url
 
+            # SigV4 gateways sign every upstream request; build the signer while the ORM row is loaded.
+            direct_proxy_sigv4_auth = None
+            if getattr(gateway, "auth_type", None) == "sigv4":
+                try:
+                    direct_proxy_sigv4_auth = build_stored_sigv4_auth(getattr(gateway, "sigv4_config", None))
+                except SigV4ConfigError as sigv4_exc:
+                    raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+                if direct_proxy_sigv4_auth is None:
+                    raise ToolInvocationError("SigV4 gateway has no stored credentials")
+
             # Snapshot auth_query_params while the ORM session is still open so
             # sanitize_exception_message can redact secrets if the downstream call fails.
             _gw_auth_type = getattr(gateway, "auth_type", None)
@@ -4425,7 +4449,7 @@ class ToolService(BaseService):
                     url=gateway_url,
                     headers=traced_headers,
                     timeout=settings.mcpgateway_direct_proxy_timeout,
-                    httpx_client_factory=get_httpx_client_factory,
+                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, direct_proxy_sigv4_auth),
                 ) as client:
                     with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                         pass  # Client auto-initializes on first RPC call
@@ -5237,6 +5261,7 @@ class ToolService(BaseService):
                     "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
+                    "sigv4_config": getattr(gateway, "sigv4_config", None),
                     "ca_certificate": gateway.ca_certificate,
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
@@ -5562,6 +5587,7 @@ class ToolService(BaseService):
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
         gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
+        gateway_sigv4_config = gateway_payload.get("sigv4_config") if has_gateway and isinstance(gateway_payload.get("sigv4_config"), dict) else None
         if has_gateway and gateway is not None:
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
             if isinstance(runtime_gateway_auth_value, dict):
@@ -5574,6 +5600,9 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+            runtime_gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
+            if isinstance(runtime_gateway_sigv4_config, dict):
+                gateway_sigv4_config = runtime_gateway_sigv4_config
         # MCP invoke path: cert params come from the serialized gateway_payload dict
         # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
@@ -5588,7 +5617,7 @@ class ToolService(BaseService):
         # (tool is None), hydrate auth-related fields from DB only when needed.
         if tool is None:
             requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
-            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
+            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param", "sigv4"}
             if requires_tool_auth_hydration or requires_gateway_auth_hydration:
                 tool_id_for_hydration = tool_payload.get("id")
                 if tool_id_for_hydration:
@@ -5612,6 +5641,9 @@ class ToolService(BaseService):
                             hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
                             if isinstance(hydrated_gateway_oauth_config, dict):
                                 gateway_oauth_config = hydrated_gateway_oauth_config
+                            hydrated_gateway_sigv4_config = getattr(tool_auth_row.gateway, "sigv4_config", None)
+                            if isinstance(hydrated_gateway_sigv4_config, dict):
+                                gateway_sigv4_config = hydrated_gateway_sigv4_config
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -5629,6 +5661,16 @@ class ToolService(BaseService):
             # Apply query params to gateway URL
             if gateway_auth_query_params_decrypted and gateway_url:
                 gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
+
+        # SigV4 gateways sign each upstream request; the signer lives for this invocation only.
+        gateway_sigv4_auth = None
+        if has_gateway and gateway_auth_type == "sigv4":
+            try:
+                gateway_sigv4_auth = build_stored_sigv4_auth(gateway_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+            if gateway_sigv4_auth is None:
+                raise ToolInvocationError("SigV4 gateway has no stored credentials")
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -6526,7 +6568,7 @@ class ToolService(BaseService):
                                     url=server_url,
                                     headers=headers,
                                     transport_type=TransportType.SSE,
-                                    httpx_client_factory=get_httpx_client_factory,
+                                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await _call_upstream_tool(
@@ -6573,7 +6615,7 @@ class ToolService(BaseService):
                                         url=server_url,
                                         headers=request_headers,
                                         timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                         transport="sse",
                                     ) as client:
                                         with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
@@ -6763,7 +6805,7 @@ class ToolService(BaseService):
                                     url=server_url,
                                     headers=headers,
                                     transport_type=registry_transport_type,
-                                    httpx_client_factory=get_httpx_client_factory,
+                                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await _call_upstream_tool(
@@ -6811,7 +6853,7 @@ class ToolService(BaseService):
                                         url=server_url,
                                         headers=request_headers,
                                         timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as client:
                                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                                             pass  # Client auto-initializes on first RPC call
@@ -7819,6 +7861,7 @@ class ToolService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7832,6 +7875,7 @@ class ToolService(BaseService):
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             The updated ToolRead object.
@@ -8041,7 +8085,7 @@ class ToolService(BaseService):
                 changes.append("description updated")
 
             audit_trail.log_action(
-                user_id=user_email or modified_by or "system",
+                user_id=user_id or user_email or modified_by or SYSTEM_ACTOR,
                 action="update_tool",
                 resource_type="tool",
                 resource_id=tool.id,

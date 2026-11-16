@@ -11,6 +11,34 @@
 
 ### Added
 
+- **AWS Signature V4 gateway authentication** ([#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#6408](https://github.com/IBM/mcp-context-forge/issues/6408)) - A gateway accepts `auth_type: "sigv4"` with a `sigv4_config` object (`access_key_id`, `secret_access_key`, optional `session_token`, `region`, `service`). ContextForge signs each upstream request for SSE and StreamableHTTP gateways, including session traffic, tool discovery, and health checks. The `secret_access_key` and `session_token` fields are encrypted at rest and masked in API responses. An update that changes `sigv4_config` evicts pooled upstream sessions. An inbound `Authorization` header never overrides the signature. Adds migration `e5a7c2d9b4f1`.
+    - Register a SigV4 gateway with `POST /gateways`. Set `auth_type` to `sigv4` and add a `sigv4_config` object. Use the API, not the Admin UI. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md).
+
+      ```bash
+      curl -sS -X POST "$GW/gateways" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{
+          "name": "aws-lambda-sigv4",
+          "url": "https://<id>.lambda-url.<region>.on.aws/mcp",
+          "transport": "STREAMABLEHTTP",
+          "auth_type": "sigv4",
+          "sigv4_config": {
+            "access_key_id": "<access-key-id>",
+            "secret_access_key": "<secret-access-key>",
+            "session_token": "<optional, temporary credentials only>",
+            "region": "<region>",
+            "service": "<service, for example lambda or execute-api>"
+          }
+        }'
+      ```
+
+    - `transport` is `STREAMABLEHTTP` or `SSE`. `region` and `service` use lowercase letters, digits, and hyphens. `sigv4_config` rejects unknown keys.
+    - Registration signs the initialize call and tool discovery. An upstream 401 or 403 fails registration with `GatewayCredentialError`, and no gateway is saved.
+    - Rotate credentials with `PUT /gateways/{id}` and a new `sigv4_config`. Send the masked value as `secret_access_key` to keep the stored secret. The update evicts pooled upstream sessions.
+    - No new environment variable is needed. The gateway encrypts `secret_access_key` and `session_token` with `AUTH_ENCRYPTION_SECRET`.
+
+    - Limits: the gateway stores static credentials and does not refresh an expired STS session token. The Admin UI edit form keeps the stored SigV4 settings when you save but cannot change them. Export skips SigV4 gateways, so signing credentials never reach an export file. The modern listener skips SigV4 gateways, so they get no list-changed push events.
+
 - **`mcpServerId` in responses** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt records, the MCP-server refresh result, and the impact preview now carry `mcpServerId` next to `gatewayId`. Both keys hold the same value. `gatewayId` stays until a later release announces its removal. A client that rejects unknown response fields must accept `mcpServerId` on `ToolRead`, `ResourceRead`, `PromptRead`, `GatewayRefreshResponse`, and `GatewayImpactPreview`.
 - **Breaking: disabled A2A returns one typed 404, and `/auth/email/me` reports feature flags** ([#6698](https://github.com/IBM/mcp-context-forge/issues/6698)) - With `MCPGATEWAY_A2A_ENABLED=false`, every A2A route returns 404 with `{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}`. Before, `/a2a/*` and `/v1/a2a/*` returned a generic 404 because the router was not mounted. The router is now always mounted behind a dependency that runs after authentication, and OpenAPI omits its operations when A2A is off. The admin routes `GET /admin/a2a`, `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial`, `POST /admin/a2a`, `POST /admin/a2a/{agent_id}/edit`, `/admin/a2a/plugin-bindings*`, and `POST /admin/a2a/{agent_id}/test`, and `POST /metrics/reset` for entity `a2a`, return the same response. They returned an empty page, 500, 200, 403 with `success: false`, 403 with `success: false`, and 400 with "A2A features are disabled" before. The admin state and delete form routes still redirect to the A2A tab. Token scoping now lets any token read `GET /auth/email/me`. That route adds `features`, for example `{"a2a": true}`, so any authenticated user can read whether A2A is enabled. A disabled-metrics reset still returns 400, now with the message "A2A metrics are disabled".
 
