@@ -11,10 +11,6 @@ findings:
   check: sep-2322-respect-client-capabilities
   name: RespectClientCapabilities
   status: FAILURE
-- scenario: input-required-result-non-tool-request
-  check: sep-2322-non-tool-incomplete
-  name: InputRequiredResultNonToolIncomplete
-  status: FAILURE
 - scenario: input-required-result-tampered-state
   check: sep-2322-reject-tampered-state
   name: RejectTamperedState
