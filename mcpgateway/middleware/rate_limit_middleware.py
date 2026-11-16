@@ -573,22 +573,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP from request.
 
-        Only trusts X-Forwarded-For / X-Real-IP when the deployment is
-        configured to trust proxy headers (trust_proxy_auth). Otherwise
-        falls back to the direct transport client address to prevent
-        IP-spoofing evasion of rate limits.
+        Uses ``scope["client"]``, which ``ProxyHeadersMiddleware`` resolves
+        from X-Forwarded-For only for peers in ``FORWARDED_ALLOW_IPS``.
+        Raw forwarding headers are never read, so callers cannot rotate
+        their rate-limit bucket.
         """
-        if settings.trust_proxy_auth:
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                return real_ip
-
-        # Use scope client (set by ASGI server) rather than request.client,
-        # which can be rewritten by upstream proxy middleware.
         client = request.scope.get("client")
         if client:
             return client[0]

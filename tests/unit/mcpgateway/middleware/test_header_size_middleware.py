@@ -169,8 +169,8 @@ class TestHeaderSizeMiddleware:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_get_client_ip_with_x_forwarded_for(self):
-        """Test client IP extraction from X-Forwarded-For header when trust_proxy_auth=True."""
+    async def test_get_client_ip_ignores_x_forwarded_for(self):
+        """Raw X-Forwarded-For is ignored even when trust_proxy_auth=True."""
         with patch("mcpgateway.middleware.header_size_middleware.settings") as mock_settings:
             mock_settings.header_size_validation_enabled = True
             mock_settings.max_header_total_size_bytes = 1000
@@ -186,11 +186,11 @@ class TestHeaderSizeMiddleware:
             request.scope = {"client": ("192.168.1.100", 12345)}
 
             client_ip = middleware._get_client_ip(request)
-            assert client_ip == "203.0.113.1"
+            assert client_ip == "192.168.1.100"
 
     @pytest.mark.asyncio
-    async def test_get_client_ip_with_x_real_ip(self):
-        """Test client IP extraction from X-Real-IP header when trust_proxy_auth=True."""
+    async def test_get_client_ip_ignores_x_real_ip(self):
+        """Raw X-Real-IP is ignored even when trust_proxy_auth=True."""
         with patch("mcpgateway.middleware.header_size_middleware.settings") as mock_settings:
             mock_settings.header_size_validation_enabled = True
             mock_settings.max_header_total_size_bytes = 1000
@@ -206,7 +206,7 @@ class TestHeaderSizeMiddleware:
             request.scope = {"client": ("192.168.1.100", 12345)}
 
             client_ip = middleware._get_client_ip(request)
-            assert client_ip == "203.0.113.1"
+            assert client_ip == "192.168.1.100"
 
     @pytest.mark.asyncio
     async def test_get_client_ip_fallback_to_scope(self, middleware):
