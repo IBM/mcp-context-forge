@@ -1,12 +1,12 @@
 # Configuration Reference
 
-This guide provides comprehensive configuration options for ContextForge, including database setup, environment variables, and deployment-specific settings.
+This guide describes configuration options for ContextForge, including database setup, environment variables, and deployment settings.
 
 ---
 
 ## 🔐 Required: Change Before Use
 
-These variables have insecure built-in placeholders. Set each credential before enabling its consuming authentication feature; the gateway rejects empty, placeholder, and known-weak password values at startup.
+These variables have insecure built-in placeholders. Set each credential before enabling its authentication feature. The gateway rejects empty, placeholder, and known-weak password values at startup.
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
@@ -132,9 +132,9 @@ ContextForge uses this trusted base to generate these browser-facing email links
 - `https://ui.example.com/contextforge/app/reset-password/{token}`
 - `https://ui.example.com/contextforge/app/forgot-password`
 
-Values whose final path segment is `/app` are treated as full frontend roots, including a trailing slash.
-Only that final mount segment is removed during normalization; earlier path segments are preserved.
-Other values are treated as deployment bases and receive the `/app` mount when links are generated.
+The gateway treats values ending with `/app` as full frontend roots, including a trailing slash.
+Normalization removes only that final mount segment and keeps earlier path segments.
+The gateway treats other values as deployment bases and appends `/app` when generating links.
 For a deployment prefix of `/contextforge/app`, configure the full frontend root:
 
 ```bash
@@ -144,14 +144,14 @@ UI_BASE_URL=https://ui.example.com/contextforge/app/app
 This produces links such as `https://ui.example.com/contextforge/app/app/reset-password/{token}`.
 
 When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base.
-With `MCPGATEWAY_ADMIN_API_ENABLED=true`, password-recovery emails use the bundled Admin UI routes:
+When `MCPGATEWAY_ADMIN_API_ENABLED=true`, password-recovery emails use Admin UI routes:
 `/admin/reset-password/{token}` and `/admin/forgot-password`.
-With the Admin API disabled, these emails use `/app/reset-password/{token}` and `/app/forgot-password`.
-Invitation emails always use `/app/accept-invitation/{token}`. The fallback host must serve the corresponding frontend routes.
-For a separately deployed React client, configure `UI_BASE_URL` using the deployment-base or full-root rules above.
+When the Admin API is disabled, these emails use `/app/reset-password/{token}` and `/app/forgot-password`.
+Invitation emails always use `/app/accept-invitation/{token}`. The fallback host must serve those frontend routes.
+For a separately deployed React client, configure `UI_BASE_URL` using the rules above.
 ContextForge never derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
 
-`UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
+`UI_BASE_URL` controls generated links only. It does not configure browser access to gateway APIs. For a React client on a
 different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set
 appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 
@@ -163,7 +163,7 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 | `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme` (rejected when enabled) | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
-| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
+| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user. Default identity for OAuth health-check token lookups on `authorization_code` gateways. | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
 | `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key-but-now-longer-than-32-bytes`       | string      |
@@ -222,7 +222,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
 | `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
-| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
+| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV or JSON list of UI sections to hide | `[]` | CSV/JSON list |
 | `MCPGATEWAY_UI_HIDE_HEADER_ITEMS` | CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
@@ -286,9 +286,9 @@ The banner remains informational after the notice date. It does not disable the 
 | `DATAPLANE_PUBLISHER`                    | Publish gateway configuration for the Rust dataplane  | `false` | bool    |
 | `DATAPLANE_PUBLISHER_INTERVAL_SECONDS`   | Interval between configuration snapshots, in seconds | `60`    | int ≥ 1 |
 
-User configuration keys expire after twice the configured snapshot interval plus 10 seconds. Shorter intervals can reduce
-convergence time in test environments; production deployments should retain the default unless their Redis and database
-capacity has been sized for more frequent snapshots.
+User configuration keys expire after twice the snapshot interval plus 10 seconds. Shorter intervals can reduce
+convergence time in test environments. Production deployments should retain the default unless their database and Redis
+capacity supports more frequent snapshots.
 
 ### Direct Proxy Mode
 
@@ -299,14 +299,14 @@ capacity has been sized for more frequent snapshots.
 
 **Configuration Effects:**
 
-- `MCPGATEWAY_DIRECT_PROXY_ENABLED=false` (default): Gateways cannot use `gateway_mode=direct_proxy`; existing ones fall back to cache mode
-- `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`: Enables pass-through MCP operations bypassing the caching layer
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=false` (default): Gateways cannot use `gateway_mode=direct_proxy`. Existing gateways fall back to cache mode.
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`: Enables pass-through MCP operations bypassing the caching layer.
 
-**Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
+**Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway ID. The gateway proxies all MCP operations directly to the remote server.
 
 ### ToolOps
 
-ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
+ToolOps enables tool enrichment, automated test case generation, and tool validation.
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
@@ -413,14 +413,6 @@ The LLM Settings feature enables ContextForge to act as a unified LLM provider w
 | `LLM_STREAMING_ENABLED`       | Enable streaming responses             | `true`  | bool    |
 | `LLM_HEALTH_CHECK_INTERVAL`   | Provider health check interval (seconds) | `300` | int     |
 
-**Gateway Provider Settings:**
-
-| Setting                        | Description                            | Default | Options |
-| ------------------------------ | -------------------------------------- | ------- | ------- |
-| `GATEWAY_MODEL`               | Default model to use                   | `gpt-4o` | string |
-| `GATEWAY_BASE_URL`            | Base URL for gateway LLM API           | (auto)  | string  |
-| `GATEWAY_TEMPERATURE`         | Sampling temperature                   | `0.7`   | float   |
-
 **API Endpoints:**
 
 ```bash
@@ -473,7 +465,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
 
-Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An administrator with `admin.user_management` can demote or deactivate another administrator while at least one active administrator remains. Protect administrator credentials accordingly; deployments requiring dual control should enforce that process outside this endpoint.
+Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An administrator with `admin.user_management` can demote or deactivate another administrator while at least one active administrator remains. Protect administrator credentials accordingly. Deployments requiring dual control should enforce that process outside this endpoint.
 
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
@@ -507,7 +499,7 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `MCP_LISTEN_MAX_LIFETIME_SECONDS` | Maximum lifetime of a `subscriptions/listen` stream (2026-07-28 clients). A token expiry earlier than this ends the stream sooner | `3600` | int (60-86400) |
 | `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` | Maximum concurrent `subscriptions/listen` streams for one authenticated principal on one worker. The gateway refuses further streams with "Subscription limit reached" | `32` | int (1-1024) |
-| `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers (`MCP_REQUIRE_AUTH=false`). `0` refuses all anonymous streams | `256` | int (0-1024) |
+| `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers when `MCP_REQUIRE_AUTH` is false. `0` refuses all anonymous streams | `256` | int (0-1024) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -527,7 +519,7 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | `auto` (default) | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
 | `legacy` | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
 
-An unserved version is rejected with HTTP `400` and a JSON-RPC error body. The error code is `-32022` (`UnsupportedProtocolVersionError`); `data.supported` lists the versions this gateway accepts in its current mode and `data.requested` echoes the rejected version. The example below shows the default `auto` mode; in `legacy` mode `supported` omits `2026-07-28`:
+The gateway rejects an unserved version with HTTP `400` and a JSON-RPC error body. The error code is `-32022` (`UnsupportedProtocolVersionError`). `data.supported` lists accepted versions. `data.requested` echoes the rejected version. The example below shows default `auto` mode. In `legacy` mode, `supported` omits `2026-07-28`:
 
 ```json
 {"jsonrpc": "2.0", "id": null, "error": {"code": -32022, "message": "Unsupported protocol version",
@@ -539,19 +531,19 @@ An unserved version is rejected with HTTP `400` and a JSON-RPC error body. The e
 When a client negotiates the `2026-07-28` protocol, the gateway marks its cacheable results so the client knows how long it may reuse them:
 
 - `server/discover`, `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list` carry `ttlMs` and `cacheScope: "private"`.
-- `ttlMs` on a catalog result is the shortest refresh interval among the upstream gateways behind the virtual server being queried, floored at `HEALTH_CHECK_INTERVAL` because the gateway only refreshes upstreams inside its health-check loop. A request that is not scoped to a virtual server uses `GATEWAY_AUTO_REFRESH_INTERVAL`. If the interval cannot be derived, the gateway answers `ttlMs: 0` so the client does not cache.
+- `ttlMs` on a catalog result is the shortest refresh interval among upstream gateways behind the virtual server. The minimum is `HEALTH_CHECK_INTERVAL`. Requests not scoped to a virtual server use `GATEWAY_AUTO_REFRESH_INTERVAL`. If the interval cannot be derived, the gateway returns `ttlMs: 0`.
 - `resources/read` relays the `ttlMs` the upstream server provided, or `0` when it provided none, and is always `private` because reads go through the caller's own authorization.
 
-A client that honours these hints will not see a catalog change (a new, removed or renamed tool) until its cached copy expires, so the refresh interval you configure is also the longest delay before such clients notice the change.
+A client honoring these hints does not see catalog changes until its cache expires. The configured refresh interval determines the maximum propagation delay.
 
 #### Structured Content Shapes
 
-The 2025 protocol requires a tool result's `structuredContent` to be a JSON object; the `2026-07-28` protocol allows any JSON value. The gateway follows the caller's era:
+The 2025 protocol requires `structuredContent` to be a JSON object. The `2026-07-28` protocol allows any JSON value. The gateway follows the protocol era of the caller:
 
-- A `2026-07-28` client receives whatever the tool produced: an object, an array, a string, a number, a boolean or null, validated against the tool's `outputSchema` when one is declared. A tool may declare a non-object `outputSchema`, such as `{"type": "array"}`.
-- A handshake-era client, and `/rpc`, only ever receive an object. A non-object value is dropped from `structuredContent` for them; the same data is still in the result's text content block.
-- A handshake-era client also never sees a non-object `outputSchema` in `tools/list`, because its wire rejects one; the tool is listed without it.
-- An explicit `null` is validated against the `outputSchema` like any other value, but it is not sent on the wire: the SDK omits every null field when it serialises a result, as every server built on it does, so a client sees the field absent.
+- A `2026-07-28` client receives any value the tool produced (object, array, string, number, boolean, or null). The gateway validates the value against `outputSchema` when declared. A tool may declare a non-object `outputSchema`, such as `{"type": "array"}`.
+- Handshake-era clients and `/rpc` only receive an object. The gateway drops non-object values from `structuredContent` for these callers. The text content block retains the data.
+- Handshake-era clients never see a non-object `outputSchema` in `tools/list`. The gateway lists the tool without the schema.
+- The gateway validates an explicit `null` against `outputSchema`. The SDK omits null fields on the wire.
 
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 
@@ -585,8 +577,8 @@ Choose each mode independently for its direction: `MCP_INBOUND_PROTOCOL_MODE` ap
 | Peer capability | `MCP_INBOUND_PROTOCOL_MODE` | `MCP_CLIENT_CONNECT_MODE` | Guidance |
 | ---------------- | --------------------------- | ------------------------- | -------- |
 | Legacy-only | `legacy` | `legacy` | Use the pre-2026 `initialize` handshake only. |
-| Dual-era | `legacy` | `legacy` | Sufficient for compatibility; dual-era clients should retry with legacy after the gateway returns `400` for a modern handshake. |
-| Modern-only | `auto` | `auto` | Required because there is no strict `modern` mode; `auto` negotiates modern protocol revisions and retains legacy fallback. |
+| Dual-era | `legacy` | `legacy` | Dual-era clients retry with legacy after the gateway returns `400` for a modern handshake. |
+| Modern-only | `auto` | `auto` | `auto` negotiates modern protocol revisions and keeps legacy fallback. |
 
 For dual-era peers, use `auto` instead of `legacy` only when modern protocol negotiation or modern-only features are required. `auto` is not modern-only.
 
@@ -598,7 +590,7 @@ For dual-era peers, use `auto` instead of `legacy` only when modern protocol neg
 | `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
-| `SSO_ALLOW_PROVIDER_LINKING`  | Let a verified email sign in via a different trusted provider (rebinds). Global switch across all providers, not scoped to a pair; admin status is re-vetted against the new provider on relink. | `false`     | bool    |
+| `SSO_ALLOW_PROVIDER_LINKING`  | Let a verified email sign in via a different trusted provider (rebinds). Global switch across all providers. Admin status is checked against the new provider on relink. | `false`     | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
 | `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
@@ -691,7 +683,7 @@ For dual-era peers, use `auto` instead of `legacy` only when modern protocol neg
 
 ### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
 
-ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and **PKCE (RFC 7636)** for seamless integration with OAuth-protected MCP servers.
+ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and **PKCE (RFC 7636)** to integrate with OAuth-protected MCP servers.
 
 | Setting                                     | Description                                                    | Default                        | Options       |
 |--------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
@@ -704,15 +696,15 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
-| `CIMD_ENABLED`                             | Prefer Client ID Metadata Documents over DCR when the AS supports them. On upgrade, gateways with an issuer but no `client_id` switch from DCR to CIMD; set `false` to keep DCR | `true`                 | bool          |
+| `CIMD_ENABLED`                             | Prefer Client ID Metadata Documents over DCR when the AS supports them. Gateways with an issuer but no `client_id` switch from DCR to CIMD. Set `false` to keep DCR. | `true`                 | bool          |
 | `CIMD_CLIENT_NAME`                         | `client_name` in the published Client ID Metadata Document     | `ContextForge`                 | string        |
 | `CIMD_CLIENT_METADATA_URL`                 | Optional explicit public URL of the metadata document (overrides auto-derived URL). Must end with `/oauth/client-metadata.json` | `None`                 | string        |
 | `CIMD_TOKEN_ENDPOINT_AUTH_METHOD`         | Preferred token endpoint authentication method for CIMD clients | `none`                 | `none`, `private_key_jwt` |
-| `CIMD_PRIVATE_KEY_PATH`                   | Dedicated PEM private key for CIMD `private_key_jwt` assertions; never the JWT signing key | `""`                 | path          |
+| `CIMD_PRIVATE_KEY_PATH`                   | Dedicated PEM private key for CIMD `private_key_jwt` assertions. Do not use the JWT signing key. | `""`                 | path          |
 | `CIMD_KEY_ID`                             | `kid` of the CIMD signing key in assertions and the CIMD JWKS  | `cimd-1`                       | string        |
 | `CIMD_SIGNING_ALG`                        | Signing algorithm for CIMD client assertions                   | `RS256`                        | `RS256`, `RS384`, `RS512`, `PS256`, `ES256`, `ES384`, `ES512` |
 | `CIMD_PREVIOUS_PUBLIC_KEY_PATH`           | Previous CIMD public key PEM published in the JWKS during rotation | `""`                       | path          |
-| `CIMD_PREVIOUS_KEY_ID`                    | `kid` published for the previous CIMD public key; set to the former `CIMD_KEY_ID` | `""` (`<CIMD_KEY_ID>-previous`) | string |
+| `CIMD_PREVIOUS_KEY_ID`                    | `kid` published for the previous CIMD public key. Defaults to `<CIMD_KEY_ID>-previous`. | `""` | string |
 | `CIMD_DOCUMENT_CACHE_SECONDS`             | Cache-Control max-age in seconds for the Client ID Metadata Document endpoint | `3600`                 | int           |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
@@ -759,9 +751,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
-| `REGEX_TIMEOUT_SECONDS`   | Time budget for validating against a schema that carries `pattern` or `patternProperties`; on expiry validation fails closed | `1.0` | float > 0 |
+| `REGEX_TIMEOUT_SECONDS`   | Time budget for validating against a schema with `pattern` or `patternProperties`. On expiry, validation fails closed. | `1.0` | float > 0 |
 | `REGEX_WORKERS`           | Worker processes in the JSON Schema regex sandbox | `2`                                         | int > 0    |
-| `REGEX_MAX_SUBJECT_BYTES` | Largest value a regex-bearing schema validates; larger values fail closed | `262144`                        | int >= 1024 |
+| `REGEX_MAX_SUBJECT_BYTES` | Largest value a regex-bearing schema validates. Larger values fail closed. | `262144`                        | int >= 1024 |
 | `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
 | `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
 | `HSTS_INCLUDE_SUBDOMAINS` | Include subdomains in HSTS header | `true`                                      | bool       |
@@ -792,14 +784,14 @@ ContextForge provides Cross-Site Request Forgery (CSRF) protection through three
 | `CSRF_ENABLED`            | Enable CSRF protection for state-changing operations | `true`                                   | bool       |
 | `CSRF_SECRET_KEY`         | Secret key for CSRF token generation (falls back to `JWT_SECRET_KEY` if empty) | `""`                              | string     |
 | `CSRF_TOKEN_NAME`         | HTTP header name for CSRF token | `X-CSRF-Token`                                 | string     |
-| `CSRF_COOKIE_NAME`        | Cookie name for CSRF token (middleware-path-only; hardcoded in admin routes) | `mcpgateway_csrf_token`            | string     |
-| `CSRF_TOKEN_EXPIRY`       | CSRF token expiration time in seconds (middleware-path-only; different calculation in admin routes) | `3600`                            | int        |
-| `CSRF_COOKIE_SECURE`      | Set Secure flag on CSRF cookie (middleware-path-only; production-aware in admin routes) | `true`                            | bool       |
-| `CSRF_COOKIE_SAMESITE`    | SameSite attribute for CSRF cookie (middleware-path-only; hardcoded `strict` in admin routes) | `Strict`                          | `Strict`/`Lax`/`None` |
-| `CSRF_COOKIE_HTTPONLY`    | Set HttpOnly flag on CSRF cookie (middleware-path-only; hardcoded `false` in admin routes) | `false`                           | bool       |
+| `CSRF_COOKIE_NAME`        | Cookie name for CSRF token (middleware path only) | `mcpgateway_csrf_token`            | string     |
+| `CSRF_TOKEN_EXPIRY`       | CSRF token expiration time in seconds (middleware path only) | `3600`                            | int        |
+| `CSRF_COOKIE_SECURE`      | Set Secure flag on CSRF cookie (middleware path only) | `true`                            | bool       |
+| `CSRF_COOKIE_SAMESITE`    | SameSite attribute for CSRF cookie (middleware path only) | `Strict`                          | `Strict`/`Lax`/`None` |
+| `CSRF_COOKIE_HTTPONLY`    | Set HttpOnly flag on CSRF cookie (middleware path only) | `false`                           | bool       |
 | `CSRF_CHECK_REFERER`      | Validate Referer header for CSRF protection | `true`                                 | bool       |
 | `CSRF_ROTATE_ON_LOGIN`    | Rotate CSRF token on user login for enhanced security | `true`                                 | bool       |
-| `CSRF_TRUSTED_ORIGINS`    | Additional trusted origins for CSRF validation (code default is `[]`; `.env.example` overrides with localhost) | `[]`                              | JSON array |
+| `CSRF_TRUSTED_ORIGINS`    | Additional trusted origins for CSRF validation (code default is `[]`, `.env.example` overrides with localhost) | `[]`                              | JSON array |
 | `CSRF_EXEMPT_PATHS`       | Paths exempt from CSRF middleware (admin routes use per-route enforcement instead) | See below | JSON array |
 
 **Three Independent CSRF Implementations:**
@@ -810,7 +802,7 @@ ContextForge implements CSRF protection in three distinct paths:
 2. **`enforce_admin_csrf` (per-route dependency)**: Applies to admin routes at both the legacy (`/admin/*`, `/admin/llm/*`) and versioned (`/v1/admin/*`, `/v1/admin/llm/*`) mounts
 3. **`enforce_fetch_tools_csrf` (per-route dependency, `mcpgateway/routers/oauth_router.py`)**: Applies only to `POST /oauth/fetch-tools/{gateway_id}` — the reason that path is in `CSRF_EXEMPT_PATHS` rather than relying on `CSRFMiddleware`. It duplicates its own module-level `ADMIN_CSRF_COOKIE_NAME`/`ADMIN_CSRF_HEADER_NAME` constants (not imported from `admin.py`) and its own Origin/Referer same-origin check, independent of both `CSRFMiddleware`'s and `enforce_admin_csrf`'s origin-check logic.
 
-The five settings marked as "middleware-path-only" in the table above govern only the first path; the other two dependencies use hardcoded equivalents for all cookie and header attributes:
+The five settings marked as middleware path only govern only the first path. The other two dependencies use hardcoded equivalents for cookie and header attributes:
 
 | Attribute | `CSRFMiddleware` (Middleware) | `enforce_admin_csrf` (Admin Routes) |
 | --- | --- | --- |
@@ -829,36 +821,34 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 ```
 
 !!! warning "CSRF_COOKIE_NAME Synchronization Risk"
-    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Every other CSRF consumer — `enforce_admin_csrf` (`mcpgateway/admin.py`), `enforce_fetch_tools_csrf` (`mcpgateway/routers/oauth_router.py`), the Admin UI JavaScript, and the server-rendered login/password/admin templates — hardcodes `mcpgateway_csrf_token` independently rather than reading the setting. There is no complete, stable list of these consumers to enumerate here; treat the name as effectively fixed. Changing `CSRF_COOKIE_NAME` desynchronizes the middleware from everything else, breaking login, password reset, and admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
+    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Other CSRF consumers hardcode `mcpgateway_csrf_token` directly. Changing `CSRF_COOKIE_NAME` desynchronizes the middleware from other components and breaks login, password reset, and admin writes. Verify your `.env` uses `mcpgateway_csrf_token`.
 
 !!! warning "CSRF_COOKIE_HTTPONLY Should Stay False for CSRFMiddleware-Protected Writes"
-    `CSRF_COOKIE_HTTPONLY` is honored only by `CSRFMiddleware` (`set_csrf_cookie()` reads `settings.csrf_cookie_httponly` directly). Admin-route CSRF (`enforce_admin_csrf`, `enforce_fetch_tools_csrf`) always issues its cookie with `httponly=False`, hardcoded, regardless of this setting. The browser JavaScript for `CSRFMiddleware`-protected writes (e.g. `/v1/llm/*`) must read the CSRF cookie to echo it in the `X-CSRF-Token` header (double-submit pattern); setting `CSRF_COOKIE_HTTPONLY=true` makes that cookie unreadable to JavaScript and breaks those writes specifically — not admin-route writes, which are unaffected either way. The cookie is safe: the middleware's HMAC token is bound to user + session identity, preventing CSRF abuse regardless of this setting.
+    `CSRF_COOKIE_HTTPONLY` applies only to `CSRFMiddleware`. Admin-route CSRF always issues its cookie with `httponly=False`. Browser JavaScript for `CSRFMiddleware`-protected writes must read the CSRF cookie to send the `X-CSRF-Token` header. Setting `CSRF_COOKIE_HTTPONLY=true` prevents JavaScript from reading that cookie and breaks those writes.
 
 !!! info "CSRF_TRUSTED_ORIGINS: Code Default vs. Template"
     The code default is an empty list `[]`, meaning no additional origins beyond same-site are trusted. However, `.env.example` overrides this with `["http://localhost:4444","http://localhost:8080"]` for development convenience. Production deployments should verify the code default and explicitly configure `CSRF_TRUSTED_ORIGINS` to match your frontend origin(s).
 
 !!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
-    The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
-
-    This double-validation used to expose a timing gap: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass rejected writes that the legacy mount's `enforce_admin_csrf`-only path accepted, because the CSRF cookie had not yet rotated from its opaque pre-login value to its HMAC-bound one. Fixed in [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978) — see *Admin CSRF token lifecycle* below.
+    Middleware exemption uses prefix matching on the raw request path. Versioned admin routes at `/v1/admin/*` undergo checks by both the middleware and the per-route `enforce_admin_csrf` dependency. Legacy routes at `/admin/*` use only the per-route dependency. Cross-check paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on CSRF middleware interactions.
 
 #### Admin CSRF token lifecycle
 
-The `mcpgateway_csrf_token` cookie is an HMAC-SHA256 digest bound to `(user email, session JWT jti)`. Every handler that mints a session JWT now issues the bound cookie in the same response:
+The `mcpgateway_csrf_token` cookie is an HMAC-SHA256 digest bound to user email and session JWT JTI. Handlers that create a session JWT issue the bound cookie in the response:
 
 | Handler | When |
 | --- | --- |
-| `admin_login_handler` | `POST /admin/login`, both the normal and the forced-password-change branch |
-| `change_password_required_handler` | `POST /admin/change-password-required`, which re-mints the JWT with a new `jti` |
-| `admin_ui()` | every `/admin/` dashboard load, which also re-mints and therefore rotates |
-| `/auth/*` login endpoints | `routers/auth.py`, `routers/email_auth.py` |
+| `admin_login_handler` | `POST /admin/login` |
+| `change_password_required_handler` | `POST /admin/change-password-required` |
+| `admin_ui()` | Every `/admin/` dashboard load |
+| `/auth/*` login endpoints | `routers/auth.py` and `routers/email_auth.py` |
 
-Because the token is bound to the session, it cannot be replayed across sessions or users, and the unprefixed `/admin/**` and versioned `/v1/admin/**` mounts accept it identically from the first request after login — no dashboard load required.
+The token binds to the session and prevents replay across sessions. Unprefixed `/admin/**` and versioned `/v1/admin/**` mounts accept it immediately after login.
 
 Unauthenticated pages (`GET /admin/login`, forgot-password, reset-password) still receive an opaque, unbound token. That is correct: there is no session to bind to yet, and neither CSRF layer engages without a session cookie. The bound token replaces it on successful login.
 
 !!! warning "Long sessions can outlive their CSRF token"
-    The admin CSRF cookie's `max_age` is `max(300, TOKEN_EXPIRY * 60)`, but the HMAC is only accepted for the current and previous `CSRF_TOKEN_EXPIRY` window — 1 to 2 hours at the `3600` default. At the shipped `TOKEN_EXPIRY` of 20 minutes the cookie expires first and there is no gap. If you raise `TOKEN_EXPIRY` above 120 minutes, the cookie can outlive its own HMAC, after which `/v1/admin/**` writes fail with `CSRF_TOKEN_INVALID` while `/admin/**` still accepts them. Browsers are unaffected because every dashboard load rotates the cookie; long-lived non-browser cookie clients are not. Keep `CSRF_TOKEN_EXPIRY >= TOKEN_EXPIRY * 60`, or re-authenticate rather than holding one cookie for the full session.
+    The admin CSRF cookie `max_age` is `max(300, TOKEN_EXPIRY * 60)`. The HMAC is accepted for the current and previous `CSRF_TOKEN_EXPIRY` window (1 to 2 hours at the `3600` default). If you raise `TOKEN_EXPIRY` above 120 minutes, the cookie can outlive its HMAC. When this happens, `/v1/admin/**` writes fail with `CSRF_TOKEN_INVALID`. Dashboard loads rotate the cookie for browser sessions. Keep `CSRF_TOKEN_EXPIRY >= TOKEN_EXPIRY * 60`.
 
 ### Identity Propagation
 
@@ -979,7 +969,7 @@ mcpContextForge:
 
 ### URL Scheme Allowlist
 
-Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation. A restart is required to re-run the startup database scan.
 
 | Setting | Description | Default | Options |
 | --- | --- | --- | --- |
@@ -1024,7 +1014,7 @@ Metadata limits prevent resource exhaustion and denial of service attacks (CWE-4
 | `META_MAX_BYTES` | Maximum JSON-encoded byte size for user-supplied meta_data | `4096` (4KB) | 1B – 1MB |
 
 !!! warning "Behavior Change"
-    The metadata limit validations (keys, depth, and bytes) now apply strictly to **every** incoming `/mcp` protocol request (including `tools/call`, `resources/read`, and `prompts/get`), whereas previously they were only checked during direct-proxy resource reads. Any request carrying custom `_meta` structures that exceed these configured limits is rejected before reaching any service layer. Note that the mandatory envelope keys (`protocolVersion`, `clientInfo`, and `clientCapabilities`) are exempted from user depth and key limits (using a fixed depth cap of 4).
+    Metadata limits (keys, depth, and bytes) apply to all incoming `/mcp` protocol requests. Requests carrying custom `_meta` structures that exceed configured limits fail validation before reaching any service layer. Mandatory envelope keys (`protocolVersion`, `clientInfo`, and `clientCapabilities`) use a fixed depth cap of 4.
 
 ### Ed25519 Certificate Signing
 
@@ -1084,7 +1074,6 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-3`               | string                                     |
 | `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag (dev/staging/prod)           | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -1106,8 +1095,6 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 
 | Setting                         | Description                                    | Default               | Options                                    |
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
-| `OTEL_TRACES_SAMPLER`           | Sampling strategy                              | `parentbased_traceidratio` | `always_on`, `always_off`, `traceidratio` |
-| `OTEL_TRACES_SAMPLER_ARG`       | Sample rate (0.0-1.0)                         | `0.1`                 | float                                      |
 | `OTEL_BSP_MAX_QUEUE_SIZE`       | Max queued spans                              | `2048`                | int > 0                                    |
 | `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`| Max batch size for export                     | `512`                 | int > 0                                    |
 | `OTEL_BSP_SCHEDULE_DELAY`       | Export interval (ms)                          | `5000`                | int > 0                                    |
@@ -1172,7 +1159,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 `MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
-With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request that carries `_meta.progressToken` may get a `text/event-stream` response once progress is sent or after 15 s without a response; a request that finishes earlier without progress gets JSON. On that stream, errors arrive as JSON-RPC errors with HTTP 200, and closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`. A body over `MCP_BODY_PEEK_MAX_BYTES` keeps the JSON response, with no progress.
+With `JSON_RESPONSE_ENABLED=true`, a 2026-07-28 request carrying `_meta.progressToken` may receive a `text/event-stream` response when progress arrives or after 15 seconds. Requests finishing earlier receive JSON. Errors arrive as JSON-RPC errors with HTTP 200. Closing the stream cancels the request. The client `Accept` header must allow `text/event-stream`.
 
 ### Federation
 
@@ -1222,7 +1209,7 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `CEL_WORKERS` | Policy sandbox worker processes per gateway process | `2` | int > 0 |
 
 The forbidden-pattern settings are the global default of the **tool validation policy**. A gateway or a tool can
-override them with its own CEL expression; see [Tool Description Content Validation](../best-practices/input-validation.md#tool-description-content-validation).
+override them with its own CEL expression. See [Tool Description Content Validation](../best-practices/input-validation.md#tool-description-content-validation).
 
 **Strict Mode Scenarios:**
 
@@ -1240,21 +1227,21 @@ override them with its own CEL expression; see [Tool Description Content Validat
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
-| `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs); also the catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
-| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker chosen by `PRIMARY_WORKER_ELECTION_BACKEND` (`filelock`: one per host, `redis`: one per cluster) | `false` | bool |
+| `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs) and catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
+| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to modern upstream servers for refresh | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
-| `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
-| `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
+| `PRIMARY_WORKER_LOCK_PATH` | Path for primary-worker election lock file | (none) | string |
+| `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election backend (`filelock` or `redis`) | `filelock` | enum |
 | `PRIMARY_WORKER_REDIS_KEY` | Redis lease key for cross-instance election | `mcpgw:primary_worker` | string |
 | `PRIMARY_WORKER_LEASE_TTL` | Redis lease TTL (secs) | `15` | int > 0 |
-| `PRIMARY_WORKER_HEARTBEAT_INTERVAL` | Lease renewal interval (secs; `< ttl/2`) | `5` | int > 0 |
+| `PRIMARY_WORKER_HEARTBEAT_INTERVAL` | Lease renewal interval in seconds (must be less than `LEASE_TTL / 2`) | `5` | int > 0 |
 | `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` | Redis down: `fail_closed` or `filelock_fallback` | `fail_closed` | enum |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
 !!! note "Primary-worker election notes (redis backend)"
     - **Namespace the key when sharing Redis.** `PRIMARY_WORKER_REDIS_KEY` defaults to `mcpgw:primary_worker`. Two independent gateway deployments pointed at the same Redis instance/DB will collide on this key (electing one primary *across both*). Give each deployment its own key (e.g. suffix the environment name) when sharing Redis.
-    - **Keep `HEARTBEAT_INTERVAL < LEASE_TTL / 2`.** Otherwise the lease can expire before it is renewed, causing continuous re-election. A misconfiguration logs a warning at startup (it does not fail the boot).
-    - **Boot-time Redis outage doesn't auto-recover.** If Redis is unreachable when a worker starts, that worker applies `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` (fail-closed or filelock fallback) and stays in that state for its lifetime — it does not start a background loop that would later pick up a recovered Redis. Restart the worker once Redis is healthy to resume cross-instance election.
+    - **Keep `HEARTBEAT_INTERVAL < LEASE_TTL / 2`.** Otherwise the lease can expire before renewal and cause re-election.
+    - **Boot-time Redis outages do not auto-recover.** If Redis is unreachable at startup, the worker applies `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` for its lifetime. Restart the worker once Redis is healthy to resume cross-instance election.
 
 ### Database Connection Pool
 
@@ -1393,25 +1380,6 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
 | `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
 
-### MCP Session Pool
-
-| Setting                                   | Description                                        | Default | Options     |
-| ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
-| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
-| `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
-| `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
-| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |
-| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL`  | Idle time before health check (seconds)            | `60`    | float       |
-| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT`        | Timeout waiting for session slot (seconds)         | `30`    | float       |
-| `MCP_SESSION_POOL_CREATE_TIMEOUT`         | Timeout creating new session (seconds)             | `30`    | float       |
-| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens                   | `5`     | int         |
-| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET`  | Seconds before circuit resets                      | `60`    | float       |
-| `MCP_SESSION_POOL_IDLE_EVICTION`          | Evict idle pool keys after (seconds)               | `600`   | float       |
-| `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`    | Force explicit RPC on health checks                | `false` | bool        |
-
-!!! tip "Session Pool Performance"
-    Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing.
-
 ### Development
 
 | Setting    | Description            | Default | Options |
@@ -1438,7 +1406,7 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature           | `false`               | bool    |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers             | `false`               | bool    |
 | `ENABLE_SENSITIVE_HEADER_PASSTHROUGH` | Allow allowlisted sensitive headers to reach outbound A2A invocations. Tool pre-invoke plugin payloads still receive only non-sensitive headers. Requires `ENABLE_HEADER_PASSTHROUGH=true`. | `false` | bool |
-| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through for gateways. A2A agents require an explicit `passthrough_headers` allowlist; an unset or empty A2A list blocks request-header forwarding. | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through for gateways. A2A agents require an explicit `passthrough_headers` allowlist. An unset or empty A2A list blocks request-header forwarding. | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
 | `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds)  | `60`                  | int     |
 
 !!! warning "Security Warning"
@@ -1514,12 +1482,9 @@ The plugin framework has its own configuration via `pydantic-settings` with the 
 ### CPU Spin Loop Mitigation
 
 These settings detect and close dead SSE connections before they can trigger CPU
-spin loops during connection cleanup. The underlying anyio `_deliver_cancellation`
-spin (anyio#695) was fixed upstream in anyio 4.15.0, which this project requires;
-the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
-`SSE_TASK_GROUP_CLEANUP_TIMEOUT`) and the experimental anyio monkey-patch
-(`ANYIO_CANCEL_DELIVERY_*`) were removed. Cleanup waits remain bounded internally
-(fixed 5-second windows). See the
+spin loops during connection cleanup. Upstream anyio 4.15.0 fixed the underlying
+cancellation delivery spin. Cleanup waits remain bounded internally
+to fixed 5-second windows. See the
 [CPU Spin Loop Mitigation guide](../operations/cpu-spin-loop-mitigation.md) for details.
 
 **SSE Connection Protection**
@@ -1546,7 +1511,7 @@ The separate defaults prevent REST configuration changes from altering MCP trave
 | `MCP_LIST_CURSOR_TTL_SECONDS` | `900` | Fixed traversal lifetime in seconds |
 | `MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES` | `67108864` | Maximum charged snapshot bytes, including page overhead |
 | `MCP_PROXY_LIST_MAX_TOTAL_BYTES` | `134217728` | Maximum aggregate retained snapshot bytes |
-| `MCP_PROXY_LIST_MAX_COLLECTORS` | `32` | Concurrent collectors across Redis workers; per worker without Redis |
+| `MCP_PROXY_LIST_MAX_COLLECTORS` | `32` | Concurrent collectors across Redis workers (per worker without Redis) |
 | `MCP_PROXY_LIST_MAX_SNAPSHOTS` | `64` | Maximum retained snapshots and active reservations |
 
 Database ordering changes from `created_at DESC` to `id ASC`.
@@ -1558,7 +1523,7 @@ Cursors bind the method, virtual server, identity, teams, and MCP session.
 Keep the session alive until traversal completes. Reconnecting changes the session and invalidates existing cursors.
 Start again without a cursor after a reconnect.
 Invalid, expired, or mismatched cursors return JSON-RPC error `-32602`.
-All workers must share `AUTH_ENCRYPTION_SECRET`; rotating it invalidates existing cursors.
+All workers must share `AUTH_ENCRYPTION_SECRET`. Rotating it invalidates existing cursors.
 
 Direct proxy collects upstream pages within one session and stores immutable snapshot pages in Redis.
 Multi-page proxy catalogs require `CACHE_TYPE=redis` and a reachable `REDIS_URL`.
@@ -1579,6 +1544,10 @@ Redis is a trusted storage boundary: catalog descriptors remain in plaintext and
 Restrict Redis access to gateway operators. Use authenticated TLS connections and protect Redis backups.
 Stored scope fingerprints use HMAC with a key derived separately from the cursor encryption key.
 
+Database catalogs check current visibility on every page.
+Restart traversal to get a current catalog after configuration changes.
+Invalid, expired, or mismatched cursors return JSON-RPC error `-32602`.
+
 Snapshot admission reserves a collector slot before contacting the upstream server.
 Collector slots do not reserve snapshot bytes. Publication atomically enforces the aggregate retained-byte limit.
 Publication charges serialized pages, the manifest, and 512 bytes of overhead per page and manifest.
@@ -1586,7 +1555,7 @@ Reservations and pages share one Redis hash, so eviction removes their accountin
 Expired snapshots are reclaimed on the next snapshot operation or when the hash expires.
 When `INFO memory` is available, admission checks usage below 80% of `maxmemory`.
 Publication also checks headroom for twice the charged snapshot bytes.
-Redis ACLs must permit `EVAL`. Denied `INFO memory` skips headroom checks; snapshot byte and count limits remain enforced.
+Redis ACLs must permit `EVAL`. Denied `INFO memory` skips headroom checks. Snapshot byte and count limits remain enforced.
 Use a dedicated Redis instance or configure sufficient headroom when `INFO memory` is unavailable.
 Quota exhaustion returns JSON-RPC error `-32000` before upstream collection.
 Internal HTTP handlers map `-32000` to 503, `-32603` to 500, `-32602` to 400, and `-32003` to 403.
@@ -1597,12 +1566,12 @@ Collector memory is bounded separately by collector count and the per-catalog by
 Tune the collector count for worker memory and upstream capacity.
 These limits cannot reserve Redis memory against unrelated applications writing to the same instance.
 
-Clients must follow `nextCursor`; clients that make one list call receive only the first page.
+Clients must follow `nextCursor`. Clients that make one list call receive only the first page.
 See [#6990](https://github.com/IBM/mcp-context-forge/issues/6990) and the release changelog.
 During deployment, keep each traversal on workers running the same version.
 Old workers ignore new cursors and can return an unbounded catalog during an overlapping rollout.
 Drain old workers before routing new traversals, or use a coordinated deployment.
-Restart traversals after encryption-secret rotation or rollback; never reuse earlier cursors.
+Restart traversals after encryption-secret rotation or rollback. Never reuse earlier cursors.
 
 
 ## 🐳 Container Configuration
