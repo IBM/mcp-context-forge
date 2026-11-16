@@ -400,11 +400,14 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
 # Strong references to in-flight invalidation tasks. The event loop only keeps a
 # weak reference to a task, so without this a fire-and-forget task can be garbage
 # collected before it completes.
-_BACKGROUND_TASKS: Set[Any] = set()
+_BACKGROUND_TASKS: Set["asyncio.Task[None]"] = set()
 
 
-def _log_invalidation_task_exception(task: Any) -> None:
+def _log_invalidation_task_exception(task: "asyncio.Task[None]") -> None:
     """Log an exception raised inside a background invalidation task.
+
+    `_publish_a2a_invalidation()` handles its own errors, so this callback is a guard
+    against unexpected failures and does not log in normal operation.
 
     Args:
         task: The completed invalidation task.
@@ -435,11 +438,7 @@ def _schedule_a2a_invalidation(agent_name: str) -> None:
     try:
         task = loop.create_task(coro)
     except Exception as exc:  # pylint: disable=broad-except
-        # Close the coroutine we just built so it cannot raise
-        # "coroutine ... was never awaited" during garbage collection.
         coro.close()
-        # Best-effort, but log so a Redis outage stops being invisible - stale
-        # Rust L1 caches silently serve old agent data until TTL expires.
         logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
         return
 

@@ -11,6 +11,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import gc
+import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -3596,7 +3597,7 @@ class TestA2AInvalidationBestEffort:
         coro = loop.create_task.call_args[0][0]
         gc.collect()
         assert not [w for w in recwarn.list if issubclass(w.category, RuntimeWarning) and "was never awaited" in str(w.message)]
-        assert getattr(coro, "cr_running", False) is False
+        assert inspect.getcoroutinestate(coro) == "CORO_CLOSED"
 
     async def test_schedule_invalidation_keeps_a_strong_reference_until_done(self):
         """The scheduled task must be retained so the GC cannot drop it mid-flight."""
