@@ -748,3 +748,23 @@ def clear_jwt_cache_between_tests():
         clear_jwt_caches()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_correlation_id_between_tests():
+    """Clear the correlation-ID contextvar before and after each test.
+
+    ``get_or_generate_correlation_id()`` sets the ContextVar when no ID is set.
+    ``AuditTrailService.log_action()`` calls it synchronously and never resets it.
+    The next test on the same worker then inherits that ID. Assertions on exact
+    error text fail nondeterministically, because ``error_formatter._with_reference``
+    appends ``(reference: <id>)``. Clear around every test so no test inherits
+    another test's ID.
+    """
+    from mcpgateway.utils.correlation_id import clear_correlation_id
+
+    clear_correlation_id()
+
+    yield
+
+    clear_correlation_id()
