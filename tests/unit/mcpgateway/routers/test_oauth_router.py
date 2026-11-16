@@ -5197,6 +5197,20 @@ class TestPersistLearnedAudience:
         assert gateway.oauth_config == {"issuer": "https://idp.example.com/", "resource": "aud-x"}
 
     @pytest.mark.asyncio
+    async def test_token_issuer_pins_instead_of_as_issuer(self, mock_db):
+        """token_issuer is the expected token iss; the AS issuer no longer pins the audience."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        config = {"issuer": "https://mcp.example.com", "token_issuer": "https://login.example.com"}
+        gateway = self._gateway(config)
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://mcp.example.com"}, mock_db)
+        mock_db.flush.assert_not_called()
+
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://login.example.com"}, mock_db)
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {**config, "resource": "aud-x"}
+
+    @pytest.mark.asyncio
     async def test_persists_when_no_issuer_configured(self, mock_db):
         """Without a configured issuer the pinning check is skipped (non-OIDC setups)."""
         from mcpgateway.routers.oauth_router import _persist_learned_audience

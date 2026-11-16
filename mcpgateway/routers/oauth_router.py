@@ -44,6 +44,7 @@ from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
@@ -327,8 +328,9 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
       string or non-empty list of non-empty strings.  Anything else (numbers,
       empty containers, mixed types) is silently dropped so a malformed IdP
       response cannot pollute persisted state.
-    * **Issuer pinning** -- when ``oauth_config["issuer"]`` is configured, the
-      token's ``iss`` claim must match it.  This prevents a stale or misrouted
+    * **Issuer pinning** -- when ``oauth_config["token_issuer"]`` (or, absent
+      that, ``oauth_config["issuer"]``) is configured, the token's ``iss``
+      claim must match it.  This prevents a stale or misrouted
       token from a different AS from injecting an audience for the wrong IdP.
       The check is skipped when no issuer is configured (preserves existing
       behavior for non-OIDC / non-discovery setups).
@@ -370,10 +372,10 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     # ``https://idp.example.com/`` are treated as equivalent (matches the
     # convention used by token_validation_service for issuer comparison).
     # See docstring for the cross-IdP bleed scenario this prevents.
-    configured_issuer = oauth_config.get("issuer")
-    if configured_issuer:
+    expected_issuers = resolve_expected_token_issuers(oauth_config)
+    if expected_issuers:
         token_iss = oauth_result.get("token_iss")
-        if not isinstance(token_iss, str) or token_iss.rstrip("/") != configured_issuer.rstrip("/"):
+        if not isinstance(token_iss, str) or token_iss.rstrip("/") not in expected_issuers:
             logger.debug(
                 "Skipping audience persistence for gateway %s: token iss does not match configured issuer",
                 gateway.name,

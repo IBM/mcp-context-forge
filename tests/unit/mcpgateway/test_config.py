@@ -1993,6 +1993,31 @@ def test_gateway_create_oauth_config_authorization_servers_non_string_item_raise
     assert "oauth_config.authorization_servers[1] must be a string URL" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("bad", [12345, [], ["https://a.example.com"] * 6, ["https://a.example.com", 7]])
+def test_gateway_create_oauth_config_token_issuer_bad_shape_raises(bad):
+    """oauth_config.token_issuer must be a URL string or a bounded list of URL strings."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={"token_issuer": bad, "client_id": "test-client", "client_secret": "test-secret"},  # pragma: allowlist secret
+        )
+    assert "oauth_config.token_issuer must be a URL string or a list" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_token_issuer_accepts_string_and_list():
+    """A valid token_issuer string or list passes validation unchanged."""
+    for value in ("https://login.example.com", ["https://a.example.com", "https://b.example.com"]):
+        gateway = GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={"token_issuer": value, "client_id": "test-client", "client_secret": "test-secret"},  # pragma: allowlist secret
+        )
+        assert gateway.oauth_config["token_issuer"] == value
+
+
 def test_oauth_manager_non_string_token_url_raises():
     """Test that OAuthManager raises error for non-string token_url."""
     from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
