@@ -257,7 +257,7 @@ mcpContextForge:
     APP_NAME: ContextForge            # public-facing name of the gateway
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
-    FORWARDED_ALLOW_IPS: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # proxies allowed to set X-Forwarded-For/Proto; narrow to your ingress/proxy CIDR
+    FORWARDED_ALLOW_IPS: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # proxies allowed to set X-Forwarded-For/Proto; default trusts all in-cluster peers, narrow to your ingress/proxy CIDR
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
     CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
 

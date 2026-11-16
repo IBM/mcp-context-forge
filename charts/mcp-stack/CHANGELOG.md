@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Breaking Changes
 
-- **Forwarded headers are trusted only from `FORWARDED_ALLOW_IPS`** - The gateway now honors `X-Forwarded-For` and `X-Forwarded-Proto` only from listed proxy addresses. The chart default `mcpContextForge.config.FORWARDED_ALLOW_IPS` trusts loopback and the RFC 1918 ranges, so in-cluster ingress and the bundled nginx keep working. Narrow it to your ingress or proxy CIDR.
+- **Forwarded headers are trusted only from `FORWARDED_ALLOW_IPS`** - The gateway now honors `X-Forwarded-For` and `X-Forwarded-Proto` only from listed proxy addresses. The chart default `mcpContextForge.config.FORWARDED_ALLOW_IPS` trusts loopback and the RFC 1918 ranges, so in-cluster ingress and the bundled nginx keep working. This default also trusts every pod and node in those ranges, and any of them can set the client IP. Narrow the value to your ingress or proxy CIDR.
 
 - **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Before `helm upgrade`, add matching root policy to `mcpContextForge.config`: set `ROOT_ALLOWED_SCHEMES` for network `DEFAULT_ROOTS`, or set both `ROOT_ALLOW_FILE_SCHEME: "true"` and `ROOT_ALLOWED_FILE_PREFIXES` for `file://` roots. Invalid `DEFAULT_ROOTS` abort gateway startup.
 - **Scoped backup exports must exclude roots** - Unfiltered exports include roots and require unrestricted platform-admin credentials. Configure scoped backup jobs with an explicit roots exclusion, or use unrestricted platform-admin credentials.
