@@ -1564,7 +1564,7 @@ class Settings(BaseSettings):
     toolops_temperature: float = Field(default=0.1, description="Sampling temperature for ToolOps LLM calls")
 
     # OpenAI Provider Settings
-    openai_api_key: str = Field(default="", description="OpenAI API key")
+    openai_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI API key")
     openai_base_url: str = Field(default="", description="Base URL for OpenAI-compatible endpoints")
     openai_model: str = Field(default="", description="OpenAI model name")
     openai_max_retries: int = Field(default=2, description="Maximum number of retries for OpenAI requests")
@@ -1575,7 +1575,7 @@ class Settings(BaseSettings):
     )
 
     # Azure OpenAI Provider Settings
-    azure_openai_api_key: str = Field(default="", description="Azure OpenAI API key")
+    azure_openai_api_key: SecretStr = Field(default=SecretStr(""), description="Azure OpenAI API key")
     azure_openai_endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
     azure_openai_api_version: str = Field(default="", description="Azure OpenAI API version")
     azure_openai_deployment: str = Field(default="", description="Azure OpenAI deployment name")
@@ -1588,7 +1588,7 @@ class Settings(BaseSettings):
     )
 
     # Anthropic Provider Settings
-    anthropic_api_key: str = Field(default="", description="Anthropic API key")
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key")
     anthropic_model: str = Field(default="", description="Anthropic Claude model name")
     anthropic_max_tokens: int = Field(default=4096, description="Maximum tokens for Anthropic requests")
     anthropic_max_retries: int = Field(default=2, description="Maximum number of retries for Anthropic requests")
@@ -1598,7 +1598,7 @@ class Settings(BaseSettings):
     aws_bedrock_region: str = Field(default="", description="AWS region for Bedrock")
     aws_bedrock_max_tokens: int = Field(default=4096, description="Maximum tokens for AWS Bedrock requests")
     aws_access_key_id: str = Field(default="", description="AWS Access Key ID")
-    aws_secret_access_key: str = Field(default="", description="AWS Secret Access Key")
+    aws_secret_access_key: SecretStr = Field(default=SecretStr(""), description="AWS Secret Access Key")
     aws_session_token: str = Field(default="", description="AWS Session Token")
 
     # Ollama Provider Settings
