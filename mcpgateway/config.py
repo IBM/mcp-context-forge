@@ -399,7 +399,7 @@ class Settings(BaseSettings):
             "/teams/",
             "/llmchat/",
             "/api/logs/",
-            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity/Rust forwards); not browser-reachable
+            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity); not browser-reachable
         ],
         description="Paths exempt from CSRF protection",
     )
