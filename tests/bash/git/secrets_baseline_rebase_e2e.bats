@@ -12,9 +12,6 @@
 
 load test_helper/helpers
 
-# Same pinned spec the driver and the Makefile use.
-DETECT_SECRETS_TEST_SPEC='git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976'
-
 setup() {
     setup_standard_repo
 }
@@ -36,21 +33,6 @@ install_driver() {
     printf '%s\n' '.secrets.baseline merge=secrets-baseline' > .gitattributes
     git add .gitattributes
     git commit -qm "configure secrets-baseline merge driver"
-}
-
-# rescan_baseline [path...]: refresh .secrets.baseline with the pinned
-# detect-secrets, limited to the given paths.
-rescan_baseline() {
-    uv tool run --from "$DETECT_SECRETS_TEST_SPEC" detect-secrets scan \
-        --update .secrets.baseline --use-all-plugins "$@" >/dev/null
-}
-
-# set_baseline_verdict <true|false>: mark every baseline entry with the given
-# is_secret verdict (what `make detect-secrets-audit` would record).
-set_baseline_verdict() {
-    jq ".results |= with_entries(.value |= map(. + {is_secret: $1}))" \
-        .secrets.baseline > .secrets.baseline.new
-    mv .secrets.baseline.new .secrets.baseline
 }
 
 # setup_rebase_conflict <verdict>: build the two-sided history that makes a
