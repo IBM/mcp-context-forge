@@ -1027,16 +1027,13 @@ REDIS_LEADER_TTL=10
 REDIS_LEADER_HEARTBEAT_INTERVAL=3
 ```
 
-### Redis Cluster Mode (degraded)
+### Redis Cluster Mode
 
 Set `REDIS_CLUSTER_MODE=true` to use `redis.asyncio.RedisCluster` and stop `MOVED`/`ASK` crash-loops in leader election. `/0` in `REDIS_URL` is stripped; any other database number fails at startup. `REDIS_SSL*` settings apply to the cluster client.
 
 Cluster mode has these limitations:
 
-- **No Pub/Sub.** Async `RedisCluster` has no `publish()` or `pubsub()`. Cross-worker cache invalidation, session broadcasting, cancellation propagation and the Redis server-event bus are unavailable.
-- **Stale auth caches.** `AuthCache` cannot broadcast token-revocation, team and role invalidation. Other workers keep stale entries until the local TTL expires, so use short auth-cache TTLs.
 - **Cross-slot operations.** Multi-key pipelines (`server_classification_service.py`) and multi-key Lua scripts (`redis_event_store.py`) can fail with cross-slot errors.
-
 
 ### Hiredis High-Performance Parser
 
