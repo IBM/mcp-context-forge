@@ -17,6 +17,7 @@ import pytest
 # First-Party
 from mcpgateway.utils.redis_client import (
     _build_ssl_kwargs,
+    _create_cluster_client,
     _get_async_parser_class,
     _is_hiredis_available,
     _reset_client,
@@ -1015,6 +1016,19 @@ class TestMaskRedisUrl:
         assert "secret" not in result
         assert ":***@" in result
 
+    def test_masks_percent_encoded_password(self):
+        """Percent-encoded password is fully masked and the username kept."""
+        from mcpgateway.utils.redis_client import _mask_redis_url
+
+        result = _mask_redis_url("redis://user:p%40ss%3Aw@host:6379")
+        assert result == "redis://user:***@host:6379"
+
+    def test_masks_ipv6_host(self):
+        """IPv6 host keeps its brackets."""
+        from mcpgateway.utils.redis_client import _mask_redis_url
+
+        assert _mask_redis_url("redis://:secret@[::1]:6379") == "redis://:***@[::1]:6379"
+
 
 class TestClusterMode:
     """Tests for REDIS_CLUSTER_MODE setting."""
@@ -1064,6 +1078,7 @@ class TestClusterMode:
             mock_settings.redis_health_check_interval = 30
             mock_settings.redis_parser = "auto"
             mock_settings.redis_cluster_mode = True
+            mock_settings.redis_ssl = False
 
             mock_aioredis = MagicMock()
             mock_aioredis.RedisCluster = mock_redis_cluster_cls
@@ -1108,6 +1123,7 @@ class TestClusterMode:
             mock_settings.redis_health_check_interval = 30
             mock_settings.redis_parser = "auto"
             mock_settings.redis_cluster_mode = True
+            mock_settings.redis_ssl = False
 
             mock_aioredis = MagicMock()
             mock_aioredis.RedisCluster = mock_redis_cluster_cls
@@ -1124,6 +1140,32 @@ class TestClusterMode:
                     assert "parser_class" not in call_args[1]
                     assert "retry_on_timeout" not in call_args[1]
                     assert "single_connection_client" not in call_args[1]
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_applies_ssl_kwargs(self):
+        """TLS settings reach RedisCluster.from_url when REDIS_SSL=true."""
+        mock_cluster = AsyncMock()
+        mock_cls = MagicMock()
+        mock_cls.from_url = MagicMock(return_value=mock_cluster)
+        mock_aioredis = MagicMock(RedisCluster=mock_cls)
+        settings = MagicMock(redis_url="rediss://redis-cluster:6379", redis_ssl=True)
+
+        with patch("mcpgateway.utils.redis_client._build_ssl_kwargs", return_value={"ssl_ca_certs": "/ca.pem"}):
+            await _create_cluster_client(settings, mock_aioredis)
+
+        assert mock_cls.from_url.call_args[1]["ssl_ca_certs"] == "/ca.pem"
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_warns_rediss_without_ssl_flag(self, caplog):
+        """rediss:// with REDIS_SSL=false logs the same warning as standalone."""
+        mock_cls = MagicMock()
+        mock_cls.from_url = MagicMock(return_value=AsyncMock())
+        settings = MagicMock(redis_url="rediss://redis-cluster:6379", redis_ssl=False)
+
+        with caplog.at_level("WARNING"):
+            await _create_cluster_client(settings, MagicMock(RedisCluster=mock_cls))
+
+        assert "REDIS_SSL=false" in caplog.text
 
     @pytest.mark.asyncio
     async def test_cluster_mode_non_zero_db_raises_error(self):

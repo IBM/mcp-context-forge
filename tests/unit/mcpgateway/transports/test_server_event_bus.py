@@ -691,6 +691,21 @@ async def test_redis_subscribe_missing_client_raises(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_redis_subscribe_cluster_client_without_pubsub_raises(monkeypatch):
+    """subscribe() raises BusBackendError when the client has no pubsub() (Redis Cluster)."""
+    # First-Party
+    from mcpgateway.transports.server_event_bus import BusBackendError, RedisServerEventBus
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.server_event_bus.get_redis_client",
+        AsyncMock(return_value=object()),
+    )
+    bus = RedisServerEventBus(store=_FakeStore())
+    with pytest.raises(BusBackendError, match="does not support pubsub"):
+        await bus.subscribe("sid-cluster").__anext__()
+
+
+@pytest.mark.asyncio
 async def test_redis_subscribe_subscribe_failure_calls_aclose(monkeypatch):
     """pubsub.subscribe raising must propagate AND invoke aclose cleanup."""
     # First-Party
