@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Helper tests for tool_service schema and jq utilities.
+Helper tests for tool_service schema and response filter utilities.
 """
 
 # Third-Party
@@ -35,54 +35,96 @@ def test_get_validator_fallback_draft4():
     assert validator_cls is not None
 
 
-def test_extract_using_jq_edge_cases():
-    assert tool_service.extract_using_jq({"a": 1}, "") == {"a": 1}
-    assert tool_service.extract_using_jq("not json", ".a") == ["Invalid JSON string provided."]
-    assert tool_service.extract_using_jq(123, ".a") == ["Input data must be a JSON string, dictionary, or list."]
-
-
-def test_extract_using_jq_rejects_restricted_builtin():
-    """A stored hostile filter is refused at invoke time, not executed."""
+def test_apply_response_filter_edge_cases():
+    """Input that cannot be filtered comes back as an error block, never as plain output."""
     # First-Party
     from mcpgateway.common.models import TextContent
-    from mcpgateway.services import tool_service
 
-    result = tool_service.extract_using_jq({"a": 1}, "$ENV")
-    assert result == [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
+    assert tool_service.apply_response_filter({"a": 1}, "") == {"a": 1}
+    bad_json = tool_service.apply_response_filter("not json", "response.a")
+    bad_type = tool_service.apply_response_filter(123, "response.a")
+    assert bad_json == [TextContent(type="text", text="Invalid JSON string provided.")]
+    assert bad_type == [TextContent(type="text", text="Input data must be a JSON string, dictionary, or list.")]
+    assert tool_service._is_filter_error(bad_json) and tool_service._is_filter_error(bad_type)
 
 
-def test_extract_using_jq_does_not_echo_engine_errors(monkeypatch):
+def test_apply_response_filter_rejects_a_filter_that_is_not_cel():
+    """A stored jq-era filter is reported at invoke time, not executed."""
+    # First-Party
+    from mcpgateway.common.models import TextContent
+
+    result = tool_service.apply_response_filter({"a": 1}, "$ENV")
+    assert result == [TextContent(type="text", text="jsonpath filter is not a valid CEL expression")]
+
+
+def test_apply_response_filter_does_not_echo_engine_errors(monkeypatch):
     """Filter engine detail goes to the log, never to the caller."""
     # First-Party
     from mcpgateway.common.models import TextContent
-    from mcpgateway.services import tool_service
-    from mcpgateway.utils.jq_runner import JqFilterError
+    from mcpgateway.utils.cel_runner import CelEvaluationError
 
-    monkeypatch.setattr(tool_service, "run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterError("secret path /etc/app/x")))
-    result = tool_service.extract_using_jq({"a": 1}, ".a")
+    monkeypatch.setattr(tool_service, "evaluate_value", lambda *_args: (_ for _ in ()).throw(CelEvaluationError("secret path /etc/app/x")))
+    result = tool_service.apply_response_filter({"a": 1}, "response.a")
     assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
     assert "secret path" not in result[0].text
 
 
-def test_extract_using_jq_reports_timeout_distinctly(monkeypatch):
+def test_apply_response_filter_reports_timeout_distinctly(monkeypatch):
     """A timed-out filter is distinguishable from a malformed one."""
     # First-Party
     from mcpgateway.common.models import TextContent
-    from mcpgateway.services import tool_service
-    from mcpgateway.utils.jq_runner import JqFilterTimeout
+    from mcpgateway.utils.cel_runner import CelTimeout
 
-    monkeypatch.setattr(tool_service, "run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterTimeout("too slow")))
-    result = tool_service.extract_using_jq({"a": 1}, ".a")
+    monkeypatch.setattr(tool_service, "evaluate_value", lambda *_args: (_ for _ in ()).throw(CelTimeout("too slow")))
+    result = tool_service.apply_response_filter({"a": 1}, "response.a")
     assert result == [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
 
 
-def test_extract_using_jq_reports_busy_distinctly_from_timeout(monkeypatch):
+def test_apply_response_filter_reports_busy_distinctly_from_timeout(monkeypatch):
     """A full pool with no free worker is distinguishable from a genuine timeout."""
     # First-Party
     from mcpgateway.common.models import TextContent
-    from mcpgateway.services import tool_service
-    from mcpgateway.utils.jq_runner import JqFilterBusy
+    from mcpgateway.utils.cel_runner import CelBusy
 
-    monkeypatch.setattr(tool_service, "run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterBusy("no free worker")))
-    result = tool_service.extract_using_jq({"a": 1}, ".a")
+    monkeypatch.setattr(tool_service, "evaluate_value", lambda *_args: (_ for _ in ()).throw(CelBusy("no free worker")))
+    result = tool_service.apply_response_filter({"a": 1}, "response.a")
     assert result == [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
+
+
+
+def test_as_content_blocks_keeps_a_block_list_as_blocks():
+    """A filter that selected whole content blocks delivers them as blocks."""
+    # First-Party
+    from mcpgateway.common.models import ImageContent, TextContent
+
+    blocks = [{"type": "text", "text": "a"}, {"type": "image", "data": "x", "mimeType": "image/png"}]
+    assert tool_service._as_content_blocks(blocks) == [TextContent(type="text", text="a"), ImageContent(type="image", data="x", mime_type="image/png")]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [{"type": "text"}],
+        [{"type": "foo"}],
+        [{"type": 5}],
+        [{"type": "text", "text": "a"}, 1],
+    ],
+)
+def test_as_content_blocks_wraps_a_malformed_block_list_as_text(value):
+    """A list that only looks like content blocks becomes one text block instead of a validation crash."""
+    # First-Party
+    from mcpgateway.common.models import TextContent
+
+    # Third-Party
+    import orjson
+
+    assert tool_service._as_content_blocks(value) == [TextContent(type="text", text=orjson.dumps(value).decode())]
+
+
+@pytest.mark.parametrize("value,expected", [("a", '"a"'), (1, "1"), ({"a": 1}, '{"a":1}'), (["a", "b"], '["a","b"]'), ([], "[]"), (None, "null"), ([{"a": 1}], '[{"a":1}]')])
+def test_as_content_blocks_wraps_anything_else_as_text(value, expected):
+    """A value picked out of a block becomes one text block carrying its JSON."""
+    # First-Party
+    from mcpgateway.common.models import TextContent
+
+    assert tool_service._as_content_blocks(value) == [TextContent(type="text", text=expected)]

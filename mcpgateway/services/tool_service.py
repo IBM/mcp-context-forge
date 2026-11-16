@@ -79,7 +79,7 @@ from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, RESPONSE_FILTER_VARIABLE, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_oauth import resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -112,8 +112,7 @@ from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_e
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
-from mcpgateway.utils.jq_guard import assert_safe_jq_filter
-from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
+from mcpgateway.utils.cel_runner import CelBusy, CelError, CelSyntaxError, CelTimeout, evaluate_value
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -657,7 +656,7 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     ``ToolResult.content`` with ``is_error=True``. On the 2xx success path that only
     happens when the tool declares an ``outputSchema``; otherwise the raw text is
     passed through as a successful result. Never pass the result to
-    ``extract_using_jq``: ``TextContent`` is not JSON-serializable, so the filter
+    ``apply_response_filter``: ``TextContent`` is not JSON-serializable, so the filter
     fails and replaces this message with a generic jsonpath error.
 
     Args:
@@ -851,90 +850,85 @@ def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Opti
     return None
 
 
-def extract_using_jq(data, jq_filter=""):
-    """
-    Extracts data from a given input (string, dict, or list) using a jq filter string.
+def apply_response_filter(data, expression=""):
+    """Apply a tool's response filter, a CEL expression, to its response.
 
-    The filter is refused if it uses a restricted jq built-in, then delegated to
-    the sandboxed runner in :mod:`mcpgateway.utils.jq_runner`, which owns program
-    compilation, caching, and the worker pool. A refusal, a timeout, or an
-    execution failure comes back as a single ``TextContent`` in a list, which
+    The expression sees the response as ``response`` and may return any JSON
+    value. It runs in the sandboxed CEL runner, which owns compilation, caching
+    and the worker pool. A timeout, a filter that does not compile, or a
+    failed evaluation comes back as a single ``TextContent`` in a list, which
     callers must treat as an error result rather than as tool output.
 
     Args:
-        data (str, dict, list): The input JSON data. Can be a string, dict, or list.
-        jq_filter (str): The jq filter string to extract the desired data.
+        data (str, dict, list): The response. A string is parsed as JSON first.
+        expression (str): The CEL expression.
 
     Returns:
-        The result of applying the jq filter to the input data.
+        The value the expression produced, or ``data`` unchanged when there is no filter.
 
     Examples:
-        >>> extract_using_jq('{"a": 1, "b": 2}', '.a')
-        [1]
-        >>> extract_using_jq({'a': 1, 'b': 2}, '.b')
-        [2]
-        >>> extract_using_jq('[{"a": 1}, {"a": 2}]', '.[].a')
+        >>> apply_response_filter('{"a": 1, "b": 2}', 'response.a')
+        1
+        >>> apply_response_filter({'a': 1, 'b': 2}, 'response.b')
+        2
+        >>> apply_response_filter('[{"a": 1}, {"a": 2}]', 'response.map(x, x.a)')
         [1, 2]
-        >>> extract_using_jq('not a json', '.a')
-        ['Invalid JSON string provided.']
-        >>> extract_using_jq({'a': 1}, '')
+        >>> apply_response_filter('not a json', 'response.a')
+        [TextContent(type='text', text='Invalid JSON string provided.', annotations=None, meta=None)]
+        >>> apply_response_filter({'a': 1}, '')
         {'a': 1}
     """
-    if not jq_filter or jq_filter == "":
+    expression = str(expression or "").strip()
+    if not expression:
         return data
 
-    # Validate that jq_filter looks like a valid jq expression
-    jq_filter_str = str(jq_filter).strip()
-    if not jq_filter_str:
-        return data
-
-    # Check if it looks like an email address (common mistake when jsonpath_filter
-    # field contains corrupted data). Intentionally simple regex to avoid false
-    # positives with valid jq expressions like .foo|.bar
-    if re.match(r"^[^.\[\]|]+@[^.\[\]|]+\.[^.\[\]|]+$", jq_filter_str):
-        logger.warning("Invalid jq filter (email address): %s. Treating as empty filter.", jq_filter_str)
-        return data
-
-    # Track if input was originally a string (for error handling)
-    was_string = isinstance(data, str)
-
-    if was_string:
-        # If the input is a string, parse it as JSON
+    if isinstance(data, str):
         try:
             data = orjson.loads(data)
         except orjson.JSONDecodeError:
-            return ["Invalid JSON string provided."]
+            return [TextContent(type="text", text="Invalid JSON string provided.")]
     elif not isinstance(data, (dict, list)):
-        # If the input is not a string, dict, or list, raise an error
-        return ["Input data must be a JSON string, dictionary, or list."]
-
-    # Refuse restricted built-ins before execution. This covers rows written
-    # before the schema validator existed, and any writer that bypasses it.
-    try:
-        assert_safe_jq_filter(jq_filter_str)
-    except ValueError as exc:
-        logger.warning("Refused jq filter: %s", exc)
-        return [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
+        return [TextContent(type="text", text="Input data must be a JSON string, dictionary, or list.")]
 
     try:
-        result = run_jq_filter(jq_filter_str, data)
-        if result == [None]:
-            return [TextContent(type="text", text="Error applying jsonpath filter")]
-    except JqFilterTimeout:
-        logger.warning("jq filter exceeded its time limit and was terminated")
+        return evaluate_value(expression, {RESPONSE_FILTER_VARIABLE: data})
+    except CelTimeout:
+        logger.warning("Response filter exceeded its time limit and was terminated")
         return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
-    except JqFilterBusy:
-        logger.warning("jq filter sandbox had no free worker")
+    except CelBusy:
+        logger.warning("Response filter sandbox had no free worker")
         return [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
-    except JqFilterError as exc:
-        logger.warning("jq filter failed: %s", exc)
+    except CelSyntaxError as exc:
+        logger.error("Response filter is not a valid CEL expression: %s", exc)
+        return [TextContent(type="text", text="jsonpath filter is not a valid CEL expression")]
+    except CelError as exc:
+        logger.error("Response filter failed: %s", exc)
         return [TextContent(type="text", text="Error applying jsonpath filter")]
 
-    return result
+
+def _as_content_blocks(value: Any) -> list:
+    """Turn a filter result into MCP content blocks.
+
+    ``ToolResult.content`` must be a list of content blocks. A result that
+    already is a list is returned as is. Any other value becomes one text block
+    holding the value as JSON.
+
+    Args:
+        value: The value the filter returned.
+
+    Returns:
+        A list of content blocks.
+    """
+    if isinstance(value, list) and value:
+        try:
+            return ToolResult(content=value).content
+        except ValidationError:
+            pass
+    return [TextContent(type="text", text=orjson.dumps(value).decode())]
 
 
-def _is_jq_filter_error(filtered_response) -> bool:
-    """Report whether ``extract_using_jq`` returned an error rather than data.
+def _is_filter_error(filtered_response) -> bool:
+    """Report whether ``apply_response_filter`` returned an error rather than data.
 
     Refusals, timeouts, and execution failures come back as a list holding a
     single ``TextContent``. Filter output never contains ``TextContent``
@@ -943,7 +937,7 @@ def _is_jq_filter_error(filtered_response) -> bool:
     which are plain JSON data by the time the filter runs.
 
     Args:
-        filtered_response: Whatever ``extract_using_jq`` returned.
+        filtered_response: Whatever ``apply_response_filter`` returned.
 
     Returns:
         True when the value is an error result that must not be reported as a
@@ -6266,13 +6260,12 @@ class ToolService(BaseService):
                                 result = {"response_text": response.text[: settings.rest_response_text_max_length]} if response.text else {"error": "Empty response body"}
                             if parse_error is not None and tool_output_schema:
                                 # A non-JSON body cannot satisfy outputSchema, so report the parse error.
-                                # Skip jq here: TextContent is not JSON-serializable.
+                                # Skip the filter here: TextContent is not JSON-serializable.
                                 tool_result = ToolResult(content=parse_error, is_error=True)
                             else:
                                 logger.debug("REST API tool response: %s", result)
-                                filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
-                                # Check if extract_using_jq returned an error (list of TextContent objects)
-                                if _is_jq_filter_error(filtered_response):
+                                filtered_response = await asyncio.to_thread(apply_response_filter, result, tool_jsonpath_filter)
+                                if _is_filter_error(filtered_response):
                                     # Error case - use the TextContent directly
                                     tool_result = ToolResult(content=filtered_response, is_error=True)
                                     success = False
@@ -6967,7 +6960,7 @@ class ToolService(BaseService):
                             structured = dump.get("structuredContent")
                             if structured is None:
                                 structured = dump.get("structured_content")
-                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(apply_response_filter, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
@@ -6975,9 +6968,11 @@ class ToolService(BaseService):
                             # A refused or timed-out filter must be reported as an error here
                             # too. Without this the refusal string was recorded as a successful
                             # invocation carrying it as if it were real tool output.
-                            if _is_jq_filter_error(filtered_response):
+                            if _is_filter_error(filtered_response):
                                 is_err = True
                                 structured = None
+                            elif tool_jsonpath_filter:
+                                filtered_response = _as_content_blocks(filtered_response)
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
                             logger.debug("Final tool_result: %s", tool_result)
