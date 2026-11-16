@@ -912,6 +912,73 @@ async def _assert_session_owner_or_admin(request: Request, user, session_id: str
     raise HTTPException(status_code=403, detail="Session access denied")
 
 
+async def _resolve_elicitation_target(request: Request, user, params: Dict[str, Any]) -> str:
+    """Pick the session that receives an ``elicitation/create`` request.
+
+    A named session must belong to the requester (admins may name any session).
+    Without a named session, only elicitation-capable sessions owned by the
+    requester are candidates, for admins too.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        params: JSON-RPC params of the ``elicitation/create`` call.
+
+    Returns:
+        The target session identifier.
+
+    Raises:
+        JSONRPCError: -32602 for a malformed session id, -32002 if the named session
+            does not exist, -32003 if the requester does not own it, -32000 if no
+            owned elicitation-capable session exists.
+    """
+    session_id = params.get("session_id") or params.get("sessionId")
+    if session_id is not None and not isinstance(session_id, str):
+        raise JSONRPCError(-32602, "Invalid elicitation session_id", {"method": "elicitation/create"})
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    # get_user_email() falls back to "unknown"; such identities must never match each other's sessions.
+    has_identity = bool(requester_email) and requester_email != "unknown"
+
+    if session_id:
+        if not requester_is_admin and not has_identity:
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "elicitation/create"})
+        try:
+            await _assert_session_owner_or_admin(request, user, session_id)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                raise JSONRPCError(-32002, "Session not found", {"method": "elicitation/create"}) from exc
+            raise JSONRPCError(-32003, str(exc.detail), {"method": "elicitation/create"}) from exc
+        return session_id
+
+    if has_identity:
+        for candidate in await session_registry.get_elicitation_capable_sessions():
+            if await session_registry.get_session_owner(candidate) == requester_email:
+                return candidate
+    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"method": "elicitation/create"})
+
+
+def _bounded_elicitation_timeout(params: Dict[str, Any]) -> float:
+    """Validate the caller-supplied elicitation timeout and cap it at the configured default.
+
+    Args:
+        params: JSON-RPC params of the ``elicitation/create`` call.
+
+    Returns:
+        Timeout in seconds, at most ``settings.mcpgateway_elicitation_timeout``.
+
+    Raises:
+        JSONRPCError: -32602 if the timeout is not a positive finite number.
+    """
+    ceiling = settings.mcpgateway_elicitation_timeout
+    value = params.get("timeout")
+    if value is None:
+        return float(ceiling)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)) or value <= 0:
+        raise JSONRPCError(-32602, "Invalid elicitation timeout", {"method": "elicitation/create"})
+    return float(min(value, ceiling))
+
+
 async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
     """Authorize a notifications/cancelled request for a specific run id.
 
@@ -4599,8 +4666,9 @@ async def message_endpoint(
 
                     elicitation_service = get_elicitation_service()
                     try:
+                        pending = elicitation_service.get_pending_elicitation(request_id)
                         elicit_result = ElicitResult(**result_data)
-                        if elicitation_service.complete_elicitation(request_id, elicit_result):
+                        if pending is not None and pending.downstream_session_id == session_id and elicitation_service.complete_elicitation(request_id, elicit_result):
                             logger.info(f"Completed elicitation {request_id} from session {session_id}")
                             is_elicitation_response = True
                     except Exception as e:
@@ -9635,15 +9703,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.warning("Invalid elicitation params: %s", e)
                 raise JSONRPCError(-32602, safe_error_detail(e, "Invalid elicitation params"), params)
 
-            # Get target session (from params or find elicitation-capable session)
-            target_session_id = params.get("session_id") or params.get("sessionId")
-            if not target_session_id:
-                # Find an elicitation-capable session
-                capable_sessions = await session_registry.get_elicitation_capable_sessions()
-                if not capable_sessions:
-                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
-                target_session_id = capable_sessions[0]
-                logger.debug("Selected session %s for elicitation", target_session_id)
+            timeout = _bounded_elicitation_timeout(params)
+            target_session_id = await _resolve_elicitation_target(request, user, params)
 
             # Verify session has elicitation capability
             if not await session_registry.has_elicitation_capability(target_session_id):
@@ -9651,9 +9712,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
             # Get elicitation service and create request
             elicitation_service = get_elicitation_service()
-
-            # Extract timeout from params or use default
-            timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
 
             try:
                 # Create elicitation request - this stores it and waits for response
