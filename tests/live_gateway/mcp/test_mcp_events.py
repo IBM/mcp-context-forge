@@ -11,8 +11,11 @@ It does not qualify durable subscription custody or external callback delivery.
 """
 
 # Standard
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Generator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import secrets
@@ -21,6 +24,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from threading import Thread
 import time
 from typing import Any
 
@@ -71,10 +75,50 @@ class SyntheticEventOwner:
         return {"id": "sub_original-owner", "refreshBefore": "2026-11-16T00:00:00Z", "cursor": None, "truncated": False}
 
 
+@contextmanager
+def legacy_tool_endpoint() -> Generator[str, None, None]:
+    """Own a private HTTP provider for actual pre-existing tool dispatch.
+
+    Yields:
+        The fixed loopback URL; no external provider or platform record is used.
+    """
+
+    class LegacyToolHandler(BaseHTTPRequestHandler):
+        """Return bounded fixture evidence from the real outbound HTTP call."""
+
+        def do_POST(self) -> None:  # noqa: N802 - HTTP handler interface.
+            """Echo only the reviewed synthetic tool argument."""
+            size = int(self.headers.get("Content-Length", "0"))
+            if self.path != "/legacy-read" or not 0 < size <= 1024:
+                self.send_error(400)
+                return
+            payload = json.loads(self.rfile.read(size))
+            response = json.dumps({"echo": payload["value"]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            """Keep provider bodies and arguments out of subprocess output."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LegacyToolHandler)
+    worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    try:
+        worker.start()
+        yield f"http://127.0.0.1:{server.server_port}/legacy-read"
+    finally:
+        server.shutdown()
+        worker.join(timeout=5)
+        server.server_close()
+        assert not worker.is_alive()
+
+
 def app_factory() -> FastAPI:
     """Wrap the real gateway lifespan with one synthetic application owner."""
     # First-Party
-    from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, Server, SessionLocal, UserRole
+    from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, Server, SessionLocal, Tool, UserRole
     from mcpgateway.main import app
     from mcpgateway.services.mcp_events import event_provider
 
@@ -83,7 +127,7 @@ def app_factory() -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         """Seed only the subprocess database and release provider registration."""
-        with event_provider(_SERVER, SyntheticEventOwner()):
+        with legacy_tool_endpoint() as legacy_url, event_provider(_SERVER, SyntheticEventOwner()):
             async with original(application):
                 with SessionLocal() as db:
                     db.add(EmailUser(email=_OTHER, full_name="Fixture other", is_active=True, is_admin=False))
@@ -96,7 +140,21 @@ def app_factory() -> FastAPI:
                     db.add(role)
                     db.flush()
                     db.add(UserRole(user_email=_OTHER, role_id=role.id, scope="global", granted_by=_OWNER))
-                    db.add(Server(id=_SERVER, name="Events fixture", visibility="team", team_id="events-team-a", owner_email=_OWNER))
+                    legacy_tool = Tool(
+                        id="events-legacy-tool",
+                        name="fixture-legacy-echo",
+                        original_name="fixture-legacy-echo",
+                        custom_name="fixture-legacy-echo",
+                        custom_name_slug="fixture-legacy-echo",
+                        url=legacy_url,
+                        integration_type="REST",
+                        request_type="POST",
+                        visibility="team",
+                        team_id="events-team-a",
+                        owner_email=_OWNER,
+                        input_schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"], "additionalProperties": False},
+                    )
+                    db.add(Server(id=_SERVER, name="Events fixture", visibility="team", team_id="events-team-a", owner_email=_OWNER, tools=[legacy_tool]))
                     db.add(Server(id="events-unconfigured", name="No provider", visibility="team", team_id="events-team-a", owner_email=_OWNER))
                     db.commit()
                 yield
@@ -105,8 +163,18 @@ def app_factory() -> FastAPI:
     return app
 
 
+@dataclass(frozen=True)
+class IsolatedGateway:
+    """Retain fixture handles without exposing the ephemeral signing key."""
+
+    client: httpx.Client = field(repr=False)
+    signing_key: str = field(repr=False)
+    enabled: bool
+    log_path: Path
+
+
 @pytest.fixture(params=[True, False], ids=["enabled", "disabled"])
-def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[tuple[httpx.Client, str, bool, Path]]:
+def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[IsolatedGateway]:
     """Start the real gateway with private fixture storage and current auth."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -137,6 +205,7 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator
         "OBSERVABILITY_ENABLED": "false",
         "RATE_LIMITING_ENABLED": "false",
         "AUTH_CACHE_ENABLED": "false",
+        "SSRF_ALLOW_LOCALHOST": "true",  # Only this isolated fixture provider.
         "LOG_LEVEL": "DEBUG",
         "LOG_DETAILED_REQUESTS": "true",
         "JSON_RESPONSE_ENABLED": "true",
@@ -167,7 +236,7 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator
                     time.sleep(0.1)
                 else:
                     pytest.fail("Isolated gateway startup timed out")
-                yield client, signing_key, request.param, log_path
+                yield IsolatedGateway(client, signing_key, request.param, log_path)
         finally:
             process.terminate()
             try:
@@ -182,9 +251,10 @@ def isolated_gateway(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator
             lock_path.unlink(missing_ok=True)
 
 
-def test_events_black_box_authenticated_endpoint_and_denials(isolated_gateway: tuple[httpx.Client, str, bool, Path]) -> None:
+def test_events_black_box_authenticated_endpoint_and_denials(isolated_gateway: IsolatedGateway) -> None:
     """Exercise native methods, both handshakes, authorization, and safe errors."""
-    client, key, enabled, log_path = isolated_gateway
+    client, key = isolated_gateway.client, isolated_gateway.signing_key
+    enabled, log_path = isolated_gateway.enabled, isolated_gateway.log_path
     owner = make_test_jwt(_OWNER, is_admin=True, teams=None, secret=key)
     owner_headers = {**make_auth_headers(owner), "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28"}
     endpoint = f"/servers/{_SERVER}/mcp"
@@ -195,6 +265,8 @@ def test_events_black_box_authenticated_endpoint_and_denials(isolated_gateway: t
         arguments = dict(params or {})
         if effective_headers.get("MCP-Protocol-Version") == "2026-07-28":
             effective_headers["Mcp-Method"] = method
+            if method == "tools/call":
+                effective_headers["Mcp-Name"] = str(arguments["name"])
             arguments["_meta"] = {
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
                 "io.modelcontextprotocol/clientInfo": {"name": "events-fixture", "version": "1"},
@@ -213,7 +285,12 @@ def test_events_black_box_authenticated_endpoint_and_denials(isolated_gateway: t
         headers={key: value for key, value in owner_headers.items() if key != "MCP-Protocol-Version"},
     ).json()
     assert ("events" in legacy["result"]["capabilities"]) is enabled
-    assert "result" in rpc("tools/list").json()
+    tools = rpc("tools/list").json()["result"]["tools"]
+    assert any(tool["name"] == "fixture-legacy-echo" for tool in tools)
+    for value, headers in [("fixture-legacy-v2", owner_headers), ("fixture-legacy-v1", {key: value for key, value in owner_headers.items() if key != "MCP-Protocol-Version"})]:
+        called = rpc("tools/call", {"name": "fixture-legacy-echo", "arguments": {"value": value}}, headers=headers).json()
+        assert "result" in called and called["result"].get("isError") is not True, called
+        assert any(json.loads(item["text"]) == {"echo": value} for item in called["result"]["content"] if item["type"] == "text"), called
     if not enabled:
         assert rpc("events/list").json()["error"]["code"] == -32601
         return
