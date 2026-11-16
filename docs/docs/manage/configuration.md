@@ -1269,6 +1269,8 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `CEL_EXECUTION` | Where tool validation policies (CEL) are evaluated | `subprocess` | `subprocess`, `inprocess` |
 | `CEL_TIMEOUT_SECONDS` | Wall-clock limit for one policy evaluation | `1.0` | 0 < float ≤ 1.0 |
 | `CEL_WORKERS` | Policy sandbox worker processes per gateway process | `2` | int > 0 |
+| `CEL_FILTER_TIMEOUT_SECONDS` | Wall-clock limit for one tool response filter (`jsonpath_filter`) | `2.0` | 0 < float ≤ 60 |
+| `CEL_FILTER_WORKERS` | Response-filter sandbox worker processes per gateway process | `2` | int > 0 |
 
 The forbidden-pattern settings are the global default of the **tool validation policy**. A gateway or a tool can
 override them with its own CEL expression. See [Tool Description Content Validation](../best-practices/input-validation.md#tool-description-content-validation).

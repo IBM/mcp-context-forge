@@ -2879,20 +2879,20 @@ class Settings(  # pylint: disable=too-many-ancestors
     # jq filter sandbox — see docs/superpowers/specs/2026-08-11-jq-env-disclosure-design.md
     jq_filter_execution: Literal["subprocess", "inprocess"] = Field(
         default="subprocess",
-        description="Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
         "'inprocess' removes both protections and is unsafe; it exists only for platforms where fork is unavailable.",
     )
     jq_filter_timeout_seconds: float = Field(
         default=2.0,
         gt=0,
         le=60,
-        description="Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
     )
     jq_filter_workers: int = Field(
         default=2,
         ge=1,
         le=16,
-        description="Number of forked jq worker processes per gateway worker. Default: 2.",
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
     # CEL expression sandbox: operator-supplied policy expressions on gateway and tool records.
@@ -2912,6 +2912,20 @@ class Settings(  # pylint: disable=too-many-ancestors
         ge=1,
         le=16,
         description="Number of forked CEL worker processes per gateway worker. Default: 2.",
+    )
+    # Response filters are CEL expressions supplied by tool registrants. They run in their own
+    # pool, so a runaway filter cannot take out a policy evaluation, with a longer budget for large responses.
+    cel_filter_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        description="Wall-clock limit for running one tool response filter. Exceeding it kills the filter worker and returns an error result. Default: 2.0 seconds.",
+    )
+    cel_filter_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked response-filter worker processes per gateway worker. Default: 2.",
     )
 
     # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.

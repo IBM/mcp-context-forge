@@ -266,7 +266,6 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
-from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -1370,7 +1369,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Fork the sandbox pools while the process holds no sockets or threads.
     # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
-    start_jq_pool()
     start_validation_pool()
     start_cel_pool()
 
@@ -1943,9 +1941,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()
-
-        # Shut down the sandboxed jq worker pool
-        shutdown_jq_pool()
 
         # Shut down the sandboxed schema-validation worker pool
         shutdown_validation_pool()
