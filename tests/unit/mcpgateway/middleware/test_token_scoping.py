@@ -251,6 +251,35 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    @pytest.mark.parametrize(
+        ("method", "path", "allowed"),
+        [
+            ("GET", "/export", Permissions.ADMIN_EXPORT),
+            ("POST", "/export/selective", Permissions.ADMIN_EXPORT),
+            ("POST", "/import", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status/abc", Permissions.ADMIN_IMPORT),
+            ("POST", "/import/cleanup", Permissions.ADMIN_IMPORT),
+        ],
+    )
+    def test_export_import_routes_map_to_handler_permissions(self, middleware, method, path, allowed):
+        """Scoped tokens must reach the export/import routes their handlers allow (#7436)."""
+        denied = Permissions.ADMIN_IMPORT if allowed == Permissions.ADMIN_EXPORT else Permissions.ADMIN_EXPORT
+
+        assert middleware._check_permission_restrictions(path, method, [allowed]) is True
+        assert middleware._check_permission_restrictions(path, method, [denied]) is False
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("DELETE", "/export"),
+            ("PUT", "/import"),
+            ("GET", "/import/cleanup"),
+        ],
+    )
+    def test_export_import_routes_stay_default_deny_without_a_mapping(self, middleware, method, path):
+        assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_EXPORT, Permissions.ADMIN_IMPORT]) is False
+
     def test_tools_preview_precedes_tools_update_catchall(self, middleware):
         """POST /tools/preview/{name} must map to tools.preview, not the /tools/[^/]+/
         catch-all mapped to tools.update -- the preview pattern must be listed first (#5629)."""
