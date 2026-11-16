@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 add_a2a_agent_cards_table
 
 Revision ID: a4c8e2f1b7d9
-Revises: 4a7d9e2c6b18
+Revises: e5a7c2d9b4f1
 Create Date: 2026-10-29 13:45:00.000000
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "a4c8e2f1b7d9"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "4a7d9e2c6b18"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e5a7c2d9b4f1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
