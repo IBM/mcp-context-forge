@@ -602,6 +602,22 @@ Stored tokens are deleted selectively — only when the Authorization Server exp
 !!! tip
     If a gateway's refresh loop is failing with `invalid_client` after rotating `AUTH_ENCRYPTION_SECRET`, the token is preserved but refresh cannot succeed until the secret is re-encrypted with the current key. Re-save the gateway in the Admin UI to re-encrypt the `client_secret`.
 
+### Disconnecting a user (`DELETE /oauth/tokens/{gateway_id}`)
+
+A user deletes their own stored token for one gateway with `DELETE /oauth/tokens/{gateway_id}`. An un-narrowed platform admin can pass `app_user_email` to delete another user's token (database token backend only).
+
+ContextForge reads the stored tokens, deletes its own copy, and then revokes them at the provider with [RFC 7009](https://datatracker.ietf.org/doc/html/rfc7009): the refresh token first, then the access token, with the gateway's configured client authentication. The revocation endpoint comes only from the issuer's metadata (`revocation_endpoint` in RFC 8414 discovery) and must share the issuer origin. A `private_key_jwt` client is revoked only when that endpoint also shares the token endpoint origin, because the client assertion's audience is the token endpoint.
+
+The response reports both steps:
+
+| `provider_revoked` | Meaning |
+|---|---|
+| `true` | The provider accepted every revocation (RFC 7009 also answers `200` for a token that was already invalid) |
+| `false` | A revocation was refused, failed, or took longer than 10 seconds. The local copy is still deleted |
+| `null` | There was nothing to revoke, the provider advertises no revocation endpoint, or the token backend cannot read tokens for revocation |
+
+`deleted` is `false` when no token was stored, so repeating the call is safe.
+
 ### Health Checks for Authorization Code Gateways
 
 Authorization Code gateways use **per-user** tokens — there is no platform-level service token. Health checks therefore verify **service reachability**, not token ownership:

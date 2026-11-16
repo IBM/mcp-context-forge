@@ -1741,6 +1741,50 @@ async def get_oauth_status(
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
+# Upper bound on the whole provider-side revocation step, so a slow or unresponsive
+# provider cannot hold the disconnect open; the local delete has already happened.
+OAUTH_PROVIDER_REVOCATION_TIMEOUT_SECONDS = 10.0
+
+
+async def _revoke_at_provider(gateway: Gateway, tokens: Any) -> Optional[bool]:
+    """Revoke a user's tokens at the provider (RFC 7009), bounded and never raising.
+
+    The endpoint comes only from the issuer's RFC 8414 metadata and must share the
+    issuer origin; there is deliberately no configured override, so stored tokens and
+    client credentials only go to an endpoint the issuer itself advertises. The refresh
+    token goes first, since RFC 7009 Section 2.1 says revoking it should also invalidate
+    access tokens from the same grant.
+
+    Args:
+        gateway: Gateway whose provider issued the tokens.
+        tokens: ``RevocationTokens`` read from storage, or None.
+
+    Returns:
+        None when there is nothing to revoke or no revocation endpoint, True when every
+        stored token was revoked, False when any revocation failed, was refused, or timed out.
+    """
+    issuer = (gateway.oauth_config or {}).get("issuer")
+    if tokens is None or not (tokens.refresh_token or tokens.access_token) or not issuer:
+        return None
+    try:
+        async with asyncio.timeout(OAUTH_PROVIDER_REVOCATION_TIMEOUT_SECONDS):
+            advertised = (await DcrService().discover_as_metadata(issuer)).get("revocation_endpoint")
+            if not advertised:
+                return None
+            endpoint = await validate_issuer_scoped_endpoint(advertised, issuer, "revocation_endpoint")
+            manager = OAuthManager()
+            results = [
+                await manager.revoke_token(token, hint, gateway.oauth_config, endpoint, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                for token, hint in ((tokens.refresh_token, "refresh_token"), (tokens.access_token, "access_token"))
+                if token
+            ]
+            return all(results)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        # Never log the exception text: provider and client errors can echo request parameters.
+        logger.warning("Provider-side token revocation failed for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway.id), type(e).__name__)
+        return False
+
+
 @oauth_router.delete("/tokens/{gateway_id}")
 async def revoke_oauth_token(
     gateway_id: str,
@@ -1762,8 +1806,12 @@ async def revoke_oauth_token(
     ``app_user_email`` (database token backend only).
     Idempotent: deleting a token that is not stored reports ``deleted: false``.
 
-    Provider-side revocation (RFC 7009) is not attempted, so
-    ``provider_revoked`` is always ``None``.
+    The stored tokens are read first, the local copy is deleted, and then they are
+    revoked at the provider (RFC 7009) when it advertises a revocation endpoint, so a
+    refresh during that call cannot store a token that is never revoked.
+    ``provider_revoked`` is ``True`` when that succeeded, ``False`` when it failed, was
+    refused, or timed out, and ``None`` when there was nothing to revoke or no
+    revocation endpoint.
 
     Args:
         gateway_id: ID of the gateway whose token to delete.
@@ -1773,7 +1821,7 @@ async def revoke_oauth_token(
         db: Database session.
 
     Returns:
-        ``{"gateway_id": ..., "deleted": bool, "provider_revoked": None}``
+        ``{"gateway_id": ..., "deleted": bool, "provider_revoked": bool | None}``
 
     Raises:
         HTTPException: 401 without an authenticated user; 403 when the caller names another
@@ -1803,7 +1851,9 @@ async def revoke_oauth_token(
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         token_storage = TokenStorageService(db, _build_user_context(current_user))
+        tokens = await token_storage.read_revocation_tokens(gateway_id, target_email)
         deleted = await token_storage.revoke_user_tokens(gateway_id, target_email)
+        provider_revoked = await _revoke_at_provider(gateway, tokens)
     except HTTPException:
         raise
     except Exception as e:
@@ -1814,7 +1864,7 @@ async def revoke_oauth_token(
         )
         raise HTTPException(status_code=500, detail="Failed to revoke OAuth token")
 
-    return {"gateway_id": gateway_id, "deleted": bool(deleted), "provider_revoked": None}
+    return {"gateway_id": gateway_id, "deleted": bool(deleted), "provider_revoked": provider_revoked}
 
 
 OAUTH_STATUS_BATCH_MAX_IDS = 100

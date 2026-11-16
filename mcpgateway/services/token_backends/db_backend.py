@@ -27,7 +27,7 @@ from mcpgateway.db import Gateway, OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, AccessTokenDetails, TokenReauthorizationRequired, TokenRecord, ValidationToken
+from .base import AbstractTokenBackend, AccessTokenDetails, RevocationTokens, TokenReauthorizationRequired, TokenRecord, ValidationToken
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
@@ -383,6 +383,35 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             return ValidationToken("invalid")
         token = await self.encryption.decrypt_secret_async(record.access_token) if self.encryption else record.access_token
         return ValidationToken("valid", token) if token else ValidationToken("invalid")
+
+    async def read_revocation_tokens(self, gateway_id: str, team_id: str | None, app_user_email: str) -> RevocationTokens | None:  # pylint: disable=unused-argument
+        """Read the user's stored tokens for RFC 7009 revocation without refreshing or modifying them.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Unused database backend path context.
+            app_user_email: User whose tokens to read.
+
+        Returns:
+            The decrypted tokens, or None when none are stored. A token that fails to decrypt is None.
+        """
+        record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+        if record is None:
+            return None
+        return RevocationTokens(access_token=await self._plain_secret(record.access_token), refresh_token=await self._plain_secret(record.refresh_token))
+
+    async def _plain_secret(self, value: str | None) -> str | None:
+        """Decrypt one stored token, if any.
+
+        Args:
+            value: The stored, possibly encrypted, token.
+
+        Returns:
+            The plaintext token, or None when absent or when decryption fails.
+        """
+        if not value:
+            return None
+        return await self.encryption.decrypt_secret_async(value) if self.encryption else value
 
     async def get_token_info(
         self,

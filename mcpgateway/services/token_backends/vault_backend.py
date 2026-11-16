@@ -26,7 +26,7 @@ from mcpgateway.config import Settings
 from mcpgateway.db import Gateway
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, AccessTokenDetails, TokenReauthorizationRequired, TokenRecord, ValidationToken
+from .base import AbstractTokenBackend, AccessTokenDetails, RevocationTokens, TokenReauthorizationRequired, TokenRecord, ValidationToken
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
@@ -679,6 +679,32 @@ class VaultTokenBackend(AbstractTokenBackend):
         if not isinstance(token, str) or not token or data.get("token_type", "Bearer").lower() != "bearer":
             return ValidationToken("invalid")
         return ValidationToken("valid", token)
+
+    async def read_revocation_tokens(self, gateway_id: str, team_id: str | None, app_user_email: str) -> RevocationTokens | None:
+        """Read an explicitly bound Vault token pair for RFC 7009 revocation, without refresh or cache access.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Authenticated token storage path context.
+            app_user_email: User whose tokens to read.
+
+        Returns:
+            The stored tokens, or None when none are stored or the record is bound to another gateway or user.
+        """
+        mcp_url = self._resolve_mcp_url(gateway_id)
+        result = await self._vault_request("GET", self._construct_vault_path(team_id, mcp_url, app_user_email))
+        if not result or "data" not in result:
+            return None
+        data = result["data"]["data"]
+        if data.get("gateway_id") != gateway_id or data.get("email") != app_user_email or data.get("mcp_url") != mcp_url:
+            return None
+        token = data.get("token") if isinstance(data.get("token"), dict) else {}
+        access_token = token.get("access_token")
+        refresh_token = token.get("refresh_token")
+        return RevocationTokens(
+            access_token=access_token if isinstance(access_token, str) and access_token else None,
+            refresh_token=refresh_token if isinstance(refresh_token, str) and refresh_token else None,
+        )
 
     async def get_token_info(
         self,
