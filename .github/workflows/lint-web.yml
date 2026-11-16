@@ -114,7 +114,13 @@ jobs:
           registry-url: https://registry.npmjs.org/
 
       # -----------------------------------------------------------
-      # 2️⃣  Run Linter (install and execute in one step)
+      # 2️⃣  Upgrade npm to minimum required version
+      # -----------------------------------------------------------
+      - name: 🔧  Upgrade npm to minimum required version
+        run: sudo npm install -g npm@^11.10.0
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run Linter (install and execute in one step)
       # -----------------------------------------------------------
       - name: 🔍  Run ${{ matrix.id }}
         run: ${{ matrix.cmd }}
