@@ -27,7 +27,6 @@ import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import mimetypes
-import os
 import re
 import ssl
 import time
@@ -436,7 +435,7 @@ class ResourceService(BaseService):
         """Initialize the resource service."""
         self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
-        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self.oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
 
         # Register MIME types for resource content detection
         # This runs in __init__ rather than initialize() because:

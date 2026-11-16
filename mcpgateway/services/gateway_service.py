@@ -1134,7 +1134,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.resource_service = resource_service
         self._gateway_failure_counts: dict[str, int] = {}
         self._refresh_failures: dict[str, tuple[int, float]] = {}  # gateway_id -> (failure count, monotonic time of next allowed auto-refresh)
-        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self.oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
         self._service_token_cache = get_service_token_cache()
@@ -9878,7 +9878,7 @@ async def test_gateway_connectivity(
                 # For Client Credentials flow, get token directly
                 await _require_stored_credential_authority(user, gateway, db)
                 try:
-                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                    oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
                     access_token: str = await oauth_manager.get_access_token(
                         gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
                     )
@@ -10210,7 +10210,7 @@ async def _test_gateway_handshake(
                     )
                 headers["Authorization"] = f"Bearer {access_token}"
             else:
-                oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
                 access_token = await oauth_manager.get_access_token(gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
                 headers["Authorization"] = f"Bearer {access_token}"
             credential_source = "stored"
