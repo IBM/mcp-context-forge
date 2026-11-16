@@ -3993,6 +3993,8 @@ install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook
 		fi; \
 		echo "✅  Installed config hook $$name -> $$script"; \
 	else \
+		git config --local --unset-all "hook.$$name.command" || true; \
+		git config --local --unset-all "hook.$$name.event" || true; \
 		if [ -f "$$target" ] && ! grep -q "$$marker" "$$target"; then \
 			if [ -e "$$chain" ]; then \
 				echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \

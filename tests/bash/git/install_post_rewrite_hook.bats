@@ -118,6 +118,22 @@ fake_old_git() {
     [ "$(git config --local --get-all "hook.$NAME.event")" = "post-rewrite" ]
 }
 
+@test "migration: file mode removes the config hook left by a prior config install" {
+    git_supports_config_hooks || skip "needs Git >= 2.54"
+    install_hook POST_REWRITE_HOOK_MODE=config
+    [ "$(git config --local --get-all "hook.$NAME.event")" = "post-rewrite" ]
+
+    install_hook POST_REWRITE_HOOK_MODE=file
+
+    [ "$status" -eq 0 ]
+    [ -x "$HOOKS_DIR/post-rewrite" ]
+    run git config --local --get-all "hook.$NAME.event"
+    [ "$status" -ne 0 ]
+    run git config --local --get-all "hook.$NAME.command"
+    [ "$status" -ne 0 ]
+    [ "$(git hook list post-rewrite | grep -c "$NAME")" -eq 0 ]
+}
+
 @test "migration: a chained foreign hook is moved back to post-rewrite and still runs" {
     git_supports_config_hooks || skip "needs Git >= 2.54"
     write_foreign_hook

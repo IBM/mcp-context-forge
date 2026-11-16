@@ -14,7 +14,7 @@ HOOK_SCRIPT="$REPO_ROOT/scripts/git/post-rewrite-secrets-refresh.sh"
 DETECT_SECRETS_TEST_SPEC='git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976'
 
 # A value detect-secrets flags under --use-all-plugins (Secret Keyword +
-# Base64 High Entropy String). Verified against the pinned DETECT_SECRETS_SPEC.
+# Base64 High Entropy String). Verified against the pinned DETECT_SECRETS_TEST_SPEC.
 FAKE_AWS_KEY='AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"'  # pragma: allowlist secret
 
 # init_repo: create a throwaway repo in a fresh mktemp dir and cd into it.
