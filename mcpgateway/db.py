@@ -5812,6 +5812,7 @@ class SSOProvider(Base):
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
         jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
+        ca_certificate (str): PEM CA bundle trusted for TLS to this provider (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5850,6 +5851,7 @@ class SSOProvider(Base):
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
     jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
+    ca_certificate: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # PEM CA bundle trusted, in addition to system CAs, for TLS to this provider
     trusted_for_api_auth: Mapped[bool] = mapped_column(Boolean, default=False, nullable=True)  # Accept this IdP's access tokens as API/MCP bearer creds (issue #3567)
     api_audience: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
