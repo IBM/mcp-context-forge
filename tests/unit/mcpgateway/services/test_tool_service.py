@@ -11,6 +11,7 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import time
@@ -3937,7 +3938,7 @@ class TestToolService:
             sent_meta = invocation.kwargs["meta"]
             assert sent_meta == {"source": "client", "traceparent": f"00-{request_span.context.trace_id:032x}-{request_span.context.span_id:016x}-{int(request_span.context.trace_flags):02x}"}
             for item in (request_span, call_span, invoke_span):
-                assert item.attributes["gateway.upstream.session_id"] == "b0241fbdef1b27b4"  # sha256("upstream-assigned")[:16]; raw ID is never exported
+                assert item.attributes["gateway.upstream.session_id"] == hashlib.sha256(b"upstream-assigned").hexdigest()[:16]
                 assert item.status.status_code == (StatusCode.ERROR if failed else StatusCode.OK)
         provider.shutdown()
 

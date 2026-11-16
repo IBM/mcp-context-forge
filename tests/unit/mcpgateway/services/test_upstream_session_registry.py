@@ -22,6 +22,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import hashlib
 
 # Third-Party
 import httpx
@@ -2466,7 +2467,7 @@ async def test_factory_captures_upstream_id_and_detaches_request_baggage(monkeyp
                 initialized = exporter.get_finished_spans()[0]
                 assert initialized.name == "mcp.client.initialize"
                 assert initialized.parent.span_id == call_span.get_span_context().span_id
-                assert initialized.attributes["gateway.upstream.session_id"] == "2ebb9294801961cd"  # sha256("assigned")[:16]; raw ID is never exported
+                assert initialized.attributes["gateway.upstream.session_id"] == hashlib.sha256(b"assigned").hexdigest()[:16]
                 assert baggage.get_baggage("tenant.id") == "first-request"
             finally:
                 lifecycle.shutdown_event.set()
