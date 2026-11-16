@@ -309,8 +309,9 @@ def _mask_redis_url(url: str) -> str:
     """
     parsed = urlparse(url)
     if parsed.password:
-        # Replace password in netloc
-        masked_netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
+        host = f"[{parsed.hostname}]" if ":" in (parsed.hostname or "") else parsed.hostname
+        port = f":{parsed.port}" if parsed.port else ""
+        masked_netloc = f"{parsed.username or ''}:***@{host}{port}"
         return parsed._replace(netloc=masked_netloc).geturl()
     return url
 
@@ -342,6 +343,10 @@ async def _create_cluster_client(settings: Any, aioredis: Any) -> Any:
         "health_check_interval": settings.redis_health_check_interval,
         "encoding": "utf-8",
     }
+
+    if url.startswith("rediss://") and not settings.redis_ssl:
+        logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
+    cluster_kwargs.update(_build_ssl_kwargs(settings))
 
     client = aioredis.RedisCluster.from_url(url, **cluster_kwargs)
     await client.ping()
@@ -454,9 +459,11 @@ async def get_redis_client() -> Optional[Any]:
             logger.info(f"Redis Cluster client initialized: parser={_parser_info}, timeout={settings.redis_socket_timeout}s, url={masked_url}")
             logger.warning(
                 "Redis Cluster mode: async RedisCluster does not support "
-                "publish()/pubsub(). Cross-worker cache invalidation, "
-                "session broadcasting, and cancellation propagation will "
-                "not function until those callers are migrated."
+                "publish()/pubsub(). Cross-worker cache invalidation "
+                "(including auth/token-revocation, team and role caches, which "
+                "stay stale until their local TTL expires), session broadcasting, "
+                "and cancellation propagation will not function until those "
+                "callers are migrated. Use short auth-cache TTLs."
             )
         else:
             _client = await _create_standalone_client(settings, aioredis, parser_class)

@@ -424,6 +424,8 @@ class RedisServerEventBus(ServerEventBus):
         redis = await get_redis_client()
         if redis is None:
             raise BusBackendError(f"Redis client not available for session {session_id}")
+        if not hasattr(redis, "pubsub"):
+            raise BusBackendError(f"Redis client does not support pubsub (Redis Cluster mode) for session {session_id}")
 
         # Distinct sentinel for backend failure, separate from the overflow
         # ``None`` sentinel — lets the consumer raise ``BusBackendError``
