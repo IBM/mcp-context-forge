@@ -135,7 +135,7 @@ def test_forwarded_user_carries_user_id(forwarded, expected_user_id):
     """The owner-side forwarded user carries ``user_id``, falling back to the e-mail."""
     request = MagicMock()
     request.headers = {"x-contextforge-mcp-auth-context": encode_internal_mcp_auth_context(forwarded)}
-    with patch("mcpgateway.main._is_trusted_internal_mcp_runtime_request", return_value=True), patch("mcpgateway.main._INTERNAL_MCP_AUTH_CONTEXT_HEADER", "x-contextforge-mcp-auth-context"):
+    with patch("mcpgateway.main.is_trusted_internal_mcp_request", return_value=True), patch("mcpgateway.main._INTERNAL_MCP_AUTH_CONTEXT_HEADER", "x-contextforge-mcp-auth-context"):
         user = _build_internal_mcp_forwarded_user(request)
     assert user["user_id"] == expected_user_id
     assert user["email"] == "u@example.com"
