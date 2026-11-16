@@ -1834,6 +1834,35 @@ async def test_alternate_claim_token_cannot_take_over_account_bound_to_another_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claim_overrides,relinked",
+    [
+        pytest.param({}, False, id="claim-absent"),
+        pytest.param({"email_verified": True}, True, id="claim-true"),
+    ],
+)
+async def test_alternate_claim_token_relinks_only_with_verified_email_claim(monkeypatch, alt_settings, session_teams, claim_overrides, relinked):
+    """With provider linking enabled, a token rebinds an account only when it carries a verified-email claim."""
+    # Standard
+    from types import SimpleNamespace
+
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(sso_service.settings, "sso_allow_provider_linking", True, raising=False)
+    existing = SimpleNamespace(email="jane@corp.com", full_name="Jane", auth_provider="github", email_verified=True, last_login=None, is_admin=False, admin_origin=None)
+    provider = _alt_provider()
+    svc = _alt_service(monkeypatch, provider, existing_user=existing)
+
+    payload = await vc.build_external_identity(provider, _alt_claims(**claim_overrides), "raw-token", MagicMock())
+
+    assert (payload is not None) is relinked
+    assert existing.auth_provider == ("corp-oidc" if relinked else "github")
+    assert (existing.last_login is not None) is relinked
+
+
+@pytest.mark.asyncio
 async def test_alternate_claim_token_admin_like_claims_do_not_grant_admin(monkeypatch, alt_settings, session_teams):
     """``is_admin`` in the payload is read from the persisted user, never from token claims."""
     # First-Party

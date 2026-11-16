@@ -70,6 +70,8 @@
 
 - **Modern listeners run on the primary worker** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - With `GATEWAY_MODERN_LISTENERS_ENABLED=true`, only the primary worker holds `subscriptions/listen` streams to upstream servers. `PRIMARY_WORKER_ELECTION_BACKEND=filelock` elects one primary per host or pod. `PRIMARY_WORKER_ELECTION_BACKEND=redis` elects one primary per cluster.
 
+- **Provider relinking requires a verified-email claim** ([#7564](https://github.com/IBM/mcp-context-forge/pull/7564)) - With `SSO_ALLOW_PROVIDER_LINKING=true`, the gateway rebinds an account to a different SSO provider only when that provider sends an explicit verified-email claim. Before, a login without the claim also relinked. GitHub and most Entra ID tenants send no claim, so relinking to them is now refused; ADFS identities count as verified. Sign-in through the account's own provider does not change. The gateway log records each refusal. See [SSO](docs/docs/manage/sso.md).
+
 ### Fixed
 
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.

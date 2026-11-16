@@ -1056,6 +1056,43 @@ class SSOService:
         return None
 
     @staticmethod
+    def _resolve_email_verified_claim(user_info: Dict[str, Any]) -> Optional[bool]:
+        """Resolve the IdP email-verification claim to a three-state result.
+
+        Single policy point for the claim.  Claims are checked in the order of
+        ``_EMAIL_VERIFIED_CLAIMS``; the first claim present decides the outcome.
+
+        Args:
+            user_info: Normalized user-info payload from provider.
+
+        Returns:
+            ``None`` when no supported claim is present; ``True`` when the
+            first present claim is explicitly truthy; ``False`` when the first
+            present claim is explicitly falsy or of an unrecognized type.
+        """
+        provider = user_info.get("provider", "unknown")
+        for claim in SSOService._EMAIL_VERIFIED_CLAIMS:
+            if claim not in user_info:
+                continue
+            coerced = SSOService._coerce_email_verified_claim(user_info[claim])
+            if coerced is None:
+                logger.warning(
+                    "SSO claim '%s' has unrecognized type %s from provider '%s'; rejecting as unverified.",
+                    claim,
+                    type(user_info[claim]).__name__,
+                    provider,
+                )
+                return False
+            if claim != "email_verified":
+                logger.info(
+                    "SSO email verified via non-standard claim '%s' for provider '%s'.",
+                    claim,
+                    provider,
+                )
+            return coerced
+        return None
+
+    @staticmethod
     def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
         """Evaluate email verification claim when provided by the IdP.
 
@@ -1081,27 +1118,7 @@ class SSOService:
             present claim is explicitly truthy; ``False`` when the first
             present claim is explicitly falsy or of an unrecognized type.
         """
-        provider = user_info.get("provider", "unknown")
-        for claim in SSOService._EMAIL_VERIFIED_CLAIMS:
-            if claim not in user_info:
-                continue
-            coerced = SSOService._coerce_email_verified_claim(user_info[claim])
-            if coerced is None:
-                logger.warning(
-                    "SSO claim '%s' has unrecognized type %s from provider '%s'; rejecting as unverified.",
-                    claim,
-                    type(user_info[claim]).__name__,
-                    provider,
-                )
-                return False
-            if claim != "email_verified":
-                logger.info(
-                    "SSO email verified via non-standard claim '%s' for provider '%s'.",
-                    claim,
-                    provider,
-                )
-            return coerced
-        return True
+        return SSOService._resolve_email_verified_claim(user_info) is not False
 
     def get_authorization_url(
         self,
@@ -2133,7 +2150,8 @@ class SSOService:
             logger.warning("SSO authenticate_or_create_user: email is empty after normalization from provider '%s'.", user_info.get("provider", "unknown"))
             return None
 
-        if not self._is_email_verified_claim(user_info):
+        email_verified_claim = self._resolve_email_verified_claim(user_info)
+        if email_verified_claim is False:
             logger.warning(
                 "SSO authenticate_or_create_user: unverified email claim for provider '%s' and email '%s'.",
                 user_info.get("provider", "unknown"),
@@ -2177,26 +2195,38 @@ class SSOService:
 
             provider_relinked = False
             if user.auth_provider and current_auth_provider != incoming_provider:
-                # Email is already verified (gated above) and within trusted-domain policy,
-                # so linking here only ever rebinds a trusted, verified identity.
+                # Email is within trusted-domain policy. Rebinding also requires the provider to
+                # have asserted the email as verified; an absent claim is not enough.
+                log_email = SecurityValidator.sanitize_log_message(email)
+                log_current_provider = SecurityValidator.sanitize_log_message(current_auth_provider)
+                log_incoming_provider = SecurityValidator.sanitize_log_message(incoming_provider)
                 if provider is None:
                     # Can't re-vet admin status against a provider we can't resolve (deleted
                     # between callback and this call, or an id-casing mismatch) — refusing here
                     # keeps the relink admin-carryover guard (below) from being silently skipped.
                     logger.warning(
                         "SSO authenticate_or_create_user: refusing login for email '%s' — incoming provider '%s' could not be resolved, so admin status cannot be re-vetted for a relink from '%s'.",
-                        email,
-                        incoming_provider,
-                        current_auth_provider,
+                        log_email,
+                        log_incoming_provider,
+                        log_current_provider,
                     )
                     return None
                 if not settings.sso_allow_provider_linking:
                     logger.warning(
                         "SSO authenticate_or_create_user: login refused for email '%s' — it is bound to provider '%s' and sign-in came from '%s'. "
                         "One email maps to one provider unless SSO_ALLOW_PROVIDER_LINKING is enabled.",
-                        email,
-                        current_auth_provider,
-                        incoming_provider,
+                        log_email,
+                        log_current_provider,
+                        log_incoming_provider,
+                    )
+                    return None
+                if email_verified_claim is not True:
+                    logger.warning(
+                        "SSO authenticate_or_create_user: login refused for email '%s' — it is bound to provider '%s' and provider '%s' did not supply a verified-email claim. "
+                        "Relinking requires the provider to assert the email as verified.",
+                        log_email,
+                        log_current_provider,
+                        log_incoming_provider,
                     )
                     return None
                 logger.info(
@@ -2228,7 +2258,7 @@ class SSOService:
                 current_auth_provider = incoming_provider
 
             # Persist verification status from provider claims.
-            user.email_verified = self._is_email_verified_claim(user_info)
+            user.email_verified = email_verified_claim is not False
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership.
