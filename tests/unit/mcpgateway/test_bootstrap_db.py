@@ -9,7 +9,6 @@ Comprehensive unit tests for bootstrap_db module.
 # Standard
 import asyncio
 import json
-import os
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -40,6 +39,7 @@ def mock_settings():
     settings.platform_admin_full_name = "Platform Admin"
     settings.auto_create_personal_teams = True
     settings.database_url = "sqlite:///:memory:"
+    settings.gateway_replicas = 1
     return settings
 
 
@@ -2134,10 +2134,10 @@ class TestMainAdditionalBranches:
         """SQLite + GATEWAY_REPLICAS > 1 emits warning (line 768)."""
         mock_settings.mcpgateway_skip_migrations = False
         mock_settings.database_url = "sqlite:///./mcp.db"
+        mock_settings.gateway_replicas = 2
         mock_engine, _ = self._make_engine_cm()
 
         with (
-            patch.dict(os.environ, {"GATEWAY_REPLICAS": "2"}),
             patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
             patch("importlib.resources.files") as mock_files,
             patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),

@@ -875,7 +875,7 @@ async def main() -> None:
     # cross-container coordination. All replicas run migrations concurrently
     # against the same SQLite file — a silent correctness bug.
     is_sqlite = settings.database_url.startswith("sqlite")
-    gateway_replicas = int(os.environ.get("GATEWAY_REPLICAS", "1"))
+    gateway_replicas = settings.gateway_replicas
     if is_sqlite and gateway_replicas > 1:
         logger.warning(
             "SQLite detected with GATEWAY_REPLICAS=%d. The migration file lock at '%s' is stored in "

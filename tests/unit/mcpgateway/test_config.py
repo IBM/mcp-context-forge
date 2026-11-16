@@ -38,6 +38,34 @@ def test_admin_ui_deprecation_notice_flag(monkeypatch, configured, expected):
     assert configured_settings.mcpgateway_ui_deprecation_notice_enabled is expected
 
 
+def test_runtime_settings_read_environment(monkeypatch):
+    for name, value in {
+        "SQLALCHEMY_ECHO": "true",
+        "SSL_CONTEXT_CACHE_MAX_SIZE": "42",
+        "SSL_CONTEXT_CACHE_TTL": "60",
+        "LOOPBACK_CLIENT_CERT": "/tmp/client.crt",
+        "LOOPBACK_CLIENT_KEY": "/tmp/client.key",
+        "GATEWAY_REPLICAS": "2",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    configured = Settings(_env_file=None)
+
+    assert configured.sqlalchemy_echo is True
+    assert configured.ssl_context_cache_max_size == 42
+    assert configured.ssl_context_cache_ttl == 60
+    assert configured.loopback_client_cert == "/tmp/client.crt"
+    assert configured.loopback_client_key == "/tmp/client.key"
+    assert configured.gateway_replicas == 2
+
+
+def test_loopback_client_certificate_requires_key(monkeypatch):
+    monkeypatch.setenv("LOOPBACK_CLIENT_CERT", "/tmp/client.crt")
+    monkeypatch.delenv("LOOPBACK_CLIENT_KEY", raising=False)
+    with pytest.raises(ValidationError, match="LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY"):
+        Settings(_env_file=None)
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)

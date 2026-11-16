@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+"""Tests for runtime environment settings."""
+
+import pytest
+from pydantic import ValidationError
+
+from mcpgateway.config import Settings
+
+
+def test_loopback_key_requires_certificate(monkeypatch):
+    monkeypatch.delenv("LOOPBACK_CLIENT_CERT", raising=False)
+    monkeypatch.setenv("LOOPBACK_CLIENT_KEY", "/tmp/client.key")
+    with pytest.raises(ValidationError, match="LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("value, expected", [("", None), ("   ", None), ("60", 60)])
+def test_ssl_cache_ttl_parsing(monkeypatch, value, expected):
+    monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", value)
+    assert Settings(_env_file=None).ssl_context_cache_ttl == expected
+
+
+@pytest.mark.parametrize("value", ["invalid", "0", "-1"])
+def test_ssl_cache_ttl_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", value)
+    with pytest.raises(ValidationError, match="SSL_CONTEXT_CACHE_TTL"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("name", ["OPENAI_MAX_TOKENS", "OPENAI_MAX_TOEKNS"])
+def test_openai_max_tokens_aliases(monkeypatch, name):
+    monkeypatch.delenv("OPENAI_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("OPENAI_MAX_TOEKNS", raising=False)
+    monkeypatch.setenv(name, "123")
+    assert Settings(_env_file=None).openai_max_tokens == 123
