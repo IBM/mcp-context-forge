@@ -186,6 +186,7 @@ _CONNECT_FIELD_NAMES = (
     "auth_value",
     "auth_query_params",
     "oauth_config",
+    "sigv4_config",  # rotating AWS credentials must drop sessions pinned to the old signer
     "ca_certificate",
     "ca_certificate_sig",
     "signing_algorithm",

@@ -137,7 +137,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
-from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
@@ -175,6 +175,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -1029,6 +1030,7 @@ class GatewayRegistrationPreparation:
     auth_query_params_decrypted: Optional[Dict[str, str]]
     init_url: str
     oauth_config: Optional[Dict[str, Any]]
+    sigv4_config: Optional[Dict[str, Any]]
     ca_certificate: Optional[str]
     init_client_cert: Optional[str]
     init_client_key: Optional[str]
@@ -2101,6 +2103,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_key: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
         """Initialize a gateway and optionally bound remote MCP work.
 
@@ -2118,6 +2121,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_cert=client_cert,
             client_key=client_key,
             gateway_id=gateway_id,
+            sigv4_config=sigv4_config,
         )
         if initialize_timeout is None:
             return await initialize_task
@@ -2275,6 +2279,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         owner_email: str,
         visibility: str,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> Optional[DbGateway]:
         """
         Check if a gateway with the same URL and credentials already exists.
@@ -2288,6 +2293,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             owner_email: Email of the gateway owner
             visibility: Gateway visibility (public/team/private)
             gateway_id: Optional gateway ID to exclude from check (for updates)
+            sigv4_config: SigV4 configuration. Two SigV4 gateways match when access key, region and service match.
 
         Returns:
             DbGateway if duplicate found, None otherwise
@@ -2311,6 +2317,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Check each existing gateway
         for existing in existing_gateways:
+            # SigV4 gateways differ from every other auth type and match only on the same signing identity
+            if sigv4_config or existing.auth_type == "sigv4":
+                existing_sigv4 = existing.sigv4_config if existing.auth_type == "sigv4" and isinstance(existing.sigv4_config, dict) else None
+                if sigv4_config and existing_sigv4:
+                    identity_keys = ("access_key_id", "region", "service")
+                    if all(existing_sigv4.get(k) == sigv4_config.get(k) for k in identity_keys):
+                        return existing
+                continue
+
             # Case 1: Both have OAuth config
             if oauth_config and existing.oauth_config:
                 # Compare OAuth configs (exclude dynamic fields like tokens)
@@ -2398,6 +2413,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 team_id=team_id,
                 owner_email=owner_email or "",
                 visibility=visibility,
+                sigv4_config=gateway.sigv4_config if getattr(gateway, "auth_type", None) == "sigv4" else None,
             )
             if duplicate_gateway:
                 raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
@@ -2432,6 +2448,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
+        sigv4_config = await protect_sigv4_config_for_storage(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
@@ -2453,6 +2470,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params_decrypted=auth_query_params_decrypted,
             init_url=init_url,
             oauth_config=oauth_config,
+            sigv4_config=sigv4_config,
             ca_certificate=ca_certificate,
             init_client_cert=init_client_cert,
             init_client_key=init_client_key,
@@ -2503,6 +2521,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_value=preparation.auth_value,
             auth_query_params=preparation.auth_query_params_encrypted,
             oauth_config=preparation.oauth_config,
+            sigv4_config=preparation.sigv4_config,
             passthrough_headers=gateway.passthrough_headers,
             tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
             tools=[],
@@ -2661,6 +2680,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_cert=preparation.init_client_cert,
                 client_key=preparation.init_client_key,
                 initialize_timeout=initialize_timeout,
+                sigv4_config=preparation.sigv4_config,
             )
 
             tools = [tool for tool in tools if tool is not None]
@@ -2679,10 +2699,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_type = "one_time_auth"
                 auth_value = None
                 oauth_config = None
+                sigv4_config = None
             else:
                 auth_type = preparation.auth_type
                 auth_value = preparation.auth_value
                 oauth_config = preparation.oauth_config
+                sigv4_config = preparation.sigv4_config
 
             # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
             # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
@@ -2935,6 +2957,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_value=auth_value,
                 auth_query_params=preparation.auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
+                sigv4_config=sigv4_config,
                 passthrough_headers=gateway.passthrough_headers,
                 tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
                 tools=db_tools,
@@ -3839,6 +3862,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value)
                 final_oauth_config = gateway_update.oauth_config if gateway_update.oauth_config is not None else gateway.oauth_config
                 final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
+                final_auth_type = gateway_update.auth_type if gateway_update.auth_type is not None else gateway.auth_type
+                final_sigv4_config = (gateway_update.sigv4_config or getattr(gateway, "sigv4_config", None)) if final_auth_type == "sigv4" else None
 
                 # Check for duplicates with updated credentials
                 if not gateway_update.one_time_auth:
@@ -3851,6 +3876,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         visibility=final_visibility,
                         gateway_id=gateway_id,  # Exclude current gateway from check
                         owner_email=user_email,
+                        sigv4_config=final_sigv4_config,
                     )
 
                     if duplicate_gateway:
@@ -3874,6 +3900,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 original_auth_value = gateway.auth_value
                 original_auth_query_params = gateway.auth_query_params
                 original_oauth_config = gateway.oauth_config
+                original_sigv4_config = getattr(gateway, "sigv4_config", None)
                 original_ca_certificate = gateway.ca_certificate
                 original_ca_certificate_sig = gateway.ca_certificate_sig
                 original_signing_algorithm = gateway.signing_algorithm
@@ -3895,6 +3922,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         (gateway.auth_value, original_auth_value),
                         (gateway.auth_query_params, original_auth_query_params),
                         (gateway.oauth_config, original_oauth_config),
+                        (getattr(gateway, "sigv4_config", None), original_sigv4_config),
                         (gateway.ca_certificate, original_ca_certificate),
                         (getattr(gateway, "client_cert", None), original_client_cert),
                         (getattr(gateway, "client_key", None), original_client_key),
@@ -4003,6 +4031,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if original_auth_type == "query_param" and gateway_update.auth_type != "query_param":
                         gateway.auth_query_params = None
                         logger.debug("Cleared auth_query_params for gateway %s (switched from query_param to %s)", SecurityValidator.sanitize_log_message(gateway.id), gateway_update.auth_type)
+
+                    # Clear sigv4_config when switching away from sigv4 auth
+                    if original_auth_type == "sigv4" and gateway_update.auth_type != "sigv4":
+                        gateway.sigv4_config = None
+
+                # Handle SigV4 configuration updates
+                if gateway_update.sigv4_config is not None:
+                    if gateway.auth_type != "sigv4":
+                        raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
+                    gateway.sigv4_config = await protect_sigv4_config_for_storage(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
+                elif gateway.auth_type == "sigv4" and not getattr(gateway, "sigv4_config", None):
+                    raise PublicValidationError("auth_type 'sigv4' requires sigv4_config")
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -4271,6 +4311,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=connection_material.client_cert,
                             client_key=connection_material.client_key,
                             gateway_id=gateway.id,
+                            sigv4_config=getattr(gateway, "sigv4_config", None),
                         )
                     except Exception as init_err:
                         # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
@@ -4290,6 +4331,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.auth_type = "one_time_auth"
                         gateway.auth_value = None
                         gateway.oauth_config = None
+                        gateway.sigv4_config = None
 
                     _vis_changed = gateway_update.visibility is not None
                     catalog_sync = self._sync_gateway_catalog(
@@ -4870,6 +4912,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=act_client_cert,
                             client_key=act_client_key,
                             gateway_id=gateway.id,
+                            sigv4_config=getattr(gateway, "sigv4_config", None),
                         )
                         catalog_sync = self._sync_gateway_catalog(
                             db,
@@ -5576,6 +5619,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=connection_material.client_key,
                 initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
                 gateway_id=gateway.id,
+                sigv4_config=getattr(gateway, "sigv4_config", None),
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
@@ -5949,6 +5993,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_oauth_config = gateway.oauth_config
         gateway_auth_value = gateway.auth_value
         gateway_auth_query_params = gateway.auth_query_params
+        gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
         health_client_cert = getattr(gateway, "client_cert", None)
         health_client_key = getattr(gateway, "client_key", None)
 
@@ -6156,6 +6201,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         await self._handle_gateway_failure(gateway, error=pin_exc, auth_query_params=auth_query_params_decrypted)
                         return
 
+                    # SigV4 signs each probe afresh, so a long-lived health loop never reuses a stale signature
+                    health_sigv4_auth = None
+                    health_sigv4_mcp_auth = None
+                    if gateway_auth_type == "sigv4":
+                        try:
+                            health_sigv4_auth = build_stored_sigv4_httpx_auth(gateway_sigv4_config)
+                            health_sigv4_mcp_auth = build_stored_sigv4_auth(gateway_sigv4_config)
+                        except SigV4ConfigError as sigv4_exc:
+                            if span:
+                                set_span_attribute(span, "health.status", "unhealthy")
+                                set_span_error(span, sigv4_exc)
+                            await self._handle_gateway_failure(gateway, error=GatewayCredentialError("Stored SigV4 credentials could not be loaded"), auth_query_params=auth_query_params_decrypted)
+                            return
+
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
@@ -6165,6 +6224,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             headers=pinned_target.apply_headers(headers),
                             timeout=timeout,
                             extensions=pinned_target.extensions,
+                            auth=health_sigv4_auth if health_sigv4_auth is not None else httpx.USE_CLIENT_DEFAULT,
                         ) as response:
                             # This will raise immediately if status is 3xx/4xx/5xx
                             response.raise_for_status()
@@ -6179,7 +6239,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             url=gateway_url,
                             headers=headers,
                             timeout=settings.health_check_timeout,
-                            httpx_client_factory=get_httpx_client_factory,
+                            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, health_sigv4_mcp_auth),
                         ) as client:
                             pass  # Client auto-initializes on first RPC call (health check only does initialize)
 
@@ -6451,6 +6511,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -6476,6 +6537,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_key: Optional client private key path or PEM for mTLS
             gateway_id: Gateway identifier used to cache the token-exchange discovery token,
                 or ``None`` before the gateway row exists (registration).
+            sigv4_config: Stored (encrypted) SigV4 configuration when auth_type is "sigv4"
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
@@ -6572,6 +6634,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts = []
             validation_errors: list[str] = []
             instructions: Optional[str] = None
+            signing_auth = None
+            if auth_type == "sigv4":
+                try:
+                    signing_auth = build_stored_sigv4_auth(sigv4_config)
+                except SigV4ConfigError as exc:
+                    raise GatewayCredentialError(f"Failed to initialize gateway at {sanitize_url_for_logging(url, auth_query_params)}: invalid SigV4 credentials -- {exc}") from exc
+                if signing_auth is None:
+                    raise GatewayCredentialError("Failed to initialize gateway: auth_type 'sigv4' requires sigv4_config")
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if authentication:
@@ -6582,11 +6652,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 authentication = {k: SecurityValidator.sanitize_credential_value(v) for k, v in authentication.items()}
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts, validation_errors, instructions = await self.connect_to_sse_server(
-                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key, signing_auth=signing_auth
                 )
             elif transport.lower() == "streamablehttp":
                 capabilities, tools, resources, prompts, validation_errors, instructions = await self.connect_to_streamablehttp_server(
-                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key, signing_auth=signing_auth
                 )
             else:
                 sanitized_url = sanitize_url_for_logging(url, auth_query_params)
@@ -6620,6 +6690,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Report it distinctly so it isn't mistaken for a network/connectivity failure.
             if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
                 raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
+
+            if auth_type == "sigv4" and isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root_cause.response.status_code in (401, 403):
+                raise GatewayCredentialError(
+                    f"Failed to initialize gateway at {sanitized_url}: upstream rejected the SigV4 credentials (HTTP {root_cause.response.status_code}). Verify the access key, secret, region and service."
+                ) from root_cause
 
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(e)) from root_cause
 
@@ -8023,6 +8098,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_auth_type = None
         gateway_auth_value = None
         gateway_oauth_config = None
+        gateway_sigv4_config = None
         gateway_ca_certificate = None
         gateway_auth_query_params = None
         refresh_client_cert = None
@@ -8039,6 +8115,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_auth_type = gateway.auth_type
             gateway_auth_value = gateway.auth_value
             gateway_oauth_config = gateway.oauth_config
+            gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
             gateway_ca_certificate = gateway.ca_certificate
             gateway_auth_query_params = gateway.auth_query_params
             refresh_client_cert = getattr(gateway, "client_cert", None)
@@ -8062,6 +8139,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_auth_type = gateway_obj.auth_type
                 gateway_auth_value = gateway_obj.auth_value
                 gateway_oauth_config = gateway_obj.oauth_config
+                gateway_sigv4_config = getattr(gateway_obj, "sigv4_config", None)
                 gateway_ca_certificate = gateway_obj.ca_certificate
                 gateway_auth_query_params = gateway_obj.auth_query_params
                 refresh_client_cert = getattr(gateway_obj, "client_cert", None)
@@ -8133,6 +8211,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_query_params=auth_query_params_decrypted,
                 client_cert=refresh_client_cert,
                 client_key=_refresh_key,
+                sigv4_config=gateway_sigv4_config,
             )
         except Exception as e:
             logger.warning("Failed to fetch tools from gateway %s: %s", gateway_name, e)
@@ -8727,6 +8806,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         auth_query_params: Optional[Dict[str, str]] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        signing_auth: Optional[httpx2.Auth] = None,
     ):
         """Connect to an MCP server running with SSE transport.
 
@@ -8739,6 +8819,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params: Query param names for URL sanitization in error logs.
             client_cert: Optional client certificate path or PEM for mTLS.
             client_key: Optional client private key path or PEM for mTLS.
+            signing_auth: Optional SigV4 auth that signs every upstream request.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -8789,7 +8870,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
         # Client auto-initializes on entry; no manual initialize() needed.
-        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
+        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth), transport="sse") as client:
             # Read negotiated capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
             raw_instructions = client.instructions or None
@@ -8902,6 +8983,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         auth_query_params: Optional[Dict[str, str]] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        signing_auth: Optional[httpx2.Auth] = None,
     ):
         """Connect to an MCP server running with Streamable HTTP transport.
 
@@ -8914,6 +8996,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params: Query param names for URL sanitization in error logs.
             client_cert: Optional client certificate path or PEM for mTLS.
             client_key: Optional client private key path or PEM for mTLS.
+            signing_auth: Optional SigV4 auth that signs every upstream request.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -8967,7 +9050,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         async with mcp_proxy_client(
             url=server_url,
             headers=authentication,
-            httpx_client_factory=get_httpx_client_factory,
+            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth),
         ) as client:
             # Client auto-initializes; get capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
@@ -10060,6 +10143,7 @@ async def _test_gateway_handshake(
         and (
             (gateway.auth_type == "oauth" and gateway.oauth_config and gateway.oauth_config.get("grant_type", "client_credentials") != "authorization_code")
             or (gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value)
+            or (gateway.auth_type == "sigv4" and gateway.sigv4_config)
             or gateway.client_cert
         )
     )
@@ -10127,6 +10211,16 @@ async def _test_gateway_handshake(
             headers.update(gateway.auth_value)
         elif isinstance(gateway.auth_value, str):
             headers.update(decode_auth(gateway.auth_value))
+        credential_source = "stored"
+
+    # SigV4 signs each request, so it adds no stored header. The signature replaces any form Authorization header.
+    handshake_sigv4_auth = None
+    if not candidate_only and gateway and gateway.auth_type == "sigv4" and gateway.sigv4_config:
+        try:
+            handshake_sigv4_auth = build_stored_sigv4_auth(gateway.sigv4_config)
+        except SigV4ConfigError:
+            return _failure("auth", "The stored SigV4 credentials could not be loaded. Re-enter the credentials on the gateway.")
+        form_headers = {key: value for key, value in form_headers.items() if key.lower() != "authorization"}
         credential_source = "stored"
 
     if form_headers:
@@ -10207,7 +10301,7 @@ async def _test_gateway_handshake(
             discover_result: Optional[Dict[str, Any]] = None
 
             # Skip server/discover probe in legacy mode — go straight to SDK initialize
-            if settings.mcp_client_connect_mode != "legacy":
+            if settings.mcp_client_connect_mode != "legacy" and handshake_sigv4_auth is None:
                 discover_headers = {
                     **headers,
                     "Host": target["original_authority"],
@@ -10354,11 +10448,11 @@ async def _test_gateway_handshake(
                 # with TLS verified against that hostname, closing the same DNS rebinding window
                 # as server/discover, on the follow-up requests too.
                 if gateway and str(gateway.transport).lower() == "sse":
-                    async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
+                    async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, handshake_sigv4_auth)) as (read_stream, write_stream):
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
                 else:
-                    probe_http_client = get_httpx_client_factory(headers=headers, timeout=settings.health_check_timeout, auth=None)
+                    probe_http_client = get_httpx_client_factory(headers=headers, timeout=settings.health_check_timeout, auth=handshake_sigv4_auth)
                     async with probe_http_client:
                         async with streamable_http_client(url=hostname_url, http_client=probe_http_client) as (read_stream, write_stream):
                             async with ClientSession(read_stream, write_stream) as session:

@@ -13734,13 +13734,20 @@ async def admin_edit_gateway(
             auth_type_from_form = "oauth"
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
+        # The edit form has no SigV4 option and submits an empty auth_type for these gateways.
+        # Keep the stored SigV4 auth instead of clearing it.
+        if existing_gateway is not None and getattr(existing_gateway, "auth_type", None) == "sigv4" and not auth_type_from_form:
+            auth_type_for_update: Optional[str] = None
+        else:
+            auth_type_for_update = auth_type_from_form
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
-            auth_type=auth_type_from_form,
+            auth_type=auth_type_for_update,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
             auth_token=str(form.get("auth_token", "")),

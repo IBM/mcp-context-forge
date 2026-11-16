@@ -4796,7 +4796,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param", "sigv4" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4807,6 +4807,11 @@ class Gateway(Base):
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # AWS Signature V4 configuration
+    sigv4_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, comment="AWS SigV4 configuration: access_key_id, region, service, encrypted secret_access_key and session_token"
+    )
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
