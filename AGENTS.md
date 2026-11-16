@@ -16,7 +16,7 @@ Task-specific guidance lives in `.agents/skills/`. `.bob/skills` links to that d
 
 - `asd-ste100`: write or rewrite prose for humans (review findings, issue and PR text, commit bodies) in ASD-STE100 style.
 - `pr-review`: write review findings, assign severity, judge blocking criteria.
-- `alembic-migrations`: add or change a database model, column, or migration. Every model change needs a migration whose `down_revision` is the current `alembic heads` value.
+- `alembic-migrations`: add or change a database model, column, or migration.
 - `observability-audit-sessions`: change trace, span, metric, or audit writes.
 - `secret-detection`: resolve a `detect-secrets` finding or `.secrets.baseline` change.
 - `github-issues`: create, label, or triage an issue.

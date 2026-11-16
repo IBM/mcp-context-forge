@@ -5,7 +5,14 @@ description: Create or review an Alembic migration in `mcpgateway/alembic`. Use 
 
 # Alembic Database Migrations
 
-Create an Alembic migration for every new database column or table.
+Every change to a model in `mcpgateway/db.py` needs a matching Alembic migration. This includes every new column and table.
+
+## Migration Chain Rules
+
+- Work on one migration at a time. Merge or finish one migration before you start the next.
+- The `revision` -> `down_revision` links form one linked list. The chain never branches.
+- Each migration has exactly one parent. `alembic heads` shows exactly one head.
+- A new migration sets `down_revision` to the current head.
 
 ## Create a Migration
 
@@ -55,16 +62,48 @@ def upgrade() -> None:
 
 ## Verification
 
-```bash
-# Verify single head after creating migration
-cd mcpgateway && alembic heads
-# Should show only ONE head
+Run these commands from `mcpgateway/`.
 
-# Run tests to confirm migrations work
+### Inspect the chain
+
+```bash
+alembic heads              # must show exactly ONE head
+alembic current            # revision the DB is at
+alembic history --verbose  # full chain
+alembic branches           # find branch points
+```
+
+### Upgrade
+
+```bash
+alembic upgrade head              # apply all
+alembic upgrade +1                # apply the next one
+alembic upgrade <revision_id>     # apply up to a specific revision
+alembic upgrade <rev>:head --sql  # print the SQL only (offline mode, no DB change)
+```
+
+### Downgrade
+
+```bash
+alembic downgrade -1              # revert the latest migration
+alembic downgrade <revision_id>   # revert to a specific revision
+alembic downgrade base            # revert everything
+alembic downgrade head:-1 --sql   # print the SQL only (offline mode, no DB change)
+```
+
+### Round-trip test of a new migration
+
+```bash
+alembic upgrade head && alembic downgrade -1 && alembic upgrade head
+```
+
+Run the test suite to confirm the migrations work:
+
+```bash
 make test
 ```
 
-Done when `alembic heads` prints one head and `make test` passes.
+Done when `alembic heads` prints one head, the round-trip test passes, and `make test` passes.
 
 ## Common Errors
 

@@ -5,7 +5,7 @@ description: Review a PR, branch, or diff in this repository. Use before you cre
 
 # PR Review
 
-A review auto-fixes formatting on touched files and reports everything else as findings the author can act on.
+A review reports every issue as a finding the author can act on. A review changes no files.
 
 ## Rebase on origin/main
 
@@ -28,16 +28,18 @@ Review the diff in this order. Severity comes from *Blocking Criteria* below, no
 1. Security: injection, leaked secrets, auth gaps, OWASP top 10, Layer 1 / Layer 2 violations.
 2. Correctness: logic errors, edge cases, mismatch with linked issues.
 3. Test coverage: changed code has tests, including deny-path tests for security changes.
-4. Linter compliance: run project linters on touched files. Auto-fix formatting (see *Lint Auto-Fix*).
+4. Linter compliance: run project linters on touched files and report violations. Do not fix them (see *Optional Lint Auto-Fix*).
 5. Performance: N+1 queries, unnecessary allocations, bottlenecks.
 6. Redundancy: duplicated logic, copy-paste patterns, shared-utility opportunities.
 7. Design: structural quality (see *Design Guidance*).
 8. Consistency: adherence to documented conventions.
 9. Alembic migrations (conditional): idempotence, reversibility, cross-database compatibility, `batch_alter_table` for SQLite. Apply the `alembic-migrations` skill.
 
-## Lint Auto-Fix
+## Optional Lint Auto-Fix
 
-Fix `black`, `isort`, and `autoflake` findings automatically, on files the PR touched only. Never run formatters on the whole codebase. That pollutes the diff.
+Never auto-fix formatting during a review. A reviewer who edits the reviewed code changes the PR under review. Report `black`, `isort`, `autoflake`, pylint, bandit, and mypy findings for the author to address. Include the exact command and output.
+
+Run the auto-fix only when the user explicitly asks for it, for example a local developer who reviews their own branch. Fix files the PR touched only. Never run formatters on the whole codebase. That pollutes the diff.
 
 ```bash
 PY_FILES="$(git diff --diff-filter=d --name-only origin/main -- '*.py')"
@@ -46,7 +48,7 @@ if [ -n "$PY_FILES" ]; then
 fi
 ```
 
-Run the linters again to check the fixes. Report the fix as a minor finding, for example "Auto-fixed: ran autoflake/isort/black on N files". Report other linter findings (pylint, bandit, mypy) that you cannot fix safely for the author to address. Include the exact command and output.
+Run the linters again to check the fixes. Report the fix as a minor finding, for example "Auto-fixed: ran autoflake/isort/black on N files".
 
 ## Design Guidance
 
@@ -137,7 +139,7 @@ Not blocking: style and naming (Ruff owns these), the sync-SQLAlchemy-in-async p
 
 ## Rules
 
-- Change no files except the targeted lint auto-fixes. Report every other finding for the author.
+- Change no files. Report every finding for the author. Run the lint auto-fix only on explicit user request.
 - Never mention AI or coding assistants in any output.
 
 ## Tone
