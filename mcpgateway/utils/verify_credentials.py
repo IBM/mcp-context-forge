@@ -76,7 +76,8 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import SSOProvider
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.sso_service import _NoRedirectPyJWKClient, resolve_trusted_provider_by_issuer
+from mcpgateway.services.oidc_tls import _NoRedirectPyJWKClient, provider_http_client, provider_ssl_context, tls_cache_key
+from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -1886,7 +1887,7 @@ def _build_metadata_urls(issuer: str) -> list[str]:
     return list(dict.fromkeys([oauth_url, oidc_url]))
 
 
-async def _discover_oidc_metadata(issuer: str) -> Optional[dict[str, Any]]:
+async def _discover_oidc_metadata(issuer: str, ca_certificate: Optional[str] = None) -> Optional[dict[str, Any]]:
     """Fetch and cache authorization-server metadata via RFC 8414 / OIDC discovery.
 
     Tries both the RFC 8414 OAuth authorization server metadata endpoint
@@ -1903,27 +1904,26 @@ async def _discover_oidc_metadata(issuer: str) -> Optional[dict[str, Any]]:
 
     Args:
         issuer: Authorization server issuer URL.
+        ca_certificate: Optional provider CA bundle (PEM) trusted for the discovery requests.
 
     Returns:
         Provider metadata dict, or None on failure.
     """
     normalized = issuer.rstrip("/")
-    cached = _oauth_oidc_metadata_cache.get(normalized)
+    cache_key = tls_cache_key(normalized, ca_certificate)
+    cached = _oauth_oidc_metadata_cache.get(cache_key)
     if cached is not None:
         cached_at, metadata, ttl = cached
         if monotonic() - cached_at < ttl:
             return metadata
-        _oauth_oidc_metadata_cache.pop(normalized, None)
+        _oauth_oidc_metadata_cache.pop(cache_key, None)
 
-    # First-Party
-    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-    client = await get_http_client()
     probe_errors: list[str] = []
     saw_transient = False
     for url in _build_metadata_urls(normalized):
         try:
-            resp = await client.get(url, timeout=10)
+            async with provider_http_client(ca_certificate) as client:
+                resp = await client.get(url, timeout=10)
         except Exception as exc:
             # Network errors (DNS, connection refused, TLS, timeout) are
             # transient — the IdP may recover within seconds.
@@ -1963,7 +1963,7 @@ async def _discover_oidc_metadata(issuer: str) -> Optional[dict[str, Any]]:
             logger.debug("Metadata issuer mismatch at %s: got %s, expected %s", url, metadata_issuer, normalized)
             continue
 
-        _oauth_oidc_metadata_cache[normalized] = (monotonic(), metadata, _OAUTH_OIDC_METADATA_TTL)
+        _oauth_oidc_metadata_cache[cache_key] = (monotonic(), metadata, _OAUTH_OIDC_METADATA_TTL)
         return metadata
 
     # All probes failed. Choose TTL based on whether any probe looked
@@ -1977,7 +1977,7 @@ async def _discover_oidc_metadata(issuer: str) -> Optional[dict[str, Any]]:
         ttl_on_failure,
         probe_errors,
     )
-    _oauth_oidc_metadata_cache[normalized] = (monotonic(), None, ttl_on_failure)
+    _oauth_oidc_metadata_cache[cache_key] = (monotonic(), None, ttl_on_failure)
     return None
 
 
@@ -1987,6 +1987,7 @@ async def verify_oauth_access_token(
     *,
     expected_audience: Optional[Union[str, list[str]]] = None,
     jwks_uri_override: Optional[str] = None,
+    ca_certificate: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Verify an OAuth access token issued by a configured authorization server.
 
@@ -2011,6 +2012,8 @@ async def verify_oauth_access_token(
             it (there's no live discovery response to have been tampered
             with) and it may legitimately live on a different, internal-only
             origin than the issuer (split internal/public IdP hostnames).
+        ca_certificate: Optional PEM CA bundle of the admin-configured SSOProvider,
+            trusted for metadata discovery and the JWKS fetch.
 
     Returns:
         Verified claims dict on success, None on failure.
@@ -2035,7 +2038,7 @@ async def verify_oauth_access_token(
         jwks_uri = jwks_uri_override.strip()
     else:
         # Discover OIDC metadata and resolve JWKS URI
-        metadata = await _discover_oidc_metadata(normalized_issuer)
+        metadata = await _discover_oidc_metadata(normalized_issuer, ca_certificate)
         if not metadata:
             return None
 
@@ -2101,9 +2104,10 @@ async def verify_oauth_access_token(
 
     try:
         jwks_uri = jwks_uri.strip()
-        if jwks_uri not in _oauth_jwks_client_cache:
-            _oauth_jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
-        jwks_client = _oauth_jwks_client_cache[jwks_uri]
+        jwks_key = tls_cache_key(jwks_uri, ca_certificate)
+        if jwks_key not in _oauth_jwks_client_cache:
+            _oauth_jwks_client_cache[jwks_key] = _NoRedirectPyJWKClient(jwks_uri, ssl_context=provider_ssl_context(ca_certificate))
+        jwks_client = _oauth_jwks_client_cache[jwks_key]
 
         signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
         decode_options = {"verify_signature": True, "verify_exp": True, "verify_iat": True, "verify_iss": False, "verify_aud": bool(expected_audience)}
@@ -2183,6 +2187,7 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         authorization_servers=[provider.issuer],
         expected_audience=provider.api_audience,
         jwks_uri_override=provider.jwks_uri or None,
+        ca_certificate=provider.ca_certificate,
     )
     if claims is None:
         logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))

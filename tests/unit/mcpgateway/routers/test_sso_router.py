@@ -802,6 +802,7 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         userinfo_url="https://userinfo",
         issuer="https://issuer",
         jwks_uri=None,
+        ca_certificate=None,
         scope="openid",
         trusted_domains=["example.com"],
         auto_create_users=True,

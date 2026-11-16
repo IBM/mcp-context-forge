@@ -50,6 +50,7 @@ class SSOProviderCreateRequest(BaseModel):
     userinfo_url: str
     issuer: Optional[str] = None
     jwks_uri: Optional[str] = None
+    ca_certificate: Optional[str] = None  # PEM CA bundle trusted, besides system CAs, for TLS to this provider
     scope: str = "openid profile email"
     trusted_domains: List[str] = []
     auto_create_users: bool = True
@@ -86,6 +87,7 @@ class SSOProviderUpdateRequest(BaseModel):
     userinfo_url: Optional[str] = None
     issuer: Optional[str] = None
     jwks_uri: Optional[str] = None
+    ca_certificate: Optional[str] = None  # PEM CA bundle; empty string clears it
     scope: Optional[str] = None
     trusted_domains: Optional[List[str]] = None
     auto_create_users: Optional[bool] = None
@@ -640,6 +642,7 @@ async def get_sso_provider(
         "userinfo_url": provider.userinfo_url,
         "issuer": provider.issuer,
         "jwks_uri": provider.jwks_uri,
+        "ca_certificate": provider.ca_certificate,
         "scope": provider.scope,
         "trusted_domains": provider.trusted_domains,
         "auto_create_users": provider.auto_create_users,
