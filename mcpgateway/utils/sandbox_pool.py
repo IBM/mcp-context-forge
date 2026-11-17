@@ -246,14 +246,14 @@ class SandboxPool:
         with self._lock:
             if self._pool is not None and self._pool_pid == os.getpid():
                 return self._pool
-            try:
-                self._pool = self._build()
-                self._pool_pid = os.getpid()
-            except Exception as exc:  # pylint: disable=broad-except
-                self._pool = None
-                self._pool_pid = None
-                raise SandboxError(f"{self._name} sandbox unavailable: {exc}") from exc
-            return self._pool
+        try:
+            self.start()
+        except Exception as exc:  # pylint: disable=broad-except
+            raise SandboxError(f"{self._name} sandbox unavailable: {exc}") from exc
+        with self._lock:
+            if self._pool is not None and self._pool_pid == os.getpid():
+                return self._pool
+        raise SandboxError(f"{self._name} sandbox stopped during startup")
 
     def _owns(self, pool: ProcessPoolExecutor) -> bool:
         """Report whether this process created the pool's workers.

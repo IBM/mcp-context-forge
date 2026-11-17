@@ -98,11 +98,18 @@ def _start_method_for(platform: str) -> str:
 
 _START_METHOD = _start_method_for(sys.platform)
 
+
+def _worker_init() -> None:
+    """Load schema validation dependencies before the execution deadline starts."""
+    jsonschema.Draft202012Validator({}).validate(None)
+
+
 _SANDBOX = SandboxPool(
     name="schema validation",
     workers_fn=lambda: settings.regex_workers,
     timeout_fn=lambda: settings.regex_timeout_seconds,
     start_method=_START_METHOD,
+    initializer=_worker_init,
 )
 
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Regression checks for caller-session review corrections."""
+"""Location: ./tests/unit/mcpgateway/services/test_caller_session_review.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Regression checks for caller-session review corrections.
+"""
 
 import asyncio
 import time

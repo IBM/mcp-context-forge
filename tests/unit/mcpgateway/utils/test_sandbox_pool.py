@@ -31,6 +31,11 @@ def _echo(value: str) -> str:
     return value
 
 
+def _slow_initializer() -> None:
+    """Simulate worker imports that exceed the execution budget."""
+    time.sleep(1.5)
+
+
 def _runaway(pattern: str, text: str) -> bool:
     """Run a match that may never terminate.
 
@@ -87,6 +92,24 @@ def test_pool_serves_the_next_call_after_a_kill(pool):
     with pytest.raises(SandboxTimeout):
         pool.submit(_runaway, r"^(a+)+$", "a" * 40 + "b")
     assert pool.submit(_echo, "still here") == "still here"
+
+
+@pytest.mark.parametrize("recover", [False, True], ids=["lazy-start", "after-timeout"])
+def test_worker_startup_does_not_consume_execution_budget(recover):
+    """Slow worker startup must not reject fast work during creation or recovery.
+
+    Args:
+        recover: Kill an existing worker before checking its replacement.
+    """
+    instance = SandboxPool(name="test-startup", workers_fn=lambda: 1, timeout_fn=lambda: 0.5, initializer=_slow_initializer, start_method="spawn")
+    try:
+        if recover:
+            instance.start()
+            with pytest.raises(SandboxTimeout):
+                instance.submit(_runaway, r"^(a+)+$", "a" * 40 + "b")
+        assert instance.submit(_echo, "ready") == "ready"
+    finally:
+        instance.shutdown()
 
 
 def test_start_reads_worker_count_once():
