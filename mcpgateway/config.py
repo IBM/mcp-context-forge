@@ -47,7 +47,6 @@ Examples:
 """
 
 # Standard
-from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 import logging
@@ -167,19 +166,6 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
-
-
-@dataclass(frozen=True)
-class EnvDeprecation:
-    """Startup warning for an environment variable the gateway no longer reads or will stop reading.
-
-    Attributes:
-        pattern: Exact variable name or ``fnmatch`` glob, matched case-insensitively.
-        message: Reason and replacement guidance, shown after the matched names.
-    """
-
-    pattern: str
-    message: str
 
 
 class SecurityConfigurationError(Exception):
@@ -1596,15 +1582,15 @@ class Settings(BaseSettings):
     aws_bedrock_max_tokens: int = Field(default=4096, description="Maximum tokens for AWS Bedrock requests")
     aws_access_key_id: str = Field(default="", description="AWS Access Key ID")
     aws_secret_access_key: SecretStr = Field(default=SecretStr(""), description="AWS Secret Access Key")
-    aws_session_token: str = Field(default="", description="AWS Session Token")
+    aws_session_token: SecretStr = Field(default=SecretStr(""), description="AWS Session Token")
 
     # Ollama Provider Settings
     ollama_model: str = Field(default="", description="Ollama model name")
     ollama_base_url: str = Field(default="", description="Ollama base URL")
 
     # IBM watsonx.ai Provider Settings
-    watsonx_apikey: str = Field(
-        default="",
+    watsonx_apikey: SecretStr = Field(
+        default=SecretStr(""),
         validation_alias=AliasChoices("watsonx_apikey", "WATSONX_APIKEY", "watsonx_api_key", "WATSONX_API_KEY"),
         description="IBM Cloud API key for watsonx.ai",
     )
