@@ -186,7 +186,9 @@ How the signing works:
 - ContextForge never stores credentials in `auth_value`. A read of the tool returns `sigv4_config` with the secret fields masked.
 - Send the masked value as `secret_access_key` or `session_token` on `PUT /tools/{id}` to keep the stored secret. Change `auth_type` to another value to drop SigV4 and clear `sigv4_config`.
 - Only REST tools accept `sigv4`. MCP tools from a SigV4 gateway are signed through the gateway.
-- To make a tool under a SigV4 gateway inherit its credential, the caller needs access to that gateway under the usual visibility rules. Otherwise the request fails with HTTP 403.
+- A tool signs only when its `auth_type` is `sigv4`. A tool with another `auth_type` under a SigV4 gateway keeps its own authentication and is never signed with the gateway credential.
+- To make a tool under a SigV4 gateway inherit its credential, the gateway must use `sigv4`. The caller needs access to that gateway under the usual visibility rules, including the team scope of the caller's token. Otherwise the request fails with HTTP 403.
+- A masked `secret_access_key` is valid only when the tool already stores a secret to keep. Otherwise the request fails with HTTP 400.
 - Presigned URLs keep working. A URL that already carries `X-Amz-Signature` is sent as is and gets no second signature.
 
 ## Security properties

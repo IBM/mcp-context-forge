@@ -23,6 +23,7 @@ from mcpgateway.schemas import ToolCreate, ToolUpdate
 from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.export_service import ExportService
 from mcpgateway.services.tool_service import ToolError, ToolService
+from mcpgateway.utils.error_formatter import PublicValidationError
 from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
@@ -114,6 +115,18 @@ class TestStorageEncryption:
         updated = protect_sigv4_config_sync({**CONFIG, "secret_access_key": settings.masked_auth_value}, stored)
         assert updated["secret_access_key"] == stored["secret_access_key"]
 
+    def test_masked_secret_without_a_stored_value_is_rejected(self):
+        with pytest.raises(PublicValidationError, match="secret_access_key must be provided"):
+            protect_sigv4_config_sync({**CONFIG, "secret_access_key": settings.masked_auth_value}, None)
+
+    def test_masked_secret_with_an_empty_stored_value_is_rejected(self):
+        with pytest.raises(PublicValidationError, match="secret_access_key must be provided"):
+            protect_sigv4_config_sync({**CONFIG, "secret_access_key": settings.masked_auth_value}, {"secret_access_key": None})
+
+    def test_masked_session_token_without_a_stored_value_is_dropped(self):
+        updated = protect_sigv4_config_sync({**CONFIG, "session_token": settings.masked_auth_value}, None)
+        assert updated["session_token"] is None
+
 
 @pytest.fixture
 def service():
@@ -170,7 +183,7 @@ class TestRegisterTool:
     @pytest.mark.asyncio
     async def test_gateway_inheritance_is_allowed_with_gateway_access(self, service):
         db = _db_for_create()
-        gateway = DbGateway(id="gw-1", name="gw", slug="gw", url="https://gw.example.com/mcp", visibility="public")
+        gateway = DbGateway(id="gw-1", name="gw", slug="gw", url="https://gw.example.com/mcp", visibility="public", auth_type="sigv4")
         db.get.return_value = gateway
         db.refresh.side_effect = lambda obj: setattr(obj, "gateway", gateway)
         with patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)) as access, patch.object(service, "convert_tool_to_read", return_value=MagicMock()):
@@ -178,6 +191,38 @@ class TestRegisterTool:
 
         access.assert_awaited_once()
         db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_gateway_inheritance_passes_the_token_scope_to_the_access_check(self, service):
+        """Layer 1: the token scope of the caller reaches the gateway visibility check."""
+        db = _db_for_create()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="team", owner_email="someone-else@example.com", team_id="team-a", auth_type="sigv4")
+        with patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=False)) as access:
+            with pytest.raises(PermissionError, match="No access to the gateway"):
+                await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="member@example.com", token_teams=[])
+
+        assert access.await_args.args[3] == []
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token_teams", [[], ["other-team"]])
+    async def test_gateway_inheritance_denies_a_narrowed_token_without_a_patched_check(self, service, token_teams):
+        """Deny path with the real visibility check: a public-only or wrong-team token cannot borrow a team gateway credential."""
+        db = _db_for_create()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="team", owner_email="someone-else@example.com", team_id="team-a", auth_type="sigv4")
+        with pytest.raises(PermissionError, match="No access to the gateway"):
+            await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="member@example.com", token_teams=token_teams)
+
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gateway_inheritance_requires_a_sigv4_gateway(self, service):
+        db = _db_for_create()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="public", owner_email=None, team_id=None, auth_type="bearer")
+        with pytest.raises(ToolError, match="does not use SigV4"):
+            await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="member@example.com")
+
+        db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unknown_gateway_is_rejected(self, service):
@@ -301,6 +346,28 @@ class TestUpdateTool:
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool):
             with pytest.raises(ToolError, match="requires sigv4_config"):
                 await service.update_tool(MagicMock(), "t1", update)
+
+    @pytest.mark.asyncio
+    async def test_masked_secret_on_a_tool_without_stored_config_is_rejected(self, service):
+        """A masked placeholder cannot create a credential that does not exist."""
+        tool = _stored_tool(auth_type="bearer", sigv4_config=None)
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None), sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value})
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool):
+            with pytest.raises(ToolError, match="secret_access_key must be provided"):
+                await service.update_tool(MagicMock(), "t1", update)
+
+    @pytest.mark.asyncio
+    async def test_switching_to_sigv4_on_a_gateway_tool_denies_a_public_only_token(self, service):
+        """Deny path with the real visibility check: a public-only token cannot switch a tool onto a team gateway credential."""
+        tool = _stored_tool(auth_type="bearer", sigv4_config=None, gateway_id="gw-1")
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="team", owner_email="someone-else@example.com", team_id="team-a", auth_type="sigv4")
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None))
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool):
+            with pytest.raises(PermissionError, match="No access to the gateway"):
+                await service.update_tool(db, "t1", update, user_email="owner@example.com", token_teams=[])
 
     @pytest.mark.asyncio
     async def test_switching_to_sigv4_on_a_gateway_tool_checks_gateway_access(self, service):

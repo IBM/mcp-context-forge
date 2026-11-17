@@ -23,8 +23,10 @@ import pytest
 # First-Party
 from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4Auth, SigV4HttpxAuth
 
+# Local
 # Reuse the REST-path fixtures of the main tool service tests.
 from tests.unit.mcpgateway.services.test_tool_service import (  # noqa: F401  pylint: disable=unused-import
     mock_fresh_db_session,
@@ -185,7 +187,7 @@ def received_signature(request: httpx.Request) -> str:
 @pytest.mark.asyncio
 async def test_json_body_hash_covers_exact_bytes(invoke, upstream):
     """Scenario 1: ``x-amz-content-sha256`` is the SHA-256 of the exact JSON bytes, including non-ASCII text."""
-    await invoke({"id": "42", "note": "caf\u00e9 \u2603 {\"nested\": [1, 2, {\"a\": \"b\"}]}"}, tool_sigv4=stored_config())
+    await invoke({"id": "42", "note": 'caf\u00e9 \u2603 {"nested": [1, 2, {"a": "b"}]}'}, tool_sigv4=stored_config())
 
     request = upstream.requests[0]
     assert request.headers["x-amz-content-sha256"] == body_hash(request)
@@ -351,6 +353,39 @@ async def test_undecryptable_credentials_fail_closed(invoke, upstream):
         await invoke({"id": "1", "note": "x"}, tool_sigv4=broken)
 
     assert upstream.requests == []
+
+
+@pytest.mark.asyncio
+async def test_tool_without_sigv4_auth_type_never_borrows_the_gateway_credential(invoke, upstream):
+    """Deny path: a REST tool that did not opt in to sigv4 is not signed with the gateway credential."""
+    await invoke({"id": "1", "note": "x"}, tool_auth_type=None, tool_sigv4=None, gateway_sigv4=stored_config(), has_gateway=True)
+
+    request = upstream.requests[0]
+    assert "authorization" not in request.headers
+    assert "x-amz-date" not in request.headers
+    assert "x-amz-content-sha256" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_bearer_tool_under_a_sigv4_gateway_keeps_its_own_credential(invoke, upstream):
+    """A REST tool with its own static auth keeps it; the SigV4 gateway never replaces it."""
+    bearer = encode_auth({"Authorization": "Bearer tool-token"})
+
+    await invoke({"id": "1", "note": "x"}, tool_auth_type="bearer", tool_auth_value=bearer, tool_sigv4=None, gateway_sigv4=stored_config(), has_gateway=True)
+
+    request = upstream.requests[0]
+    assert request.headers["authorization"] == "Bearer tool-token"
+    assert "x-amz-date" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_tool_sigv4_config_is_ignored_without_the_sigv4_auth_type(invoke, upstream):
+    """A leftover tool sigv4_config does not sign a tool whose auth_type is not sigv4."""
+    await invoke({"id": "1", "note": "x"}, tool_auth_type=None, tool_sigv4=stored_config())
+
+    request = upstream.requests[0]
+    assert "authorization" not in request.headers
+    assert "x-amz-date" not in request.headers
 
 
 @pytest.mark.asyncio

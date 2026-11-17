@@ -15743,6 +15743,7 @@ async def admin_import_tools(
                     team_id=team_id,
                     owner_email=user_email,
                     user_id=get_canonical_user_id(user),
+                    token_teams=token_teams,
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:

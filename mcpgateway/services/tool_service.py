@@ -2389,19 +2389,27 @@ class ToolService(BaseService):
         policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return policy if isinstance(policy, str) else None
 
-    async def _require_inherited_gateway_access(self, db: Session, gateway_id: Optional[str], requester_email: Optional[str]) -> None:
+    async def _require_inherited_gateway_access(
+        self,
+        db: Session,
+        gateway_id: Optional[str],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
         """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot access.
 
         The gateway credential signs requests to any URL the tool names. The requester
-        needs the same visibility of the gateway as for direct use.
+        needs the same visibility of the gateway as for direct use, including the
+        narrowing of the requester's token.
 
         Args:
             db: Database session.
             gateway_id: Gateway the tool belongs to.
             requester_email: Identity that creates or changes the tool. Internal callers without an identity skip the check.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
 
         Raises:
-            ToolError: If the gateway does not exist.
+            ToolError: If the gateway does not exist, or does not use SigV4.
             PermissionError: If the requester cannot access the gateway.
         """
         if not gateway_id or not requester_email:
@@ -2409,8 +2417,10 @@ class ToolService(BaseService):
         gateway = db.get(DbGateway, gateway_id)
         if gateway is None:
             raise ToolError("Gateway not found")
-        if not await check_gateway_access(db, gateway, requester_email, None):
+        if not await check_gateway_access(db, gateway, requester_email, token_teams):
             raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
+        if gateway.auth_type != "sigv4":
+            raise ToolError("The gateway does not use SigV4 authentication")
 
     async def register_tool(
         self,
@@ -2426,6 +2436,7 @@ class ToolService(BaseService):
         owner_email: Optional[str] = None,
         visibility: str = None,
         user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2442,6 +2453,7 @@ class ToolService(BaseService):
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams: Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             Created tool information.
@@ -2484,7 +2496,7 @@ class ToolService(BaseService):
                 auth_value = tool.auth.auth_value
             tool_sigv4_config = protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" and tool.sigv4_config else None
             if auth_type == "sigv4" and not tool_sigv4_config:
-                await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by)
+                await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by, token_teams)
 
             if visibility is None:
                 visibility = tool.visibility or "public"
@@ -5782,17 +5794,16 @@ class ToolService(BaseService):
             if gateway_sigv4_auth is None:
                 raise ToolInvocationError("SigV4 gateway has no stored credentials")
 
-        # REST tools sign with their own sigv4_config first, then with the gateway sigv4_config.
+        # Only a REST tool with auth_type "sigv4" signs. It uses its own sigv4_config first, then the gateway sigv4_config.
         rest_sigv4_auth = None
-        if tool_integration_type == "REST":
+        if tool_integration_type == "REST" and tool_auth_type == "sigv4":
             rest_sigv4_config = tool_sigv4_config or (gateway_sigv4_config if has_gateway and gateway_auth_type == "sigv4" else None)
-            if rest_sigv4_config:
-                try:
-                    rest_sigv4_auth = build_stored_sigv4_httpx_auth(rest_sigv4_config)
-                except SigV4ConfigError as sigv4_exc:
-                    raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
-            elif tool_auth_type == "sigv4" or (has_gateway and gateway_auth_type == "sigv4"):
+            if not rest_sigv4_config:
                 raise ToolInvocationError("SigV4 tool has no stored credentials")
+            try:
+                rest_sigv4_auth = build_stored_sigv4_httpx_auth(rest_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -7895,6 +7906,7 @@ class ToolService(BaseService):
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
         user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7909,6 +7921,7 @@ class ToolService(BaseService):
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
             user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             The updated ToolRead object.
@@ -8085,7 +8098,7 @@ class ToolService(BaseService):
             elif tool.auth_type == "sigv4" and not tool.sigv4_config and not tool.gateway_id:
                 raise PublicValidationError("auth_type 'sigv4' requires sigv4_config when the tool has no gateway")
             if tool.auth_type == "sigv4" and not tool.sigv4_config and tool_update.auth is not None:
-                await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by)
+                await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by, token_teams)
 
             # Update tags if provided
             if tool_update.tags is not None:
