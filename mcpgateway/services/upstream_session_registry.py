@@ -53,6 +53,7 @@ from mcpgateway.services.caller_session import (
     CallerSessionError,
     connection_fingerprint,
     INTERNAL_HEADERS,
+    log_caller_event,
     REQUEST_HEADERS,
 )
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
@@ -996,6 +997,7 @@ class _CallerEntry:
     ownership: Optional[CallerOwnershipTicket] = None
     ownership_revoked: bool = False
     drained: asyncio.Event = field(default_factory=asyncio.Event)
+    retirement: Optional[asyncio.Task[None]] = None
 
 
 class UpstreamSessionRegistry:
@@ -1032,6 +1034,7 @@ class UpstreamSessionRegistry:
         shutdown_timeout_seconds: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         caller_idle_timeout: Optional[float] = None,
         caller_max_bindings: Optional[int] = None,
+        caller_max_bindings_per_identity: Optional[int] = None,
     ) -> None:
         """Build a registry. ``session_factory`` is injectable for tests."""
         self._session_factory: SessionFactory = session_factory or _default_session_factory
@@ -1048,6 +1051,10 @@ class UpstreamSessionRegistry:
         self._callers: dict[tuple[str, str], _CallerEntry] = {}
         self._caller_idle_timeout = caller_idle_timeout if caller_idle_timeout is not None else settings.mcp_caller_session_idle_timeout
         self._caller_max_bindings = caller_max_bindings if caller_max_bindings is not None else settings.mcp_caller_session_max_bindings
+        identity_limit = caller_max_bindings_per_identity if caller_max_bindings_per_identity is not None else settings.mcp_caller_session_max_bindings_per_identity
+        self._caller_identity_limit = min(identity_limit, max(1, self._caller_max_bindings - 1))
+        self._caller_identity_counts: dict[str, int] = {}
+        self._caller_retirements: set[asyncio.Task[None]] = set()
         self._caller_cleanup_task: Optional[asyncio.Task] = None
         self._closing = False
         self._caller_ownership: dict[str, CallerOwnershipTicket] = {}
@@ -1063,16 +1070,116 @@ class UpstreamSessionRegistry:
             await asyncio.sleep(min(self._caller_idle_timeout, 30.0))
             await self.expire_callers()
 
+    def _remove_caller_entry(self, key: tuple[str, str], entry: _CallerEntry) -> None:
+        """Release one reserved binding while the caller holds the global lock.
+
+        Args:
+            key: Internal binding and gateway key.
+            entry: Exact entry whose reservation is released.
+        """
+        if self._callers.get(key) is not entry:
+            return
+        self._callers.pop(key)
+        identity = entry.binding.quota_identity
+        remaining = self._caller_identity_counts[identity] - 1
+        if remaining:
+            self._caller_identity_counts[identity] = remaining
+        else:
+            self._caller_identity_counts.pop(identity)
+
+    async def _finish_caller_retirement(self, key: tuple[str, str], entry: _CallerEntry) -> None:
+        """Close outside the global lock before releasing capacity and identity reservations.
+
+        Args:
+            key: Internal binding and gateway key.
+            entry: Idle entry reserved for retirement.
+        """
+        try:
+            if entry.upstream is not None:
+                await self._close_session(entry.upstream)
+                entry.upstream = None
+                self._metrics.evictions += 1
+        finally:
+            async with self._global_lock:
+                self._remove_caller_entry(key, entry)
+
+    def _retire_caller_entry(self, key: tuple[str, str], entry: _CallerEntry) -> asyncio.Task[None]:
+        """Share cancellation-independent teardown while the caller holds the global lock.
+
+        Args:
+            key: Internal binding and gateway key.
+            entry: Entry without active or queued users.
+
+        Returns:
+            Shared teardown task that retains the entry's reservations until completion.
+        """
+        if entry.retirement is None:
+            entry.retirement = asyncio.create_task(self._finish_caller_retirement(key, entry), name="caller-session-retirement")
+            self._caller_retirements.add(entry.retirement)
+            entry.retirement.add_done_callback(self._caller_retirements.discard)
+        return entry.retirement
+
     async def expire_callers(self) -> int:
-        """Close expired caller sessions while protecting active and queued calls."""
+        """Retire expired idle entries without blocking unrelated registry acquisitions."""
         async with self._global_lock:
-            expired = [key for key, entry in self._callers.items() if entry.users == 0 and time.monotonic() - entry.last_used >= self._caller_idle_timeout]
-            for key in expired:
-                entry = self._callers.pop(key)
-                if entry.upstream is not None:
-                    await self._close_session(entry.upstream)
-                    self._metrics.evictions += 1
-            return len(expired)
+            expired = [
+                self._retire_caller_entry(key, entry)
+                for key, entry in self._callers.items()
+                if entry.users == 0 and (entry.retirement is not None or time.monotonic() - entry.last_used >= self._caller_idle_timeout)
+            ]
+        if expired:
+            await asyncio.shield(asyncio.gather(*expired))
+        return len(expired)
+
+    async def _reserve_caller(self, binding: CallerBinding, gateway_id: str, ownership: Optional[CallerOwnershipTicket]) -> _CallerEntry:
+        """Reserve an existing entry or atomically enforce worker and identity capacity.
+
+        Args:
+            binding: Verified session and quota identity.
+            gateway_id: Authorized upstream gateway.
+            ownership: Verified local ownership ticket when distributed affinity is enabled.
+
+        Returns:
+            An entry whose user reservation protects it from expiry.
+        """
+        key = (binding.key, gateway_id)
+        while True:
+            retirements = []
+            async with self._global_lock:
+                if self._closing:
+                    raise CallerSessionError("Upstream session registry is closing")
+                self._require_caller_ownership(binding, ownership)
+                entry = self._callers.get(key)
+                if entry is not None and (entry.retirement is not None or (entry.users == 0 and time.monotonic() - entry.last_used >= self._caller_idle_timeout)):
+                    retirements.append(self._retire_caller_entry(key, entry))
+                elif entry is not None:
+                    entry.users += 1
+                    entry.drained.clear()
+                    return entry
+                else:
+                    identity_count = self._caller_identity_counts.get(binding.quota_identity, 0)
+                    at_capacity = len(self._callers) >= self._caller_max_bindings
+                    at_quota = identity_count >= self._caller_identity_limit
+                    if at_capacity or at_quota:
+                        retirements = [
+                            self._retire_caller_entry(other_key, other)
+                            for other_key, other in self._callers.items()
+                            if other.users == 0
+                            and (other.retirement is not None or time.monotonic() - other.last_used >= self._caller_idle_timeout)
+                            and (at_capacity or other.binding.quota_identity == binding.quota_identity)
+                        ]
+                        if not retirements:
+                            if at_capacity:
+                                log_caller_event("caller_session_capacity_rejected")
+                                raise CallerSessionError("Upstream session capacity exhausted")
+                            log_caller_event("caller_session_quota_rejected")
+                            raise CallerSessionError("Caller session quota exhausted")
+                    else:
+                        entry = _CallerEntry(binding=binding, ownership=ownership, users=1)
+                        self._callers[key] = entry
+                        self._caller_identity_counts[binding.quota_identity] = identity_count + 1
+                        return entry
+            await asyncio.shield(asyncio.gather(*retirements))
 
     def _require_caller_ownership(self, binding: CallerBinding, ownership: Optional[CallerOwnershipTicket], entry: Optional[_CallerEntry] = None) -> None:
         """Reject stale admission tickets and terminally revoked queued entries.
@@ -1082,6 +1189,8 @@ class UpstreamSessionRegistry:
             ownership: Server-issued ticket, or None for single-worker admission.
             entry: Reserved entry when acquisition has reached the operation queue.
         """
+        if self._closing:
+            raise CallerSessionError("Upstream session registry is closing")
         if entry is not None and (entry.ownership_revoked or entry.ownership is not ownership):
             raise CallerOwnershipLostError()
         if ownership is None:
@@ -1129,12 +1238,9 @@ class UpstreamSessionRegistry:
         for key, entry in stale:
             if entry.users:
                 await entry.drained.wait()
-            if entry.upstream is not None:
-                await self._close_session(entry.upstream)
-                entry.upstream = None
             async with self._global_lock:
-                if self._callers.get(key) is entry:
-                    self._callers.pop(key)
+                task = self._retire_caller_entry(key, entry)
+            await asyncio.shield(task)
 
     def publish_caller_ownership(self, ownership: CallerOwnershipTicket) -> None:
         """Admit a verified generation only after local initialization completes.
@@ -1179,25 +1285,13 @@ class UpstreamSessionRegistry:
             CallerSessionError: When capacity is exhausted or shutdown has started.
             CallerOwnershipLostError: When ownership cannot authorize dispatch.
         """
-        await self._validate_caller_ownership(binding, ownership)
-        await self.expire_callers()
+        self._require_caller_ownership(binding, ownership)
         key = (binding.key, gateway_id)
-        async with self._global_lock:
-            if self._closing:
-                raise CallerSessionError("Upstream session registry is closing")
-            self._require_caller_ownership(binding, ownership)
-            entry = self._callers.get(key)
-            if entry is None:
-                if len(self._callers) >= self._caller_max_bindings:
-                    raise CallerSessionError("Upstream session capacity exhausted")
-                entry = _CallerEntry(binding=binding, ownership=ownership)
-                self._callers[key] = entry
-            entry.users += 1
-            entry.drained.clear()
+        entry = await self._reserve_caller(binding, gateway_id, ownership)
         try:
             async with entry.lock:
                 try:
-                    await self._validate_caller_ownership(binding, ownership, entry)
+                    self._require_caller_ownership(binding, ownership, entry)
                     fingerprint = connection_fingerprint(url, transport_type.value, headers, tls_identity)
                     entry.request_headers.update({name.lower(): value for name, value in headers.items() if name.lower() in REQUEST_HEADERS})
                     try:
@@ -1214,9 +1308,9 @@ class UpstreamSessionRegistry:
                         if not await self._probe_health(upstream):
                             await self._close_session(upstream)
                             entry.upstream = upstream = None
-                        await self._validate_caller_ownership(binding, ownership, entry)
+                        self._require_caller_ownership(binding, ownership, entry)
                     if upstream is None:
-                        await self._validate_caller_ownership(binding, ownership, entry)
+                        self._require_caller_ownership(binding, ownership, entry)
                         stable_headers = {name: value for name, value in headers.items() if name.lower() not in REQUEST_HEADERS | INTERNAL_HEADERS}
                         upstream = await self._create_session(
                             downstream_session_id=binding.downstream_session_id or binding.routing_key,
@@ -1228,7 +1322,7 @@ class UpstreamSessionRegistry:
                             caller_entry=entry,
                         )
                         entry.upstream = upstream
-                        await self._validate_caller_ownership(binding, ownership, entry)
+                        self._require_caller_ownership(binding, ownership, entry)
                         entry.fingerprint = fingerprint
                         entry.invalidated = False
                         self._metrics.creates += 1
@@ -1257,7 +1351,7 @@ class UpstreamSessionRegistry:
                 if entry.users == 0:
                     entry.drained.set()
                     if entry.upstream is None and self._callers.get(key) is entry:
-                        self._callers.pop(key)
+                        self._remove_caller_entry(key, entry)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1374,21 +1468,21 @@ class UpstreamSessionRegistry:
         return caller_count + await self._evict_keys_in_parallel(keys)
 
     async def _evict_callers(self, *, gateway_id: Optional[str] = None, downstream_session_id: Optional[str] = None) -> int:
-        """Invalidate matching caller entries without closing active operations."""
+        """Invalidate matching entries and retire idle connections outside the global lock."""
+        tasks = []
         async with self._global_lock:
-            keys = [
-                key
+            matches = [
+                (key, entry)
                 for key, entry in self._callers.items()
                 if (gateway_id is None or key[1] == gateway_id) and (downstream_session_id is None or entry.binding.downstream_session_id == downstream_session_id)
             ]
-            for key in keys:
-                entry = self._callers[key]
+            for key, entry in matches:
                 entry.invalidated = True
                 if entry.users == 0:
-                    if entry.upstream is not None:
-                        await self._close_session(entry.upstream)
-                    self._callers.pop(key)
-            return len(keys)
+                    tasks.append(self._retire_caller_entry(key, entry))
+        if tasks:
+            await asyncio.shield(asyncio.gather(*tasks))
+        return len(matches)
 
     def has_caller_route(self, routing_key: str) -> bool:
         """Return whether this worker retains sessions or queued work for a caller route.
@@ -1408,6 +1502,7 @@ class UpstreamSessionRegistry:
             routing_key: Server-derived caller routing identity.
             generation: Exact generation to revoke, or None to revoke the current route.
         """
+        tasks = []
         async with self._global_lock:
             authority = self._caller_ownership.get(routing_key)
             if authority is not None and (generation is None or authority.generation == generation):
@@ -1420,9 +1515,9 @@ class UpstreamSessionRegistry:
                 if entry.ownership is not None:
                     entry.ownership.revoke()
                 if entry.users == 0:
-                    if entry.upstream is not None:
-                        await self._close_session(entry.upstream)
-                    self._callers.pop(key)
+                    tasks.append(self._retire_caller_entry(key, entry))
+        if tasks:
+            await asyncio.shield(asyncio.gather(*tasks))
 
     async def _evict_keys_in_parallel(self, keys: list[tuple[str, str]]) -> int:
         """Run _evict_key concurrently for a set of keys; returns the count that succeeded."""
@@ -1449,6 +1544,8 @@ class UpstreamSessionRegistry:
             await asyncio.gather(self._caller_cleanup_task, return_exceptions=True)
             self._caller_cleanup_task = None
         await self._evict_callers()
+        if self._caller_retirements:
+            await asyncio.gather(*list(self._caller_retirements))
         async with self._global_lock:
             keys = list(self._sessions.keys())
         if not keys:

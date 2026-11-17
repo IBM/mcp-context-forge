@@ -63,7 +63,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
+from mcpgateway.services.caller_session import caller_execution_scope, mark_caller_execution_forwarded, CallerSessionError, quota_identity_from_context, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
@@ -89,7 +89,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
@@ -2317,15 +2317,22 @@ class ResourceService(BaseService):
                         auth_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
                         caller_binding = resolve_caller_binding(
                             caller_identity=auth_context.get("caller_session_identity") if auth_context.get("is_authenticated") is True else None,
+                            quota_identity=quota_identity_from_context(auth_context) if auth_context.get("caller_session_identity") else None,
                             server_id=server_id,
                             downstream_session_id=_downstream_session_id_from_request(),
                             meta=meta_data,
                             pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
                         )
                         forwarded = await forward_binding_operation(
-                            caller_binding, auth_context, "resources/read", {"uri": resource_uri, "_meta": meta_data, "server_id": server_id}, request_headers or {}
+                            caller_binding,
+                            auth_context,
+                            "resources/read",
+                            {"uri": resource_uri, "_meta": meta_data, "server_id": server_id},
+                            request_headers or {},
+                            on_forward=mark_caller_execution_forwarded,
                         )
                         if forwarded.result is not None:
+                            mark_caller_execution_forwarded()
                             return _upstream_resource_content(types.ReadResourceResult.model_validate(forwarded.result))
                         meta_data = upstream_meta(meta_data)
 
@@ -2334,6 +2341,8 @@ class ResourceService(BaseService):
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
+                                    if attempt > 1 and forwarded.ownership is not None:
+                                        await forwarded.ownership.validate()
                                     resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None, input_responses, request_state)
                                     _raise_if_input_required(resource_response)
                                     set_upstream_cache_directive(resource_response)
@@ -2341,7 +2350,7 @@ class ResourceService(BaseService):
                                 except ResourceInputRequired:
                                     raise
                                 except Exception as exc:
-                                    if upstream_session_needs_replacement(exc):
+                                    if caller_binding is not None and upstream_session_needs_replacement(exc):
                                         raise
                                     if attempt == max_read_attempts:
                                         raise
@@ -2421,7 +2430,7 @@ class ResourceService(BaseService):
                                             downstream_session_id=downstream_session_id,
                                             gateway_id=gateway_id,
                                             url=server_url,
-                                            headers=inject_trace_context_headers(authentication),
+                                            headers=authentication,
                                             transport_type=TransportType.SSE,
                                             httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                         )
@@ -2516,7 +2525,7 @@ class ResourceService(BaseService):
                                             downstream_session_id=downstream_session_id,
                                             gateway_id=gateway_id,
                                             url=server_url,
-                                            headers=inject_trace_context_headers(authentication),
+                                            headers=authentication,
                                             transport_type=TransportType.STREAMABLE_HTTP,
                                             httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                         )
@@ -2755,7 +2764,7 @@ class ResourceService(BaseService):
         if is_input_capture_enabled("resource.read"):
             span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": resource_uri or resource_id or "unknown"})
 
-        with create_span("resource.read", span_attributes) as span:
+        with create_span("resource.read", span_attributes) as span, caller_execution_scope() as execution:
             try:
                 # Generate request ID if not provided
                 if not request_id:
@@ -3186,7 +3195,7 @@ class ResourceService(BaseService):
                 # Record metrics only if we found a resource (not for templates)
                 logger.debug("read_resource finally block: resource_db=%s, resource_id=%s, server_id=%s", "present" if resource_db else None, resource_db.id if resource_db else None, server_id)
 
-                if resource_db:
+                if resource_db and not execution.forwarded:
                     try:
                         metrics_buffer.record_resource_metric(
                             resource_id=resource_db.id,
@@ -3200,7 +3209,7 @@ class ResourceService(BaseService):
                 # Record server metrics ONLY when the server scoping check passed.
                 # This prevents recording metrics with unvalidated server_id values
                 # from admin API headers (X-Server-ID) or RPC params.
-                if resource_db and server_scoped:
+                if resource_db and server_scoped and not execution.forwarded:
                     try:
                         logger.debug("Recording server metric for server_id=%s, resource_id=%s, success=%s", server_id, resource_db.id, success)
                         # Record server metric only for the specific virtual server being accessed
@@ -3212,6 +3221,9 @@ class ResourceService(BaseService):
                         )
                     except Exception as metrics_error:
                         logger.warning("Failed to record server metric: %s", metrics_error)
+
+                if span:
+                    set_span_attribute(span, "caller.forwarded", execution.forwarded)
 
                 # End database span for observability dashboard
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource

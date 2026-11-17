@@ -80,7 +80,7 @@ class Capture(BaseHTTPMiddleware):
             body = json.loads(await request.body())
             if body.get("method") == "tools/call":
                 with Path(sys.argv[3]).open("a") as output:
-                    output.write(json.dumps({"event": "http", "traceparent": request.headers.get("traceparent")}) + "\\n")
+                    output.write(json.dumps({"event": "http", "traceparent": request.headers.get("traceparent"), "meta": body.get("params", {}).get("_meta", {})}) + "\\n")
         return await call_next(request)
 app.add_middleware(Capture)
 uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), log_level="error")
@@ -92,6 +92,41 @@ import json
 import sys
 import uvicorn
 from mcpgateway.services import upstream_session_registry as registry
+from mcpgateway.services import session_affinity as affinity
+import asyncio
+original_gate = affinity._CallerRouteGate
+class ControlledGateLock:
+    def __init__(self, lock):
+        self.lock = lock
+    def event(self, kind):
+        with Path(sys.argv[2]).open("a") as output:
+            output.write(json.dumps({"event": kind}) + "\\n")
+    async def __aenter__(self):
+        path = Path(sys.argv[2])
+        if self.lock.locked():
+            cancel = path.with_suffix(".gate-cancel")
+            if cancel.exists():
+                cancel.unlink()
+                self.event("gate-cancelled")
+                raise asyncio.CancelledError()
+            if path.with_suffix(".gate-active").exists():
+                self.event("gate-waiting")
+        await self.lock.acquire()
+        hold = path.with_suffix(".gate-hold")
+        if hold.exists():
+            hold.unlink()
+            path.with_suffix(".gate-active").touch()
+            self.event("gate-held")
+            while not path.with_suffix(".gate-release").exists():
+                await asyncio.sleep(0.01)
+        return self
+    async def __aexit__(self, *args):
+        self.lock.release()
+def controlled_gate():
+    gate = original_gate()
+    gate.lock = ControlledGateLock(gate.lock)
+    return gate
+affinity._CallerRouteGate = controlled_gate
 original_entry = registry._CallerEntry
 class ObservedLock:
     def __init__(self, lock, route):
@@ -178,12 +213,15 @@ def counter_gateway(request, tmp_path):
             "OTEL_HTTPX_INSTRUMENTATION_ENABLED": "true",
             "OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED": "false",
             "OBSERVABILITY_ENABLED": "false",
+            "METRICS_BUFFER_ENABLED": "false",
             "USE_STATEFUL_SESSIONS": str(bool(stateful)).lower(),
             "MCP_CLIENT_CONNECT_MODE": "legacy",
             "AUTO_REFRESH_SERVERS": "false",
             "LOG_LEVEL": "ERROR",
             "PYTHONUNBUFFERED": "1",
         }
+        if isinstance(request.param, tuple) and len(request.param) > 4:
+            env["MCP_CALLER_SESSION_MAX_BINDINGS_PER_IDENTITY"] = str(request.param[4])
         gateway_log = stack.enter_context((tmp_path / "gateway.log").open("w"))
         queue_events = tmp_path / "queue-events.jsonl"
         gateway_command = (
@@ -197,19 +235,25 @@ def counter_gateway(request, tmp_path):
         tokens = [make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=signing_key) for _ in range(2)]
         client = stack.enter_context(httpx.Client(base_url=f"http://127.0.0.1:{gateway_port}", headers=make_auth_headers(tokens[0]), timeout=30, trust_env=False))
         client.signing_key = signing_key
+        client.database = tmp_path / "gateway.db"
         client.upstream_events = upstream_events
         client.queue_events = queue_events
         client.release_upstream = upstream_events.with_suffix(".release")
         if multi_worker:
             client.redis_probe = probe
         suffix = "sse" if transport == "SSE" else "mcp"
-        response = client.post("/gateways", json={"name": "caller-counter", "url": f"http://127.0.0.1:{upstream_port}/{suffix}", "transport": transport, "visibility": "public"})
+        pinning = isinstance(request.param, tuple) and len(request.param) > 5 and request.param[5]
+        response = client.post(
+            "/gateways", json={"name": "caller-counter", "url": f"http://127.0.0.1:{upstream_port}/{suffix}", "transport": transport, "visibility": "public", "pin_sessions_by_caller": pinning}
+        )
         assert response.status_code in (200, 201), response.text
+        assert response.json()["pinSessionsByCaller"] is bool(pinning)
         gateway_id = response.json()["id"]
         tools = client.get("/tools").json()
         if isinstance(tools, dict):
             tools = tools["tools"]
         tool = next(tool for tool in tools if tool["name"].endswith("increment"))
+        client.tool_id = tool["id"]
         resources = client.get("/resources").json()
         prompts = client.get("/prompts").json()
         resources = resources["resources"] if isinstance(resources, dict) else resources
@@ -451,7 +495,7 @@ def test_queued_call_rejects_transferred_ownership(counter_gateway):
 
 @pytest.mark.parametrize("counter_gateway", [("STREAMABLEHTTP", True)], indirect=True)
 def test_same_worker_reacquires_new_generation_after_expiry(counter_gateway):
-    """Old caller records reject claims; expiry creates a new generation without changing legacy records."""
+    """Expiry replaces the generation while unrelated legacy ownership records remain untouched."""
     client, _, server_id, name, tokens = counter_gateway
     arguments = {"token": tokens[0], "server_id": server_id, "key": "expiry"}
     assert _call(client, "/rpc", name, **arguments) == 1
@@ -463,11 +507,8 @@ def test_same_worker_reacquires_new_generation_after_expiry(counter_gateway):
     legacy_key = "mcpgw:pool_owner:legacy-session"
     probe.set(legacy_key, "legacy-owner", ex=300)
     probe.set(old_key, previous[b"owner"], ex=300)
-    dispatches = len(_events(client.upstream_events, "dispatch"))
-    rejected = _response(client, "/rpc", name, **arguments).json()
-    assert rejected["error"] == {"code": -32000, "message": "Caller session ownership lost"}
-    assert len(_events(client.upstream_events, "dispatch")) == dispatches
-    probe.delete(old_key)
+    assert _call(client, "/rpc", name, **arguments) == 2
+    assert probe.get(old_key) == previous[b"owner"]
     probe.pexpire(key, 1)
     _wait(lambda: not probe.exists(key), "caller lease expiry")
     assert _call(client, "/rpc", name, **arguments) == 1
@@ -476,3 +517,106 @@ def test_same_worker_reacquires_new_generation_after_expiry(counter_gateway):
     assert current[b"generation"] != previous[b"generation"]
     assert _call(client.peer, "/rpc", name, **arguments) == 2
     assert probe.get(legacy_key) == b"legacy-owner"
+
+
+@pytest.mark.parametrize("counter_gateway", [("SSE", True), ("STREAMABLEHTTP", True)], indirect=True)
+def test_forwarded_execution_records_metrics_once(counter_gateway):
+    """Origin and owner produce one execution metric for each actual upstream dispatch."""
+    import sqlite3
+
+    client, _, server_id, name, tokens = counter_gateway
+    arguments = {"token": tokens[0], "server_id": server_id, "key": "metered"}
+    assert _call(client, "/rpc", name, **arguments) == 1
+    assert _call(client.peer, "/rpc", name, **arguments) == 2
+    for method, params in (("resources/read", {"uri": "counter://state"}), ("prompts/get", {"name": client.prompt_name, "arguments": {}})):
+        response = client.peer.post(
+            "/rpc",
+            headers={"Authorization": f"Bearer {tokens[0]}"},
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {**params, "server_id": server_id, "_meta": {"io.contextforge/sessionKey": "metered"}}},
+        )
+        assert response.status_code == 200, response.text
+        assert "error" not in response.json(), response.text
+    with sqlite3.connect(f"file:{client.database}?mode=ro", uri=True) as connection:
+        tool_count = connection.execute("SELECT count(*) FROM tool_metrics WHERE tool_id=?", (client.tool_id,)).fetchone()[0]
+        server_count = connection.execute("SELECT count(*) FROM server_metrics WHERE server_id=?", (server_id,)).fetchone()[0]
+        resource_count = connection.execute("SELECT count(*) FROM resource_metrics").fetchone()[0]
+        prompt_count = connection.execute("SELECT count(*) FROM prompt_metrics").fetchone()[0]
+    assert tool_count == 2
+    assert resource_count == prompt_count == 1
+    assert server_count == 4
+    assert len(_events(client.upstream_events, "dispatch")) == 2
+
+
+@pytest.mark.parametrize("counter_gateway", [("STREAMABLEHTTP", True, False, False, 2, False), ("STREAMABLEHTTP", True, False, False, 2, True)], indirect=True)
+def test_identity_quota_preserves_other_callers_capacity(counter_gateway):
+    """Keys and rotated tokens share a quota while another verified principal can create a binding."""
+    client, _, server_id, name, tokens = counter_gateway
+    for key in ("one", "two"):
+        assert _call(client, "/rpc", name, token=tokens[0], server_id=server_id, key=key) == 1
+    created = len(_events(client.upstream_events, "created"))
+    rejected = _response(client, "/rpc", name, token=tokens[0], server_id=server_id, key="three").json()
+    assert rejected["error"] == {"code": -32000, "message": "Caller session quota exhausted"}
+    rotated = _response(client, "/rpc", name, token=tokens[1], server_id=server_id, key="rotated").json()
+    assert rotated["error"] == {"code": -32000, "message": "Caller session quota exhausted"}
+    assert len(_events(client.upstream_events, "created")) == created
+    created_user = client.post(
+        "/auth/email/admin/users", json={"email": "other@example.com", "password": secrets.token_urlsafe(32), "full_name": "Other caller", "is_admin": True, "password_change_required": False}
+    )
+    assert created_user.status_code == 201, created_user.text
+    other = make_test_jwt("other@example.com", is_admin=True, teams=None, secret=client.signing_key)
+    assert _call(client, "/rpc", name, token=other, server_id=server_id, key="other-principal") == 1
+    assert _call(client, "/rpc", name, token=tokens[0], server_id=server_id, key="one") == 2
+
+
+@pytest.mark.parametrize("counter_gateway", [("STREAMABLEHTTP", True)], indirect=True)
+def test_script_flush_preserves_owned_session(counter_gateway):
+    """Redis script-cache loss reloads scripts without losing state or replaying dispatch."""
+    client, _, server_id, name, tokens = counter_gateway
+    arguments = {"token": tokens[0], "server_id": server_id, "key": "script-cache"}
+    assert _call(client, "/rpc", name, **arguments) == 1
+    client.redis_probe.script_flush()
+    assert _call(client.peer, "/rpc", name, **arguments) == 2
+    assert len(_events(client.upstream_events, "dispatch")) == 2
+
+
+def test_gateway_metadata_stays_local(counter_gateway):
+    """Application metadata survives while local keys and downstream negotiation do not reach legacy upstreams."""
+    client, _, server_id, name, tokens = counter_gateway
+    assert _call(client, f"/servers/{server_id}/mcp/", name, token=tokens[0], key="private-key", extra_meta={"application": "visible"}) == 1
+    meta = _events(client.upstream_events, "http")[-1]["meta"]
+    assert meta.get("application") == "visible"
+    assert "io.contextforge/sessionKey" not in meta
+    assert "io.modelcontextprotocol/clientCapabilities" not in meta
+    assert _call(client, f"/servers/{server_id}/mcp/", name, token=None, key="anonymous-key") == 1
+    assert "io.contextforge/sessionKey" not in _events(client.upstream_events, "http")[-1]["meta"]
+
+
+@pytest.mark.parametrize("counter_gateway", [("STREAMABLEHTTP", True)], indirect=True)
+def test_cancelled_gate_waiter_preserves_live_admissions(counter_gateway):
+    """An injected request cancellation while waiting for initialization leaves other HTTP calls valid."""
+    client, _, server_id, name, tokens = counter_gateway
+    arguments = {"token": tokens[0], "server_id": server_id, "key": "gate-cancellation"}
+    client.queue_events.with_suffix(".gate-hold").touch()
+
+    def observed(kind):
+        if not client.queue_events.exists():
+            return False
+        return any(json.loads(line).get("event") == kind for line in client.queue_events.read_text().splitlines())
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        first = executor.submit(_call, client, "/rpc", name, **arguments)
+        try:
+            _wait(lambda: observed("gate-held"), "held initialization gate")
+            client.queue_events.with_suffix(".gate-cancel").touch()
+            cancelled = executor.submit(_response, client, "/rpc", name, **arguments)
+            _wait(lambda: observed("gate-cancelled"), "cancelled gate waiter")
+            cancelled_response = cancelled.result(timeout=10)
+            assert cancelled_response.status_code >= 400 or "error" in cancelled_response.json()
+            waiting = executor.submit(_call, client, "/rpc", name, **arguments)
+            _wait(lambda: observed("gate-waiting"), "remaining gate waiter")
+        finally:
+            client.queue_events.with_suffix(".gate-release").touch()
+        assert sorted([first.result(timeout=15), waiting.result(timeout=15)]) == [1, 2]
+    assert len(_events(client.upstream_events, "dispatch")) == 2
+    # One registration connection exists before the caller connection.
+    assert len({event["connection"] for event in _events(client.upstream_events, "dispatch")}) == 1

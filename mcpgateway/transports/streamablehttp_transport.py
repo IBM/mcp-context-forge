@@ -84,7 +84,7 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity
+from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity, verified_quota_identity
 from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -6422,6 +6422,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "scoped_permissions",
         "scoped_server_id",
         "caller_session_identity",
+        "caller_quota_identity",
     ):
         if key not in user_context:
             continue
@@ -6842,6 +6843,7 @@ class _StreamableHttpAuthHandler:
                 "is_admin": effective_is_admin,
                 "auth_method": "jwt",
                 "caller_session_identity": verified_caller_identity(token, user_email, str(user_payload.get("iss", ""))),
+                "caller_quota_identity": verified_quota_identity(user_email, str(user_payload.get("iss", ""))) if user_email else None,
                 "exp": user_payload.get("exp"),
                 "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
@@ -7147,6 +7149,7 @@ class _StreamableHttpAuthHandler:
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
                 "caller_session_identity": verified_caller_identity(token, user_email, str(claims.get("iss", ""))),
+                "caller_quota_identity": verified_quota_identity(user_email, str(claims.get("iss", ""))) if user_email else None,
             }
         )
         _oauth_checked_var.set(True)

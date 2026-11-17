@@ -80,7 +80,7 @@ from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, To
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
+from mcpgateway.services.caller_session import CallerSessionError, quota_identity_from_context, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
@@ -5834,6 +5834,13 @@ class ToolService(BaseService):
             )
 
         start_time = time.monotonic()
+        caller_forwarded = False
+
+        def mark_caller_forwarded() -> None:
+            """Assign execution accounting to the remote owner before forwarding starts."""
+            nonlocal caller_forwarded
+            caller_forwarded = True
+
         success = False
         error_message = None
         tool_result: Optional[ToolResult] = None
@@ -6304,6 +6311,7 @@ class ToolService(BaseService):
                     verified_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
                     caller_binding = resolve_caller_binding(
                         caller_identity=verified_context.get("caller_session_identity") if verified_context.get("is_authenticated") is True else None,
+                        quota_identity=quota_identity_from_context(verified_context) if verified_context.get("caller_session_identity") else None,
                         server_id=server_id,
                         downstream_session_id=_downstream_session_id_from_request(),
                         meta=meta_data,
@@ -6315,8 +6323,10 @@ class ToolService(BaseService):
                         "tools/call",
                         {"name": name, "arguments": arguments, "_meta": meta_data, "server_id": server_id},
                         request_headers or {},
+                        on_forward=mark_caller_forwarded,
                     )
                     if forwarded.result is not None:
+                        mark_caller_forwarded()
                         tool_result = self._coerce_to_tool_result(forwarded.result)
                         success = not tool_result.is_error
                         return tool_result
@@ -7427,6 +7437,7 @@ class ToolService(BaseService):
                             status_message=error_message if error_message else None,
                             attributes={
                                 "success": success,
+                                "caller.forwarded": caller_forwarded,
                                 "duration_ms": duration_ms,
                             },
                         )
@@ -7438,66 +7449,70 @@ class ToolService(BaseService):
                 # Add final span attributes for OpenTelemetry
                 if span:
                     set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "caller.forwarded", caller_forwarded)
                     set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
 
-                # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 4: Record metrics via buffered service (batches writes for performance)
-                # ═══════════════════════════════════════════════════════════════════════════
-                # Only record metrics if tool_id is valid (skip for direct_proxy mode)
-                if tool_id:
-                    try:
-                        metrics_buffer.record_tool_metric(
-                            tool_id=tool_id,
-                            start_time=start_time,
-                            success=success,
-                            error_message=error_message,
-                        )
-                    except Exception as metric_error:
-                        logger.warning("Failed to record tool metric: %s", metric_error)
-
-                # Record server metrics ONLY when invoked through a specific virtual server
-                # When server_id is provided, it means the tool was called via a virtual server endpoint
-                # Direct tool calls via /rpc should NOT populate server metrics
-                if tool_id and server_id:
-                    try:
-                        # Record server metric only for the specific virtual server being accessed
-                        metrics_buffer.record_server_metric(
-                            server_id=server_id,
-                            start_time=start_time,
-                            success=success,
-                            error_message=error_message,
-                        )
-                    except Exception as metric_error:
-                        logger.warning("Failed to record server metric: %s", metric_error)
-
-                # Log structured message with performance tracking (using local variables)
-                if success:
-                    structured_logger.info(
-                        f"Tool '{name}' invoked successfully",  # noqa: G004
-                        user_id=app_user_email,
-                        resource_type="tool",
-                        resource_id=tool_id,
-                        resource_action="invoke",
-                        duration_ms=duration_ms,
-                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "arguments_count": len(arguments) if arguments else 0},
-                    )
+                if caller_forwarded:
+                    logger.info("Caller tool forwarding completed", extra={"event": "caller_session_forwarded", "success": success})
                 else:
-                    structured_logger.error(
-                        f"Tool '{name}' invocation failed",  # noqa: G004
-                        error=Exception(error_message) if error_message else None,
-                        user_id=app_user_email,
-                        resource_type="tool",
-                        resource_id=tool_id,
-                        resource_action="invoke",
-                        duration_ms=duration_ms,
-                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "error_message": error_message},
-                    )
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # PHASE 4: Record metrics via buffered service (batches writes for performance)
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # Only record metrics if tool_id is valid (skip for direct_proxy mode)
+                    if tool_id:
+                        try:
+                            metrics_buffer.record_tool_metric(
+                                tool_id=tool_id,
+                                start_time=start_time,
+                                success=success,
+                                error_message=error_message,
+                            )
+                        except Exception as metric_error:
+                            logger.warning("Failed to record tool metric: %s", metric_error)
 
-                # Track performance with threshold checking
-                with perf_tracker.track_operation("tool_invocation", name):
-                    pass  # Duration already captured above
+                    # Record server metrics ONLY when invoked through a specific virtual server
+                    # When server_id is provided, it means the tool was called via a virtual server endpoint
+                    # Direct tool calls via /rpc should NOT populate server metrics
+                    if tool_id and server_id:
+                        try:
+                            # Record server metric only for the specific virtual server being accessed
+                            metrics_buffer.record_server_metric(
+                                server_id=server_id,
+                                start_time=start_time,
+                                success=success,
+                                error_message=error_message,
+                            )
+                        except Exception as metric_error:
+                            logger.warning("Failed to record server metric: %s", metric_error)
+
+                    # Log structured message with performance tracking (using local variables)
+                    if success:
+                        structured_logger.info(
+                            f"Tool '{name}' invoked successfully",  # noqa: G004
+                            user_id=app_user_email,
+                            resource_type="tool",
+                            resource_id=tool_id,
+                            resource_action="invoke",
+                            duration_ms=duration_ms,
+                            custom_fields={"tool_name": name, "integration_type": tool_integration_type, "arguments_count": len(arguments) if arguments else 0},
+                        )
+                    else:
+                        structured_logger.error(
+                            f"Tool '{name}' invocation failed",  # noqa: G004
+                            error=Exception(error_message) if error_message else None,
+                            user_id=app_user_email,
+                            resource_type="tool",
+                            resource_id=tool_id,
+                            resource_action="invoke",
+                            duration_ms=duration_ms,
+                            custom_fields={"tool_name": name, "integration_type": tool_integration_type, "error_message": error_message},
+                        )
+
+                    # Track performance with threshold checking
+                    with perf_tracker.track_operation("tool_invocation", name):
+                        pass  # Duration already captured above
 
     @staticmethod
     def _is_preview_safe(hook_ref: Any) -> bool:

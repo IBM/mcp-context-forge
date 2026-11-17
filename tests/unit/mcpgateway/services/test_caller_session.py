@@ -117,6 +117,7 @@ def binding(token="token-a", key=None, downstream=None, server="server-a", enabl
     """Resolve a binding from simulated verified ingress context."""
     return resolve_caller_binding(
         caller_identity=verified_caller_identity(token, "user@example.com", "issuer"),
+        quota_identity=token,
         server_id=server,
         downstream_session_id=downstream,
         meta={SESSION_KEY_META: key} if key is not None else None,
@@ -339,7 +340,7 @@ def test_migration_preserves_existing_rows_and_is_idempotent(monkeypatch):
 def test_upstream_metadata_preserves_keys_without_forwarding_negotiation():
     """Forward application metadata while the upstream SDK negotiates its own connection."""
     supplied = {SESSION_KEY_META: "conversation", "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}, "traceparent": "trace"}
-    assert upstream_meta(supplied) == {SESSION_KEY_META: "conversation", "traceparent": "trace"}
+    assert upstream_meta(supplied) == {"traceparent": "trace"}
     assert "io.modelcontextprotocol/protocolVersion" in supplied
     assert session_key_from_meta({SESSION_KEY_META: "é" * 128}) == "é" * 128
     with pytest.raises(InvalidSessionKeyError):
@@ -891,13 +892,14 @@ async def test_shared_lease_loss_prevents_queued_dispatch(routed_registry):
     ticket = await affinity.forward_caller_request(binding().routing_key, {}, "verified")
     dispatched = []
     validated = asyncio.Event()
-    validate = ticket.validator
+    reserve = registry._reserve_caller
 
-    async def observe(ownership):
-        await validate(ownership)
+    async def observe(*args):
+        entry = await reserve(*args)
         validated.set()
+        return entry
 
-    ticket.validator = observe
+    registry._reserve_caller = observe
 
     async def queued():
         async with acquire(registry, ownership=ticket):
@@ -1038,13 +1040,14 @@ async def test_cancelled_queued_acquisition_releases_reservation(caller_registry
     registry, _ = caller_registry
     ticket = await ready_ticket(registry)
     admitted = asyncio.Event()
-    validate = ticket.validator
+    reserve = registry._reserve_caller
 
-    async def observe(ownership):
-        await validate(ownership)
+    async def observe(*args):
+        entry = await reserve(*args)
         admitted.set()
+        return entry
 
-    ticket.validator = observe
+    registry._reserve_caller = observe
 
     async def queued():
         async with acquire(registry, ownership=ticket):

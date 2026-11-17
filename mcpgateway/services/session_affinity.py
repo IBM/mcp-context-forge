@@ -35,7 +35,7 @@ import os
 import re
 import socket
 import time
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 import uuid
 import weakref
 
@@ -225,6 +225,8 @@ class SessionAffinity:
         self._listener_claims: Dict[str, tuple[str, float]] = {}
         self._listener_lock = asyncio.Lock()
         self._caller_routes: dict[str, CallerOwnershipTicket] = {}
+        self._caller_script_client: Any = None
+        self._caller_scripts: dict[str, Any] = {}
         self._caller_gates: weakref.WeakValueDictionary[str, _CallerRouteGate] = weakref.WeakValueDictionary()
 
     @staticmethod
@@ -308,6 +310,28 @@ class SessionAffinity:
 
             await asyncio.sleep(10)  # Refresh every 10s
 
+    async def _caller_eval(self, redis: Any, script: str, key_count: int, *values: Any) -> Any:
+        """Cache caller ownership scripts per client and delegate NOSCRIPT recovery to Redis.
+
+        Args:
+            redis: Current asynchronous Redis client.
+            script: Ownership script source.
+            key_count: Number of Redis keys before the script arguments.
+            values: Keys followed by script arguments.
+
+        Returns:
+            The Redis script result.
+        """
+        if not hasattr(redis, "register_script"):
+            return await redis.eval(script, key_count, *values)
+        if self._caller_script_client is not redis:
+            self._caller_scripts.clear()
+            self._caller_script_client = redis
+        scripts = self._caller_scripts
+        if script not in scripts:
+            scripts[script] = redis.register_script(script)
+        return await scripts[script](keys=list(values[:key_count]), args=list(values[key_count:]), client=redis)
+
     @staticmethod
     def _caller_owner_key(routing_key: str) -> str:
         """Use caller-only versioned records without changing downstream-session ownership.
@@ -348,7 +372,8 @@ class SessionAffinity:
             redis = await get_redis_client()
             if redis is None:
                 raise CallerOwnershipLostError()
-            ttl = await redis.eval(
+            ttl = await self._caller_eval(
+                redis,
                 """-- caller_validate_v1
                 if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
                     and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
@@ -366,10 +391,12 @@ class SessionAffinity:
                 raise CallerOwnershipLostError()
             ownership.expires_at = started + ttl / 1000
             ownership.require_valid(ready=False)
-        except BaseException as exc:
+        except asyncio.CancelledError:
+            if ownership.state is CallerOwnershipState.PENDING:
+                ownership.revoke()
+            raise
+        except Exception as exc:
             ownership.revoke()
-            if isinstance(exc, asyncio.CancelledError):
-                raise
             raise CallerOwnershipLostError() from exc
 
     async def _release_caller_ticket(self, ownership: CallerOwnershipTicket) -> None:
@@ -383,7 +410,8 @@ class SessionAffinity:
         redis = await get_redis_client()
         if redis is None:
             raise CallerOwnershipLostError()
-        await redis.eval(
+        await self._caller_eval(
+            redis,
             """-- caller_release_v1
                 if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
                     and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
@@ -426,7 +454,8 @@ class SessionAffinity:
                         self._caller_routes.pop(routing_key)
                     continue
                 started = time.monotonic()
-                ttl = await redis.eval(
+                ttl = await self._caller_eval(
+                    redis,
                     """-- caller_renew_v1
                     if redis.call('HGET', KEYS[1], 'owner') == ARGV[1]
                         and redis.call('HGET', KEYS[1], 'generation') == ARGV[2] then
@@ -1166,13 +1195,16 @@ class SessionAffinity:
                 await pubsub.unsubscribe(response_channel)
         raise CallerSessionError("Caller session forwarding ended without a response")
 
-    async def forward_caller_request(self, routing_key: str, request_data: Dict[str, Any], auth_context: str) -> CallerOwnershipTicket | Dict[str, Any]:
+    async def forward_caller_request(
+        self, routing_key: str, request_data: Dict[str, Any], auth_context: str, *, on_forward: Optional[Callable[[], None]] = None
+    ) -> CallerOwnershipTicket | Dict[str, Any]:
         """Return verified local admission or forward to the current caller-route owner.
 
         Args:
             routing_key: Server-derived caller routing identity.
             request_data: Authorized operation and original headers.
             auth_context: Encoded verified ingress context.
+            on_forward: Callback when this worker delegates execution.
 
         Returns:
             An initialized local ticket or the remote JSON-RPC response.
@@ -1211,9 +1243,9 @@ class SessionAffinity:
                             raise
                         force_generation = previous.generation
                 started = time.monotonic()
-                response = await redis.eval(
+                response = await self._caller_eval(
+                    redis,
                     """-- caller_claim_v1
-                    if redis.call('EXISTS', KEYS[2]) ~= 0 then return {'', '', -1, 0} end
                     local owner = redis.call('HGET', KEYS[1], 'owner')
                     local generation = redis.call('HGET', KEYS[1], 'generation')
                     local changed = 0
@@ -1230,9 +1262,8 @@ class SessionAffinity:
                     if owner == ARGV[1] then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
                     return {owner, generation, changed, redis.call('PTTL', KEYS[1])}
                     """,
-                    2,
+                    1,
                     self._caller_owner_key(routing_key),
-                    self._session_owner_key(routing_key),
                     get_worker_id(),
                     uuid.uuid4().hex,
                     max(30, settings.mcpgateway_session_affinity_ttl),
@@ -1252,7 +1283,7 @@ class SessionAffinity:
                     if previous is not None and previous.generation == generation and previous.state is CallerOwnershipState.READY:
                         previous.require_valid()
                         previous.expires_at = started + ttl / 1000
-                        await previous.validate()
+                        previous.require_valid()
                         previous.retained_until = time.monotonic() + 30
                         return previous
                     initialized = CallerOwnershipTicket(routing_key, owner, generation, started + ttl / 1000, self._validate_caller_ticket)
@@ -1265,7 +1296,9 @@ class SessionAffinity:
                     return initialized
                 if previous is not None:
                     await self._revoke_caller_ticket(previous)
-            # Forwarding never holds the initialization gate; the receiving worker verifies this exact generation.
+            # The callback assigns execution accounting before a remote error or timeout can occur.
+            if on_forward is not None:
+                on_forward()
             return await self._forward_rpc_to_worker(
                 redis,
                 owner,
@@ -1275,8 +1308,8 @@ class SessionAffinity:
                 settings.mcpgateway_pool_rpc_forward_timeout,
             )
         except BaseException as exc:
-            gate.failures += 1
             if initialized is not None:
+                gate.failures += 1
                 initialized.revoke()
                 await get_upstream_session_registry().evict_caller_route(routing_key, generation=initialized.generation)
                 try:
@@ -2068,7 +2101,9 @@ def unregister_gateway_from_notifications(gateway_id: str) -> None:
         pass  # Notification service not initialized
 
 
-async def forward_binding_operation(binding: Optional[CallerBinding], auth_context: Mapping[str, Any], method: str, params: dict[str, Any], headers: Mapping[str, str]) -> CallerRoutingResult:
+async def forward_binding_operation(
+    binding: Optional[CallerBinding], auth_context: Mapping[str, Any], method: str, params: dict[str, Any], headers: Mapping[str, str], *, on_forward: Optional[Callable[[], None]] = None
+) -> CallerRoutingResult:
     """Route caller-bound operations through verified worker ownership.
 
     Args:
@@ -2077,6 +2112,7 @@ async def forward_binding_operation(binding: Optional[CallerBinding], auth_conte
         method: MCP operation name.
         params: Authorized operation parameters.
         headers: Original request headers for trusted forwarding.
+        on_forward: Callback when execution belongs to a remote worker.
 
     Returns:
         A remote result or a verified local ownership ticket.
@@ -2092,7 +2128,7 @@ async def forward_binding_operation(binding: Optional[CallerBinding], auth_conte
 
     try:
         response = await get_session_affinity().forward_caller_request(
-            binding.routing_key, {"method": method, "params": params, "headers": dict(headers)}, encode_internal_mcp_auth_context(dict(auth_context))
+            binding.routing_key, {"method": method, "params": params, "headers": dict(headers)}, encode_internal_mcp_auth_context(dict(auth_context)), on_forward=on_forward
         )
     except CallerSessionError:
         raise

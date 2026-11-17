@@ -52,7 +52,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.caller_session import CallerSessionError, resolve_caller_binding, upstream_meta
+from mcpgateway.services.caller_session import caller_execution_scope, CallerSessionError, mark_caller_execution_forwarded, quota_identity_from_context, resolve_caller_binding, upstream_meta
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
@@ -74,7 +74,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory, SigV4ConfigError
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
@@ -572,15 +572,22 @@ class PromptService(BaseService):
             auth_context = caller_auth_context if caller_auth_context is not None else user_context_var.get()
             caller_binding = resolve_caller_binding(
                 caller_identity=auth_context.get("caller_session_identity") if auth_context.get("is_authenticated") is True else None,
+                quota_identity=quota_identity_from_context(auth_context) if auth_context.get("caller_session_identity") else None,
                 server_id=server_id,
                 downstream_session_id=downstream_session_id,
                 meta=meta_data,
                 pin_sessions_by_caller=getattr(gateway, "pin_sessions_by_caller", False) is True,
             )
             forwarded = await forward_binding_operation(
-                caller_binding, auth_context, "prompts/get", {"name": prompt.name, "arguments": arguments or {}, "_meta": meta_data, "server_id": server_id}, request_headers_var.get()
+                caller_binding,
+                auth_context,
+                "prompts/get",
+                {"name": prompt.name, "arguments": arguments or {}, "_meta": meta_data, "server_id": server_id},
+                request_headers_var.get(),
+                on_forward=mark_caller_execution_forwarded,
             )
             if forwarded.result is not None:
+                mark_caller_execution_forwarded()
                 return PromptResult.model_validate(forwarded.result)
             meta_data = upstream_meta(meta_data)
 
@@ -2220,7 +2227,7 @@ class PromptService(BaseService):
         if is_input_capture_enabled("prompt.render"):
             span_attributes["langfuse.observation.input"] = serialize_trace_payload(arguments or {})
 
-        with create_span("prompt.render", span_attributes) as span:
+        with create_span("prompt.render", span_attributes) as span, caller_execution_scope() as execution:
             try:
                 # Check if any prompt hooks are registered to avoid unnecessary context creation
                 plugin_manager = await self._get_plugin_manager(server_id)
@@ -2411,7 +2418,10 @@ class PromptService(BaseService):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
 
                 success = True
-                logger.info("Retrieved prompt: %s successfully", prompt.id)
+                if execution.forwarded:
+                    logger.info("Forwarded prompt request completed")
+                else:
+                    logger.info("Retrieved prompt: %s successfully", prompt.id)
                 return result
 
             except PromptInputRequired:
@@ -2424,7 +2434,7 @@ class PromptService(BaseService):
                 raise
             finally:
                 # Record metrics only if we found a prompt
-                if prompt:
+                if prompt and not execution.forwarded:
                     try:
                         metrics_buffer.record_prompt_metric(
                             prompt_id=prompt.id,
@@ -2449,6 +2459,9 @@ class PromptService(BaseService):
                             )
                         except Exception as metrics_error:
                             logger.warning("Failed to record server metric: %s", metrics_error)
+
+                if span:
+                    set_span_attribute(span, "caller.forwarded", execution.forwarded)
 
                 # End database span for observability dashboard
                 if db_span_id and observability_service and not db_span_ended:

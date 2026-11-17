@@ -189,7 +189,7 @@ from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity
+from mcpgateway.services.caller_session import CallerSessionError, verified_caller_identity, verified_quota_identity
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
     completion_error_code,
@@ -541,8 +541,10 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     internal = get_internal_mcp_auth_context(request)
     if internal is not None and internal.get("is_authenticated") is True:
         context["caller_session_identity"] = internal.get("caller_session_identity")
+        context["caller_quota_identity"] = internal.get("caller_quota_identity")
     elif is_authenticated and isinstance(cached, tuple) and isinstance(cached[0], str):
         context["caller_session_identity"] = verified_caller_identity(cached[0], email, str(payload.get("iss", "")))
+        context["caller_quota_identity"] = verified_quota_identity(email, str(payload.get("iss", ""))) if email else None
     if scoped_permissions is not None:
         context["scoped_permissions"] = scoped_permissions
     if scoped_server_id:

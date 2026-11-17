@@ -297,6 +297,9 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCPGATEWAY_CATALOG_CACHE_TTL | string | `"3600"` |  |
 | mcpContextForge.config.MCPGATEWAY_CATALOG_PAGE_SIZE | string | `"100"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT | string | `"60000"` |  |
+| mcpContextForge.config.MCP_CALLER_SESSION_IDLE_TIMEOUT | string | `"600"` | Idle expiry for caller-pinned upstream sessions, in seconds. |
+| mcpContextForge.config.MCP_CALLER_SESSION_MAX_BINDINGS | string | `"1000"` | Worker-local binding limit, including creation and retirement reservations. |
+| mcpContextForge.config.MCP_CALLER_SESSION_MAX_BINDINGS_PER_IDENTITY | string | `"100"` | Worker-local quota for one verified principal and issuer, across tokens and conversation keys. |
 | mcpContextForge.config.MCP_SESSION_POOL_ACQUIRE_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET | string | `"60.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD | string | `"5"` |  |

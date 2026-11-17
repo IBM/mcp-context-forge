@@ -115,7 +115,7 @@ class TestPromptSigning:
         fake_registry = MagicMock()
         acquisition = "acquire_caller" if binding_kind == "caller" else "acquire"
         setattr(fake_registry, acquisition, MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=SimpleNamespace(session=MagicMock())), __aexit__=AsyncMock(return_value=False))))
-        context = {"is_authenticated": True, "caller_session_identity": "verified-caller"}
+        context = {"is_authenticated": True, "caller_session_identity": "verified-caller", "caller_quota_identity": "verified-principal"}
 
         with (
             patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-1" if binding_kind == "downstream" else None),
@@ -227,7 +227,7 @@ class TestResourceSigning:
         session.session = session
         session.read_resource.return_value = SimpleNamespace(contents=[SimpleNamespace(uri="test://r", text="x", mimeType="text/plain")])
         registry = SimpleNamespace(acquire=_capturing_proxy_client(captured, session), acquire_caller=_capturing_proxy_client(captured, session))
-        context = {"is_authenticated": True, "caller_session_identity": "verified-caller"}
+        context = {"is_authenticated": True, "caller_session_identity": "verified-caller", "caller_quota_identity": "verified-principal"}
 
         with (
             patch("mcpgateway.services.resource_service.mcp_proxy_client", _capturing_proxy_client(captured, session)),

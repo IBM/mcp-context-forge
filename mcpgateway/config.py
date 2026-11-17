@@ -3001,6 +3001,7 @@ class Settings(BaseSettings):
     # The upstream-session pooling surface that used to share this section is
     # gone as of #4205 — see mcpgateway.services.upstream_session_registry.
     mcp_caller_session_idle_timeout: float = Field(default=600.0, gt=0, description="Idle seconds before caller-pinned upstream sessions expire")
+    mcp_caller_session_max_bindings_per_identity: int = Field(default=100, ge=1, description="Maximum caller-pinned bindings per verified identity per worker")
     mcp_caller_session_max_bindings: int = Field(default=1000, ge=1, description="Maximum caller-pinned upstream bindings per worker")
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL

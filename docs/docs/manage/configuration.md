@@ -1417,11 +1417,18 @@ This authenticated-only guarantee narrows the original unconditional explicit-ke
 | Setting | Description | Default |
 | --- | --- | --- |
 | `MCP_CALLER_SESSION_IDLE_TIMEOUT` | Idle seconds before a caller binding expires | `600.0` |
-| `MCP_CALLER_SESSION_MAX_BINDINGS` | Maximum caller bindings per worker, including creations in progress | `1000` |
+| `MCP_CALLER_SESSION_MAX_BINDINGS` | Maximum caller bindings per worker, including creation and retirement reservations | `1000` |
+| `MCP_CALLER_SESSION_MAX_BINDINGS_PER_IDENTITY` | Maximum bindings per verified principal and issuer on one worker | `100` |
 
 Expiry protects active and queued operations. Capacity cleanup reclaims expired idle bindings only.
 When capacity remains full, new bindings return `-32000` (`Upstream session capacity exhausted`).
 Existing bindings remain usable. Capacity rejection never dispatches through a temporary session.
+Identity quotas apply across tokens, conversation keys, virtual servers, and upstream gateways.
+The effective identity quota is the smaller of the configured quota and the worker limit minus one.
+A worker limit of one uses an identity quota of one and cannot reserve capacity for another identity.
+Quota rejection returns `-32000` (`Caller session quota exhausted`) before session creation or dispatch.
+Quotas limit one identity's share; several identities can still exhaust the total worker capacity.
+Expiry closes connections outside the shared registry lock and releases reservations after teardown finishes.
 
 !!! warning "Shared-token conversations"
     Callers using one token without distinct keys share upstream state on opted-in gateways.
@@ -1442,12 +1449,14 @@ Ownership loss returns `-32000` (`Caller session ownership lost`) before subsequ
 Operations already dispatched can finish. Ownership loss does not undo their effects or trigger replay.
 Ownership or forwarding failures reject calls instead of creating conflicting local state.
 
-Deploy this ownership format with a coordinated stop and restart of all gateway workers.
-Mixed versions cannot enforce the same generation checks. Drain in-flight operations before stopping workers.
-Earlier caller-affinity builds use `mcpgw:pool_owner:caller-<digest>` records.
-Wait for those records to expire, or remove only those caller records while all workers remain stopped.
-New workers reject caller-route claims while a matching earlier record exists.
-Existing downstream-session ownership records and APIs keep their format.
+Enable multi-worker caller continuity only after all workers run compatible code.
+Existing downstream-session ownership records retain their format.
+No caller-record cleanup is required when upgrading from a version without caller pinning.
+The gateway consumes `io.contextforge/sessionKey` locally and excludes it from upstream metadata.
+Hop-specific protocol metadata is replaced with the upstream SDK's envelope; other application metadata remains available.
+Forwarded tools, resources, and prompts record execution metrics once on the owner worker; the origin retains forwarding diagnostics.
+Ownership-loss and capacity rejection events omit credentials, correlation keys, and full binding digests.
+Each rejection reason emits at most one structured event per minute per process.
 
 Request tracing uses current operation headers without replacing the caller binding.
 

@@ -22,6 +22,15 @@ Enable `USE_STATEFUL_SESSIONS=true` and configure affinity so calls reach the ow
 See [persistent upstream sessions with tracing](../observability-otel.md#persistent-upstream-sessions-with-tracing)
 for per-call spans, upstream session IDs, and metadata propagation.
 
+!!! note "Caller-session extension (#7263)"
+    Authenticated caller bindings extend the affinity mechanism described by this accepted ADR.
+    Caller routes use `mcpgw:caller_owner:v1:` hashes with an owner and an opaque generation.
+    Local initialization gates publish ready tickets only after stale generations drain.
+    Operations check local tickets after waits and verify shared ownership immediately before dispatch.
+    Generation comparisons fence renewal, forwarding, and cleanup; revocation cannot recreate an old generation.
+    Existing downstream-session records retain their format.
+    See [caller-session configuration](../../manage/configuration.md#upstream-mcp-sessions) for quotas and deployment requirements.
+
 ## Context
 
 ContextForge supports horizontal scaling with multiple worker processes (e.g., `gunicorn -w 4`). When clients connect via SSE or Streamable HTTP, the gateway needs to pin each downstream MCP session to one worker so the worker-local `UpstreamSessionRegistry` (see #4205) can serve subsequent calls without rebuilding upstream state.

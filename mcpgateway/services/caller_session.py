@@ -5,19 +5,36 @@ SPDX-License-Identifier: Apache-2.0
 
 Resolve authenticated upstream session bindings without trusting client ownership fields."""
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import json
+import logging
 import time
-from typing import Any, Awaitable, Callable, Mapping, Optional
+from typing import Any, Awaitable, Callable, Generator, Mapping, Optional
 
 SESSION_KEY_META = "io.contextforge/sessionKey"
 MAX_SESSION_KEY_BYTES = 256
+_CALLER_EVENT_TIMES: dict[str, float] = {}
 REQUEST_HEADERS = frozenset({"traceparent", "tracestate", "baggage", "x-correlation-id"})
 INTERNAL_HEADERS = frozenset({"mcp-session-id", "x-mcp-session-id", "x-forwarded-internally"})
 ENVELOPE_META_KEYS = frozenset({"io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo", "io.modelcontextprotocol/clientCapabilities"})
+
+
+def log_caller_event(event: str) -> None:
+    """Emit one identifier-free rejection event per reason per minute.
+
+    Args:
+        event: One of the fixed caller-session rejection event names.
+    """
+    if event not in {"caller_session_ownership_lost", "caller_session_capacity_rejected", "caller_session_quota_rejected"}:
+        raise ValueError("Unknown caller session event")
+    now = time.monotonic()
+    if now - _CALLER_EVENT_TIMES.get(event, float("-inf")) >= 60:
+        _CALLER_EVENT_TIMES[event] = now
+        logging.getLogger(__name__).warning("Caller session admission rejected", extra={"event": event})
 
 
 def upstream_meta(meta: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
@@ -29,7 +46,7 @@ def upstream_meta(meta: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]
     Returns:
         Application metadata without hop-specific client negotiation fields.
     """
-    return {name: value for name, value in meta.items() if name not in ENVELOPE_META_KEYS} if meta is not None else None
+    return {name: value for name, value in meta.items() if name not in ENVELOPE_META_KEYS and name != SESSION_KEY_META} if meta is not None else None
 
 
 class CallerSessionError(RuntimeError):
@@ -49,6 +66,7 @@ class CallerOwnershipLostError(CallerSessionError):
 
     def __init__(self) -> None:
         """Use a stable MCP error message for rejected ownership tickets."""
+        log_caller_event("caller_session_ownership_lost")
         super().__init__("Caller session ownership lost")
 
 
@@ -88,6 +106,8 @@ class CallerOwnershipTicket:
 
     def revoke(self) -> None:
         """Permanently revoke this ticket and every operation holding its reference."""
+        if self.state is not CallerOwnershipState.REVOKED:
+            log_caller_event("caller_session_ownership_lost")
         self.state = CallerOwnershipState.REVOKED
 
     async def validate(self) -> None:
@@ -103,6 +123,38 @@ class CallerRoutingResult:
 
     result: Optional[dict[str, Any]] = None
     ownership: Optional[CallerOwnershipTicket] = None
+
+
+@dataclass
+class CallerExecution:
+    """Track execution ownership within one resource or prompt request."""
+
+    forwarded: bool = False
+
+
+_caller_execution: ContextVar[Optional[CallerExecution]] = ContextVar("caller_execution", default=None)
+
+
+@contextmanager
+def caller_execution_scope() -> Generator[CallerExecution, None, None]:
+    """Isolate execution accounting across nested requests and in-process forwarding.
+
+    Yields:
+        Request-local execution ownership that survives awaits and resets on completion.
+    """
+    execution = CallerExecution()
+    token = _caller_execution.set(execution)
+    try:
+        yield execution
+    finally:
+        _caller_execution.reset(token)
+
+
+def mark_caller_execution_forwarded() -> None:
+    """Assign execution metrics to the remote owner of the current scoped request."""
+    execution = _caller_execution.get()
+    if execution is not None:
+        execution.forwarded = True
 
 
 # Only the signed Redis consumer sets this context; inbound HTTP headers cannot supply ownership authority.
@@ -126,6 +178,42 @@ def verified_caller_identity(token: str, principal: str, issuer: str = "") -> st
         An opaque identity that isolates distinct bearer tokens.
     """
     return _digest([issuer, principal, token])
+
+
+def verified_quota_identity(principal: str, issuer: str = "") -> str:
+    """Fingerprint an authenticated principal independently of token rotation.
+
+    Args:
+        principal: Verified principal identifier.
+        issuer: Verified identity issuer.
+
+    Returns:
+        An opaque worker-local quota identity.
+    """
+    if not isinstance(principal, str) or not principal:
+        raise CallerSessionError("Caller session identity unavailable")
+    return _digest(["caller-quota-v1", issuer, principal])
+
+
+def quota_identity_from_context(context: Mapping[str, Any]) -> Optional[str]:
+    """Read server-verified quota authority without consulting request metadata.
+
+    Args:
+        context: Authenticated ingress or signed internal forwarding context.
+
+    Returns:
+        Verified quota identity, or None when no authenticated principal is available.
+    """
+    if context.get("is_authenticated") is not True:
+        return None
+    identity = context.get("caller_quota_identity")
+    if isinstance(identity, str) and identity:
+        return identity
+    principal = context.get("email") or context.get("user_id")
+    issuer = context.get("issuer", "")
+    if not isinstance(principal, str) or not principal or not isinstance(issuer, str):
+        return None
+    return verified_quota_identity(principal, issuer)
 
 
 def session_key_from_meta(meta: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -161,6 +249,7 @@ class CallerBinding:
     key: str
     downstream_session_id: Optional[str]
     routing_key: str
+    quota_identity: str
 
 
 def resolve_caller_binding(
@@ -170,6 +259,7 @@ def resolve_caller_binding(
     downstream_session_id: Optional[str],
     meta: Optional[Mapping[str, Any]],
     pin_sessions_by_caller: bool,
+    quota_identity: Optional[str] = None,
 ) -> Optional[CallerBinding]:
     """Resolve opt-in caller continuity while preserving downstream-session isolation.
 
@@ -179,6 +269,7 @@ def resolve_caller_binding(
         downstream_session_id: Real downstream session ID, when present.
         meta: JSON-RPC params metadata.
         pin_sessions_by_caller: Gateway opt-in for requests without explicit keys.
+        quota_identity: Verified principal fingerprint independent of conversation and token.
 
     Returns:
         A caller binding, or None to preserve the existing invocation path.
@@ -188,9 +279,11 @@ def resolve_caller_binding(
         return None
     if key is None and (downstream_session_id or not pin_sessions_by_caller):
         return None
+    if not isinstance(quota_identity, str) or not quota_identity:
+        raise CallerSessionError("Caller session identity unavailable")
     components = ["caller-v1", caller_identity, server_id, downstream_session_id, key]
     digest = _digest(components)
-    return CallerBinding(key=digest, downstream_session_id=downstream_session_id, routing_key=f"caller-{digest}")
+    return CallerBinding(key=digest, downstream_session_id=downstream_session_id, routing_key=f"caller-{digest}", quota_identity=quota_identity)
 
 
 def connection_fingerprint(url: str, transport: str, headers: Mapping[str, str], tls_identity: Any = None) -> str:

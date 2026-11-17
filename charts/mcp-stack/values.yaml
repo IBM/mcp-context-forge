@@ -593,6 +593,14 @@ mcpContextForge:
     MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL: "32" # max concurrent listen streams per principal per worker (1-1024)
     MCP_LISTEN_MAX_ANONYMOUS_STREAMS: "256" # max concurrent listen streams shared by all anonymous callers per worker (0-1024; 0 refuses)
 
+    # ─ Caller-Pinned Upstream Sessions ─
+    # -- Idle expiry for caller-pinned upstream sessions, in seconds.
+    MCP_CALLER_SESSION_IDLE_TIMEOUT: "600"
+    # -- Worker-local binding limit, including creation and retirement reservations.
+    MCP_CALLER_SESSION_MAX_BINDINGS: "1000"
+    # -- Worker-local quota per verified principal and issuer, across tokens and conversation keys.
+    MCP_CALLER_SESSION_MAX_BINDINGS_PER_IDENTITY: "100"
+
     # ─ MCP Session Pool (disabled) ─
     # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.
     MCP_SESSION_POOL_ENABLED: "false"

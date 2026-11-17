@@ -381,6 +381,24 @@ Gateway registration rejects a normalized federated tool-name collision with `40
 }
 ```
 
+#### Caller-pinned gateway registration
+Set `pin_sessions_by_caller` on `POST /gateways` or `PUT /gateways/{id}` to retain upstream state for authenticated session-less callers.
+The default is `false`. For example, the gateway registration body can include:
+
+```json
+{
+  "name": "stateful-upstream",
+  "url": "https://mcp.example.com/mcp",
+  "transport": "STREAMABLEHTTP",
+  "pin_sessions_by_caller": true
+}
+```
+
+Authenticated callers can instead send `params._meta["io.contextforge/sessionKey"]` to request conversation isolation regardless of the flag.
+The gateway consumes this key locally. It does not forward the key upstream.
+Anonymous requests without downstream sessions retain fresh upstream sessions.
+[Caller-session settings](configuration.md#upstream-mcp-sessions) describe quotas, sharing limits, expiry, and multi-worker affinity.
+
 ### Poll Gateway Lifecycle Status
 
 ```bash
