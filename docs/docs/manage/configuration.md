@@ -1288,7 +1288,7 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation (-1 to disable) | `3`     | int     |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
-| `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
+| `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources. OAuth `authorization_code` servers with no stored user token are skipped and need a manual refresh; the skip is logged once per gateway at `LOG_LEVEL=INFO` | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs) and catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
 | `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to modern upstream servers for refresh | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |

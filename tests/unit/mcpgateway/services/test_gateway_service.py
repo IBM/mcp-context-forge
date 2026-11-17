@@ -5188,13 +5188,17 @@ class TestGatewayHealth:
         return gateway_service._refresh_gateway_tools_resources_prompts
 
     @pytest.mark.asyncio
-    async def test_health_skips_auto_refresh_for_auth_code_gateway_without_token(self, gateway_service, mock_gateway_health, mock_db_session, caplog):
-        """Issue #7015: no stored token means the refresh cannot authenticate, so it is skipped and reported once."""
+    @pytest.mark.parametrize("user_email", [None, "admin@example.com"], ids=["no-user", "admin-without-token"])
+    async def test_health_skips_auto_refresh_for_auth_code_gateway_without_token(self, gateway_service, mock_gateway_health, mock_db_session, caplog, user_email):
+        """Issue #7015: no stored token means the refresh cannot authenticate, so it is skipped and reported once.
+
+        Production health checks pass an admin email; get_user_token() then returns None when that user never authorized.
+        """
         gateway = self._as_auth_code_gateway(mock_gateway_health)
 
         with caplog.at_level(logging.INFO, logger="mcpgateway.services.gateway_service"):
             for _ in range(2):
-                refresh = await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session)
+                refresh = await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session, user_email=user_email, stored_token=None)
                 refresh.assert_not_awaited()
 
         notices = [r for r in caplog.records if "Auto-refresh skipped for gateway" in r.getMessage()]
