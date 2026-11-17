@@ -13106,6 +13106,32 @@ async def test_admin_servers_partial_html_renders(monkeypatch, mock_request, moc
 
 
 @pytest.mark.asyncio
+async def test_admin_servers_partial_html_eager_loads_interfaces(monkeypatch, mock_request, mock_db):
+    """The partial loads interfaces with the servers, so rendering each row runs no extra query."""
+    paginate = AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": make_pagination_meta(), "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate)
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
+
+    mock_request.headers = {}
+    await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    query = next(arg for arg in [*paginate.call_args.args, *paginate.call_args.kwargs.values()] if hasattr(arg, "_with_options"))
+    assert any("Server.interfaces" in str(getattr(option, "path", "")) for option in query._with_options)
+
+
+@pytest.mark.asyncio
 async def test_admin_servers_partial_html_all_teams_view(monkeypatch, mock_request, mock_db):
     """Cover All Teams view access conditions when team_id is not provided."""
     pagination = make_pagination_meta()

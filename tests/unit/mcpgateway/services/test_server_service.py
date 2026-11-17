@@ -2042,6 +2042,7 @@ class TestServerService:
             associated_tools = None
             associated_resources = None
             associated_prompts = None
+            interfaces = None
             tags = None
             oauth_enabled = None
             oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}  # pragma: allowlist secret

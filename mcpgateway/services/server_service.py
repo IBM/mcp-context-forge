@@ -1452,7 +1452,7 @@ class ServerService(BaseService):
                 server.team_id = server_update.team_id
 
             _update_server_associations(db, server, server_update)
-            _apply_server_interfaces(server, getattr(server_update, "interfaces", None))
+            _apply_server_interfaces(server, server_update.interfaces)
 
             # Update tags if provided
             if server_update.tags is not None:
@@ -1526,9 +1526,8 @@ class ServerService(BaseService):
                 changes.append(f"visibility: {server_update.visibility}")
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
-            interfaces_update = getattr(server_update, "interfaces", None)
-            if interfaces_update is not None:
-                changes.append(f"interfaces: {len(interfaces_update)}")
+            if server_update.interfaces is not None:
+                changes.append(f"interfaces: {len(server_update.interfaces)}")
 
             self._audit_trail.log_action(
                 user_id=user_email or "system",
