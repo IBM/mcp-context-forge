@@ -685,7 +685,8 @@ def test_build_oauth_config_from_credentials_carries_resource_and_audience_field
     the equivalent admin.py OAuth form assembly accepts, otherwise a catalog-registered
     gateway can never get them set at registration time. username/password are omitted:
     grant_type is hardcoded to authorization_code, so those password-grant-only fields
-    would never be read."""
+    would never be read. redirect_uri is the one deliberate exception to the parity
+    rule: it is never copied (#7394)."""
     raw = service._build_oauth_config_from_credentials(
         {
             "issuer": "https://issuer.example.com",
@@ -696,7 +697,7 @@ def test_build_oauth_config_from_credentials_carries_resource_and_audience_field
             "resource": "https://api.example.com/mcp",
         }
     )
-    assert raw["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+    assert "redirect_uri" not in raw
     assert "username" not in raw
     assert "password" not in raw
     assert raw["audience"] == "https://api.example.com"
@@ -759,7 +760,21 @@ def test_build_oauth_config_from_credentials_scopes_list_normalized(service):
     assert raw["scopes"] == ["repo", "read:user"]
 
 
-@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"])
+def test_build_oauth_config_from_credentials_ignores_redirect_uri(service):
+    """A caller-supplied redirect_uri must never reach the stored oauth_config (#7394):
+    DCR registration writes the stored value as the client's only redirect at the
+    authorization server, so the callback must derive from APP_DOMAIN instead."""
+    raw = service._build_oauth_config_from_credentials(
+        {
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://evil.example.com/oauth/callback",
+        }
+    )
+    assert "redirect_uri" not in raw
+    assert raw["issuer"] == "https://issuer.example.com"
+
+
+@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "audience"])
 def test_build_oauth_config_from_credentials_rejects_non_string_values(service, key):
     """A dict/list/int value for a known credential key must be rejected outright rather than
     silently persisted. Left unchecked, `_encrypt_oauth_secret_value`'s `isinstance(value, str)`
@@ -819,6 +834,51 @@ async def test_register_oauth_skip_init_persists_oauth_credentials(service):
     assert stored["scopes"] == ["read", "write"]
     # Sensitive values are encrypted at rest, never stored as the plaintext submitted.
     assert stored["client_secret"] != "super-secret"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_ignores_caller_supplied_redirect_uri(service):
+    """A redirect_uri inside oauth_credentials must not reach the persisted
+    oauth_config (#7394): DCR registration writes the stored value as the
+    client's only redirect at the authorization server, so the callback must
+    derive from APP_DOMAIN instead."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={
+            "issuer": "https://issuer.example.com",
+            "client_id": "client-123",
+            "redirect_uri": "https://evil.example.com/oauth/callback",
+        },
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        # Discovery makes an outbound call; keep it a no-op so the test stays offline.
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch.object(service._gateway_service, "_auto_discover_oauth_endpoints", AsyncMock(side_effect=lambda cfg: cfg)),
+        ):
+            result = await service.register_catalog_server("oauth-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    stored = db.add.call_args[0][0].oauth_config
+    assert "redirect_uri" not in stored
+    assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["client_id"] == "client-123"
 
 
 @pytest.mark.asyncio

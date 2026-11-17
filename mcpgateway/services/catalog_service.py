@@ -428,8 +428,9 @@ class CatalogService:
 
         Args:
             oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
-                optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
-                audience/resource), or None.
+                optionally client_id/client_secret/token_url/authorization_url/audience/
+                resource), or None. A supplied ``redirect_uri`` is ignored: the gateway
+                derives its OAuth callback from ``APP_DOMAIN`` at authorize time (#7394).
 
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
@@ -457,8 +458,11 @@ class CatalogService:
         # catalog-registered gateway can carry the same RFC 8707 resource/audience fields a
         # manually-created gateway can (#5967 follow-up). username/password are omitted:
         # grant_type is hardcoded to authorization_code above, so those password-grant-only
-        # fields would never be read.
-        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
+        # fields would never be read. redirect_uri is deliberately not copied (#7394): a
+        # stored value is registered at the authorization server as the client's only
+        # redirect, so the callback must come from the deployment's own APP_DOMAIN origin,
+        # which the authorize path derives when the stored config carries none.
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "audience"):
             value = oauth_credentials.get(key)
             if value is None or value == "":
                 continue

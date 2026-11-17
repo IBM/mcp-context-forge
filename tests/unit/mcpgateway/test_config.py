@@ -132,6 +132,23 @@ def test_ui_base_url_preserves_similar_path():
     assert str(configured.ui_base_url) == "https://ui.example.com/myapp"
 
 
+def test_app_domain_localhost_warns_no_public_origin_declared(caplog):
+    """A localhost APP_DOMAIN declares no public origin (#7394): OAuth callbacks
+    derive from it, so startup names the origin that will be used."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+    Settings(app_domain="http://localhost:4444", environment="development", _env_file=None)
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("declares no public origin" in message and "http://localhost:4444" in message for message in warnings)
+
+
+def test_app_domain_public_origin_skips_no_public_origin_warning(caplog):
+    """A declared public APP_DOMAIN origin does not trigger the #7394 warning."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+    Settings(app_domain="https://gateway.example.com", environment="development", _env_file=None)
+    warnings = [record.getMessage() for record in caplog.records]
+    assert not any("declares no public origin" in message for message in warnings)
+
+
 def test_ui_base_url_treats_blank_string_as_unset():
     """Blank environment override preserves gateway UI fallback behavior."""
     configured = Settings(ui_base_url="", environment="development", _env_file=None)
