@@ -18,6 +18,9 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 
+# Local
+from tests.helpers.auth import make_test_scope_request
+
 # Patch RBAC decorators before importing teams module
 def _noop_decorator(permission: str, resource_type=None):
     def decorator(func):
@@ -27,7 +30,7 @@ def _noop_decorator(permission: str, resource_type=None):
 
 
 with patch("mcpgateway.middleware.rbac.require_permission", _noop_decorator):
-    with patch("mcpgateway.middleware.rbac.require_admin_permission", lambda: (lambda f: f)):
+    with patch("mcpgateway.middleware.rbac.require_admin_permission", lambda: lambda f: f):
         from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
         from mcpgateway.routers import teams
         from mcpgateway.services.team_invitation_service import TeamInvitationService
@@ -173,7 +176,10 @@ class TestUpdateTeamMaxMembersCap:
     async def test_admin_create_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
         """Admin create with max_members > cap succeeds."""
         mock_team.max_members = 500
-        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team)), get_member_counts_batch_cached=AsyncMock(return_value={})):
+        with (
+            mock_permission_check(is_admin=admin_ctx.get("is_admin", False)),
+            _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team)), get_member_counts_batch_cached=AsyncMock(return_value={})),
+        ):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=500)
@@ -202,7 +208,7 @@ class TestUpdateTeamMaxMembersCap:
 
             req = TeamUpdateRequest(max_members=200)
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+                await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "cannot exceed" in exc.value.detail
 
@@ -229,7 +235,7 @@ class TestUpdateTeamMaxMembersCap:
             from mcpgateway.schemas import TeamUpdateRequest
 
             req = TeamUpdateRequest(max_members=500)
-            result = await teams.update_team(mock_team.id, req, current_user=admin_ctx, db=db)
+            result = await teams.update_team(mock_team.id, req, current_user=admin_ctx, db=db, http_request=make_test_scope_request())
             assert result.max_members == 500
 
     @pytest.mark.asyncio
@@ -259,7 +265,7 @@ class TestUpdateTeamMaxMembersCap:
             from mcpgateway.schemas import TeamUpdateRequest
 
             req = TeamUpdateRequest(max_members=100)
-            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert result.max_members == 100
 
     @pytest.mark.asyncio
@@ -277,7 +283,7 @@ class TestUpdateTeamMaxMembersCap:
             from mcpgateway.schemas import TeamUpdateRequest
 
             req = TeamUpdateRequest(name="Renamed")
-            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert result.max_members == 75
 
 
@@ -296,7 +302,7 @@ class TestUpdateTeamErrors:
 
             req = TeamUpdateRequest(name="X", description="Y")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+                await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
             assert "not found after update" in exc.value.detail
 
@@ -313,7 +319,7 @@ class TestUpdateTeamErrors:
 
             req = TeamUpdateRequest(name="X")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team("tid", req, current_user=user_ctx, db=db)
+                await teams.update_team("tid", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "bad name" in exc.value.detail
 
@@ -329,7 +335,7 @@ class TestUpdateTeamErrors:
 
             req = TeamUpdateRequest(name="X")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team("tid", req, current_user=user_ctx, db=db)
+                await teams.update_team("tid", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -343,7 +349,7 @@ class TestDeleteTeamErrors:
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.delete_team("tid", current_user=user_ctx, db=db)
+                await teams.delete_team("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -364,7 +370,7 @@ class TestListTeamMembersEdge:
                 get_team_members=AsyncMock(return_value=(members, "next-cursor")),
             ),
         ):
-            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db)
+            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert isinstance(result, list)
             assert len(result) == 1
 
@@ -379,7 +385,7 @@ class TestListTeamMembersEdge:
                 get_team_members=AsyncMock(return_value=(members, "nc")),
             ),
         ):
-            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db)
+            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert hasattr(result, "members")
             assert result.next_cursor == "nc"
 
@@ -387,7 +393,7 @@ class TestListTeamMembersEdge:
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_members("tid", current_user=user_ctx, db=db)
+                await teams.list_team_members("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -404,7 +410,7 @@ class TestUpdateTeamMemberErrors:
 
             req = TeamMemberUpdateRequest(role="owner")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db)
+                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
@@ -420,7 +426,7 @@ class TestUpdateTeamMemberErrors:
 
             req = TeamMemberUpdateRequest(role="owner")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db)
+                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -437,7 +443,7 @@ class TestUpdateTeamMemberErrors:
 
             req = TeamMemberUpdateRequest(role="owner")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db)
+                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
             assert "after update" in exc.value.detail
 
@@ -454,7 +460,7 @@ class TestUpdateTeamMemberErrors:
 
             req = TeamMemberUpdateRequest(role="member")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db)
+                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
     @pytest.mark.asyncio
@@ -464,7 +470,7 @@ class TestUpdateTeamMemberErrors:
 
             req = TeamMemberUpdateRequest(role="member")
             with pytest.raises(HTTPException) as exc:
-                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db)
+                await teams.update_team_member("tid", "u@t.com", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -484,14 +490,14 @@ class TestRemoveTeamMemberErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.remove_team_member("tid", "other@t.com", current_user=user_ctx, db=db)
+                await teams.remove_team_member("tid", "other@t.com", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.remove_team_member("tid", "other@t.com", current_user=user_ctx, db=db)
+                await teams.remove_team_member("tid", "other@t.com", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -514,7 +520,7 @@ class TestInviteTeamMemberErrors:
 
             req = TeamInviteRequest(email="x@t.com", role="member")
             with pytest.raises(HTTPException) as exc:
-                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db)
+                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @pytest.mark.asyncio
@@ -530,7 +536,7 @@ class TestInviteTeamMemberErrors:
 
             req = TeamInviteRequest(email="x@t.com", role="member")
             with pytest.raises(HTTPException) as exc:
-                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db)
+                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
     @pytest.mark.asyncio
@@ -540,7 +546,7 @@ class TestInviteTeamMemberErrors:
 
             req = TeamInviteRequest(email="x@t.com", role="member")
             with pytest.raises(HTTPException) as exc:
-                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db)
+                await teams.invite_team_member("tid", req, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -554,14 +560,14 @@ class TestListTeamInvitationsErrors:
     async def test_not_owner(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(return_value="member")):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_invitations("tid", current_user=user_ctx, db=db)
+                await teams.list_team_invitations("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_invitations("tid", current_user=user_ctx, db=db)
+                await teams.list_team_invitations("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -601,7 +607,7 @@ class TestCancelTeamInvitationErrors:
         db.query = MagicMock(return_value=mock_query)
 
         with pytest.raises(HTTPException) as exc:
-            await teams.cancel_team_invitation("inv-id", current_user=user_ctx, db=db)
+            await teams.cancel_team_invitation("inv-id", current_user=user_ctx, db=db, http_request=make_test_scope_request())
         assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -615,7 +621,7 @@ class TestCancelTeamInvitationErrors:
 
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_user_role_in_team=AsyncMock(return_value="member")):
             with pytest.raises(HTTPException) as exc:
-                await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db)
+                await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
@@ -634,7 +640,7 @@ class TestCancelTeamInvitationErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db)
+                await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -642,7 +648,7 @@ class TestCancelTeamInvitationErrors:
         db.query = MagicMock(side_effect=RuntimeError("crash"))
 
         with pytest.raises(HTTPException) as exc:
-            await teams.cancel_team_invitation("inv-id", current_user=user_ctx, db=db)
+            await teams.cancel_team_invitation("inv-id", current_user=user_ctx, db=db, http_request=make_test_scope_request())
         assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -702,7 +708,7 @@ class TestLeaveTeamErrors:
     async def test_team_not_found(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
-                await teams.leave_team("tid", current_user=user_ctx, db=db)
+                await teams.leave_team("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -715,7 +721,7 @@ class TestLeaveTeamErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.leave_team(mock_team.id, current_user=user_ctx, db=db)
+                await teams.leave_team(mock_team.id, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "not a member" in exc.value.detail
 
@@ -730,7 +736,7 @@ class TestLeaveTeamErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.leave_team(mock_team.id, current_user=user_ctx, db=db)
+                await teams.leave_team(mock_team.id, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "last owner" in exc.value.detail
 
@@ -738,7 +744,7 @@ class TestLeaveTeamErrors:
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.leave_team("tid", current_user=user_ctx, db=db)
+                await teams.leave_team("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -752,7 +758,7 @@ class TestListTeamJoinRequestsErrors:
     async def test_team_not_found(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_join_requests("tid", current_user=user_ctx, db=db)
+                await teams.list_team_join_requests("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -765,14 +771,14 @@ class TestListTeamJoinRequestsErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_join_requests(mock_team.id, current_user=user_ctx, db=db)
+                await teams.list_team_join_requests(mock_team.id, current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.list_team_join_requests("tid", current_user=user_ctx, db=db)
+                await teams.list_team_join_requests("tid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -786,7 +792,7 @@ class TestApproveJoinRequestErrors:
     async def test_team_not_found(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -799,7 +805,7 @@ class TestApproveJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
@@ -813,7 +819,7 @@ class TestApproveJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
             assert "not found" in exc.value.detail
 
@@ -828,7 +834,7 @@ class TestApproveJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Cannot approve" in exc.value.detail
 
@@ -843,7 +849,7 @@ class TestApproveJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "maximum member limit" in exc.value.detail
 
@@ -858,7 +864,7 @@ class TestApproveJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "some other validation error" in exc.value.detail
 
@@ -866,7 +872,7 @@ class TestApproveJoinRequestErrors:
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db)
+                await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
@@ -880,7 +886,7 @@ class TestRejectJoinRequestErrors:
     async def test_team_not_found(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
-                await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
+                await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
@@ -894,7 +900,7 @@ class TestRejectJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
             assert "not found" in exc.value.detail
 
@@ -909,7 +915,7 @@ class TestRejectJoinRequestErrors:
             ),
         ):
             with pytest.raises(HTTPException) as exc:
-                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "some other validation error" in exc.value.detail
 
@@ -917,5 +923,5 @@ class TestRejectJoinRequestErrors:
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
-                await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
+                await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db, http_request=make_test_scope_request())
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR

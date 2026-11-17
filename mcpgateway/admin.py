@@ -114,7 +114,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission, require_team_scope
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -6634,6 +6634,8 @@ async def admin_view_team_members(
     Returns:
         HTMLResponse: Rendered unified team members management view
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         response = HTMLResponse(
             content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Email authentication is disabled</div>',
@@ -7254,6 +7256,8 @@ async def admin_add_team_members(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
