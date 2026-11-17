@@ -625,7 +625,15 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.visibility == "private"
 
 
-@pytest.mark.parametrize("credentials", [None, {}, {"resource": "https://override.example.com/mcp", "scopes": ["custom"]}])
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        None,
+        {},
+        {"resource": "https://override.example.com/mcp", "scopes": ["custom"]},
+        {"authorization_url": "", "token_url": None, "scopes": []},
+    ],
+)
 @pytest.mark.asyncio
 async def test_register_oauth_uses_catalog_defaults(service, credentials):
     """Registration preserves catalog OAuth defaults and applies caller overrides."""
@@ -633,6 +641,9 @@ async def test_register_oauth_uses_catalog_defaults(service, credentials):
 
     defaults = {
         "resource": "https://oauth.example.com/mcp",
+        "issuer": "https://issuer.example.com",
+        "authorization_url": "https://issuer.example.com/authorize",
+        "token_url": "https://issuer.example.com/token",
         "scopes": ["read", "write"],
         "audience": "https://api.example.com",
         "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -660,7 +671,8 @@ async def test_register_oauth_uses_catalog_defaults(service, credentials):
     assert result.oauth_required is True
     db_gateway = db.add.call_args[0][0]
     assert result.success is True
-    for key, value in {**defaults, **(credentials or {})}.items():
+    submitted = {k: v for k, v in (credentials or {}).items() if v not in (None, "", [])}
+    for key, value in {**defaults, **submitted}.items():
         assert db_gateway.oauth_config[key] == value
     assert fake_catalog["catalog_servers"][0]["oauth"] == defaults
 

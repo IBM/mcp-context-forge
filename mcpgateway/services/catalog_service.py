@@ -645,7 +645,10 @@ class CatalogService:
                 # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
                 # in later - automatically for providers that support discovery/DCR - by the
                 # existing GET /oauth/authorize/{gateway_id} flow.
-                oauth_credentials = {**(server_data.get("oauth") or {}), **((request.oauth_credentials if request else None) or {})}
+                # Blank submitted values (None, "", [] - e.g. optional URL fields the web form sends
+                # empty) must not mask a non-empty catalog default, so drop them before merging.
+                submitted_credentials = {k: v for k, v in ((request.oauth_credentials if request else None) or {}).items() if v not in (None, "", [])}
+                oauth_credentials = {**(server_data.get("oauth") or {}), **submitted_credentials}
                 gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(oauth_credentials)
 
                 # Runs the same URL/SSRF and grant-type validation normal gateway registration
