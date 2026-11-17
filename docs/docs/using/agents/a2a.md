@@ -483,7 +483,7 @@ When the card declares an extended card and the registration carries credentials
 
 `GET /a2a/{agent_id}/stored-card` returns the current stored card. It needs `a2a.read` and applies the same visibility rules as the agent read. It returns 404 when the agent has no stored card.
 
-`GET /a2a/{agent_id}/stored-card/extended` returns the stored extended card. The extended card is content that the agent shows only to credentialed callers, so the route needs `a2a.update`, not `a2a.read`, and applies the same agent visibility check. It returns 404 when the agent has no stored extended card.
+`GET /a2a/{agent_id}/stored-card/extended` returns the stored extended card. The extended card is content that the agent shows only to credentialed callers, so the route needs `a2a.update`, not `a2a.read`. The caller must also own the agent, as for task and push config routes: the agent owner, a team owner for team agents, or a platform admin. Other callers get 404. The route also returns 404 when the agent has no stored extended card.
 
 **Visibility of stored cards.** The route does not check how the card was fetched. A card fetched with registration credentials is readable by every caller who has `a2a.read` and can see the agent. For a `team` or `public` agent, that includes every team member or every user. Do not register a card behind credentials with a `team` or `public` agent if its content is confidential. Use `private` visibility instead.
 

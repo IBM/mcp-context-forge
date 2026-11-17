@@ -213,6 +213,7 @@ class TestExtendedCardRoute:
         monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
         service = MagicMock()
         service.get_stored_card = AsyncMock()
+        service.check_agent_manage_access = AsyncMock(return_value=True)
         monkeypatch.setattr(main, "a2a_service", service)
         return service
 
@@ -234,6 +235,15 @@ class TestExtendedCardRoute:
         service.get_stored_card.return_value = "card"
         assert await self._call() == "card"
         assert service.get_stored_card.await_args.kwargs["kind"] == "extended"
+
+    async def test_non_owner_is_404(self, monkeypatch):
+        """A caller with a2a.update who does not own the agent gets 404 and no card."""
+        service = self._grant(monkeypatch, True)
+        service.check_agent_manage_access.return_value = False
+        with pytest.raises(HTTPException) as exc_info:
+            await self._call()
+        assert exc_info.value.status_code == 404
+        service.get_stored_card.assert_not_awaited()
 
     async def test_invisible_agent_is_404(self, monkeypatch):
         """An agent the caller cannot see gives 404."""

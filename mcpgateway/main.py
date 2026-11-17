@@ -5055,7 +5055,7 @@ async def get_a2a_agent_stored_extended_card(
     """Return the authenticated extended Agent Card stored for a registered agent.
 
     The extended card is content the agent shows only to credentialed callers, so the route
-    needs ``a2a.update`` and the agent visibility check, not only ``a2a.read``.
+    needs ``a2a.update`` and agent ownership, not only ``a2a.read`` and visibility.
 
     Args:
         agent_id (str): The ID of the agent.
@@ -5067,11 +5067,11 @@ async def get_a2a_agent_stored_extended_card(
         A2AStoredCardRead: The current stored extended card.
 
     Raises:
-        HTTPException: If the agent is not visible, or has no stored extended card.
+        HTTPException: If the agent is not visible, the caller does not own it, or it has no stored extended card.
     """
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
     try:
         card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams, kind="extended")
     except A2AAgentNotFoundError as e:
