@@ -251,6 +251,7 @@ from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+from mcpgateway.utils.env_deprecation import warn_deprecated_envs
 from mcpgateway.utils.error_formatter import (
     PUBLIC_REASON_CODES,
     ErrorFormatter,
@@ -1296,8 +1297,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
-    if settings.expose_error_details:
-        logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
+    warn_deprecated_envs()
 
     # Fork the sandbox pools while the process holds no sockets or threads.
     # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
