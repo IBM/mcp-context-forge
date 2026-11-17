@@ -92,6 +92,11 @@ os.environ.setdefault("AUTH_ENCRYPTION_SECRET", _TEST_ENC_SECRET)
 os.environ.setdefault("PLATFORM_ADMIN_PASSWORD", _TEST_ADMIN_PW)
 os.environ.setdefault("DEFAULT_USER_PASSWORD", _TEST_USER_PW)
 
+# Cheap Argon2id parameters keep password hashing and secret encryption fast. `make test` sets the
+# same values. setdefault lets CI and direct rstest runs match it without overriding a host value.
+os.environ.setdefault("ARGON2ID_TIME_COST", "1")
+os.environ.setdefault("ARGON2ID_MEMORY_COST", "1024")
+
 
 def _force_minimal_main_app_features() -> None:
     """Default heavy optional features to off before anything imports mcpgateway.main.
