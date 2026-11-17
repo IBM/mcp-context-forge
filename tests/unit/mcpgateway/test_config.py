@@ -2663,3 +2663,12 @@ def test_mcp_allowed_hosts_default_empty():
     """mcp_allowed_hosts defaults to empty set."""
     s = Settings(environment="development", _env_file=None)
     assert s.mcp_allowed_hosts == set()
+
+
+def test_argon2id_defaults_meet_owasp_floor(monkeypatch):
+    """The test suite lowers Argon2id cost through env vars; the shipped defaults must stay at or above the OWASP minimum (CWE-916)."""
+    monkeypatch.delenv("ARGON2ID_TIME_COST", raising=False)
+    monkeypatch.delenv("ARGON2ID_MEMORY_COST", raising=False)
+    s = Settings(environment="development", _env_file=None)
+    assert s.argon2id_time_cost >= 2
+    assert s.argon2id_memory_cost >= 19456  # KiB (19 MiB)

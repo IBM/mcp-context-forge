@@ -112,7 +112,7 @@ _SANDBOX_POOL_HOOKS = (
 
 
 @pytest.fixture(autouse=True)
-def _skip_sandbox_pools_in_lifespan(monkeypatch):
+def _skip_sandbox_pools_in_lifespan(request, monkeypatch):
     """Keep ``main.lifespan`` from forking sandbox worker pools.
 
     On Linux each lifespan entry forks a jq, a validation and a CEL pool. That
@@ -120,12 +120,18 @@ def _skip_sandbox_pools_in_lifespan(monkeypatch):
     pools build their executors lazily on first use, so skipping the start
     hooks is safe. Tests of the pools call ``jq_runner``, ``cel_runner`` and
     ``safe_jsonschema`` directly and do not go through ``main``.
+
+    A test that needs the real pools carries the ``real_sandbox_pools`` marker.
+    A renamed or removed hook raises ``AttributeError`` here, so CI cannot slow
+    down without a failure.
     """
+    if request.node.get_closest_marker("real_sandbox_pools"):
+        return
     main_mod = sys.modules.get("mcpgateway.main")
     if main_mod is None:
         return
     for hook in _SANDBOX_POOL_HOOKS:
-        monkeypatch.setattr(main_mod, hook, lambda: None, raising=False)
+        monkeypatch.setattr(main_mod, hook, lambda: None, raising=True)
 
 
 @pytest.fixture(autouse=True)

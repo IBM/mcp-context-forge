@@ -7,7 +7,7 @@ Unit tests for mcpgateway/tools/builder/build_hooks.py.
 """
 
 # Standard
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 import importlib.util
 import os
 import subprocess
@@ -17,7 +17,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-from packaging.version import Version
 import pytest
 
 import mcpgateway.tools.builder.build_hooks as bh_module
@@ -36,9 +35,10 @@ def _has_build_module() -> bool:
 def _can_build_without_isolation() -> bool:
     """Check if the running environment already satisfies the wheel test's build requirements."""
     try:
-        return Version(version("setuptools")) >= Version("78.1.1")
-    except Exception:  # pylint: disable=broad-except
+        installed = tuple(int(part) for part in version("setuptools").split(".")[:3])
+    except (PackageNotFoundError, ValueError):
         return False
+    return installed >= (78, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -360,10 +360,12 @@ def _build_wheel(project_dir: Path) -> Path:
     dist_dir = project_dir / "dist"
     env = {k: v for k, v in os.environ.items() if k != "BUILD_UI_ASSETS"}
     command = [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)]
+    # Trade-off: the host setuptools (>=78.1.1) replaces the isolated build env, which avoids a network install of the
+    # build backend. The real pyproject.toml pins a newer setuptools; this test project does not need it.
     if _can_build_without_isolation():
         command.append("--no-isolation")
     result = subprocess.run(command, check=False, cwd=str(project_dir), env=env, capture_output=True, text=True)
-    assert result.returncode == 0, f"wheel build failed:\n{result.stderr}"
+    assert result.returncode == 0, f"wheel build failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     wheels = list(dist_dir.glob("*.whl"))
     assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
     return wheels[0]

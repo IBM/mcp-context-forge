@@ -729,6 +729,7 @@ markers = [
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
+    "real_sandbox_pools: keeps the real jq, validation and CEL worker pools in main.lifespan (unit tests stub them by default)",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",

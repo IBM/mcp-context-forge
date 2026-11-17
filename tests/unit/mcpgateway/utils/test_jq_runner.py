@@ -509,6 +509,8 @@ def test_a_full_pool_fails_fast_instead_of_queueing(monkeypatch):
 
     assert not occupier.is_alive()
     assert busy_thread_result and isinstance(busy_thread_result[0], JqFilterError)
+    # JqFilterError is the base class: rule out the timeout and busy paths, so only the pool shutdown can have ended the occupier.
+    assert not isinstance(busy_thread_result[0], (JqFilterTimeout, JqFilterBusy))
 
 
 @linux_only
