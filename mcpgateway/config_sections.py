@@ -47,6 +47,7 @@ class ListenerSettings(EnvironmentSettings):
         Returns:
             Sources in descending priority, with listener aliases normalized.
         """
+        del cls, settings_cls
 
         def normalize(source: PydanticBaseSettingsSource) -> Callable[[], dict[str, Any]]:
             """Wrap one source with canonical listener keys."""
@@ -97,6 +98,7 @@ class LoggingSettings(EnvironmentSettings):
             ValueError: If the provided value is not one of
                 {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}.
         """
+        del cls
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         v_up = v.upper()
         if v_up not in allowed:
@@ -169,6 +171,7 @@ class SSLCacheSettings(EnvironmentSettings):
         Returns:
             None for empty values, otherwise the configured value.
         """
+        del cls
         return None if isinstance(value, str) and not value.strip() else value
 
 
