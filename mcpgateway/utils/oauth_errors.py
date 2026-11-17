@@ -22,6 +22,7 @@ class OAuthFailure:
 
 
 _FAILURES = {
+    "invalid_state": OAuthFailure("invalid_state", "Invalid OAuth state parameter. Restart authorization.", True),
     "authorization_missing": OAuthFailure("authorization_missing", "Authorize this gateway before testing the connection.", True),
     "token_expired": OAuthFailure("token_expired", "The stored token has expired. Authorize this gateway again.", True),
     "invalid_token": OAuthFailure("invalid_token", "The stored token is invalid. Authorize this gateway again.", True),
