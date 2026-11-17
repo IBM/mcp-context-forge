@@ -157,8 +157,6 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 # Initialize logging service first
 logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.translate")
-CONTENT_TYPE = TransportSettings().forge_content_type
-# headers = {"Content-Type": CONTENT_TYPE}
 # Import settings for default keepalive interval.
 try:
     # First-Party
@@ -167,10 +165,12 @@ try:
     DEFAULT_KEEP_ALIVE_INTERVAL = settings.sse_keepalive_interval
     DEFAULT_KEEPALIVE_ENABLED = settings.sse_keepalive_enabled
     DEFAULT_SSL_VERIFY = not settings.skip_ssl_verify
+    CONTENT_TYPE = settings.forge_content_type
 except ImportError:
     DEFAULT_KEEP_ALIVE_INTERVAL = 30
     DEFAULT_KEEPALIVE_ENABLED = True
     DEFAULT_SSL_VERIFY = True  # Verify SSL by default when config unavailable
+    CONTENT_TYPE = "application/json"
 
 KEEP_ALIVE_INTERVAL = DEFAULT_KEEP_ALIVE_INTERVAL  # seconds - from config or fallback to 30
 

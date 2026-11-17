@@ -40,15 +40,11 @@ def _is_ssl_enabled() -> bool:
 def _loopback_client_cert() -> Optional[tuple]:
     """Return the configured loopback client certificate pair, if any.
 
-    Read from the environment rather than :mod:`mcpgateway.config` for
-    consistency with :func:`_is_ssl_enabled`: both describe how the *launcher*
-    (``run-gunicorn.sh``) started this process, not application configuration.
-
     Returns:
         Optional[tuple]: ``(cert_path, key_path)`` when both are set, else ``None``.
     """
-    cert = os.getenv("LOOPBACK_CLIENT_CERT", "")
-    key = os.getenv("LOOPBACK_CLIENT_KEY", "")
+    cert = settings.loopback_client_cert
+    key = settings.loopback_client_key
     if cert and key:
         return (cert, key)
     return None
@@ -57,8 +53,7 @@ def _loopback_client_cert() -> Optional[tuple]:
 def reset_loopback_ssl_context() -> None:
     """Clear the cached loopback SSL context.
 
-    Call from test fixtures that mutate ``LOOPBACK_CLIENT_CERT`` /
-    ``LOOPBACK_CLIENT_KEY`` so a later call rebuilds the context.
+    Call when the loopback client certificate settings change.
     """
     global _loopback_ssl_context, _loopback_ssl_context_key  # pylint: disable=global-statement
     _loopback_ssl_context = None

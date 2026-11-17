@@ -37,6 +37,34 @@ def test_admin_ui_deprecation_notice_flag(monkeypatch, configured, expected):
     assert configured_settings.mcpgateway_ui_deprecation_notice_enabled is expected
 
 
+def test_runtime_settings_read_environment(monkeypatch):
+    for name, value in {
+        "SQLALCHEMY_ECHO": "true",
+        "SSL_CONTEXT_CACHE_MAX_SIZE": "42",
+        "SSL_CONTEXT_CACHE_TTL": "60",
+        "LOOPBACK_CLIENT_CERT": "/tmp/client.crt",
+        "LOOPBACK_CLIENT_KEY": "/tmp/client.key",
+        "GATEWAY_REPLICAS": "2",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    configured = Settings(_env_file=None)
+
+    assert configured.sqlalchemy_echo is True
+    assert configured.ssl_context_cache_max_size == 42
+    assert configured.ssl_context_cache_ttl == 60
+    assert configured.loopback_client_cert == "/tmp/client.crt"
+    assert configured.loopback_client_key == "/tmp/client.key"
+    assert configured.gateway_replicas == 2
+
+
+def test_loopback_client_certificate_requires_key(monkeypatch):
+    monkeypatch.setenv("LOOPBACK_CLIENT_CERT", "/tmp/client.crt")
+    monkeypatch.delenv("LOOPBACK_CLIENT_KEY", raising=False)
+    with pytest.raises(ValidationError, match="LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY"):
+        Settings(_env_file=None)
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)
@@ -1788,6 +1816,19 @@ def test_log_summary():
     s.log_summary()
 
 
+def test_log_summary_masks_provider_secrets(monkeypatch, caplog):
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "example-session-value")
+    monkeypatch.setenv("WATSONX_APIKEY", "example-watson-value")
+    configured = Settings(_env_file=None)
+
+    with caplog.at_level(logging.INFO, logger="mcpgateway.config"):
+        configured.log_summary()
+
+    assert "Application settings summary" in caplog.text
+    assert "example-session-value" not in caplog.text
+    assert "example-watson-value" not in caplog.text
+
+
 # --------------------------------------------------------------------------- #
 #                    proxy auth warning in __init__                            #
 # --------------------------------------------------------------------------- #
@@ -2686,3 +2727,26 @@ def test_argon2id_defaults_meet_owasp_floor(monkeypatch):
     s = Settings(environment="development", _env_file=None)
     assert s.argon2id_time_cost >= 2
     assert s.argon2id_memory_cost >= 19456  # KiB (19 MiB)
+
+
+# --------------------------------------------------------------------------- #
+#                    validation_max_json_depth                                 #
+# --------------------------------------------------------------------------- #
+def test_validation_max_json_depth_default():
+    """Default value is 30."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.validation_max_json_depth == 30
+
+
+def test_validation_max_json_depth_env_override(monkeypatch):
+    """Override via VALIDATION_MAX_JSON_DEPTH environment variable."""
+    monkeypatch.setenv("VALIDATION_MAX_JSON_DEPTH", "45")
+    s = Settings(environment="development", _env_file=None)
+    assert s.validation_max_json_depth == 45
+
+
+@pytest.mark.parametrize("invalid_depth", [0, 101, -5])
+def test_validation_max_json_depth_bounds_validation(invalid_depth):
+    """VALIDATION_MAX_JSON_DEPTH enforces 1 <= depth <= 100."""
+    with pytest.raises(ValidationError):
+        Settings(validation_max_json_depth=invalid_depth, environment="development", _env_file=None)

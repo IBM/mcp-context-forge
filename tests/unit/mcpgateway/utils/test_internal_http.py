@@ -163,8 +163,8 @@ class TestLoopbackClientCertificate:
     def test_returns_ssl_context_when_cert_configured(self, monkeypatch, client_cert_pair):
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
 
         context = internal_loopback_verify()
 
@@ -174,8 +174,8 @@ class TestLoopbackClientCertificate:
         """The context must not impose new server-cert or SAN requirements."""
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
 
         context = internal_loopback_verify()
 
@@ -186,24 +186,24 @@ class TestLoopbackClientCertificate:
         """Building a context parses PEM files; it must not happen per request."""
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
 
         assert internal_loopback_verify() is internal_loopback_verify()
 
     def test_cache_rebuilds_when_configuration_changes(self, monkeypatch, client_cert_pair, tmp_path):
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
         first = internal_loopback_verify()
 
         other_cert = tmp_path / "copy-cert.pem"
         other_key = tmp_path / "copy-key.pem"
         other_cert.write_bytes(open(cert, "rb").read())
         other_key.write_bytes(open(key, "rb").read())
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", str(other_cert))
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", str(other_key))
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", str(other_cert), raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", str(other_key), raising=False)
 
         assert internal_loopback_verify() is not first
 
@@ -211,8 +211,8 @@ class TestLoopbackClientCertificate:
         """A half-configured pair must not silently produce a context."""
         cert, _ = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.delenv("LOOPBACK_CLIENT_KEY", raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", None, raising=False)
 
         assert internal_loopback_verify() is False
 
@@ -220,8 +220,8 @@ class TestLoopbackClientCertificate:
         """Plain HTTP loopback never needs a client certificate."""
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "false")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
 
         assert internal_loopback_verify() is True
 
@@ -229,8 +229,8 @@ class TestLoopbackClientCertificate:
         """httpx must accept the returned value wherever it accepts verify."""
         cert, key = client_cert_pair
         monkeypatch.setenv("SSL", "true")
-        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
-        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_cert", cert, raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.loopback_client_key", key, raising=False)
 
         client = httpx.AsyncClient(verify=internal_loopback_verify())
 
