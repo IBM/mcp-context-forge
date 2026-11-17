@@ -202,8 +202,9 @@ def test_update_replaces_the_list_and_an_empty_list_clears_it(gateway):
         [_interface("http://169.254.169.254/latest/meta-data")],
         [_interface("ftp://agent.example.com/a2a")],
         [{"protocol": "", "binding": BINDING}],
+        [_interface(f"http://127.0.0.1:9/a2a/{n}") for n in range(11)],
     ],
-    ids=["duplicate-pair", "not-a-url", "metadata-address", "disallowed-scheme", "empty-protocol"],
+    ids=["duplicate-pair", "not-a-url", "metadata-address", "disallowed-scheme", "empty-protocol", "too-many-interfaces"],
 )
 def test_invalid_interfaces_are_rejected_on_create_and_update(gateway, interfaces):
     """A bad interface list gets 422 and changes nothing."""
@@ -250,3 +251,26 @@ def test_other_users_private_server_interfaces_cannot_be_changed(gateway):
 
     assert response.status_code in (403, 404)
     assert _call(gateway, "GET", f"/v1/virtual-servers/{server['id']}", **_admin()).json()["interfaces"] == server["interfaces"]
+
+
+def test_card_resolves_after_create_and_disabling_the_interface_stops_it(gateway):
+    """The agent card of a virtual server resolves while its A2A interface is enabled and returns 404 after it is disabled."""
+    server = _create(gateway, [_interface()]).json()
+
+    card = _call(gateway, "GET", f"/a2a/{server['id']}/card", **_admin())
+    assert card.status_code == 200, card.text
+    assert card.json()["supportedInterfaces"][0]["url"] == BINDING
+
+    disabled = _call(gateway, "PUT", f"/v1/virtual-servers/{server['id']}", {"interfaces": [_interface(enabled=False)]}, **_admin())
+    assert disabled.status_code == 200, disabled.text
+    assert _call(gateway, "GET", f"/a2a/{server['id']}/card", **_admin()).status_code == 404
+
+
+def test_legacy_servers_route_returns_interfaces(gateway):
+    """The legacy /servers route returns the interfaces of a server created through /v1/virtual-servers."""
+    server = _create(gateway, [_interface()]).json()
+
+    fetched = _call(gateway, "GET", f"/servers/{server['id']}", **_admin())
+
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["interfaces"] == server["interfaces"]

@@ -483,7 +483,7 @@ class A2AServerService:
 
         Matches any protocol whose lower-cased value starts with ``a2a``
         (e.g. ``a2a``, ``a2a/v1``, ``a2a-jsonrpc``).  When a server exposes
-        multiple A2A interfaces, the first one (by DB insertion order) is
+        multiple A2A interfaces, the most recently created one is
         returned — this avoids ``MultipleResultsFound`` when both v0.3 and
         v1 bindings exist.
 

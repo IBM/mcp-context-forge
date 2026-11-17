@@ -15,7 +15,7 @@ import pytest
 
 # First-Party
 from mcpgateway.db import ServerInterface as DbServerInterface
-from mcpgateway.schemas import ServerCreate, ServerInterfaceInput, ServerUpdate
+from mcpgateway.schemas import MAX_SERVER_INTERFACES, ServerCreate, ServerInterfaceInput, ServerUpdate
 from mcpgateway.services.server_service import _apply_server_interfaces
 
 
@@ -37,7 +37,7 @@ class TestInterfaceSchemas:
 
     def test_duplicate_protocol_binding_rejected(self):
         with pytest.raises(ValidationError):
-            ServerCreate(name="s", interfaces=[{"protocol": "a2a", "binding": "https://agent.example.com/a2a"}, {"protocol": "A2A", "binding": "https://agent.example.com/A2A"}])
+            ServerCreate(name="s", interfaces=[{"protocol": "a2a", "binding": "https://agent.example.com/a2a"}, {"protocol": "A2A", "binding": "HTTPS://Agent.Example.com/a2a"}])
 
     def test_update_rejects_duplicates(self):
         with pytest.raises(ValidationError):
@@ -47,6 +47,23 @@ class TestInterfaceSchemas:
     def test_non_url_or_blocked_binding_rejected(self, binding):
         with pytest.raises(ValidationError):
             ServerInterfaceInput(protocol="a2a", binding=binding)
+
+    def test_bindings_with_different_path_case_are_distinct(self):
+        server = ServerCreate(name="s", interfaces=[{"protocol": "a2a", "binding": "https://agent.example.com/a2a"}, {"protocol": "a2a", "binding": "https://agent.example.com/A2A"}])
+        assert len(server.interfaces) == 2
+
+    def test_interface_count_is_limited(self):
+        too_many = [{"protocol": "a2a", "binding": f"https://8.8.8.8/a2a/{n}"} for n in range(MAX_SERVER_INTERFACES + 1)]
+        with pytest.raises(ValidationError):
+            ServerCreate(name="s", interfaces=too_many)
+        with pytest.raises(ValidationError):
+            ServerUpdate(interfaces=too_many)
+        assert len(ServerCreate(name="s", interfaces=too_many[:MAX_SERVER_INTERFACES]).interfaces) == MAX_SERVER_INTERFACES
+
+    @pytest.mark.parametrize("overrides", [{"protocol": "a2a jsonrpc"}, {"protocol": "-a2a"}, {"version": "1 0"}, {"version": "../1"}])
+    def test_malformed_protocol_or_version_rejected(self, overrides):
+        with pytest.raises(ValidationError):
+            _iface(**overrides)
 
     def test_empty_protocol_rejected(self):
         with pytest.raises(ValidationError):
@@ -70,7 +87,7 @@ class TestApplyServerInterfaces:
     def test_updates_matching_row_in_place(self):
         existing = DbServerInterface(id="keep-me", protocol="a2a", binding="https://agent.example.com/a2a", enabled=True, config={"k": "v"})
         server = SimpleNamespace(interfaces=[existing])
-        _apply_server_interfaces(server, [_iface(binding="https://agent.example.com/A2A", enabled=False)])
+        _apply_server_interfaces(server, [_iface(binding="https://AGENT.example.com/a2a", enabled=False)])
         assert server.interfaces == [existing]
         assert existing.enabled is False
         assert existing.id == "keep-me"

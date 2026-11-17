@@ -42,7 +42,7 @@ from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.schemas import ServerCreate, interface_identity, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -286,10 +286,10 @@ def _apply_server_interfaces(server: DbServer, interfaces: Optional[List[ServerI
     """
     if interfaces is None:
         return
-    existing = {(i.protocol.lower(), i.binding.lower()): i for i in server.interfaces}
+    existing = {interface_identity(i.protocol, i.binding): i for i in server.interfaces}
     kept: List[DbServerInterface] = []
     for item in interfaces:
-        row = existing.get((item.protocol.lower(), item.binding.lower()))
+        row = existing.get(interface_identity(item.protocol, item.binding))
         if row is None:
             row = DbServerInterface(protocol=item.protocol, binding=item.binding)
         row.protocol = item.protocol
@@ -524,7 +524,7 @@ class ServerService(BaseService):
         server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
-        server_dict["interfaces"] = list(server.interfaces) if getattr(server, "interfaces", None) else []
+        server_dict["interfaces"] = list(getattr(server, "interfaces", None) or [])
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -896,6 +896,7 @@ class ServerService(BaseService):
                 with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
                 with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+                selectinload(DbServer.interfaces),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -1012,6 +1013,7 @@ class ServerService(BaseService):
             with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
             with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+            selectinload(DbServer.interfaces),
             joinedload(DbServer.email_team),
         )
 
@@ -1234,6 +1236,7 @@ class ServerService(BaseService):
                 with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
                 with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+                selectinload(DbServer.interfaces),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)
@@ -1376,6 +1379,7 @@ class ServerService(BaseService):
                 server_id,
                 options=[
                     *SERVER_ASSOCIATION_SELECTINLOADS,
+                    selectinload(DbServer.interfaces),
                     selectinload(DbServer.email_team),
                 ],
             )
@@ -1522,6 +1526,9 @@ class ServerService(BaseService):
                 changes.append(f"visibility: {server_update.visibility}")
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
+            interfaces_update = getattr(server_update, "interfaces", None)
+            if interfaces_update is not None:
+                changes.append(f"interfaces: {len(interfaces_update)}")
 
             self._audit_trail.log_action(
                 user_id=user_email or "system",

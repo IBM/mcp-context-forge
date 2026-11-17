@@ -25,12 +25,13 @@ from enum import Enum
 import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     AnyHttpUrl,
     BaseModel,
@@ -5286,9 +5287,9 @@ class ServerInterfaceInput(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    protocol: str = Field(..., min_length=1, max_length=50, description="Interface protocol, for example 'a2a'")
+    protocol: str = Field(..., min_length=1, max_length=50, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", description="Interface protocol, for example 'a2a'")
     binding: str = Field(..., min_length=1, max_length=255, description="Agent endpoint URL that the interface publishes, for example 'https://agent.example.com/a2a'")
-    version: Optional[str] = Field(None, max_length=20, description="Protocol version")
+    version: Optional[str] = Field(None, max_length=20, pattern=r"^[0-9A-Za-z][0-9A-Za-z._+-]*$", description="Protocol version, for example '1.0'")
     tenant: Optional[str] = Field(None, max_length=255, description="Optional tenant identifier")
     enabled: bool = Field(True, description="Whether the interface is active")
 
@@ -5315,11 +5316,36 @@ class ServerInterfaceInput(BaseModel):
         return validate_core_url(v, "Interface binding")
 
 
-def _reject_duplicate_interfaces(interfaces: Optional[List["ServerInterfaceInput"]]) -> Optional[List["ServerInterfaceInput"]]:
+MAX_SERVER_INTERFACES = 10
+
+
+def interface_identity(protocol: str, binding: str) -> tuple[str, str]:
+    """Return the key that identifies an interface within one server.
+
+    The protocol, URL scheme, and host compare case-insensitively. The path and query keep their case.
+
+    Args:
+        protocol: Interface protocol.
+        binding: Interface endpoint URL.
+
+    Returns:
+        The protocol and normalized binding pair.
+
+    Examples:
+        >>> interface_identity("A2A", "HTTPS://Agent.Example.com/Path") == interface_identity("a2a", "https://agent.example.com/Path")
+        True
+        >>> interface_identity("a2a", "https://agent.example.com/Path") == interface_identity("a2a", "https://agent.example.com/path")
+        False
+    """
+    parts = urlsplit(binding)
+    return protocol.lower(), urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
+
+
+def _reject_duplicate_interfaces(interfaces: List["ServerInterfaceInput"]) -> List["ServerInterfaceInput"]:
     """Reject interface lists that repeat a protocol and binding pair.
 
     Args:
-        interfaces: Interfaces declared by the caller, or None.
+        interfaces: Interfaces declared by the caller.
 
     Returns:
         The unchanged list.
@@ -5328,12 +5354,15 @@ def _reject_duplicate_interfaces(interfaces: Optional[List["ServerInterfaceInput
         ValueError: If two entries share the same protocol and binding.
     """
     seen: set[tuple[str, str]] = set()
-    for item in interfaces or []:
-        key = (item.protocol.lower(), item.binding.lower())
+    for item in interfaces:
+        key = interface_identity(item.protocol, item.binding)
         if key in seen:
             raise ValueError(f"Duplicate interface for protocol '{item.protocol}' and binding '{item.binding}'")
         seen.add(key)
     return interfaces
+
+
+ServerInterfaceList = Annotated[List[ServerInterfaceInput], Field(max_length=MAX_SERVER_INTERFACES), AfterValidator(_reject_duplicate_interfaces)]
 
 
 class ServerInterfaceCreate(BaseModel):
@@ -5422,9 +5451,7 @@ class ServerCreate(BaseModel):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
-    interfaces: Optional[List[ServerInterfaceInput]] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
-
-    _validate_interfaces = field_validator("interfaces")(classmethod(lambda cls, v: _reject_duplicate_interfaces(v)))
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -5655,9 +5682,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
-    interfaces: Optional[List[ServerInterfaceInput]] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
-
-    _validate_interfaces = field_validator("interfaces")(classmethod(lambda cls, v: _reject_duplicate_interfaces(v)))
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     @field_validator("name")
     @classmethod
