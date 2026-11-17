@@ -134,6 +134,8 @@ prune .github
 prune .hypothesis
 prune .benchmarks
 prune .claude
+prune .agents
+prune .bob
 prune todo
 prune reports
 prune logs
