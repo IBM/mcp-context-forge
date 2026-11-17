@@ -5199,7 +5199,7 @@ class TestGatewayHealth:
 
         notices = [r for r in caplog.records if "Auto-refresh skipped for gateway" in r.getMessage()]
         assert len(notices) == 1
-        assert "refresh it manually" in notices[0].getMessage()
+        assert "require a manual refresh" in notices[0].getMessage()
 
     @pytest.mark.asyncio
     async def test_health_auto_refreshes_auth_code_gateway_with_stored_token(self, gateway_service, mock_gateway_health, mock_db_session):

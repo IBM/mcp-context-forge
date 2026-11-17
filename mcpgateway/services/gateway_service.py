@@ -8453,7 +8453,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if gateway_id not in self._manual_refresh_notified:
             self._manual_refresh_notified.add(gateway_id)
             logger.info(
-                "Auto-refresh skipped for gateway %s: authorization_code servers need a stored user OAuth token, so refresh it manually after authorizing",
+                "Auto-refresh skipped for gateway %s: authorization_code servers require a manual refresh",
                 SecurityValidator.sanitize_log_message(gateway_name),
             )
         return True
