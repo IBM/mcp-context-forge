@@ -8,14 +8,11 @@ ContextForge - Main module for using and supporting MCP-CF LLM providers in tool
 This module defines the utility funtions to use MCP-CF supported LLM providers in toolops.
 """
 
-# Standard
-import os
-
 # Third-Party
-from dotenv import load_dotenv
 import orjson
 
 # First-Party
+from mcpgateway.config_sections import ToolOpsSettings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
     AnthropicConfig,
@@ -34,8 +31,6 @@ from mcpgateway.services.mcp_client_chat_service import (
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
-
-load_dotenv()
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
 TOOLOPS_TEMPERATURE = 0.1
@@ -112,7 +107,8 @@ def get_llm_instance(model_type="completion"):
         ...     llm_config.__class__.__name__
         'WatsonxConfig'
     """
-    llm_provider = os.getenv("LLM_PROVIDER", "")
+    provider_settings = ToolOpsSettings()
+    llm_provider = provider_settings.llm_provider
     llm_instance, llm_config = None, None
     logger.info("Configuring LLM instance for ToolOps , and LLM provider - " + llm_provider)
     try:
@@ -129,13 +125,12 @@ def get_llm_instance(model_type="completion"):
         # getting LLM configs from environment variables
         llm_config = None
         if llm_provider == "openai":
-            oai_api_key = os.getenv("OPENAI_API_KEY", "")
-            oai_base_url = os.getenv("OPENAI_BASE_URL", "")
-            oai_model = os.getenv("OPENAI_MODEL", "")
-            # oai_temperature= float(os.getenv("OPENAI_TEMPERATURE","0.7"))
+            oai_api_key = provider_settings.openai_api_key.get_secret_value()
+            oai_base_url = provider_settings.openai_base_url
+            oai_model = provider_settings.openai_model
             oai_temperature = TOOLOPS_TEMPERATURE
-            oai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
-            oai_max_tokens = int(os.getenv("OPENAI_MAX_TOEKNS", "600"))
+            oai_max_retries = provider_settings.openai_max_retries
+            oai_max_tokens = provider_settings.openai_max_toekns
             # adding default headers for RITS LLM platform as required
             if isinstance(oai_base_url, str) and "rits.fmaas.res.ibm.com" in oai_base_url:
                 default_headers = {"RITS_API_KEY": oai_api_key}
@@ -152,15 +147,14 @@ def get_llm_instance(model_type="completion"):
                 timeout=None,
             )
         elif llm_provider == "azure_openai":
-            az_api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
-            az_url = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-            az_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "")
-            az_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
-            az_model = os.getenv("AZURE_OPENAI_MODEL", "")
-            # az_temperature= float(os.getenv("AZURE_OPENAI_TEMPERATURE",0.7))
+            az_api_key = provider_settings.azure_openai_api_key.get_secret_value()
+            az_url = provider_settings.azure_openai_endpoint
+            az_api_version = provider_settings.azure_openai_api_version
+            az_deployment = provider_settings.azure_openai_deployment
+            az_model = provider_settings.azure_openai_model
             az_temperature = TOOLOPS_TEMPERATURE
-            az_max_retries = int(os.getenv("AZURE_OPENAI_MAX_RETRIES", "2"))
-            az_max_tokens = int(os.getenv("AZURE_OPENAI_MAX_TOEKNS", "600"))
+            az_max_retries = provider_settings.azure_openai_max_retries
+            az_max_tokens = provider_settings.azure_openai_max_toekns
             llm_config = AzureOpenAIConfig(
                 api_key=az_api_key,
                 azure_endpoint=az_url,
@@ -173,23 +167,21 @@ def get_llm_instance(model_type="completion"):
                 timeout=None,
             )
         elif llm_provider == "anthropic":
-            ant_api_key = os.getenv("ANTHROPIC_API_KEY", "")
-            ant_model = os.getenv("ANTHROPIC_MODEL", "")
-            # ant_temperature= float(os.getenv("ANTHROPIC_TEMPERATURE",0.7))
+            ant_api_key = provider_settings.anthropic_api_key.get_secret_value()
+            ant_model = provider_settings.anthropic_model
             ant_temperature = TOOLOPS_TEMPERATURE
-            ant_max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096"))
-            ant_max_retries = int(os.getenv("ANTHROPIC_MAX_RETRIES", "2"))
+            ant_max_tokens = provider_settings.anthropic_max_tokens
+            ant_max_retries = provider_settings.anthropic_max_retries
             llm_config = AnthropicConfig(api_key=ant_api_key, model=ant_model, temperature=ant_temperature, max_tokens=ant_max_tokens, max_retries=ant_max_retries, timeout=None)
 
         elif llm_provider == "aws_bedrock":
-            aws_model = os.getenv("AWS_BEDROCK_MODEL_ID", "")
-            aws_region = os.getenv("AWS_BEDROCK_REGION", "")
-            # aws_temperatute=float(os.getenv("AWS_BEDROCK_TEMPERATURE",0.7))
+            aws_model = provider_settings.aws_bedrock_model_id
+            aws_region = provider_settings.aws_bedrock_region
             aws_temperatute = TOOLOPS_TEMPERATURE
-            aws_max_tokens = int(os.getenv("AWS_BEDROCK_MAX_TOKENS", "4096"))
-            aws_key_id = os.getenv("AWS_ACCESS_KEY_ID", "")
-            aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-            aws_session_token = os.getenv("AWS_SESSION_TOKEN", "")
+            aws_max_tokens = provider_settings.aws_bedrock_max_tokens
+            aws_key_id = provider_settings.aws_access_key_id.get_secret_value()
+            aws_secret = provider_settings.aws_secret_access_key.get_secret_value()
+            aws_session_token = provider_settings.aws_session_token.get_secret_value()
             llm_config = AWSBedrockConfig(
                 model_id=aws_model,
                 region_name=aws_region,
@@ -200,19 +192,18 @@ def get_llm_instance(model_type="completion"):
                 aws_session_token=aws_session_token,
             )
         elif llm_provider == "ollama":
-            ollama_model = os.getenv("OLLAMA_MODEL", "")
-            ollama_url = os.getenv("OLLAMA_BASE_URL", "")
-            # ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
+            ollama_model = provider_settings.ollama_model
+            ollama_url = provider_settings.ollama_base_url
             ollama_temeperature = TOOLOPS_TEMPERATURE
             llm_config = OllamaConfig(base_url=ollama_url, model=ollama_model, temperature=ollama_temeperature, timeout=None, num_ctx=None)
         elif llm_provider == "watsonx":
-            wx_api_key = os.getenv("WATSONX_APIKEY", "")
-            wx_base_url = os.getenv("WATSONX_URL", "")
-            wx_model = os.getenv("WATSONX_MODEL_ID", "")
-            wx_project_id = os.getenv("WATSONX_PROJECT_ID", "")
+            wx_api_key = provider_settings.watsonx_apikey.get_secret_value()
+            wx_base_url = provider_settings.watsonx_url
+            wx_model = provider_settings.watsonx_model_id
+            wx_project_id = provider_settings.watsonx_project_id
             wx_temperature = TOOLOPS_TEMPERATURE
-            wx_max_tokens = int(os.getenv("WATSONX_MAX_NEW_TOKENS", "1000"))
-            wx_decoding_method = os.getenv("WATSONX_DECODING_METHOD", "greedy")
+            wx_max_tokens = provider_settings.watsonx_max_new_tokens
+            wx_decoding_method = provider_settings.watsonx_decoding_method
             llm_config = WatsonxConfig(
                 api_key=wx_api_key,
                 url=wx_base_url,

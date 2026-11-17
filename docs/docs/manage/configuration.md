@@ -4,6 +4,42 @@ This guide describes configuration options for ContextForge, including database 
 
 ---
 
+## Environment configuration resolution
+
+Application consumers use validated settings, including standalone CLI and readiness commands.
+Process environment variables override values in the working directory's `.env` file.
+Built-in defaults apply when neither source supplies a value.
+Explicit CLI options take precedence over these settings.
+
+The gateway CLI uses `HOST` and `PORT`.
+Legacy `MCG_HOST` and `MCG_PORT` remain supported aliases.
+For each listener setting, resolution follows this order:
+
+1. Explicit CLI option.
+2. Canonical process environment variable (`HOST` or `PORT`).
+3. Legacy process environment variable (`MCG_HOST` or `MCG_PORT`).
+4. Canonical `.env` value.
+5. Legacy `.env` value.
+6. Built-in default (`127.0.0.1` or `4444`).
+
+The CLI now honors `.env` listener values.
+Copying `.env.example` therefore selects its development bind address, `0.0.0.0`, unless overridden.
+Unix socket and file descriptor listeners do not require TCP settings.
+
+Gateway and installed database readiness logging default to `ERROR`; Redis readiness logging defaults to `INFO`.
+A configured `LOG_LEVEL` overrides these defaults, with case-insensitive level validation.
+Readiness `--log-level` overrides the configured value.
+The copied SQLAlchemy-only database probe retains its process-environment configuration and `INFO` fallback default.
+
+OAuth timeout/retry settings and metrics custom labels support both process variables and `.env` files.
+CLI bearer tokens and ToolOps credentials use secret-typed settings and remain excluded from support bundle settings.
+ToolOps retains the legacy `OPENAI_MAX_TOEKNS` and `AZURE_OPENAI_MAX_TOEKNS` variable spellings.
+Passthrough headers support JSON arrays and comma-separated names through either source.
+Explicit constructor values take precedence when settings are constructed programmatically.
+
+Deployment launcher variables, SDK-owned environment variables, and secret bootstrap operations retain their existing contracts.
+These rules do not change database-backed SSO provider metadata precedence.
+
 ## 🔐 Required: Change Before Use
 
 These variables have insecure built-in placeholders. Set each credential before enabling its authentication feature. The gateway rejects empty, placeholder, and known-weak password values at startup.

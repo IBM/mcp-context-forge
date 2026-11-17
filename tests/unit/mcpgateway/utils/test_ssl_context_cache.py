@@ -7,8 +7,8 @@ Unit tests for mcpgateway.utils.ssl_context_cache.
 """
 
 # Standard
-import hashlib
 from datetime import datetime, timedelta
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -253,44 +253,15 @@ def test_is_expired_returns_true_when_entry_ttl_elapsed(monkeypatch):
     assert ssl_context_cache._is_expired(key) is True
 
 
-def test_ssl_context_cache_ttl_invalid_value_raises_error():
-    """Test that invalid SSL_CONTEXT_CACHE_TTL raises ValueError during module import."""
+def test_ssl_context_cache_ttl_invalid_value_raises_error(monkeypatch):
+    """Invalid cache TTL fails settings validation during module initialization."""
     import importlib
-    import os
-    import sys
 
-    # Save original module if loaded
-    original_module = sys.modules.get("mcpgateway.utils.ssl_context_cache")
-
-    try:
-        # Remove module from cache to force reload
-        if "mcpgateway.utils.ssl_context_cache" in sys.modules:
-            del sys.modules["mcpgateway.utils.ssl_context_cache"]
-
-        # Set invalid TTL value
-        os.environ["SSL_CONTEXT_CACHE_TTL"] = "not-a-number"
-
-        # Import should raise ValueError
-        with patch.dict(os.environ, {"SSL_CONTEXT_CACHE_TTL": "not-a-number"}):
-            try:
-                import mcpgateway.utils.ssl_context_cache
-
-                # If we get here, manually trigger the validation logic
-                ttl_val = os.getenv("SSL_CONTEXT_CACHE_TTL")
-                if ttl_val and ttl_val.strip():
-                    int(ttl_val)  # Should raise ValueError
-                assert False, "Expected ValueError was not raised"
-            except ValueError as e:
-                assert "SSL_CONTEXT_CACHE_TTL must be an integer" in str(e) or "invalid literal" in str(e).lower()
-    finally:
-        # Restore original module and clean up environment
-        if "SSL_CONTEXT_CACHE_TTL" in os.environ:
-            del os.environ["SSL_CONTEXT_CACHE_TTL"]
-        if original_module:
-            sys.modules["mcpgateway.utils.ssl_context_cache"] = original_module
-        else:
-            if "mcpgateway.utils.ssl_context_cache" in sys.modules:
-                del sys.modules["mcpgateway.utils.ssl_context_cache"]
+    with monkeypatch.context() as config_env:
+        config_env.setenv("SSL_CONTEXT_CACHE_TTL", "not-a-number")
+        with pytest.raises(ValueError, match="ssl_context_cache_ttl"):
+            importlib.reload(ssl_context_cache)
+    importlib.reload(ssl_context_cache)
 
 
 def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):

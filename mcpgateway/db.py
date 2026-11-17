@@ -24,7 +24,6 @@ Examples:
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
-import os
 import re
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
@@ -32,9 +31,30 @@ import uuid
 # Third-Party
 import jsonschema
 import sqlalchemy as sa
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    create_engine,
+    DateTime,
+    event,
+    Float,
+    ForeignKey,
+    func,
+    Index,
+    Integer,
+    JSON,
+    make_url,
+    MetaData,
+    select,
+    String,
+    Table,
+    Text,
+    text,
+    UniqueConstraint,
+)
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -119,7 +139,7 @@ elif backend == "sqlite":
 
 # Check for SQLALCHEMY_ECHO environment variable for query debugging
 # This is useful for N+1 detection and performance analysis
-_sqlalchemy_echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("true", "1", "yes")
+_sqlalchemy_echo = settings.sqlalchemy_echo
 
 
 def build_engine() -> Engine:
