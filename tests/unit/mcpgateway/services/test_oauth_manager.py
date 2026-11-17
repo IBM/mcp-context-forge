@@ -13,6 +13,7 @@ import logging
 from types import SimpleNamespace
 from typing import Dict
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qsl
 
 # Third-Party
 from fastapi import HTTPException
@@ -2776,8 +2777,8 @@ class TestPrivateKeyJwtFlows:
             private_key_credentials["resource"] = ["https://mcp.example.com/one", "https://mcp.example.com/two"]
         forms = []
 
-        async def post_token_request(_url, *, data, **_kwargs):
-            forms.append(dict(data))
+        async def post_token_request(_url, *, data=None, content=None, **_kwargs):
+            forms.append(dict(data) if data is not None else dict(parse_qsl(content)))
             if len(forms) == 1:
                 raise httpx.ConnectError("Token endpoint unavailable")
             return _token_exchange_success_response()
