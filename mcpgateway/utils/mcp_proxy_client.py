@@ -72,8 +72,8 @@ def _relayed_capabilities(params: Any) -> Optional[dict[str, Any]]:
 def keep_caller_capabilities(client: Client) -> None:
     """Make ``client`` advertise the caller's capabilities upstream instead of its own.
 
-    Requests that carry no caller-declared capabilities (legacy callers) and legacy
-    upstreams (whose handshake stamp writes no capabilities key) are left untouched.
+    Modern upstreams receive only relayable capabilities declared for this request.
+    Legacy upstreams receive no modern capability metadata.
 
     Args:
         client: A connected ``mcp.Client``.
@@ -89,6 +89,9 @@ def keep_caller_capabilities(client: Client) -> None:
             opts: The SDK's per-call options, passed through untouched.
         """
         caller = _relayed_capabilities(data.get("params"))
+        caller_meta = (data.get("params") or {}).get("_meta")
+        if isinstance(caller_meta, dict):
+            caller_meta.pop(CLIENT_CAPABILITIES_META_KEY, None)
         sdk_stamp(data, opts)
         meta = (data.get("params") or {}).get("_meta")
         if caller is not None and isinstance(meta, dict) and CLIENT_CAPABILITIES_META_KEY in meta:

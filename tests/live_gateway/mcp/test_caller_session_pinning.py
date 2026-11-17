@@ -33,6 +33,7 @@ import asyncio
 import json
 import sys
 import uvicorn
+import mcp_types as types
 class CounterServer(MCPServer):
     async def read_resource(self, uri, context=None):
         if str(uri) == "counter://state":
@@ -49,8 +50,13 @@ def current_state(ctx):
         counters[id(connection)] = [connection, 0]
     return counters[id(connection)]
 @mcp.tool()
-async def increment(ctx: Context, hold: bool = False) -> str:
+async def increment(ctx: Context, hold: bool = False, ask_sampling: bool = False) -> str | types.InputRequiredResult:
     """Increment the counter owned by this MCP session."""
+    if ask_sampling:
+        if ctx.session.client_capabilities.sampling is None:
+            return "No supported capabilities declared"
+        question = types.CreateMessageRequest(params=types.CreateMessageRequestParams(messages=[], maxTokens=1))
+        return types.InputRequiredResult(inputRequests={"sample": question}, requestState="sealed")
     state = current_state(ctx)
     state[1] += 1
     record({"event": "dispatch", "connection": id(state[0]), "hold": hold})
@@ -149,7 +155,7 @@ uvicorn.run("mcpgateway.main:app", host="127.0.0.1", port=int(sys.argv[1]), log_
 
 @pytest.fixture(params=["SSE", "STREAMABLEHTTP"])
 def counter_gateway(request, tmp_path):
-    """Start an isolated authenticated gateway and a legacy stateful counter upstream."""
+    """Start an isolated authenticated gateway and a stateful counter upstream."""
     with ExitStack() as stack:
         transport = request.param[0] if isinstance(request.param, tuple) else request.param
         multi_worker = isinstance(request.param, tuple) and request.param[1]
@@ -215,7 +221,7 @@ def counter_gateway(request, tmp_path):
             "OBSERVABILITY_ENABLED": "false",
             "METRICS_BUFFER_ENABLED": "false",
             "USE_STATEFUL_SESSIONS": str(bool(stateful)).lower(),
-            "MCP_CLIENT_CONNECT_MODE": "legacy",
+            "MCP_CLIENT_CONNECT_MODE": "auto" if isinstance(request.param, tuple) and len(request.param) > 6 and request.param[6] else "legacy",
             "AUTO_REFRESH_SERVERS": "false",
             "LOG_LEVEL": "ERROR",
             "PYTHONUNBUFFERED": "1",
@@ -620,3 +626,37 @@ def test_cancelled_gate_waiter_preserves_live_admissions(counter_gateway):
     assert len(_events(client.upstream_events, "dispatch")) == 2
     # One registration connection exists before the caller connection.
     assert len({event["connection"] for event in _events(client.upstream_events, "dispatch")}) == 1
+
+
+@pytest.mark.parametrize("counter_gateway", [("STREAMABLEHTTP", False, False, False, 100, False, True), ("STREAMABLEHTTP", False, False, False, 100, True, True)], indirect=True)
+def test_modern_sampling_capabilities_survive_gateway_forwarding(counter_gateway):
+    """Modern upstreams receive only the current caller's capabilities on fresh and retained connections."""
+    client, _, server_id, name, tokens = counter_gateway
+    for declared in ({"sampling": {}}, {}):
+        response = client.post(
+            f"/servers/{server_id}/mcp/",
+            headers={"Authorization": f"Bearer {tokens[0]}", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": name},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": {"ask_sampling": True},
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        "io.modelcontextprotocol/clientCapabilities": declared,
+                    },
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "error" not in payload, payload
+        result = payload["result"]
+        if declared:
+            assert list(result["inputRequests"]) == ["sample"]
+        else:
+            assert "inputRequests" not in result
+            assert result["content"][0]["text"] == "No supported capabilities declared"
+        assert _events(client.upstream_events, "http")[-1]["meta"]["io.modelcontextprotocol/clientCapabilities"] == declared

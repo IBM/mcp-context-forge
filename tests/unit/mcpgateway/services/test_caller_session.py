@@ -340,7 +340,7 @@ def test_migration_preserves_existing_rows_and_is_idempotent(monkeypatch):
 def test_upstream_metadata_preserves_keys_without_forwarding_negotiation():
     """Forward application metadata while the upstream SDK negotiates its own connection."""
     supplied = {SESSION_KEY_META: "conversation", "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}, "traceparent": "trace"}
-    assert upstream_meta(supplied) == {"traceparent": "trace"}
+    assert upstream_meta(supplied) == {"traceparent": "trace", "io.modelcontextprotocol/clientCapabilities": {}}
     assert "io.modelcontextprotocol/protocolVersion" in supplied
     assert session_key_from_meta({SESSION_KEY_META: "é" * 128}) == "é" * 128
     with pytest.raises(InvalidSessionKeyError):

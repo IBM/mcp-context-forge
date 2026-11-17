@@ -1241,6 +1241,9 @@ class _FakeClientSession:
     ``session.initialize()`` directly fails here with AttributeError.
     """
 
+    def _stamp(self, data, opts):
+        """Expose the SDK metadata-stamping contract to the registry relay hook."""
+
 
 class _FakeClient:
     """Async-CM stand-in for ``mcp.client.Client``.

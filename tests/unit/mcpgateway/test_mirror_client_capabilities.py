@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 # Third-Party
 from mcp import Client
 from mcp.client.session import _make_handshake_stamp, _make_modern_stamp
-from mcp.server.mcpserver import Elicit, MCPServer, Resolve
+from mcp.server.mcpserver import Context, Elicit, MCPServer, Resolve
 from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import CLIENT_CAPABILITIES_META_KEY
@@ -27,9 +27,11 @@ from pydantic import BaseModel, TypeAdapter
 import pytest
 
 # First-Party
+from mcpgateway.services import upstream_session_registry as registry_module
+from mcpgateway.services.caller_session import upstream_meta
 from mcpgateway.services.prompt_service import PromptInputRequired
 from mcpgateway.services.resource_service import ResourceInputRequired
-from mcpgateway.services.tool_service import ToolInputRequired
+from mcpgateway.services.tool_service import _call_upstream_tool, ToolInputRequired
 from mcpgateway.transports import streamablehttp_transport as tr
 from mcpgateway.utils import mcp_proxy_client as proxy
 
@@ -87,14 +89,13 @@ def test_modern_stamp_sends_the_gateways_own_set_when_the_caller_declared_none()
     assert data["params"]["_meta"][CLIENT_CAPABILITIES_META_KEY] == {}
 
 
-def test_handshake_stamp_is_left_alone_for_a_legacy_upstream():
+def test_handshake_stamp_removes_modern_capabilities_for_a_legacy_upstream():
     session = _hooked_session(_make_handshake_stamp(LEGACY))
-    data = _modern_request({CLIENT_CAPABILITIES_META_KEY: {"elicitation": {"form": {}}}})
-    before = dict(data["params"]["_meta"])
+    data = _modern_request({CLIENT_CAPABILITIES_META_KEY: {"elicitation": {"form": {}}}, "application": "preserved"})
 
     session._stamp(data, {})
 
-    assert data["params"]["_meta"] == before
+    assert data["params"]["_meta"] == {"application": "preserved"}
 
 
 # --------------------------------------------------------------------------- #
@@ -119,6 +120,19 @@ def _strict_upstream() -> MCPServer:
         """Greets once it knows a name."""
         return f"hello {who.name}"
 
+    @server.tool()
+    def capability_probe(ctx: Context) -> str | types.InputRequiredResult:
+        """Ask only questions supported by the current caller."""
+        declared = ctx.session.client_capabilities
+        requests = {}
+        if declared.sampling is not None:
+            requests["sample"] = types.CreateMessageRequest(params=types.CreateMessageRequestParams(messages=[], maxTokens=1))
+        if declared.elicitation is not None:
+            requests.update(_form_question("name").input_requests)
+        if not requests:
+            return "No supported capabilities declared"
+        return types.InputRequiredResult(inputRequests=requests, requestState="sealed")
+
     return server
 
 
@@ -139,6 +153,57 @@ def in_process_upstream(monkeypatch):
     upstream = _strict_upstream()
     monkeypatch.setattr(proxy, "streamable_http_client", lambda _url, http_client=None: upstream)
     monkeypatch.setattr(proxy, "sse_client", lambda _url, **_kwargs: upstream)
+    return upstream
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["streamablehttp", "sse"])
+@pytest.mark.parametrize("pooled", [False, True], ids=["per-call", "registry"])
+async def test_service_metadata_preserves_sampling_only_capabilities(in_process_upstream, monkeypatch, transport, pooled):
+    """Preserve declared sampling support without adding elicitation or retaining prior call capabilities."""
+    monkeypatch.setattr(registry_module.settings, "mcp_client_connect_mode", MODERN)
+    monkeypatch.setattr(registry_module.settings, "ssrf_allow_localhost", True)
+    monkeypatch.setattr(registry_module, "sse_client", lambda **_kwargs: in_process_upstream)
+    monkeypatch.setattr(registry_module, "streamable_http_client", lambda **_kwargs: in_process_upstream)
+    registry = registry_module.UpstreamSessionRegistry()
+
+    @asynccontextmanager
+    async def connection():
+        """Use the production transport construction for each connection mode."""
+        if pooled:
+            async with registry.acquire(
+                downstream_session_id="downstream",
+                gateway_id="gateway",
+                url="http://127.0.0.1:9001/mcp",
+                headers={},
+                transport_type=registry_module.TransportType.SSE if transport == "sse" else registry_module.TransportType.STREAMABLE_HTTP,
+            ) as upstream:
+                yield upstream.session
+        else:
+            async with proxy.mcp_proxy_client("http://upstream.test/mcp", transport=transport, mode=MODERN) as client:
+                yield client.session
+
+    try:
+        async with connection() as session:
+            for declared in ({"sampling": {}}, {}):
+                result = await _call_upstream_tool(
+                    session,
+                    "capability_probe",
+                    {},
+                    input_schema={},
+                    meta=upstream_meta({CLIENT_CAPABILITIES_META_KEY: declared}),
+                    progress_callback=None,
+                    input_responses=None,
+                    request_state=None,
+                )
+                if declared:
+                    assert isinstance(result, types.InputRequiredResult)
+                    assert list(result.input_requests) == ["sample"]
+                else:
+                    assert isinstance(result, types.CallToolResult)
+                    assert result.content[0].text == "No supported capabilities declared"
+    finally:
+        await registry.close_all()
 
 
 @pytest.mark.asyncio

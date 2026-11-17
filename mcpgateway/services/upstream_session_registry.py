@@ -58,6 +58,7 @@ from mcpgateway.services.caller_session import (
 )
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.mcp_proxy_client import keep_caller_capabilities
 from mcpgateway.utils.session_compat import RequestResponder
 from mcpgateway.utils.ssrf_pinning import PinnedTarget, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client, UpstreamSessionInfo
@@ -786,6 +787,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # __aenter__ enters the transport and performs the mode-driven
             # handshake; no explicit session.initialize() here.
             async with client:
+                keep_caller_capabilities(client)
                 session_info.annotate(init_span)
                 if not ready.done():
                     ready.set_result((client.session, client))

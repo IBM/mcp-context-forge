@@ -20,7 +20,7 @@ MAX_SESSION_KEY_BYTES = 256
 _CALLER_EVENT_TIMES: dict[str, float] = {}
 REQUEST_HEADERS = frozenset({"traceparent", "tracestate", "baggage", "x-correlation-id"})
 INTERNAL_HEADERS = frozenset({"mcp-session-id", "x-mcp-session-id", "x-forwarded-internally"})
-ENVELOPE_META_KEYS = frozenset({"io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo", "io.modelcontextprotocol/clientCapabilities"})
+ENVELOPE_META_KEYS = frozenset({"io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo"})
 
 
 def log_caller_event(event: str) -> None:
@@ -38,13 +38,13 @@ def log_caller_event(event: str) -> None:
 
 
 def upstream_meta(meta: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
-    """Remove downstream negotiation metadata so the upstream SDK stamps its own envelope.
+    """Remove hop metadata while retaining capabilities for upstream relay projection.
 
     Args:
         meta: Downstream request metadata.
 
     Returns:
-        Application metadata without hop-specific client negotiation fields.
+        Application metadata and declared capabilities for the transport's relay hook.
     """
     return {name: value for name, value in meta.items() if name not in ENVELOPE_META_KEYS and name != SESSION_KEY_META} if meta is not None else None
 
