@@ -25,6 +25,11 @@ For each listener setting, resolution follows this order:
 The CLI now honors `.env` listener values.
 Copying `.env.example` therefore selects its development bind address, `0.0.0.0`, unless overridden.
 Unix socket and file descriptor listeners do not require TCP settings.
+Explicit `--port 0` requests an ephemeral Uvicorn port.
+Only omitted listener options load defaults from settings; invalid unused defaults do not block explicit options.
+Configured `HOST` and `MCG_HOST` values must contain at least one character.
+An empty process or `.env` value causes a validation error when that host default is required.
+Remove the variable to use the loopback default, or configure `0.0.0.0` or `::` explicitly for a wildcard listener.
 
 Gateway and installed database readiness logging default to `ERROR`; Redis readiness logging defaults to `INFO`.
 A configured `LOG_LEVEL` overrides these defaults, with case-insensitive level validation.
@@ -39,6 +44,26 @@ Explicit constructor values take precedence when settings are constructed progra
 
 Deployment launcher variables, SDK-owned environment variables, and secret bootstrap operations retain their existing contracts.
 These rules do not change database-backed SSO provider metadata precedence.
+
+### Upgrade notes
+
+`DEFAULT_PASSTHROUGH_HEADERS` values present only in `.env` now take effect.
+Check file-only allowlists before enabling header passthrough.
+Explicit constructor values override process and file values.
+
+ToolOps reads provider configuration through its own settings model when its provider is constructed.
+Disabled ToolOps does not validate provider configuration during gateway settings initialization.
+Standalone client, builder, reverse-proxy, transport, and SSL-cache sections also retain their own settings models.
+These utility fields are absent from the gateway settings schema and support-bundle settings export.
+
+ToolOps no longer copies arbitrary `.env` values into `os.environ` during import.
+Export SDK-owned variables into the process explicitly, including proxy variables and AWS profile selection.
+Subprocesses inherit exported process values; they do not automatically inherit gateway `.env` values.
+Dynamic SIEM `${ENV_VAR}` substitutions also read exported process values.
+The modeled ToolOps provider credentials and options continue to support `.env` directly.
+
+`SQLALCHEMY_ECHO` preserves its previous string mapping.
+Case-insensitive `true`, `1`, and `yes` enable SQL logging; other strings, including empty values and `on`, disable it.
 
 ## 🔐 Required: Change Before Use
 

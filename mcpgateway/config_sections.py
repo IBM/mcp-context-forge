@@ -20,11 +20,8 @@ class EnvironmentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
 
-class ListenerSettings(EnvironmentSettings):
-    """Configure listener addresses with compatible CLI aliases."""
-
-    host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("host", "HOST", "MCG_HOST"), description="Listener bind address (HOST; legacy alias MCG_HOST).")
-    port: PositiveInt = Field(default=4444, ge=1, le=65535, validation_alias=AliasChoices("port", "PORT", "MCG_PORT"), description="Listener TCP port (PORT; legacy alias MCG_PORT).")
+class ListenerEnvironmentSettings(EnvironmentSettings):
+    """Normalize canonical and legacy listener aliases within each settings source."""
 
     @classmethod
     def settings_customise_sources(
@@ -68,6 +65,22 @@ class ListenerSettings(EnvironmentSettings):
             return read
 
         return tuple(normalize(source) for source in (init_settings, env_settings, dotenv_settings, file_secret_settings))
+
+
+class ListenerHostSettings(ListenerEnvironmentSettings):
+    """Resolve the listener host independently of unused port configuration."""
+
+    host: str = Field(default="127.0.0.1", min_length=1, validation_alias=AliasChoices("host", "HOST", "MCG_HOST"), description="Nonempty listener bind address (HOST; legacy alias MCG_HOST).")
+
+
+class ListenerPortSettings(ListenerEnvironmentSettings):
+    """Resolve a configured TCP port independently of unused host configuration."""
+
+    port: PositiveInt = Field(default=4444, ge=1, le=65535, validation_alias=AliasChoices("port", "PORT", "MCG_PORT"), description="Listener TCP port (PORT; legacy alias MCG_PORT).")
+
+
+class ListenerSettings(ListenerHostSettings, ListenerPortSettings):
+    """Configure gateway listener addresses through shared field contracts."""
 
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -118,6 +131,20 @@ class DatabaseSettings(LoggingSettings):
     db_connect_timeout: int = Field(default=2, description="Database readiness connection timeout in seconds (DB_CONNECT_TIMEOUT).")
     db_max_backoff_seconds: float = Field(default=30, description="Database retry backoff cap in seconds (DB_MAX_BACKOFF_SECONDS).")
     sqlalchemy_echo: bool = Field(default=False, description="Emit SQLAlchemy statement logs (SQLALCHEMY_ECHO).")
+
+    @field_validator("sqlalchemy_echo", mode="before")
+    @classmethod
+    def parse_sqlalchemy_echo(cls, value: Any) -> Any:
+        """Preserve legacy string parsing and explicit boolean values.
+
+        Args:
+            value: Configured SQL logging value.
+
+        Returns:
+            True for legacy truthy strings, otherwise False for strings or the original value.
+        """
+        del cls
+        return value.lower() in {"true", "1", "yes"} if isinstance(value, str) else value
 
 
 class RedisSettings(EnvironmentSettings):

@@ -9,6 +9,7 @@ Regression tests for shared environment configuration and standalone consumers.
 # Standard
 import importlib
 import json
+import os
 from pathlib import Path
 import runpy
 import secrets
@@ -21,7 +22,17 @@ import pytest
 # First-Party
 from mcpgateway import cli
 from mcpgateway.config import Settings
-from mcpgateway.config_sections import ClientAuthSettings, DatabaseSettings, ListenerSettings, RedisReadinessSettings, SSLCacheSettings, ToolOpsSettings
+from mcpgateway.config_sections import (
+    BuilderSettings,
+    ClientAuthSettings,
+    DatabaseSettings,
+    ListenerHostSettings,
+    ListenerSettings,
+    RedisReadinessSettings,
+    ReverseProxySettings,
+    SSLCacheSettings,
+    ToolOpsSettings,
+)
 from mcpgateway.services.support_bundle_service import SupportBundleService
 
 
@@ -64,19 +75,63 @@ def test_explicit_listener_options_override_invalid_environment(isolated_config,
     assert cli._insert_defaults(args) == [cli.DEFAULT_APP, *args]
 
 
+@pytest.mark.parametrize("name", ["HOST", "MCG_HOST"])
+@pytest.mark.parametrize("source", ["process", "file"])
+def test_empty_host_is_rejected_across_settings_models(isolated_config, monkeypatch, name, source):
+    """Empty configured hosts fail validation instead of selecting wildcard listeners."""
+    if source == "process":
+        (isolated_config / ".env").write_text("HOST=127.0.0.2\n")
+        monkeypatch.setenv(name, "")
+    else:
+        (isolated_config / ".env").write_text(f"{name}=\n")
+    for model in (ListenerHostSettings, ListenerSettings, Settings):
+        with pytest.raises(ValidationError) as exc:
+            model()
+        assert any(error["loc"] == ("host",) and error["type"] == "string_too_short" for error in exc.value.errors())
+
+
+@pytest.mark.parametrize("source", ["process", "file"])
+def test_empty_canonical_host_does_not_fall_back_to_legacy_alias(isolated_config, monkeypatch, source):
+    """Invalid canonical hosts remain authoritative over valid legacy aliases."""
+    if source == "process":
+        monkeypatch.setenv("HOST", "")
+        monkeypatch.setenv("MCG_HOST", "127.0.0.2")
+    else:
+        (isolated_config / ".env").write_text("HOST=\nMCG_HOST=127.0.0.2\n")
+    with pytest.raises(ValidationError, match="host"):
+        ListenerHostSettings()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0", "::"])
+def test_nonempty_listener_hosts_remain_supported(isolated_config, monkeypatch, host):
+    """Configured loopback and wildcard addresses retain explicit support."""
+    monkeypatch.setenv("HOST", host)
+    for model in (ListenerHostSettings, ListenerSettings, Settings):
+        assert model().host == host
+
+
+def test_unset_listener_host_defaults_to_loopback(isolated_config):
+    """Missing host configuration preserves the loopback default across consumers."""
+    for model in (ListenerHostSettings, ListenerSettings, Settings):
+        assert model().host == "127.0.0.1"
+    argv = cli._insert_defaults([])
+    assert argv[argv.index("--host") + 1] == "127.0.0.1"
+
+
 def test_listener_schema_preserves_existing_property_names():
     """Environment aliases retain the existing lowercase JSON schema properties."""
     for model in (ListenerSettings, Settings):
         properties = model.model_json_schema()["properties"]
         assert properties["host"]["default"] == "127.0.0.1"
+        assert properties["host"]["minLength"] == 1
         assert properties["port"]["default"] == 4444
         assert "MCG_HOST" not in properties
         assert "MCG_PORT" not in properties
 
 
-@pytest.mark.parametrize("option", ["--uds=/tmp/gateway.sock", "--fd=3"])
+@pytest.mark.parametrize("option", ["--uds=/tmp/gateway.sock", "--fd=3", "--help"])
 def test_socket_options_do_not_initialize_listener_settings(isolated_config, monkeypatch, option):
-    """Socket listeners do not require valid TCP configuration."""
+    """Socket listeners and help do not require valid TCP configuration."""
     monkeypatch.setenv("PORT", "invalid")
     assert cli._insert_defaults([option]) == [cli.DEFAULT_APP, option]
 
@@ -166,8 +221,9 @@ def test_migrated_secrets_are_absent_from_support_bundle(isolated_config, monkey
     for name in ("MCPGATEWAY_BEARER_TOKEN", "OPENAI_API_KEY", "AWS_SESSION_TOKEN", "REVERSE_PROXY_TOKEN"):
         monkeypatch.setenv(name, sentinel)
     cfg = Settings()
-    assert sentinel not in cfg.model_dump_json()
-    assert sentinel not in repr(cfg)
+    for model in (cfg, ClientAuthSettings(), ReverseProxySettings(), ToolOpsSettings()):
+        assert sentinel not in model.model_dump_json()
+        assert sentinel not in repr(model)
     monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings", cfg)
     service = SupportBundleService()  # type: ignore[no-untyped-call]
     exported = service._collect_settings()
@@ -175,7 +231,8 @@ def test_migrated_secrets_are_absent_from_support_bundle(isolated_config, monkey
         assert name not in exported
     assert sentinel not in json.dumps(exported, default=str)
     environment = service._collect_env_config()
-    assert environment["MCPGATEWAY_BEARER_TOKEN"] == "*****"
+    for name in ("MCPGATEWAY_BEARER_TOKEN", "OPENAI_API_KEY", "AWS_SESSION_TOKEN", "REVERSE_PROXY_TOKEN"):
+        assert environment[name] == "*****"
 
 
 def test_header_configuration_preserves_source_precedence(isolated_config, monkeypatch):
@@ -210,3 +267,66 @@ def test_toolops_preserves_legacy_token_names(isolated_config, monkeypatch):
     cfg = ToolOpsSettings()
     assert cfg.openai_max_toekns == 123
     assert cfg.azure_openai_max_toekns == 234
+
+
+@pytest.mark.parametrize("source", ["process", "file"])
+@pytest.mark.parametrize("raw, expected", [("", False), ("invalid", False), ("on", False), ("true", True), ("TrUe", True), ("1", True), ("yes", True), ("false", False), ("0", False)])
+def test_sql_echo_preserves_legacy_strings(isolated_config, monkeypatch, source, raw, expected):
+    """Database settings preserve SQL echo parsing across process and file inputs."""
+    monkeypatch.delenv("SQLALCHEMY_ECHO", raising=False)
+    if source == "process":
+        monkeypatch.setenv("SQLALCHEMY_ECHO", raw)
+    else:
+        (isolated_config / ".env").write_text(f"SQLALCHEMY_ECHO={raw}\n")
+    assert DatabaseSettings().sqlalchemy_echo is expected
+    assert Settings().sqlalchemy_echo is expected
+
+
+def test_sql_echo_defaults_boolean_and_source_precedence(isolated_config, monkeypatch):
+    """SQL echo retains false defaults, explicit booleans, and process priority."""
+    monkeypatch.delenv("SQLALCHEMY_ECHO", raising=False)
+    assert DatabaseSettings().sqlalchemy_echo is False
+    (isolated_config / ".env").write_text("SQLALCHEMY_ECHO=true\n")
+    monkeypatch.setenv("SQLALCHEMY_ECHO", "")
+    assert DatabaseSettings().sqlalchemy_echo is False
+    assert DatabaseSettings(sqlalchemy_echo=True).sqlalchemy_echo is True
+    assert DatabaseSettings(sqlalchemy_echo=False).sqlalchemy_echo is False
+
+
+@pytest.mark.parametrize("source", ["process", "file"])
+def test_disabled_toolops_does_not_validate_provider_settings(isolated_config, monkeypatch, source):
+    """Unused provider and utility configuration does not block gateway settings."""
+    values = {"TOOLOPS_ENABLED": "false", "OPENAI_MAX_RETRIES": "invalid", "SSL_CONTEXT_CACHE_TTL": "invalid"}
+    for name in values:
+        monkeypatch.delenv(name, raising=False)
+    if source == "process":
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+    else:
+        (isolated_config / ".env").write_text("\n".join(f"{name}={value}" for name, value in values.items()))
+    assert Settings().toolops_enabled is False
+    with pytest.raises(ValidationError, match="openai_max_retries"):
+        ToolOpsSettings()
+    with pytest.raises(ValidationError, match="ssl_context_cache_ttl"):
+        SSLCacheSettings()
+
+
+def test_gateway_schema_excludes_standalone_sections():
+    """Gateway settings expose only configuration owned by gateway consumers."""
+    fields = Settings.model_fields
+    for model in (BuilderSettings, ClientAuthSettings, ReverseProxySettings, SSLCacheSettings, ToolOpsSettings):
+        assert not fields.keys() & model.model_fields.keys()
+
+
+def test_builder_reads_file_without_exporting_values(isolated_config, monkeypatch):
+    """Builder settings read file values without changing the process environment."""
+    from mcpgateway.tools.builder.common import get_deploy_dir
+
+    monkeypatch.delenv("MCP_DEPLOY_DIR", raising=False)
+    monkeypatch.delenv("MCP_DEBUG", raising=False)
+    target = isolated_config / "artifacts"
+    (isolated_config / ".env").write_text(f"MCP_DEPLOY_DIR={target}\nMCP_DEBUG=1\n")
+    assert get_deploy_dir() == target
+    assert BuilderSettings().mcp_debug == "1"
+    assert "MCP_DEPLOY_DIR" not in os.environ
+    assert "MCP_DEBUG" not in os.environ

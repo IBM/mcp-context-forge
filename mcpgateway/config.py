@@ -71,14 +71,9 @@ from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
 
 # First-Party
 from mcpgateway.config_sections import (
-    BuilderSettings,
-    ClientAuthSettings,
     DatabaseSettings,
     ListenerSettings,
     RedisSettings,
-    ReverseProxySettings,
-    SSLCacheSettings,
-    ToolOpsSettings,
     TransportSettings,
 )
 from mcpgateway.utils.origin import is_exact_https_origin
@@ -191,12 +186,6 @@ class Settings(  # pylint: disable=too-many-ancestors
     ListenerSettings,
     DatabaseSettings,
     RedisSettings,
-    ClientAuthSettings,
-    ReverseProxySettings,
-    SSLCacheSettings,
-    ToolOpsSettings,
-    TransportSettings,
-    BuilderSettings,
 ):
     """
     ContextForge AI Gateway configuration settings.

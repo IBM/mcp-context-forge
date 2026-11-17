@@ -7,14 +7,50 @@ Tests for toolops utility helpers.
 """
 
 # Standard
+import os
+import secrets
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party
+from pydantic import ValidationError
 import pytest
 
 # First-Party
 from mcpgateway.toolops.utils import db_util, format_conversion, llm_util
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_provider_file_configuration_without_environment_export(monkeypatch, tmp_path, enabled):
+    """Provider construction reads file settings without exporting unrelated SDK variables."""
+    monkeypatch.chdir(tmp_path)
+    names = ("LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "OPENAI_MAX_RETRIES", "AWS_PROFILE")
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    token = secrets.token_urlsafe(32)
+    (tmp_path / ".env").write_text(
+        f"TOOLOPS_ENABLED={str(enabled).lower()}\nLLM_PROVIDER=openai\nOPENAI_API_KEY={token}\n"
+        "OPENAI_BASE_URL=https://provider.example/v1\nOPENAI_MODEL=file-model\nOPENAI_MAX_RETRIES=7\nAWS_PROFILE=file-profile\n"
+    )
+    provider = MagicMock()
+    monkeypatch.setattr(llm_util, "OpenAIProvider", provider)
+    instance, config = llm_util.get_llm_instance("chat")
+    assert instance is provider.return_value.get_llm.return_value
+    assert config.api_key == token
+    assert config.model == "file-model"
+    assert config.max_retries == 7
+    provider.assert_called_once_with(config)
+    assert all(name not in os.environ for name in names)
+
+
+def test_provider_construction_rejects_invalid_configuration(monkeypatch, tmp_path):
+    """Active provider construction retains numeric validation at its consuming boundary."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOOLOPS_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "invalid")
+    with pytest.raises(ValidationError, match="openai_max_retries"):
+        llm_util.get_llm_instance()
 
 
 def test_convert_to_toolops_spec_with_output_schema():

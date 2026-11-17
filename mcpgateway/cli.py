@@ -49,7 +49,7 @@ from mcpgateway import __version__
 from mcpgateway.config import SecurityConfigurationError, Settings
 
 # First-Party
-from mcpgateway.config_sections import ListenerSettings
+from mcpgateway.config_sections import ListenerHostSettings, ListenerPortSettings, ListenerSettings
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)
@@ -125,20 +125,11 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
         """
         return any(arg == option or arg.startswith(option + "=") for arg in args)
 
-    if not has_option("--uds") and not has_option("--fd"):
-        overrides = {}
-        for option in ("host", "port"):
-            flag = "--" + option
-            for index, arg in enumerate(args):
-                if arg.startswith(flag + "="):
-                    overrides[option] = arg.split("=", 1)[1]
-                elif arg == flag and index + 1 < len(args):
-                    overrides[option] = args[index + 1]
-        listener = ListenerSettings(**overrides)
+    if not has_option("--help") and not has_option("--uds") and not has_option("--fd"):
         if not has_option("--host") and not has_option("--http"):
-            args.extend(["--host", listener.host])
+            args.extend(["--host", ListenerHostSettings().host])
         if not has_option("--port"):
-            args.extend(["--port", str(listener.port)])
+            args.extend(["--port", str(ListenerPortSettings().port)])
 
     return args
 
@@ -369,7 +360,11 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
 
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]
-    uvicorn_argv = _insert_defaults(user_args)
+    try:
+        uvicorn_argv = _insert_defaults(user_args)
+    except ValidationError as exc:
+        print(f"Invalid listener configuration: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
     # Uvicorn's `main()` uses sys.argv - patch it in and run.
     sys.argv = ["mcpgateway", *uvicorn_argv]
