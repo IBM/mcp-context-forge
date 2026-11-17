@@ -1803,6 +1803,19 @@ def test_log_summary():
     s.log_summary()
 
 
+def test_log_summary_masks_provider_secrets(monkeypatch, caplog):
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "example-session-value")
+    monkeypatch.setenv("WATSONX_APIKEY", "example-watson-value")
+    configured = Settings(_env_file=None)
+
+    with caplog.at_level(logging.INFO, logger="mcpgateway.config"):
+        configured.log_summary()
+
+    assert "Application settings summary" in caplog.text
+    assert "example-session-value" not in caplog.text
+    assert "example-watson-value" not in caplog.text
+
+
 # --------------------------------------------------------------------------- #
 #                    proxy auth warning in __init__                            #
 # --------------------------------------------------------------------------- #

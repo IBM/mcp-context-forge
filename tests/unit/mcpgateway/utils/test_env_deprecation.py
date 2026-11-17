@@ -8,7 +8,6 @@ Tests for environment variable deprecation warnings.
 
 import logging
 
-from mcpgateway.config import EnvDeprecation
 from mcpgateway.utils import env_deprecation
 
 
@@ -24,7 +23,7 @@ def test_removed_variables_warn_for_case_insensitive_glob_matches(caplog):
 
 
 def test_deprecated_variable_warns_from_custom_mapping(monkeypatch, caplog):
-    monkeypatch.setattr(env_deprecation, "DEPRECATED_ENVS", (EnvDeprecation("OLD_SETTING", "Use NEW_SETTING."),))
+    monkeypatch.setattr(env_deprecation, "DEPRECATED_ENVS", [("OLD_SETTING", "Use NEW_SETTING.")])
     monkeypatch.setenv("MCP_SESSION_POOL_SIZE", "5")
 
     with caplog.at_level(logging.WARNING, logger=env_deprecation.__name__):
@@ -36,12 +35,37 @@ def test_deprecated_variable_warns_from_custom_mapping(monkeypatch, caplog):
     assert "MCP_SESSION_POOL_SIZE" not in caplog.text
 
 
-def test_default_environment_and_empty_mapping(monkeypatch, caplog):
+def test_default_environment_and_empty_mapping(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("MCP_SESSION_POOL_SIZE", "5")
+    monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.WARNING, logger=env_deprecation.__name__):
         env_deprecation.warn_deprecated_envs({})
         assert not caplog.records
         env_deprecation.warn_deprecated_envs()
 
     assert len(caplog.records) == 1
+    assert "MCP_SESSION_POOL_SIZE" in caplog.text
+
+
+def test_warns_for_dotenv_and_false_deprecated_value(tmp_path, monkeypatch, caplog):
+    monkeypatch.delenv("MCP_SESSION_POOL_SIZE", raising=False)
+    monkeypatch.delenv("EXPOSE_ERROR_DETAILS", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("MCP_SESSION_POOL_SIZE=5\nEXPOSE_ERROR_DETAILS=false\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger=env_deprecation.__name__):
+        env_deprecation.warn_deprecated_envs()
+
+    assert "mcp_session_pool_size" in caplog.text.lower()
+    assert "expose_error_details" in caplog.text.lower()
+
+
+def test_warns_for_removed_process_environment(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("MCP_SESSION_POOL_SIZE", "5")
+    monkeypatch.chdir(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger=env_deprecation.__name__):
+        env_deprecation.warn_deprecated_envs()
+
     assert "MCP_SESSION_POOL_SIZE" in caplog.text

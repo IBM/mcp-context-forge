@@ -1297,8 +1297,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
-    if settings.expose_error_details:
-        logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
     warn_deprecated_envs()
 
     # Fork the sandbox pools while the process holds no sockets or threads.
