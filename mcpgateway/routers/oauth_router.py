@@ -2078,9 +2078,10 @@ async def get_registered_client_for_gateway(
 async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
-    This will revoke the client registration locally. Note: This does not automatically
-    revoke the client at the Authorization Server. You may need to manually revoke the
-    client using the registration_client_uri if available.
+    Attempts to revoke the client at the Authorization Server first (RFC 7591
+    section 4.3) when a registration_client_uri and registration access token
+    are available, then removes the local row. The provider result is reported
+    separately so a failed remote delete does not hide a successful local delete.
 
     Args:
         client_id: The registered client ID to delete
@@ -2109,16 +2110,25 @@ async def delete_registered_client(client_id: str, request: Request, current_use
         issuer = client.issuer
         gateway_id = client.gateway_id
 
-        # Delete the client
+        provider_deleted = await DcrService().delete_client_registration(client, db)
+
+        # Delete the local row even when the Authorization Server delete fails,
+        # so a stuck remote client cannot block cleanup. The provider result is
+        # returned separately.
         db.delete(client)
         db.commit()
         db.close()
 
         logger.info(
-            f"Deleted registered OAuth client {SecurityValidator.sanitize_log_message(client_id)} for gateway {SecurityValidator.sanitize_log_message(gateway_id)} (issuer: {SecurityValidator.sanitize_log_message(issuer)})"
+            f"Deleted registered OAuth client {SecurityValidator.sanitize_log_message(client_id)} for gateway {SecurityValidator.sanitize_log_message(gateway_id)} (issuer: {SecurityValidator.sanitize_log_message(issuer)}, provider_deleted={provider_deleted})"
         )
 
-        return {"success": True, "message": f"Registered OAuth client {client_id} deleted successfully", "gateway_id": gateway_id, "issuer": issuer}
+        if provider_deleted:
+            message = f"Registered OAuth client {client_id} deleted successfully"
+        else:
+            message = f"Registered OAuth client {client_id} deleted locally, but was not removed at the Authorization Server"
+
+        return {"success": True, "message": message, "gateway_id": gateway_id, "issuer": issuer, "provider_deleted": provider_deleted}
 
     except HTTPException:
         raise

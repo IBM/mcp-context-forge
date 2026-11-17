@@ -3635,10 +3635,35 @@ class TestOAuthRouterAdditionalCoverage:
 
         # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client
+        from mcpgateway.services.dcr_service import DcrService
 
-        result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=True)) as mock_dcr_delete:
+            result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert result["success"] is True
+        assert result["provider_deleted"] is True
+        mock_dcr_delete.assert_awaited_once()
+        mock_db.delete.assert_called_once_with(client)
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_registered_client_reports_provider_failure(self, mock_db, mock_admin_request):
+        """Local delete still succeeds when the Authorization Server cannot be revoked."""
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer"
+        client.gateway_id = "g1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+
+        from mcpgateway.routers.oauth_router import delete_registered_client
+        from mcpgateway.services.dcr_service import DcrService
+
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=False)):
+            result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+
+        assert result["success"] is True
+        assert result["provider_deleted"] is False
+        assert "not removed at the Authorization Server" in result["message"]
         mock_db.delete.assert_called_once_with(client)
         mock_db.commit.assert_called_once()
 
@@ -3664,8 +3689,11 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.execute.return_value.scalar_one_or_none.return_value = client
         mock_db.commit.side_effect = Exception("boom")
 
-        with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        from mcpgateway.services.dcr_service import DcrService
+
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=True)):
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 500
         mock_db.rollback.assert_called_once()
@@ -3803,11 +3831,15 @@ class TestOAuthRouterAdditionalCoverage:
         client.gateway_id = "gw-99"
         mock_db.execute.return_value.scalar_one_or_none.return_value = client
 
+        from mcpgateway.services.dcr_service import DcrService
+
         # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
-        result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=True)):
+            result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
         assert result["gateway_id"] == "gw-99"
         assert result["issuer"] == "https://issuer.example.com"
         assert "c1" in result["message"]
+        assert result["provider_deleted"] is True
 
     @pytest.mark.asyncio
     async def test_get_registered_client_includes_registration_client_uri(self, mock_db, mock_admin_request):
@@ -3897,7 +3929,10 @@ class TestOAuthRouterAdditionalCoverage:
         client.issuer = "https://issuer"
         client.gateway_id = "g1"
         mock_db.execute.return_value.scalar_one_or_none.return_value = client
-        await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        from mcpgateway.services.dcr_service import DcrService
+
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=True)):
+            await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
         assert mock_permission_service.check_permission.await_args.kwargs["permission"] == Permissions.ADMIN_OAUTH_CLIENTS_DELETE
         assert mock_permission_service.check_permission.await_args.kwargs["allow_admin_bypass"] is False
 
@@ -3959,7 +3994,10 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_permission_service.check_permission.await_args.kwargs["team_id"] is None
         assert mock_permission_service.check_permission.await_args.kwargs["check_any_team"] is False
 
-        await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True, "team_id": "team-1"}, db=mock_db)
+        from mcpgateway.services.dcr_service import DcrService
+
+        with patch.object(DcrService, "delete_client_registration", new=AsyncMock(return_value=True)):
+            await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True, "team_id": "team-1"}, db=mock_db)
         assert mock_permission_service.check_permission.await_args.kwargs["team_id"] is None
         assert mock_permission_service.check_permission.await_args.kwargs["check_any_team"] is False
 
