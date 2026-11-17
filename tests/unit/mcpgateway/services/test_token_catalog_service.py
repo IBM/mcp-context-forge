@@ -272,6 +272,22 @@ class TestTokenCatalogService:
             assert call_kwargs["user_data"]["is_admin"] is False
 
     @pytest.mark.asyncio
+    async def test_generate_token_includes_usage_limits_in_jwt_scopes(self, token_service):
+        """Usage limits configured for a token must reach the JWT scopes.
+
+        The scoping middleware reads `scopes.usage_limits` to enforce quotas;
+        a value stored only on the DB row can never be enforced.
+        """
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
+            mock_create_jwt.return_value = "jwt_token_123"
+            scope = TokenScope(usage_limits={"requests_per_hour": 3})
+
+            await token_service._generate_token("user@example.com", str(uuid.uuid4()), scope=scope)
+
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["scopes"]["usage_limits"] == {"requests_per_hour": 3}
+
+    @pytest.mark.asyncio
     async def test_generate_token_uses_user_id_as_subject(self, token_service, mock_user):
         """API tokens use the opaque user id as JWT subject when the user record is available."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
