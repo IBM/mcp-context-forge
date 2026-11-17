@@ -6693,8 +6693,9 @@ class TestInvokeToolCancellationOutcome:
             patch("mcpgateway.services.tool_service.record_control_telemetry"),
             patch("mcpgateway.services.tool_service.create_span", return_value=span_cm),
             patch("mcpgateway.services.tool_service.set_span_attribute") as set_span_attribute,
+            patch("mcpgateway.services.tool_service.set_span_ok") as set_span_ok,
         ):
-            yield SimpleNamespace(metrics_buffer=metrics_buffer, observability=observability, otel_span=otel_span, set_span_attribute=set_span_attribute)
+            yield SimpleNamespace(metrics_buffer=metrics_buffer, observability=observability, otel_span=otel_span, set_span_attribute=set_span_attribute, set_span_ok=set_span_ok)
 
     @pytest.fixture
     def mcp_session(self, request, mock_tool, test_db):
@@ -6794,17 +6795,18 @@ class TestInvokeToolCancellationOutcome:
 
     @staticmethod
     def _assert_cancellation_recorded(structured_logger, recorders):
-        """Assert one INFO ``invocation cancelled`` log, no ERROR log, a ``cancelled`` DB span and no metric."""
+        """Assert one INFO ``invocation cancelled`` log, no ERROR log, a ``cancelled`` DB span, an OK OTel span and no metric."""
         assert len([c for c in structured_logger.info.call_args_list if "invocation cancelled" in c.args[0]]) == 1
         structured_logger.error.assert_not_called()
         recorders.observability.end_span.assert_called_once()
         assert recorders.observability.end_span.call_args.kwargs["status"] == "cancelled"
+        recorders.set_span_ok.assert_called_once_with(recorders.otel_span)
         recorders.metrics_buffer.record_tool_metric.assert_not_called()
         recorders.metrics_buffer.record_server_metric.assert_not_called()
 
     @staticmethod
     def _assert_failure_recorded(structured_logger, recorders, *, error_message):
-        """Assert the ERROR log, the ``error`` spans and the failure tool and server metrics."""
+        """Assert the ERROR log, the ``error`` spans, an OTel span left to end in ERROR and the failure tool and server metrics."""
         structured_logger.error.assert_called_once()
         assert "invocation failed" in structured_logger.error.call_args.args[0]
         assert structured_logger.error.call_args.kwargs["custom_fields"]["error_message"] == error_message
@@ -6815,6 +6817,7 @@ class TestInvokeToolCancellationOutcome:
         assert end_span_kwargs["status_message"] == error_message
         assert end_span_kwargs["attributes"]["cancelled"] is False
         recorders.set_span_attribute.assert_any_call(recorders.otel_span, "cancelled", False)
+        recorders.set_span_ok.assert_not_called()
         recorders.metrics_buffer.record_tool_metric.assert_called_once()
         assert recorders.metrics_buffer.record_tool_metric.call_args.kwargs["success"] is False
         assert recorders.metrics_buffer.record_tool_metric.call_args.kwargs["error_message"] == error_message
@@ -6844,6 +6847,7 @@ class TestInvokeToolCancellationOutcome:
         assert end_span_kwargs["attributes"]["cancelled"] is True
         assert end_span_kwargs["attributes"]["success"] is False
         recorders.set_span_attribute.assert_any_call(recorders.otel_span, "cancelled", True)
+        recorders.set_span_ok.assert_called_once_with(recorders.otel_span)
         recorders.metrics_buffer.record_tool_metric.assert_not_called()
         recorders.metrics_buffer.record_server_metric.assert_not_called()
 
@@ -6908,6 +6912,88 @@ class TestInvokeToolCancellationOutcome:
             with pytest.raises(asyncio.CancelledError):
                 await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
 
+        timeout_post_invoke.assert_awaited_once()
+        self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=None)
+
+    @pytest.mark.asyncio
+    async def test_cancellation_in_a2a_timeout_post_invoke_keeps_timeout_failure(self, tool_service, test_db, recorders, mock_logging_services):
+        """A cancellation inside the A2A timeout post-invoke hook keeps the timeout's failure record."""
+        # First-Party
+        from mcpgateway.services.tool_service import ResolvedTool
+
+        tool_payload = {
+            "id": "a2a-tool",
+            "name": "a2a-tool",
+            "original_name": "a2a-tool",
+            "url": "",
+            "integration_type": "A2A",
+            "request_type": "POST",
+            "headers": {},
+            "input_schema": {"type": "object"},
+            "annotations": {"a2a_agent_id": "agent-1"},
+            "enabled": True,
+            "reachable": True,
+            "gateway_id": None,
+        }
+        resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
+        agent = SimpleNamespace(
+            enabled=True,
+            name="agent-one",
+            endpoint_url="http://agent.example/a2a",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            passthrough_headers=[],
+        )
+        agent_query = MagicMock()
+        agent_query.scalar_one_or_none.return_value = agent
+        test_db.execute = MagicMock(return_value=agent_query)
+
+        client = AsyncMock()
+        client.post.side_effect = asyncio.TimeoutError()
+        client_cm = MagicMock()
+        client_cm.__aenter__ = AsyncMock(return_value=client)
+        client_cm.__aexit__ = AsyncMock(return_value=False)
+        pinned = SimpleNamespace(endpoint_url=agent.endpoint_url, headers={}, extensions={})
+
+        with (
+            patch.object(tool_service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", AsyncMock(return_value=pinned)),
+            patch("mcpgateway.services.tool_service.get_isolated_http_client", return_value=client_cm),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=self._retrying_plugin_manager())),
+            patch.object(tool_service, "_run_timeout_post_invoke", AsyncMock(side_effect=asyncio.CancelledError())) as timeout_post_invoke,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None, server_id="server-1")
+
+        client.post.assert_awaited_once()
+        timeout_post_invoke.assert_awaited_once()
+        self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=None)
+
+    @pytest.mark.asyncio
+    async def test_cancellation_in_grpc_timeout_post_invoke_keeps_timeout_failure(self, tool_service, mock_tool, mock_global_config_obj, test_db, recorders, mock_logging_services):
+        """A cancellation inside the gRPC timeout post-invoke hook keeps the timeout's failure record."""
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-svc-1"
+        mock_tool.original_name = "test.Svc.DoStuff"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session"),
+            patch("mcpgateway.services.grpc_service.GrpcService") as grpc_service_cls,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=self._retrying_plugin_manager())),
+            patch.object(tool_service, "_run_timeout_post_invoke", AsyncMock(side_effect=asyncio.CancelledError())) as timeout_post_invoke,
+        ):
+            grpc_service_cls.return_value.invoke_method = AsyncMock(side_effect=asyncio.TimeoutError())
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
+
+        grpc_service_cls.return_value.invoke_method.assert_awaited_once()
         timeout_post_invoke.assert_awaited_once()
         self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=None)
 

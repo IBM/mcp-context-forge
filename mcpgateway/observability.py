@@ -9,6 +9,7 @@ OTEL_AVAILABLE indicates core tracing support. Baggage support remains independe
 """
 
 # Standard
+import asyncio
 import base64
 from contextlib import contextmanager, nullcontext
 from contextvars import Context, ContextVar
@@ -962,6 +963,30 @@ def set_span_error(
     _set_pre_sanitized_span_attribute(span, "langfuse.observation.status_message", error_message)
 
 
+def set_span_ok(span: Any) -> None:
+    """Mark a span as successful.
+
+    An OK status is final: OpenTelemetry ignores a later ERROR status, including the one an exiting exception sets.
+
+    Args:
+        span: Active span object.
+    """
+    if span and OTEL_AVAILABLE and Status and StatusCode:
+        span.set_status(Status(StatusCode.OK))
+
+
+def _span_status_is_ok(span: Any) -> bool:
+    """Report whether the span status is OK.
+
+    Args:
+        span: Active span object.
+
+    Returns:
+        True when the span reports an OK status code.
+    """
+    return bool(StatusCode) and getattr(getattr(span, "status", None), "status_code", None) == StatusCode.OK
+
+
 def _derive_langfuse_trace_name(name: str, attributes: Dict[str, Any]) -> str:
     """Derive a human-readable Langfuse trace name from span context.
 
@@ -1836,7 +1861,10 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                     The result of the wrapped span context's __exit__ method.
                 """
                 # Record exception if one occurred
+                # An OK status set by the caller wins over a cancellation, so a cancelled call does not count as a failure.
                 if exc_type is not None and self.span:
+                    if issubclass(exc_type, asyncio.CancelledError) and _span_status_is_ok(self.span):
+                        return self.span_context.__exit__(exc_type, exc_val, exc_tb)
                     set_span_error(self.span, exc_val or exc_type.__name__, exc_type=exc_type, record_exception=True)
                 elif self.span:
                     if OTEL_AVAILABLE and Status and StatusCode and getattr(getattr(self.span, "status", None), "status_code", None) != StatusCode.ERROR:

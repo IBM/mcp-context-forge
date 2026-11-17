@@ -76,7 +76,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, upstream_request_context
+from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, set_span_ok, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
@@ -5830,6 +5830,8 @@ class ToolService(BaseService):
         start_time = time.monotonic()
         success = False
         cancelled = False
+        # Every upstream path that observes a failure must set this before its next await,
+        # or a later cancel records that failure as a cancellation.
         upstream_failed = False
         error_message = None
         tool_result: Optional[ToolResult] = None
@@ -7405,6 +7407,8 @@ class ToolService(BaseService):
                 if span:
                     set_span_attribute(span, "success", success)
                     set_span_attribute(span, "cancelled", cancelled)
+                    if cancelled:
+                        set_span_ok(span)
                     set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
