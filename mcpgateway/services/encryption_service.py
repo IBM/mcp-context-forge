@@ -677,8 +677,8 @@ def _protect_sigv4_secret(field: str, value: Any, existing_value: Any) -> Any:
     return encrypt_sigv4_secret(field, value)
 
 
-async def protect_sigv4_config_for_storage(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
-    """Encrypt the secret fields of a ``sigv4_config`` before persistence.
+def protect_sigv4_config_sync(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
+    """Encrypt the secret fields of a ``sigv4_config`` before persistence, for synchronous callers.
 
     A masked placeholder keeps the stored ciphertext of the same field, so a client that
     echoes a masked read back on update does not overwrite the credential.
@@ -695,3 +695,19 @@ async def protect_sigv4_config_for_storage(sigv4_config: Optional[dict], existin
 
     existing = existing_sigv4_config if isinstance(existing_sigv4_config, dict) else {}
     return {key: (_protect_sigv4_secret(key, value, existing.get(key)) if key in SIGV4_SENSITIVE_KEYS else value) for key, value in sigv4_config.items()}
+
+
+async def protect_sigv4_config_for_storage(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
+    """Encrypt the secret fields of a ``sigv4_config`` before persistence.
+
+    A masked placeholder keeps the stored ciphertext of the same field, so a client that
+    echoes a masked read back on update does not overwrite the credential.
+
+    Args:
+        sigv4_config: Incoming plaintext configuration.
+        existing_sigv4_config: Stored configuration, used to resolve masked placeholders.
+
+    Returns:
+        Optional[dict]: Configuration whose ``secret_access_key`` and ``session_token`` are encrypted.
+    """
+    return protect_sigv4_config_sync(sigv4_config, existing_sigv4_config)

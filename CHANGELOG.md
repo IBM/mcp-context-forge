@@ -11,6 +11,12 @@
 
 ### Added
 
+- **AWS Signature V4 signing for REST tools** ([#7561](https://github.com/IBM/mcp-context-forge/issues/7561), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - A REST tool accepts `auth_type: "sigv4"`. A standalone tool carries its own `sigv4_config`. A tool under a SigV4 gateway inherits the gateway credential.
+    - ContextForge signs the final request, so the body hash covers the exact bytes sent and URL templates are substituted first. The tool `sigv4_config` takes precedence over the gateway one.
+    - `unsigned_payload: true` in `sigv4_config` sends `UNSIGNED-PAYLOAD` for services that accept it. After an HTTP 401, the request is signed again once. A 403 is not retried.
+    - The tool `sigv4_config` is stored encrypted and read back masked. A masked value on update keeps the stored secret. Export skips SigV4 tools.
+    - A new migration, `f6b8d3e1a5c2`, adds the `tools.sigv4_config` column. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md#sign-rest-tool-calls).
+
 - **AWS Signature V4 gateway authentication** ([#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#6408](https://github.com/IBM/mcp-context-forge/issues/6408)) - A gateway accepts `auth_type: "sigv4"` with a `sigv4_config` object (`access_key_id`, `secret_access_key`, optional `session_token`, `region`, `service`). ContextForge signs each upstream request for SSE and StreamableHTTP gateways, including session traffic, tool discovery, and health checks. The `secret_access_key` and `session_token` fields are encrypted at rest and masked in API responses. An update that changes `sigv4_config` evicts pooled upstream sessions. An inbound `Authorization` header never overrides the signature. Adds migration `e5a7c2d9b4f1`.
     - Register a SigV4 gateway with `POST /gateways`. Set `auth_type` to `sigv4` and add a `sigv4_config` object. Use the API, not the Admin UI. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md).
 

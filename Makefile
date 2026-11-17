@@ -983,7 +983,7 @@ test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt to
 		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
 	@echo "✅ private_key_jwt live tests passed!"
 
-test-sigv4-live: uv  ## Black-box test for AWS SigV4 (auth_type=sigv4) gateways against a running gateway
+test-sigv4-live: uv  ## Black-box test for AWS SigV4 (auth_type=sigv4) gateways and REST tools against a running gateway
 	@echo "🧪 Running SigV4 live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack; the stub upstream runs on host.docker.internal"
 	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."

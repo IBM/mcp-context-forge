@@ -1207,6 +1207,11 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for auth_type 'sigv4' on a REST tool: access_key_id, secret_access_key, region, service, optional session_token and optional unsigned_payload. "
+        "Secrets are stored encrypted. A SigV4 tool without this field uses the SigV4 configuration of its gateway.",
+    )
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_ALIAS)
 
     @model_validator(mode="before")
@@ -1221,6 +1226,45 @@ class ToolCreate(BaseModel):
             Any: ``data`` unchanged.
         """
         return _reject_conflicting_aliases(data, *("gateway_id", "mcp_server_id"))
+
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration, or None.
+        """
+        return _validate_sigv4_config_input(v)
+
+    @model_validator(mode="after")
+    def validate_sigv4_auth(self) -> "ToolCreate":
+        """Tie ``sigv4_config`` to ``auth_type`` 'sigv4' on REST tools.
+
+        Returns:
+            ToolCreate: The validated tool.
+
+        Raises:
+            ValueError: If the SigV4 settings are incomplete, masked or unexpected.
+
+        Examples:
+            >>> ToolCreate(name="t", url="https://api.example.com/x", integration_type="REST", request_type="GET", auth_type="sigv4")
+            Traceback (most recent call last):
+                ...
+            pydantic_core._pydantic_core.ValidationError: ...
+        """
+        uses_sigv4 = self.auth is not None and (self.auth.auth_type or "").lower() == "sigv4"
+        if uses_sigv4:
+            if not self.sigv4_config and not self.gateway_id:
+                raise ValueError("sigv4_config is required when auth_type is 'sigv4' and the tool has no gateway")
+            if self.sigv4_config and settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
+                raise ValueError("sigv4_config must carry the real secret_access_key on registration")
+        elif self.sigv4_config:
+            raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")
+        return self
 
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
@@ -1588,6 +1632,9 @@ class ToolCreate(BaseModel):
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
                 values["auth"] = _assemble_tool_authheaders(values)
+            elif auth_type.lower() == "sigv4":
+                # SigV4 signs each request; credentials live in sigv4_config, never in auth_value.
+                values["auth"] = {"auth_type": "sigv4", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -1824,7 +1871,38 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for a REST tool with auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
+    )
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
+
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration, or None.
+        """
+        return _validate_sigv4_config_input(v)
+
+    @model_validator(mode="after")
+    def validate_sigv4_auth(self) -> "ToolUpdate":
+        """Reject a ``sigv4_config`` that arrives with a different ``auth_type``.
+
+        Returns:
+            ToolUpdate: The validated update.
+
+        Raises:
+            ValueError: If ``sigv4_config`` accompanies a non-SigV4 ``auth_type``.
+        """
+        if self.sigv4_config and self.auth is not None and self.auth.auth_type is not None and self.auth.auth_type.lower() != "sigv4":
+            raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -2073,6 +2151,9 @@ class ToolUpdate(BaseModelWithConfigDict):
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
                 values["auth"] = _assemble_tool_authheaders(values)
+            elif auth_type.lower() == "sigv4":
+                # SigV4 signs each request; credentials live in sigv4_config, never in auth_value.
+                values["auth"] = {"auth_type": "sigv4", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -2307,6 +2388,7 @@ class ToolRead(McpServerIdResponseMixin):
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
     jsonpath_filter: Optional[str]
     auth: Optional[AuthenticationValues]
+    sigv4_config: Optional[Dict[str, Any]] = Field(None, description="AWS SigV4 configuration of a REST tool. secret_access_key and session_token are masked.")
     created_at: datetime
     updated_at: datetime
     enabled: bool

@@ -466,6 +466,9 @@ class ExportService:
 
         exported_tools = []
         for tool in exportable_tools:
+            if getattr(getattr(tool, "auth", None), "auth_type", None) == "sigv4":
+                logger.warning("Tool %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", tool.id)
+                continue
             tool_data = {
                 "name": tool.original_name,  # Use original name, not the slugified version
                 "displayName": tool.displayName,  # Export displayName field from ToolRead
@@ -906,6 +909,9 @@ class ExportService:
         for db_tool in db_tools:
             # Only export local REST tools, not MCP tools from gateways
             if db_tool.integration_type == "MCP" and db_tool.gateway_id:
+                continue
+            if db_tool.auth_type == "sigv4":
+                logger.warning("Tool %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", db_tool.id)
                 continue
 
             tool_data = {

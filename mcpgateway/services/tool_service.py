@@ -79,13 +79,14 @@ from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, set_span_ok, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import _mask_sigv4_config, AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_oauth import resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
+from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -122,7 +123,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -275,16 +276,24 @@ def _upstream_call_meta(meta_data: Optional[Dict[str, Any]], carrier: Mapping[st
     return metadata or None
 
 
-def _build_pinned_rest_http_client() -> ResilientHttpClient:
-    """Build an isolated client for IP-pinned REST requests."""
-    return ResilientHttpClient(
-        client_args={
-            "timeout": settings.federation_timeout,
-            "verify": not settings.skip_ssl_verify,
-            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
-            "cookies": {},
-        }
-    )
+def _build_pinned_rest_http_client(auth: Optional[httpx.Auth] = None) -> ResilientHttpClient:
+    """Build an isolated client for one REST invocation.
+
+    Args:
+        auth: Optional httpx auth attached to the client, such as the SigV4 signer.
+
+    Returns:
+        ResilientHttpClient: A single-connection client the caller must close.
+    """
+    client_args: Dict[str, Any] = {
+        "timeout": settings.federation_timeout,
+        "verify": not settings.skip_ssl_verify,
+        "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        "cookies": {},
+    }
+    if auth is not None:
+        client_args["auth"] = auth
+    return ResilientHttpClient(client_args=client_args)
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -1779,6 +1788,7 @@ class ToolService(BaseService):
         #   1. It determines whether to decode auth (used later)
         #   2. It forces the tool object to lazily evaluate (required before copy)
         has_encrypted_auth = tool.auth_type and tool.auth_value
+        has_sigv4_auth = tool.auth_type == "sigv4"
 
         # Copy the dict from the tool
         tool_dict = tool.__dict__.copy()
@@ -1797,8 +1807,13 @@ class ToolService(BaseService):
         tool_dict["annotations"] = tool.annotations or {}
         tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
+        # SigV4 credentials live in sigv4_config, never in auth_value; reads always mask the secrets.
+        tool_dict["sigv4_config"] = _mask_sigv4_config(tool_dict.get("sigv4_config")) if has_sigv4_auth else None
+
         # Only decode auth if include_auth=True AND we have encrypted credentials
-        if include_auth and has_encrypted_auth:
+        if has_sigv4_auth:
+            tool_dict["auth"] = {"auth_type": "sigv4"}
+        elif include_auth and has_encrypted_auth:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
                 decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
@@ -2374,6 +2389,29 @@ class ToolService(BaseService):
         policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return policy if isinstance(policy, str) else None
 
+    async def _require_inherited_gateway_access(self, db: Session, gateway_id: Optional[str], requester_email: Optional[str]) -> None:
+        """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot access.
+
+        The gateway credential signs requests to any URL the tool names. The requester
+        needs the same visibility of the gateway as for direct use.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway the tool belongs to.
+            requester_email: Identity that creates or changes the tool. Internal callers without an identity skip the check.
+
+        Raises:
+            ToolError: If the gateway does not exist.
+            PermissionError: If the requester cannot access the gateway.
+        """
+        if not gateway_id or not requester_email:
+            return
+        gateway = db.get(DbGateway, gateway_id)
+        if gateway is None:
+            raise ToolError("Gateway not found")
+        if not await check_gateway_access(db, gateway, requester_email, None):
+            raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
+
     async def register_tool(
         self,
         db: Session,
@@ -2444,6 +2482,9 @@ class ToolService(BaseService):
             else:
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
+            tool_sigv4_config = protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" and tool.sigv4_config else None
+            if auth_type == "sigv4" and not tool_sigv4_config:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by)
 
             if visibility is None:
                 visibility = tool.visibility or "public"
@@ -2529,6 +2570,7 @@ class ToolService(BaseService):
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
+                sigv4_config=tool_sigv4_config,
                 gateway_id=tool.gateway_id,
                 tags=tool.tags or [],
                 # Metadata fields
@@ -3141,6 +3183,7 @@ class ToolService(BaseService):
                     existing_tool.jsonpath_filter = tool.jsonpath_filter
                     existing_tool.auth_type = auth_type
                     existing_tool.auth_value = auth_value
+                    existing_tool.sigv4_config = protect_sigv4_config_sync(tool.sigv4_config, existing_tool.sigv4_config) if auth_type == "sigv4" else None
                     existing_tool.tags = tool.tags or []
                     existing_tool.modified_by = created_by
                     existing_tool.modified_from_ip = created_from_ip
@@ -3265,6 +3308,7 @@ class ToolService(BaseService):
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
+            sigv4_config=protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" else None,
             gateway_id=tool.gateway_id,
             tags=tool.tags or [],
             created_by=created_by,
@@ -4830,6 +4874,26 @@ class ToolService(BaseService):
         )
         return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
 
+    @staticmethod
+    async def _send_with_resign_retry(send: Callable[[dict], Awaitable[Any]], headers: dict) -> Any:
+        """Send a SigV4 request, retrying exactly once on a 401.
+
+        The signing auth object runs on every send and replaces the earlier signature
+        headers, so the retry carries a fresh ``x-amz-date`` and a new signature. A 403 is
+        not retried.
+
+        Args:
+            send: Async callable taking a headers dict and returning a response with ``.status_code``.
+            headers: The headers to send. They never carry a signature.
+
+        Returns:
+            The response of the first attempt, or of the single retry after a 401.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        return await send(headers)
+
     # pylint: enable=duplicate-code
 
     async def _resolve_vault_auth_headers(
@@ -5602,6 +5666,11 @@ class ToolService(BaseService):
             runtime_tool_oauth_config = getattr(tool, "oauth_config", None)
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
+        tool_sigv4_config = None
+        if tool is not None:
+            runtime_tool_sigv4_config = getattr(tool, "sigv4_config", None)
+            if isinstance(runtime_tool_sigv4_config, dict):
+                tool_sigv4_config = runtime_tool_sigv4_config
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
@@ -5654,7 +5723,7 @@ class ToolService(BaseService):
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
         if tool is None:
-            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
+            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth", "sigv4"}
             requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param", "sigv4"}
             if requires_tool_auth_hydration or requires_gateway_auth_hydration:
                 tool_id_for_hydration = tool_payload.get("id")
@@ -5667,6 +5736,9 @@ class ToolService(BaseService):
                         hydrated_tool_oauth_config = getattr(tool_auth_row, "oauth_config", None)
                         if isinstance(hydrated_tool_oauth_config, dict):
                             tool_oauth_config = hydrated_tool_oauth_config
+                        hydrated_tool_sigv4_config = getattr(tool_auth_row, "sigv4_config", None)
+                        if isinstance(hydrated_tool_sigv4_config, dict):
+                            tool_sigv4_config = hydrated_tool_sigv4_config
                         if has_gateway and tool_auth_row.gateway:
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
                             if isinstance(hydrated_gateway_auth_value, dict):
@@ -5702,13 +5774,25 @@ class ToolService(BaseService):
 
         # SigV4 gateways sign each upstream request; the signer lives for this invocation only.
         gateway_sigv4_auth = None
-        if has_gateway and gateway_auth_type == "sigv4":
+        if has_gateway and gateway_auth_type == "sigv4" and tool_integration_type != "REST":
             try:
                 gateway_sigv4_auth = build_stored_sigv4_auth(gateway_sigv4_config)
             except SigV4ConfigError as sigv4_exc:
                 raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
             if gateway_sigv4_auth is None:
                 raise ToolInvocationError("SigV4 gateway has no stored credentials")
+
+        # REST tools sign with their own sigv4_config first, then with the gateway sigv4_config.
+        rest_sigv4_auth = None
+        if tool_integration_type == "REST":
+            rest_sigv4_config = tool_sigv4_config or (gateway_sigv4_config if has_gateway and gateway_auth_type == "sigv4" else None)
+            if rest_sigv4_config:
+                try:
+                    rest_sigv4_auth = build_stored_sigv4_httpx_auth(rest_sigv4_config)
+                except SigV4ConfigError as sigv4_exc:
+                    raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+            elif tool_auth_type == "sigv4" or (has_gateway and gateway_auth_type == "sigv4"):
+                raise ToolInvocationError("SigV4 tool has no stored credentials")
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -5923,7 +6007,7 @@ class ToolService(BaseService):
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
-                    else:
+                    elif rest_sigv4_auth is None:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Strip invisible Unicode format characters left over in a credential
                         # stored before this validation existed, so tool invocation self-heals
@@ -5941,7 +6025,7 @@ class ToolService(BaseService):
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=tool_auth_type,
+                            gateway_auth_type="sigv4" if rest_sigv4_auth is not None else tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -6083,7 +6167,9 @@ class ToolService(BaseService):
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
-                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                    if (resolved_ip and original_hostname and original_authority) or rest_sigv4_auth is not None:
+                        # Pinned and SigV4 calls never use the shared client; the signer belongs to this invocation.
+                        pinned_rest_http_client = _build_pinned_rest_http_client(auth=rest_sigv4_auth) if rest_sigv4_auth is not None else _build_pinned_rest_http_client()
                         rest_http_client = pinned_rest_http_client
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
@@ -6166,18 +6252,21 @@ class ToolService(BaseService):
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
                             try:
-                                response = await self._send_with_token_exchange_retry(
-                                    _send,
-                                    headers,
-                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                    gateway_id_str,
-                                    gateway_name,
-                                    app_user_email,
-                                    request_headers or {},
-                                    ca_certificate=gateway_ca_cert,
-                                    client_cert=gateway_client_cert,
-                                    client_key=gateway_client_key,
-                                )
+                                if rest_sigv4_auth is not None:
+                                    response = await self._send_with_resign_retry(_send, headers)
+                                else:
+                                    response = await self._send_with_token_exchange_retry(
+                                        _send,
+                                        headers,
+                                        gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                        gateway_id_str,
+                                        gateway_name,
+                                        app_user_email,
+                                        request_headers or {},
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    )
                             finally:
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
@@ -7983,9 +8072,20 @@ class ToolService(BaseService):
 
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
+                    if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
+                        tool.sigv4_config = None
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
+            update_sigv4_config = getattr(tool_update, "sigv4_config", None)
+            if isinstance(update_sigv4_config, dict):
+                if tool.auth_type != "sigv4":
+                    raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
+                tool.sigv4_config = protect_sigv4_config_sync(dict(update_sigv4_config), tool.sigv4_config)
+            elif tool.auth_type == "sigv4" and not tool.sigv4_config and not tool.gateway_id:
+                raise PublicValidationError("auth_type 'sigv4' requires sigv4_config when the tool has no gateway")
+            if tool.auth_type == "sigv4" and not tool.sigv4_config and tool_update.auth is not None:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by)
 
             # Update tags if provided
             if tool_update.tags is not None:
