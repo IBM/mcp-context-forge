@@ -13317,12 +13317,30 @@ async def test_get_configuration_settings_redacts_url_credentials(monkeypatch, m
         ("redis://localhost:6379/0", "redis://localhost:6379/0"),
         ("redis://:redispass@redis:6379/0", "redis://***@redis:6379/0"),  # pragma: allowlist secret
         ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "postgresql+psycopg://***@pgbouncer:6432/mcp"),  # pragma: allowlist secret
+        ("postgresql://u:pa/ss@h:5432/db", "postgresql://***@h:5432/db"),  # pragma: allowlist secret
+        ("postgresql://u:pa#ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
+        ("postgresql://u:pa?ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
+        ("postgresql://u:pa@ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
+        ("postgresql://u:p/a#s?s@h:5432/db", "postgresql://***@h:5432/db"),  # pragma: allowlist secret
+        ("redis://:p%40ss@redis:6379/0", "redis://***@redis:6379/0"),  # pragma: allowlist secret
+        ("redis://[::1/x", "redis://[::1/x"),
     ],
 )
 def test_redact_url_userinfo(url, expected):
     from mcpgateway.admin import _redact_url_userinfo
 
     assert _redact_url_userinfo(url) == expected
+
+
+def test_redact_url_userinfo_exception_fallback(monkeypatch):
+    from mcpgateway import admin
+    from mcpgateway.admin import _redact_url_userinfo
+
+    def _mock_re_sub(*args, **kwargs):
+        raise ValueError("Malformed pattern or value")
+
+    monkeypatch.setattr(admin.re, "sub", _mock_re_sub)
+    assert _redact_url_userinfo("redis://[::1/x") == "***"
 
 
 @pytest.mark.asyncio

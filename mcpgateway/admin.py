@@ -3075,11 +3075,10 @@ def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
     if not url:
         return url
 
-    parts = urllib.parse.urlsplit(url)
-    _, separator, host = parts.netloc.rpartition("@")
-    if not separator:
-        return url
-    return parts._replace(netloc=f"***@{host}").geturl()
+    try:
+        return re.sub(r"^([A-Za-z][\w+.-]*://).*@", r"\1***@", url)
+    except Exception:
+        return "***"
 
 
 @admin_router.get("/config/settings")
