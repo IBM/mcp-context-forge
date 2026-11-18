@@ -63,6 +63,11 @@ class TestGatewayCreate:
         assert gateway.auth_value is not None
         assert gateway.sigv4_config is None
 
+    def test_rejects_unsigned_payload(self):
+        """MCP transport signing ignores unsigned_payload, so a gateway must not accept it."""
+        with pytest.raises(ValidationError, match="unsigned_payload is only supported on a REST tool"):
+            _create(sigv4_config={**CONFIG, "unsigned_payload": True})
+
 
 class TestGatewayUpdate:
     def test_accepts_sigv4_update(self):
@@ -72,6 +77,10 @@ class TestGatewayUpdate:
     def test_masked_secret_allowed_on_update(self):
         update = GatewayUpdate(sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value})
         assert update.sigv4_config["secret_access_key"] == settings.masked_auth_value
+
+    def test_rejects_unsigned_payload(self):
+        with pytest.raises(ValidationError, match="unsigned_payload is only supported on a REST tool"):
+            GatewayUpdate(sigv4_config={**CONFIG, "unsigned_payload": False})
 
     def test_malformed_region_rejected(self):
         with pytest.raises(ValidationError, match="region"):

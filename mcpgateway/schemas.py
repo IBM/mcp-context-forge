@@ -70,7 +70,7 @@ from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRE
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import SIGV4_SENSITIVE_KEYS, SigV4ConfigError, validate_sigv4_config
+from mcpgateway.utils.sigv4 import has_query_signature, SIGV4_SENSITIVE_KEYS, SigV4ConfigError, validate_sigv4_config
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
@@ -339,22 +339,25 @@ def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any
     return v
 
 
-def _validate_sigv4_config_input(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _validate_sigv4_config_input(v: Optional[Dict[str, Any]], allow_unsigned_payload: bool = True) -> Optional[Dict[str, Any]]:
     """Validate a ``sigv4_config`` payload, keeping masked placeholders on update.
 
     Args:
         v: The sigv4_config value, or None.
+        allow_unsigned_payload: False for a gateway, whose MCP transport signing ignores ``unsigned_payload``.
 
     Returns:
         The validated configuration, or None.
 
     Raises:
-        ValueError: If the configuration is malformed.
+        ValueError: If the configuration is malformed, or sets ``unsigned_payload`` where it is not allowed.
     """
     if v is None:
         return None
     if not isinstance(v, dict):
         raise ValueError("sigv4_config must be an object")
+    if not allow_unsigned_payload and "unsigned_payload" in v:
+        raise ValueError("sigv4_config.unsigned_payload is only supported on a REST tool")
     placeholders = {key for key in SIGV4_SENSITIVE_KEYS if v.get(key) == settings.masked_auth_value}
     candidate = {key: ("placeholder-secret" if key in placeholders else value) for key, value in v.items()}
     try:
@@ -1258,6 +1261,8 @@ class ToolCreate(BaseModel):
         """
         uses_sigv4 = self.auth is not None and (self.auth.auth_type or "").lower() == "sigv4"
         if uses_sigv4:
+            if has_query_signature(str(self.url) if self.url else None):
+                raise ValueError("A presigned URL cannot be combined with auth_type 'sigv4'")
             if not self.sigv4_config and not self.gateway_id:
                 raise ValueError("sigv4_config is required when auth_type is 'sigv4' and the tool has no gateway")
             if self.sigv4_config and settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
@@ -4003,7 +4008,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         Returns:
             The validated configuration.
         """
-        return _validate_sigv4_config_input(v)
+        return _validate_sigv4_config_input(v, allow_unsigned_payload=False)
 
     @field_validator("description")
     @classmethod
@@ -4284,7 +4289,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             The validated configuration.
         """
-        return _validate_sigv4_config_input(v)
+        return _validate_sigv4_config_input(v, allow_unsigned_payload=False)
 
     @field_validator("auth_type", mode="before")
     @classmethod

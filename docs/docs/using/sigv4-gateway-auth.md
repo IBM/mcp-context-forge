@@ -178,7 +178,7 @@ How the signing works:
 
 - ContextForge signs the final request. The body hash covers the exact bytes sent. URL template values are substituted before signing.
 - The tool `sigv4_config` takes precedence. Without it, the tool uses the credential of its gateway when that gateway uses `sigv4`. Without either, the call fails and sends no request.
-- A tool that has a `sigv4_config` uses the same fields as the gateway, plus one optional field: `unsigned_payload`.
+- A tool that has a `sigv4_config` uses the same fields as the gateway, plus one optional field: `unsigned_payload`. A gateway `sigv4_config` rejects `unsigned_payload` with HTTP 422, because MCP transport signing always hashes the body.
 - `unsigned_payload: true` sends `UNSIGNED-PAYLOAD` in place of the body hash. Use it only for services that accept it, such as S3. The default is a signed body hash.
 - After an HTTP 401, ContextForge signs the request again with a fresh timestamp and sends it once more. It never retries after an HTTP 403.
 - Each call uses its own HTTP client. The signing object never moves between calls.
@@ -187,9 +187,12 @@ How the signing works:
 - Send the masked value as `secret_access_key` or `session_token` on `PUT /tools/{id}` to keep the stored secret. Change `auth_type` to another value to drop SigV4 and clear `sigv4_config`.
 - Only REST tools accept `sigv4`. MCP tools from a SigV4 gateway are signed through the gateway.
 - A tool signs only when its `auth_type` is `sigv4`. A tool with another `auth_type` under a SigV4 gateway keeps its own authentication and is never signed with the gateway credential.
-- To make a tool under a SigV4 gateway inherit its credential, the gateway must use `sigv4`. The caller needs access to that gateway under the usual visibility rules, including the team scope of the caller's token. Otherwise the request fails with HTTP 403.
+- To make a tool under a SigV4 gateway inherit its credential, the gateway must use `sigv4`. The caller must see the gateway under the usual visibility rules, including the team scope of the caller's token. The caller must also own the gateway, hold the team owner role for it, or be a platform admin. A public gateway does not grant the credential to other callers. Otherwise the request fails with HTTP 403.
+- ContextForge repeats this check when an update changes the `url` or the `auth` of a tool that inherits a gateway credential.
+- Switching a tool to `sigv4` clears any stored `auth_value`.
 - A masked `secret_access_key` is valid only when the tool already stores a secret to keep. Otherwise the request fails with HTTP 400.
-- Presigned URLs keep working. A URL that already carries `X-Amz-Signature` is sent as is and gets no second signature.
+- A tool without `sigv4` keeps presigned URLs working. A URL that already carries `X-Amz-Signature` is sent as is and gets no second signature.
+- A tool with `auth_type: "sigv4"` rejects a URL that carries `X-Amz-Signature`. A query signature and an `Authorization` signature cannot share one request.
 
 ## Security properties
 

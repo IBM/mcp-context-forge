@@ -186,7 +186,11 @@ class TestRegisterTool:
         gateway = DbGateway(id="gw-1", name="gw", slug="gw", url="https://gw.example.com/mcp", visibility="public", auth_type="sigv4")
         db.get.return_value = gateway
         db.refresh.side_effect = lambda obj: setattr(obj, "gateway", gateway)
-        with patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)) as access, patch.object(service, "convert_tool_to_read", return_value=MagicMock()):
+        with (
+            patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)) as access,
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", AsyncMock(return_value=True)),
+            patch.object(service, "convert_tool_to_read", return_value=MagicMock()),
+        ):
             await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="member@example.com")
 
         access.assert_awaited_once()
@@ -537,6 +541,105 @@ class TestExportSkipsSigV4Tools:
                 pytest.skip(f"ORM stand-in no longer satisfies _export_selected_tools: {exc}")
 
         assert [entry["name"] for entry in exported] == ["plain"]
+
+
+class TestInheritedGatewayCredentialRequiresOwnership:
+    """Visibility of a gateway does not grant use of its SigV4 credential."""
+
+    @pytest.mark.asyncio
+    async def test_register_denies_a_non_owner_on_a_public_gateway(self, service):
+        db = _db_for_create()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="public", owner_email="owner@example.com", team_id=None, auth_type="sigv4")
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", AsyncMock(return_value=False)):
+            with pytest.raises(PermissionError, match="Only the owner of the gateway"):
+                await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1", url="https://attacker.example.com/x"), owner_email="developer@example.com")
+
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_allows_the_gateway_owner(self, service):
+        db = _db_for_create()
+        gateway = DbGateway(id="gw-1", name="gw", slug="gw", url="https://gw.example.com/mcp", visibility="public", owner_email="owner@example.com", auth_type="sigv4")
+        db.get.return_value = gateway
+        db.refresh.side_effect = lambda obj: setattr(obj, "gateway", gateway)
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", AsyncMock(return_value=True)) as ownership,
+            patch.object(service, "convert_tool_to_read", return_value=MagicMock()),
+        ):
+            await service.register_tool(db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="owner@example.com")
+
+        ownership.assert_awaited_once()
+        db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_denies_a_url_change_after_gateway_access_was_lost(self, service):
+        tool = _stored_tool(sigv4_config=None, gateway_id="gw-1")
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(id="gw-1", visibility="public", owner_email="owner@example.com", team_id=None, auth_type="sigv4")
+        update = _update(url="https://attacker.example.com/x")
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", AsyncMock(side_effect=[True, False])),
+        ):
+            with pytest.raises(PermissionError, match="Only the owner of the gateway"):
+                await service.update_tool(db, "t1", update, user_email="former-owner@example.com")
+
+    @pytest.mark.asyncio
+    async def test_update_without_url_or_auth_skips_the_gateway_check(self, service):
+        tool = _stored_tool(sigv4_config=None, gateway_id="gw-1")
+        db = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch.object(service, "convert_tool_to_read", return_value={}):
+            await service.update_tool(db, "t1", _update(description="edited"), user_email="owner@example.com")
+
+        db.get.assert_not_called()
+
+
+class TestSwitchingToSigV4:
+    @pytest.mark.asyncio
+    async def test_switching_to_sigv4_clears_the_stale_auth_value(self, service):
+        tool = _stored_tool(auth_type="bearer", auth_value="stale-encrypted-bearer", sigv4_config=None)
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None), sigv4_config=dict(CONFIG))
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch.object(service, "convert_tool_to_read", return_value={}):
+            await service.update_tool(MagicMock(), "t1", update)
+
+        assert tool.auth_type == "sigv4"
+        assert tool.auth_value is None
+
+    @pytest.mark.asyncio
+    async def test_sigv4_ignores_an_auth_value_sent_with_the_update(self, service):
+        tool = _stored_tool()
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value="smuggled"))
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch.object(service, "convert_tool_to_read", return_value={}):
+            await service.update_tool(MagicMock(), "t1", update)
+
+        assert tool.auth_value is None
+
+
+class TestPresignedUrlOnSigV4Tool:
+    def test_create_rejects_a_presigned_url(self):
+        with pytest.raises(ValidationError, match="presigned URL"):
+            _create(url="https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc&X-Amz-Date=20260101T000000Z")
+
+    def test_create_rejects_the_signature_parameter_in_any_case(self):
+        with pytest.raises(ValidationError, match="presigned URL"):
+            _create(url="https://bucket.s3.amazonaws.com/key?x-amz-signature=abc")
+
+    def test_create_allows_a_presigned_url_without_sigv4(self):
+        tool = ToolCreate(name="plain", url="https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc", integration_type="REST", request_type="GET")
+        assert tool.auth is None
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_a_presigned_url(self, service):
+        tool = _stored_tool()
+        update = _update(url="https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc")
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool):
+            with pytest.raises(ToolError, match="presigned URL"):
+                await service.update_tool(MagicMock(), "t1", update)
 
 
 class TestInheritedGatewayAccessWithoutIdentity:

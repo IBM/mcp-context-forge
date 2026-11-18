@@ -154,6 +154,28 @@ def validate_sigv4_config(config: Any) -> Dict[str, Any]:
     return cleaned
 
 
+def has_query_signature(url: Any) -> bool:
+    """Report whether a URL already carries an AWS query-string signature.
+
+    Args:
+        url: Candidate URL.
+
+    Returns:
+        bool: True when the query holds ``X-Amz-Signature``.
+
+    Examples:
+        >>> has_query_signature("https://b.s3.amazonaws.com/k?X-Amz-Signature=abc&X-Amz-Date=1")
+        True
+        >>> has_query_signature("https://api.example.com/x?a=1")
+        False
+        >>> has_query_signature(None)
+        False
+    """
+    if not isinstance(url, str):
+        return False
+    return any(key.lower() == "x-amz-signature" for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True))
+
+
 def _hmac(key: bytes, message: str) -> bytes:
     """Return HMAC-SHA256 of ``message`` under ``key``.
 

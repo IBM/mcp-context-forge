@@ -123,7 +123,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -2396,11 +2396,11 @@ class ToolService(BaseService):
         requester_email: Optional[str],
         token_teams: Optional[List[str]] = None,
     ) -> None:
-        """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot access.
+        """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot use.
 
-        The gateway credential signs requests to any URL the tool names. The requester
-        needs the same visibility of the gateway as for direct use, including the
-        narrowing of the requester's token.
+        The gateway credential signs requests to any URL the tool names. Visibility of the
+        gateway is not enough: the requester must also own the gateway, hold the team owner
+        role for it, or be a platform admin. The token narrowing of the requester applies as well.
 
         Args:
             db: Database session.
@@ -2410,7 +2410,7 @@ class ToolService(BaseService):
 
         Raises:
             ToolError: If the gateway does not exist, or does not use SigV4.
-            PermissionError: If the requester cannot access the gateway.
+            PermissionError: If the requester cannot access the gateway, or does not own it.
         """
         if not gateway_id or not requester_email:
             return
@@ -2421,6 +2421,11 @@ class ToolService(BaseService):
             raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
         if gateway.auth_type != "sigv4":
             raise ToolError("The gateway does not use SigV4 authentication")
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        if not await PermissionService(db).check_resource_ownership(requester_email, gateway):
+            raise PermissionError("Only the owner of the gateway can use its SigV4 credential")
 
     async def register_tool(
         self,
@@ -8090,6 +8095,8 @@ class ToolService(BaseService):
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
+                if tool.auth_type == "sigv4":
+                    tool.auth_value = None
             update_sigv4_config = getattr(tool_update, "sigv4_config", None)
             if isinstance(update_sigv4_config, dict):
                 if tool.auth_type != "sigv4":
@@ -8097,7 +8104,9 @@ class ToolService(BaseService):
                 tool.sigv4_config = protect_sigv4_config_sync(dict(update_sigv4_config), tool.sigv4_config)
             elif tool.auth_type == "sigv4" and not tool.sigv4_config and not tool.gateway_id:
                 raise PublicValidationError("auth_type 'sigv4' requires sigv4_config when the tool has no gateway")
-            if tool.auth_type == "sigv4" and not tool.sigv4_config and tool_update.auth is not None:
+            if tool.auth_type == "sigv4" and has_query_signature(tool.url):
+                raise PublicValidationError("A presigned URL cannot be combined with auth_type 'sigv4'")
+            if tool.auth_type == "sigv4" and not tool.sigv4_config and (tool_update.auth is not None or tool_update.url is not None):
                 await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by, token_teams)
 
             # Update tags if provided

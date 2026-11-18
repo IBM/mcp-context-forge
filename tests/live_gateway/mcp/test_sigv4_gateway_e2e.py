@@ -811,6 +811,25 @@ class TestSigV4RestToolLiveFlow:
         assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
         assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
 
+    def test_presigned_url_on_a_sigv4_tool_is_rejected(self, admin_api: httpx.Client, stub_rest_upstream: dict[str, Any]) -> None:
+        """A query signature and an Authorization signature cannot share one request."""
+        url = f"{stub_rest_upstream['base_url']}/x?X-Amz-Signature=abc"
+        body = _rest_tool_body(f"sigv4-rest-presigned-{uuid.uuid4().hex[:8]}", url, auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+
+        resp = admin_api.post("/tools", json=body)
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+        assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_gateway_rejects_unsigned_payload(self, admin_api: httpx.Client, stub_upstream: dict[str, Any]) -> None:
+        """MCP transport signing ignores ``unsigned_payload``, so a gateway refuses it."""
+        name = f"sigv4-e2e-unsigned-{uuid.uuid4().hex[:8]}"
+
+        resp = admin_api.post("/gateways", json=_sigv4_payload(name, stub_upstream["mcp_url"], unsigned_payload=True))
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+        assert not _gateway_named(admin_api, name), "a rejected config must not leave a gateway row behind"
+
     def test_unauthenticated_tool_registration_is_rejected(self, stub_rest_upstream: dict[str, Any]) -> None:
         """An unauthenticated caller cannot register a SigV4 tool."""
         body = _rest_tool_body(f"sigv4-rest-unauth-{uuid.uuid4().hex[:8]}", f"{stub_rest_upstream['base_url']}/x", auth_type="sigv4", sigv4_config=_rest_sigv4_config())
