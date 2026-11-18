@@ -4871,7 +4871,7 @@ hadolint:
 # 📦 DEPENDENCY MANAGEMENT
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
-# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml (including the docs group)
+# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml
 
 .PHONY: deps-update
 
