@@ -29012,4 +29012,3 @@ class TestTeamVisibilityRouteErrorMapping:
         assert result.status_code == 400
         assert "Team team-1 not found" in json.loads(result.body)["message"]
         mock_update_prompt.assert_not_called()
-
