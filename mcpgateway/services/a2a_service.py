@@ -3179,7 +3179,7 @@ class A2AAgentService(BaseService):
                             AgentHookType.AGENT_POST_INVOKE,
                             payload=AgentPostInvokePayload(
                                 agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response is not None else [],
+                                messages=[{"role": "assistant", "content": response}] if response and isinstance(response, dict) else [],
                                 tool_calls=None,
                             ),
                             global_context=global_context,

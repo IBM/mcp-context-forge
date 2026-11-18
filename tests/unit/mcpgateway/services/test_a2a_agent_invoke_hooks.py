@@ -702,6 +702,106 @@ class TestA2AInvokePostHook:
         metric_kwargs = mock_metrics_buffer.record_a2a_agent_metric_with_duration.call_args.kwargs
         assert metric_kwargs["success"] is False
 
+    @pytest.mark.parametrize(
+        "response_body,expected_messages_len",
+        [
+            ({}, 0),
+            (["not", "a", "dict"], 0),
+            ("string response", 0),
+        ],
+    )
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_post_invoke_empty_or_non_dict_body_yields_empty_messages(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+        response_body,
+        expected_messages_len,
+    ):
+        """Empty or non-dict 200 responses do not set assistant content in post-invoke payload."""
+        # Third-Party
+        from cpex.framework import AgentHookType
+
+        pm = _make_plugin_manager()
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = response_body
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+        ):
+            await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
+
+        post_call = pm.invoke_hook.await_args_list[1]
+        assert post_call.args[0] == AgentHookType.AGENT_POST_INVOKE
+        messages = post_call.kwargs["payload"].messages
+        assert len(messages) == expected_messages_len
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_post_invoke_successful_200_reaches_hook_unchanged(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """A successful 200 JSON-RPC body reaches the post-invoke hook unchanged."""
+        # Third-Party
+        from cpex.framework import AgentHookType
+
+        pm = _make_plugin_manager()
+        envelope = {"jsonrpc": "2.0", "id": "req-1", "result": {"output": "ok"}}
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = envelope
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+        ):
+            result = await service.invoke_agent(mock_db, mock_agent.name, {"query": "hello"})
+
+        assert result == envelope
+        post_call = pm.invoke_hook.await_args_list[1]
+        assert post_call.args[0] == AgentHookType.AGENT_POST_INVOKE
+        messages = post_call.kwargs["payload"].messages
+        assert len(messages) == 1
+        assert messages[0].role == "assistant"
+        assert messages[0].content.model_dump() == envelope
+
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")

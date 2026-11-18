@@ -30,16 +30,21 @@ from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 pytestmark = pytest.mark.e2e
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-AGENT_NAME = "jsonrpc-error-e2e-agent"
+ERROR_AGENT_NAME = "jsonrpc-error-e2e-agent"
+SUCCESS_AGENT_NAME = "jsonrpc-success-e2e-agent"
 ERROR_BODY = {"jsonrpc": "2.0", "id": "req-1", "error": {"code": -32000, "message": "agent rejected the task"}}
+SUCCESS_BODY = {"jsonrpc": "2.0", "id": "req-2", "result": {"output": "ok"}}
 
 
-class ErrorAgentHandler(BaseHTTPRequestHandler):
-    """Answer every invocation with a JSON-RPC error over HTTP 200."""
+class StubAgentHandler(BaseHTTPRequestHandler):
+    """Answer invocations with either a JSON-RPC error or success over HTTP 200."""
 
     def do_POST(self):
-        """Return the fixed JSON-RPC error envelope."""
-        body = json.dumps(ERROR_BODY).encode()
+        """Return the appropriate JSON-RPC envelope based on URL path."""
+        if self.path.endswith("/invoke-success"):
+            body = json.dumps(SUCCESS_BODY).encode()
+        else:
+            body = json.dumps(ERROR_BODY).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -59,9 +64,9 @@ def _free_port():
 
 @pytest.fixture(scope="module")
 def isolated_a2a_gateway(tmp_path_factory):
-    """Start a gateway and register an agent that returns a JSON-RPC error."""
+    """Start a gateway and register stub agents returning error and success."""
     tmp_path = tmp_path_factory.mktemp("a2a-jsonrpc-error-gateway")
-    agent_server = ThreadingHTTPServer(("127.0.0.1", 0), ErrorAgentHandler)
+    agent_server = ThreadingHTTPServer(("127.0.0.1", 0), StubAgentHandler)
     agent_worker = threading.Thread(target=agent_server.serve_forever, daemon=True)
     agent_worker.start()
 
@@ -120,17 +125,29 @@ def isolated_a2a_gateway(tmp_path_factory):
                     "/a2a",
                     json={
                         "agent": {
-                            "name": AGENT_NAME,
+                            "name": ERROR_AGENT_NAME,
                             "description": "JSON-RPC error agent for metrics tests",
-                            "endpoint_url": f"http://127.0.0.1:{agent_server.server_port}/invoke",
+                            "endpoint_url": f"http://127.0.0.1:{agent_server.server_port}/invoke-error",
                             "agent_type": "generic",
                         },
                         "visibility": "public",
                     },
                 )
                 assert response.status_code in (200, 201), response.text
-                registered = response.json()
-                assert registered.get("endpointUrl") == f"http://127.0.0.1:{agent_server.server_port}/invoke", registered
+
+                response = client.post(
+                    "/a2a",
+                    json={
+                        "agent": {
+                            "name": SUCCESS_AGENT_NAME,
+                            "description": "JSON-RPC success agent for metrics tests",
+                            "endpoint_url": f"http://127.0.0.1:{agent_server.server_port}/invoke-success",
+                            "agent_type": "generic",
+                        },
+                        "visibility": "public",
+                    },
+                )
+                assert response.status_code in (200, 201), response.text
 
                 yield client
         finally:
@@ -146,24 +163,28 @@ def isolated_a2a_gateway(tmp_path_factory):
 
 
 def test_jsonrpc_error_is_counted_as_failed_invocation(isolated_a2a_gateway):
-    """The caller sees the envelope, and the aggregate metric records a failure."""
+    """The caller sees the envelopes, and aggregate metrics record both success and failure."""
     client = isolated_a2a_gateway
 
-    response = client.post(f"/a2a/{AGENT_NAME}/invoke", json={"parameters": {"prompt": "fail"}})
-    assert response.status_code == 200, response.text
-    assert response.json() == ERROR_BODY
+    err_response = client.post(f"/a2a/{ERROR_AGENT_NAME}/invoke", json={"parameters": {"prompt": "fail"}})
+    assert err_response.status_code == 200, err_response.text
+    assert err_response.json() == ERROR_BODY
+
+    ok_response = client.post(f"/a2a/{SUCCESS_AGENT_NAME}/invoke", json={"parameters": {"prompt": "succeed"}})
+    assert ok_response.status_code == 200, ok_response.text
+    assert ok_response.json() == SUCCESS_BODY
 
     deadline = time.monotonic() + 20
     a2a_metrics = {}
     while time.monotonic() < deadline:
         data = client.get("/metrics").json()
         a2a_metrics = data.get("a2aAgents") or {}
-        if a2a_metrics.get("totalInteractions", 0) >= 1:
+        if a2a_metrics.get("totalInteractions", 0) >= 2:
             break
         time.sleep(0.5)
     else:
         pytest.fail(f"A2A metric was not flushed: {a2a_metrics!r}")
 
-    assert a2a_metrics["successfulInteractions"] == 0
+    assert a2a_metrics["successfulInteractions"] == 1
     assert a2a_metrics["failedInteractions"] == 1
-    assert a2a_metrics["successRate"] == 0.0
+    assert a2a_metrics["successRate"] == 50.0

@@ -895,6 +895,11 @@ class TestA2AAgentService:
             ({"jsonrpc": "2.0", "error": {"message": "boom"}}, "A2A agent returned a JSON-RPC error: boom"),
             ({"jsonrpc": "2.0", "error": "flat error"}, "A2A agent returned a JSON-RPC error: flat error"),
             ({"jsonrpc": "2.0", "error": {"code": -1}}, "A2A agent returned a JSON-RPC error: code -1"),
+            ({"jsonrpc": "2.0", "error": {"foo": 1}}, "A2A agent returned a JSON-RPC error: unknown error"),
+            ({"jsonrpc": "2.0", "error": [1]}, "A2A agent returned a JSON-RPC error: unknown error"),
+            ({"jsonrpc": "2.0", "error": 42}, "A2A agent returned a JSON-RPC error: unknown error"),
+            ({"jsonrpc": "1.0", "error": {"message": "x"}}, None),
+            ([{"jsonrpc": "2.0", "error": {"message": "x"}}], None),
             ({"jsonrpc": "2.0", "error": {}}, None),
             ({"jsonrpc": "2.0", "error": False}, None),
             ({"jsonrpc": "2.0", "error": ""}, None),
@@ -1031,6 +1036,62 @@ class TestA2AAgentService:
         assert len(recorded_error) <= settings.rest_response_text_max_length
         assert "supersecret123" not in recorded_error
         assert "secret=REDACTED" in recorded_error
+
+    @pytest.mark.parametrize(
+        "success_body",
+        [
+            {"jsonrpc": "2.0", "id": "1", "result": {"output": "ok"}},
+            {"jsonrpc": "2.0", "id": "1", "result": {"output": "ok"}, "error": None},
+        ],
+    )
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_jsonrpc_success_is_recorded_as_success(
+        self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent, success_body
+    ):
+        """A JSON-RPC result or error:null is recorded with success=True and error_message=None."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = success_body
+        mock_response.text = json.dumps(success_body)
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = sample_db_agent.endpoint_url
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
+
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+
+        assert result == success_body
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
+        metric_kwargs = mock_metrics_buffer.record_a2a_agent_metric_with_duration.call_args.kwargs
+        assert metric_kwargs["success"] is True
+        assert metric_kwargs["error_message"] is None
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
