@@ -29,6 +29,47 @@ from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 logger = logging.getLogger(__name__)
 
 
+class CaCertificateError(ValueError):
+    """Raised when a provider ``ca_certificate`` is not a loadable PEM CA bundle."""
+
+
+def ca_fingerprint(ca_certificate: str) -> str:
+    """Return the SHA-256 hex digest of a CA bundle, safe to log and to use in cache keys.
+
+    Args:
+        ca_certificate: PEM CA bundle.
+
+    Returns:
+        Hex SHA-256 digest.
+
+    Examples:
+        >>> len(ca_fingerprint("A"))
+        64
+    """
+    return hashlib.sha256(ca_certificate.encode()).hexdigest()
+
+
+def evict_ca_entries(ca_certificate: Optional[str], *caches: dict) -> None:
+    """Drop the entries keyed on a CA bundle that is no longer in use.
+
+    Args:
+        ca_certificate: The replaced or cleared PEM CA bundle.
+        *caches: Caches keyed through ``tls_cache_key``.
+
+    Examples:
+        >>> cache = {"a#ca:" + ca_fingerprint("X"): 1, "a": 2}
+        >>> evict_ca_entries("X", cache)
+        >>> cache
+        {'a': 2}
+    """
+    if not ca_certificate:
+        return
+    suffix = f"#ca:{ca_fingerprint(ca_certificate)}"
+    for cache in caches:
+        for key in [k for k in cache if k.endswith(suffix)]:
+            cache.pop(key, None)
+
+
 def validate_ca_certificate(ca_certificate: Optional[str]) -> Optional[str]:
     """Normalize and validate a provider CA bundle.
 
@@ -39,7 +80,7 @@ def validate_ca_certificate(ca_certificate: Optional[str]) -> Optional[str]:
         The stripped PEM text, or None when the value is empty.
 
     Raises:
-        ValueError: If the text is not a loadable PEM CA bundle.
+        CaCertificateError: If the text is not a loadable PEM CA bundle.
 
     Examples:
         >>> validate_ca_certificate("  ") is None
@@ -47,7 +88,7 @@ def validate_ca_certificate(ca_certificate: Optional[str]) -> Optional[str]:
         >>> validate_ca_certificate("not a certificate")
         Traceback (most recent call last):
             ...
-        ValueError: ca_certificate is not a valid PEM CA bundle
+        mcpgateway.services.oidc_tls.CaCertificateError: ca_certificate is not a valid PEM CA bundle
     """
     if not ca_certificate or not ca_certificate.strip():
         return None
@@ -55,7 +96,7 @@ def validate_ca_certificate(ca_certificate: Optional[str]) -> Optional[str]:
     try:
         get_cached_ssl_context(pem)
     except (ssl.SSLError, ValueError) as exc:
-        raise ValueError("ca_certificate is not a valid PEM CA bundle") from exc
+        raise CaCertificateError("ca_certificate is not a valid PEM CA bundle") from exc
     return pem
 
 
@@ -93,7 +134,7 @@ def tls_cache_key(base: str, ca_certificate: Optional[str]) -> str:
     """
     if not ca_certificate:
         return base
-    return f"{base}#ca:{hashlib.sha256(ca_certificate.encode()).hexdigest()}"
+    return f"{base}#ca:{ca_fingerprint(ca_certificate)}"
 
 
 @asynccontextmanager
@@ -114,6 +155,7 @@ async def provider_http_client(ca_certificate: Optional[str]) -> AsyncIterator[h
 
         yield await get_http_client()
         return
+    # shortcut: one client, pool and handshake per call, upgrade to a size-bounded client cache per CA hash if login latency matters
     async with get_isolated_http_client(verify=ctx, follow_redirects=False) as client:
         yield client
 

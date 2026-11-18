@@ -1920,51 +1920,51 @@ async def _discover_oidc_metadata(issuer: str, ca_certificate: Optional[str] = N
 
     probe_errors: list[str] = []
     saw_transient = False
-    for url in _build_metadata_urls(normalized):
-        try:
-            async with provider_http_client(ca_certificate) as client:
+    async with provider_http_client(ca_certificate) as client:
+        for url in _build_metadata_urls(normalized):
+            try:
                 resp = await client.get(url, timeout=10)
-        except Exception as exc:
-            # Network errors (DNS, connection refused, TLS, timeout) are
-            # transient — the IdP may recover within seconds.
-            probe_errors.append(f"{url}: {type(exc).__name__}: {exc}")
-            logger.debug("OAuth metadata probe errored for %s: %s", url, exc)
-            saw_transient = True
-            continue
-
-        if resp.status_code != 200:
-            # 5xx is transient (server-side outage); 404 / other 4xx is
-            # permanent (URL is simply wrong for this issuer).
-            probe_errors.append(f"{url}: HTTP {resp.status_code}")
-            logger.debug("OAuth metadata probe returned %s for %s", resp.status_code, url)
-            if resp.status_code >= 500 or resp.status_code in {408, 429}:
+            except Exception as exc:
+                # Network errors (DNS, connection refused, TLS, timeout) are
+                # transient — the IdP may recover within seconds.
+                probe_errors.append(f"{url}: {type(exc).__name__}: {exc}")
+                logger.debug("OAuth metadata probe errored for %s: %s", url, exc)
                 saw_transient = True
-            continue
+                continue
 
-        try:
-            metadata = resp.json()
-        except Exception as exc:
-            # Malformed JSON is permanent — fix the IdP config.
-            probe_errors.append(f"{url}: invalid JSON: {exc}")
-            logger.debug("OAuth metadata probe returned invalid JSON for %s: %s", url, exc)
-            continue
+            if resp.status_code != 200:
+                # 5xx is transient (server-side outage); 404 / other 4xx is
+                # permanent (URL is simply wrong for this issuer).
+                probe_errors.append(f"{url}: HTTP {resp.status_code}")
+                logger.debug("OAuth metadata probe returned %s for %s", resp.status_code, url)
+                if resp.status_code >= 500 or resp.status_code in {408, 429}:
+                    saw_transient = True
+                continue
 
-        if not isinstance(metadata, dict):
-            probe_errors.append(f"{url}: metadata is not a JSON object")
-            continue
+            try:
+                metadata = resp.json()
+            except Exception as exc:
+                # Malformed JSON is permanent — fix the IdP config.
+                probe_errors.append(f"{url}: invalid JSON: {exc}")
+                logger.debug("OAuth metadata probe returned invalid JSON for %s: %s", url, exc)
+                continue
 
-        # RFC 8414 §3.3: verify the metadata ``issuer`` matches what we
-        # expected. A compromised CDN/proxy could serve metadata for a
-        # different issuer; caching it would let an attacker control the
-        # jwks_uri for a legitimate issuer.
-        metadata_issuer = metadata.get("issuer", "")
-        if isinstance(metadata_issuer, str) and metadata_issuer.rstrip("/") != normalized:
-            probe_errors.append(f"{url}: metadata issuer {metadata_issuer!r} does not match expected {normalized!r}")
-            logger.debug("Metadata issuer mismatch at %s: got %s, expected %s", url, metadata_issuer, normalized)
-            continue
+            if not isinstance(metadata, dict):
+                probe_errors.append(f"{url}: metadata is not a JSON object")
+                continue
 
-        _oauth_oidc_metadata_cache[cache_key] = (monotonic(), metadata, _OAUTH_OIDC_METADATA_TTL)
-        return metadata
+            # RFC 8414 §3.3: verify the metadata ``issuer`` matches what we
+            # expected. A compromised CDN/proxy could serve metadata for a
+            # different issuer; caching it would let an attacker control the
+            # jwks_uri for a legitimate issuer.
+            metadata_issuer = metadata.get("issuer", "")
+            if isinstance(metadata_issuer, str) and metadata_issuer.rstrip("/") != normalized:
+                probe_errors.append(f"{url}: metadata issuer {metadata_issuer!r} does not match expected {normalized!r}")
+                logger.debug("Metadata issuer mismatch at %s: got %s, expected %s", url, metadata_issuer, normalized)
+                continue
+
+            _oauth_oidc_metadata_cache[cache_key] = (monotonic(), metadata, _OAUTH_OIDC_METADATA_TTL)
+            return metadata
 
     # All probes failed. Choose TTL based on whether any probe looked
     # transient: if yes, cache for the short transient window so a brief

@@ -37,8 +37,9 @@ from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.oidc_tls import _NoRedirectPyJWKClient, provider_http_client, provider_ssl_context, tls_cache_key, validate_ca_certificate
+from mcpgateway.services.oidc_tls import _NoRedirectPyJWKClient, ca_fingerprint, evict_ca_entries, provider_http_client, provider_ssl_context, tls_cache_key, validate_ca_certificate
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -745,6 +746,8 @@ class SSOService:
         """
         self._enforce_allowed_issuer(provider_data.get("issuer"))
         provider_data["ca_certificate"] = validate_ca_certificate(provider_data.get("ca_certificate"))
+        if provider_data["ca_certificate"]:
+            logger.info("SSO provider %s CA set (sha256=%s)", sanitize_for_log(provider_data.get("id")), ca_fingerprint(provider_data["ca_certificate"]))
 
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
@@ -782,7 +785,7 @@ class SSOService:
             >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = SSOService(MagicMock())
             >>> # Existing provider object
-            >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True)
+            >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True, ca_certificate=None)
             >>> svc.get_provider = lambda _id: existing
             >>> svc._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC-' + s)
             >>> svc.db.commit = lambda: None
@@ -799,8 +802,17 @@ class SSOService:
 
         if "issuer" in provider_data:
             self._enforce_allowed_issuer(provider_data.get("issuer"))
+        old_ca = provider.ca_certificate
         if "ca_certificate" in provider_data:
             provider_data["ca_certificate"] = validate_ca_certificate(provider_data["ca_certificate"])
+            new_ca = provider_data["ca_certificate"]
+            if new_ca != old_ca:
+                # First-Party
+                from mcpgateway.utils import verify_credentials  # pylint: disable=import-outside-toplevel
+
+                evict_ca_entries(old_ca, self._oidc_config_cache, self._jwks_client_cache, verify_credentials._oauth_oidc_metadata_cache, verify_credentials._oauth_jwks_client_cache)  # pylint: disable=protected-access
+                action = "changed" if old_ca and new_ca else "set" if new_ca else "cleared"
+                logger.info("SSO provider %s CA %s (sha256=%s)", sanitize_for_log(provider_id), action, ca_fingerprint(new_ca) if new_ca else "none")
 
         # Handle client secret encryption if provided
         if "client_secret" in provider_data:

@@ -12,6 +12,7 @@ import datetime
 import ipaddress
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -179,6 +180,21 @@ async def test_update_provider_rejects_invalid_ca_certificate():
         await service.update_provider("github", {"ca_certificate": "garbage-but-not-empty"})
 
 
+@pytest.mark.asyncio
+async def test_update_provider_ca_change_evicts_stale_cache_and_logs_fingerprint_only(tls_server, caplog):
+    """Replacing the CA drops the old CA's cache keys and logs the fingerprint, never the PEM."""
+    _, ca_pem = tls_server
+    service = SSOService(MagicMock())
+    service.get_provider = MagicMock(return_value=SimpleNamespace(id="p", ca_certificate=ca_pem.strip(), trusted_for_api_auth=False, api_audience=None))
+    stale = tls_cache_key("https://idp/jwks", ca_pem.strip())
+    service._jwks_client_cache[stale] = MagicMock()
+    with caplog.at_level("INFO", logger="mcpgateway.services.sso_service"):
+        await service.update_provider("p", {"ca_certificate": ""})
+    assert stale not in service._jwks_client_cache
+    assert "CA cleared" in caplog.text
+    assert "BEGIN CERTIFICATE" not in caplog.text
+
+
 def test_sso_oidc_modules_resolve_tls_only_through_oidc_tls():
     """Guard: SSO/OIDC code never builds its own httpx client.
 
@@ -186,9 +202,12 @@ def test_sso_oidc_modules_resolve_tls_only_through_oidc_tls():
     The only direct shared-client uses allowed are the two calls to fixed public SaaS hosts.
     """
     root = Path(oidc_tls.__file__).resolve().parents[1]
-    allowed_shared_client_callers = {"sso_service.py": {"_fetch_entra_groups_from_graph_api", "_enrich_user_data_from_claims"}, "verify_credentials.py": set()}
-    for filename, allowed in allowed_shared_client_callers.items():
-        path = root / "services" / filename if filename == "sso_service.py" else root / "utils" / filename
+    allowed_shared_client_callers = {"sso_service.py": {"_fetch_entra_groups_from_graph_api", "_enrich_user_data_from_claims"}}
+    guarded = [p for p in root.rglob("*.py") if p != Path(oidc_tls.__file__).resolve() and "mcpgateway.services.oidc_tls import" in p.read_text(encoding="utf-8")]
+    assert {"sso_service.py", "verify_credentials.py"} <= {p.name for p in guarded}
+    for path in guarded:
+        filename = path.name
+        allowed = allowed_shared_client_callers.get(filename, set())
         tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders = set()
         for func in ast.walk(tree):

@@ -717,6 +717,11 @@ curl -sS -X PUT "$GW/auth/sso/admin/providers/<provider-id>" \
 
 The CA applies to OIDC discovery, token exchange, userinfo, and JWKS requests for that provider. It adds to the system trust store and stays active when `SKIP_SSL_VERIFY=true`.
 
+Supply only the CA that issued the provider's certificate. A bundle that includes a broad public root makes the gateway trust every certificate that root signed, for this provider.
+
+!!! note "API only"
+    The Admin UI has no field for `ca_certificate`. Set it through the API.
+
 ## Testing Checklist
 
 - [ ] Provider application created with correct settings
