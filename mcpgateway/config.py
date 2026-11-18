@@ -535,6 +535,7 @@ class Settings(  # pylint: disable=too-many-ancestors
         description=(
             "Allow an existing account (matched by verified email) to sign in through a different trusted SSO provider, "
             "rebinding it to the new provider. Only applies to email-verified logins that already pass trusted-domain policy. "
+            "Relinking requires the new provider to send an explicit verified-email claim; a login that omits the claim is refused. "
             "This is a single global switch for ALL configured providers, not scoped to a specific trusted pair — enabling it "
             "allows relinking between any two providers on this gateway. Admin status is re-vetted against the new provider "
             "on relink regardless of how admin was originally granted, so a non-admin-granting provider cannot inherit admin. "
