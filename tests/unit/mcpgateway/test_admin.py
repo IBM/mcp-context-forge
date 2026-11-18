@@ -13328,6 +13328,14 @@ async def test_get_configuration_settings_redacts_url_query_secrets(parameter, m
         ("postgresql://db/mcp?password=secret", "postgresql://db/mcp?***"),  # pragma: allowlist secret
         ("redis://host/0#secret", "redis://host/0#***"),
         ("redis://[::1/x?password=secret", "***"),  # pragma: allowlist secret
+        (None, None),
+        ("", ""),
+        ("redis://host/0?user@domain", "***"),
+        ("redis://host/0#user@domain", "***"),
+        ("redis://host /0", "***"),
+        ("redis://host\n/0", "***"),
+        ("http:google.com", "***"),
+        ("/some/path", "***"),
     ],
 )
 def test_redact_url_userinfo(url, expected):
