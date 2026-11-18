@@ -435,6 +435,11 @@ class LLMProxyService:
                 options["temperature"] = request.temperature
             elif provider.default_temperature:
                 options["temperature"] = provider.default_temperature
+            # Ollama native /api/chat calls the generation cap num_predict.
+            if request.max_tokens:
+                options["num_predict"] = request.max_tokens
+            elif provider.default_max_tokens:
+                options["num_predict"] = provider.default_max_tokens
             if options:
                 body["options"] = options
 
