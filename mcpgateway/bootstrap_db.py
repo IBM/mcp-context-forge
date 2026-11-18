@@ -273,9 +273,9 @@ async def bootstrap_admin_user(conn: Connection) -> None:
     try:
         # Import services here to avoid circular imports
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.argon2_service import Argon2PasswordService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
@@ -875,7 +875,7 @@ async def main() -> None:
     # cross-container coordination. All replicas run migrations concurrently
     # against the same SQLite file — a silent correctness bug.
     is_sqlite = settings.database_url.startswith("sqlite")
-    gateway_replicas = int(os.environ.get("GATEWAY_REPLICAS", "1"))
+    gateway_replicas = settings.gateway_replicas
     if is_sqlite and gateway_replicas > 1:
         logger.warning(
             "SQLite detected with GATEWAY_REPLICAS=%d. The migration file lock at '%s' is stored in "

@@ -16,8 +16,6 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 from pydantic import SecretStr, ValidationError
 
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
-
 # Third-party
 import pytest
 
@@ -26,6 +24,7 @@ from mcpgateway.config import (
     get_settings,
     Settings,
 )
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 
 
 @pytest.mark.parametrize("configured, expected", [(None, True), ("true", True), ("false", False)])
@@ -183,8 +182,6 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
 
-
-
 def test_ratelimiter_redis_url_defaults():
     """Test rate limiter Redis config defaults to None."""
     s = Settings(environment="development", _env_file=None)
@@ -273,7 +270,9 @@ def test_oauth_router_csrf_cookie_name_matches_config_default():
 
     with patch.dict(os.environ, dummy_env, clear=True):
         s = Settings(_env_file=None)
-        assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+        assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, (
+            f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+        )
 
 
 def test_admin_csrf_header_name_matches_config_default():
@@ -297,7 +296,9 @@ def test_admin_csrf_header_name_matches_config_default():
 
     with patch.dict(os.environ, dummy_env, clear=True):
         s = Settings(_env_file=None)
-        assert admin.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold(), f"admin.ADMIN_CSRF_HEADER_NAME={admin.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+        assert admin.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold(), (
+            f"admin.ADMIN_CSRF_HEADER_NAME={admin.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+        )
 
 
 def test_oauth_router_csrf_header_name_matches_config_default():
@@ -318,9 +319,9 @@ def test_oauth_router_csrf_header_name_matches_config_default():
 
     with patch.dict(os.environ, dummy_env, clear=True):
         s = Settings(_env_file=None)
-        assert (
-            oauth_router.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold()
-        ), f"oauth_router.ADMIN_CSRF_HEADER_NAME={oauth_router.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+        assert oauth_router.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold(), (
+            f"oauth_router.ADMIN_CSRF_HEADER_NAME={oauth_router.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+        )
 
 
 def _csrf_warnings(caplog):
@@ -408,7 +409,7 @@ def test_ratelimiter_redis_url_set():
         ratelimiter_redis_socket_timeout=5.0,
         ratelimiter_redis_socket_connect_timeout=3.0,
         environment="development",
-        _env_file=None
+        _env_file=None,
     )
     assert s.ratelimiter_redis_url == "redis://localhost:6380/0"
     assert s.ratelimiter_redis_max_connections == 100
@@ -418,8 +419,8 @@ def test_ratelimiter_redis_url_set():
 
 def test_ratelimiter_redis_url_validation_rejects_invalid_scheme():
     """Test rate limiter Redis URL validation rejects invalid schemes."""
-    import pytest
     from pydantic import ValidationError
+    import pytest
 
     with pytest.raises(ValidationError, match="must start with redis:// or rediss://"):
         Settings(ratelimiter_redis_url="http://localhost:6379", environment="development", _env_file=None)
@@ -1688,11 +1689,9 @@ def test_init_passthrough_headers_json():
 
 
 def test_init_passthrough_headers_json_not_array_falls_back_to_csv():
-    """Non-array JSON should fall back to comma-splitting (config.py:2124-2128)."""
+    """Non-array JSON falls back to comma-separated header parsing."""
     with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '{"a": 1}'}, clear=False):
-        # Pass an explicit list to bypass pydantic_settings' eager env JSON parsing
-        # (it would otherwise fail validation before our __init__ fallback executes).
-        s = Settings(default_passthrough_headers=["X-Tenant-Id"], environment="development", _env_file=None)
+        s = Settings(environment="development", _env_file=None)
         assert s.default_passthrough_headers == ['{"a": 1}']
 
 
@@ -2342,10 +2341,7 @@ def test_empty_secret_raises():
 def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
     """init_secrets ensure_env_file_secrets replaces placeholder values with strong ones."""
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n"
-        "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n"
-    )
+    env_file.write_text("JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\nAUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n")
 
     import os as _os
 
@@ -2436,8 +2432,8 @@ def test_alembic_env_import_does_not_require_secrets():
     module-level import path is safe even when environment variables are absent.
     """
     import importlib
-    import sys
     import os
+    import sys
 
     # Pop any previously cached module to force a fresh import.
     sys.modules.pop("mcpgateway.alembic.env", None)
@@ -2464,6 +2460,7 @@ def test_alembic_env_import_does_not_require_secrets():
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
 
+
 def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
     """CSRF key must be SecretStr, and must still inherit the JWT secret when unset."""
     # Third-Party
@@ -2489,6 +2486,7 @@ def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
     )
     assert cfg2.csrf_secret_key.get_secret_value() == explicit
 
+
 def test_min_secret_length_below_floor_raises_validation_error():
     """Regression: MIN_SECRET_LENGTH=0 (or any value < 32) must raise ValidationError at
     Settings() construction time, not silently pass through to validate_security_combinations().
@@ -2507,6 +2505,7 @@ def test_min_secret_length_below_floor_raises_validation_error():
 
     strong = "a" * 8 + "B" * 8 + "1" * 8 + "!" * 8  # 32 chars, mixed entropy
     import secrets as _secrets
+
     strong = _secrets.token_urlsafe(32)
 
     with pytest.raises(ValidationError) as exc_info:
@@ -2519,6 +2518,7 @@ def test_min_secret_length_below_floor_raises_validation_error():
         )
     # Confirm the error is about min_secret_length, not some other field
     assert "min_secret_length" in str(exc_info.value).lower() or "greater than or equal" in str(exc_info.value).lower()
+
 
 # --------------------------------------------------------------------------- #
 #                    mcp_client_connect_mode                                     #

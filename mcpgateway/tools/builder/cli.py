@@ -56,6 +56,7 @@ import typer
 from typing_extensions import Annotated
 
 # First-Party
+from mcpgateway.config_sections import BuilderSettings
 from mcpgateway.tools.builder.factory import DeployFactory
 
 app = typer.Typer(
@@ -324,7 +325,7 @@ def main():
         sys.exit(130)
     except Exception as e:
         console.print(f"[red]Fatal error: {e}[/red]")
-        if os.environ.get("MCP_DEBUG"):
+        if BuilderSettings().mcp_debug:
             raise
         sys.exit(1)
 

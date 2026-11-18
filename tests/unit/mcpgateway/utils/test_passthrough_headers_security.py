@@ -340,7 +340,7 @@ class TestConfigSecurity:
         # Test with valid JSON
         test_headers = ["X-Test-1", "X-Test-2"]
         # Test JSON parsing through direct instantiation
-        with patch("os.environ.get", return_value=json.dumps(test_headers)):
+        with patch.dict("os.environ", {"DEFAULT_PASSTHROUGH_HEADERS": json.dumps(test_headers)}):
             settings = Settings()
             assert settings.default_passthrough_headers == test_headers
 
@@ -349,25 +349,8 @@ class TestConfigSecurity:
         # First-Party
         from mcpgateway.config import Settings
 
-        # Test CSV parsing by simulating the __init__ logic directly
-        # since pydantic tries JSON first and fails
-        Settings()
-
-        # Manually call the parsing logic that would be triggered by env var
-        with patch("os.environ.get", return_value="X-Test-1,X-Test-2,X-Test-3"):
-            # Simulate what happens in Settings.__init__
-            default_value = "X-Test-1,X-Test-2,X-Test-3"
-            try:
-                # Try JSON parsing first - this should fail
-                # Standard
-                import json
-
-                parsed = json.loads(default_value)
-            except json.JSONDecodeError:
-                # Fallback to comma-separated parsing - this should work
-                parsed = [h.strip() for h in default_value.split(",") if h.strip()]
-
-            assert parsed == ["X-Test-1", "X-Test-2", "X-Test-3"]
+        with patch.dict("os.environ", {"DEFAULT_PASSTHROUGH_HEADERS": "X-Test-1,X-Test-2,X-Test-3"}):
+            assert Settings().default_passthrough_headers == ["X-Test-1", "X-Test-2", "X-Test-3"]
 
     def test_environment_variable_security_validation(self):
         """Test that environment variable parsing validates header names."""
@@ -744,9 +727,7 @@ class TestInboundPassthroughDenylist:
             import logging
 
             with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
-                result = compute_passthrough_headers_cached(
-                    request_headers, base_headers, allowed_headers=[], gateway_passthrough_headers=gateway_passthrough_headers
-                )
+                result = compute_passthrough_headers_cached(request_headers, base_headers, allowed_headers=[], gateway_passthrough_headers=gateway_passthrough_headers)
 
             # Denylist headers should be blocked even with gateway override
             assert "Content-Type" not in result

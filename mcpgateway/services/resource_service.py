@@ -20,14 +20,13 @@ Examples:
 """
 
 # Standard
-import contextvars
 import asyncio
 import base64
 import binascii
+import contextvars
 from datetime import datetime, timezone
 from functools import lru_cache
 import mimetypes
-import os
 import re
 import ssl
 import time
@@ -53,22 +52,18 @@ from mcpgateway.common.models import BlobResourceContents, ResourceContent, Reso
 from mcpgateway.common.validators import SecurityValidator, without_progress_token
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session, get_for_update, ResourceMetric, ResourceMetricsHourly, server_resource_association
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
-from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import apply_resource_meta, optional_extension_metadata, validate_ui_resource
@@ -83,6 +78,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -97,7 +93,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -436,7 +431,7 @@ class ResourceService(BaseService):
         """Initialize the resource service."""
         self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
-        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self.oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
 
         # Register MIME types for resource content detection
         # This runs in __init__ rather than initialize() because:
@@ -2204,7 +2199,7 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None

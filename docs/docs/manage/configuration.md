@@ -4,6 +4,67 @@ This guide describes configuration options for ContextForge, including database 
 
 ---
 
+## Environment configuration resolution
+
+Application consumers use validated settings, including standalone CLI and readiness commands.
+Process environment variables override values in the working directory's `.env` file.
+Built-in defaults apply when neither source supplies a value.
+Explicit CLI options take precedence over these settings.
+
+The gateway CLI uses `HOST` and `PORT`.
+Legacy `MCG_HOST` and `MCG_PORT` remain supported aliases.
+For each listener setting, resolution follows this order:
+
+1. Explicit CLI option.
+2. Canonical process environment variable (`HOST` or `PORT`).
+3. Legacy process environment variable (`MCG_HOST` or `MCG_PORT`).
+4. Canonical `.env` value.
+5. Legacy `.env` value.
+6. Built-in default (`127.0.0.1` or `4444`).
+
+The CLI now honors `.env` listener values.
+Copying `.env.example` therefore selects its development bind address, `0.0.0.0`, unless overridden.
+Unix socket and file descriptor listeners do not require TCP settings.
+Explicit `--port 0` requests an ephemeral Uvicorn port.
+Only omitted listener options load defaults from settings; invalid unused defaults do not block explicit options.
+Configured `HOST` and `MCG_HOST` values must contain at least one character.
+An empty process or `.env` value causes a validation error when that host default is required.
+Remove the variable to use the loopback default, or configure `0.0.0.0` or `::` explicitly for a wildcard listener.
+
+Gateway and installed database readiness logging default to `ERROR`; Redis readiness logging defaults to `INFO`.
+A configured `LOG_LEVEL` overrides these defaults, with case-insensitive level validation.
+Readiness `--log-level` overrides the configured value.
+The copied SQLAlchemy-only database probe retains its process-environment configuration and `INFO` fallback default.
+
+OAuth timeout/retry settings and metrics custom labels support both process variables and `.env` files.
+CLI bearer tokens and ToolOps credentials use secret-typed settings and remain excluded from support bundle settings.
+ToolOps retains the legacy `OPENAI_MAX_TOEKNS` and `AZURE_OPENAI_MAX_TOEKNS` variable spellings.
+Passthrough headers support JSON arrays and comma-separated names through either source.
+Explicit constructor values take precedence when settings are constructed programmatically.
+
+Deployment launcher variables, SDK-owned environment variables, and secret bootstrap operations retain their existing contracts.
+These rules do not change database-backed SSO provider metadata precedence.
+
+### Upgrade notes
+
+`DEFAULT_PASSTHROUGH_HEADERS` values present only in `.env` now take effect.
+Check file-only allowlists before enabling header passthrough.
+Explicit constructor values override process and file values.
+
+ToolOps reads provider configuration through its own settings model when its provider is constructed.
+Disabled ToolOps does not validate provider configuration during gateway settings initialization.
+Standalone client, builder, reverse-proxy, transport, and SSL-cache sections also retain their own settings models.
+These utility fields are absent from the gateway settings schema and support-bundle settings export.
+
+ToolOps no longer copies arbitrary `.env` values into `os.environ` during import.
+Export SDK-owned variables into the process explicitly, including proxy variables and AWS profile selection.
+Subprocesses inherit exported process values; they do not automatically inherit gateway `.env` values.
+Dynamic SIEM `${ENV_VAR}` substitutions also read exported process values.
+The modeled ToolOps provider credentials and options continue to support `.env` directly.
+
+`SQLALCHEMY_ECHO` preserves its previous string mapping.
+Case-insensitive `true`, `1`, and `yes` enable SQL logging; other strings, including empty values and `on`, disable it.
+
 ## 🔐 Required: Change Before Use
 
 These variables have insecure built-in placeholders. Set each credential before enabling its authentication feature. The gateway rejects empty, placeholder, and known-weak password values at startup.

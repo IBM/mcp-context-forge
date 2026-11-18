@@ -7,6 +7,7 @@ Tests for CLI export/import to improve coverage.
 """
 
 # Standard
+import base64
 from contextlib import asynccontextmanager
 import json
 import os
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -37,11 +39,12 @@ async def test_get_auth_token_basic_fallback_when_enabled():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = True  # Enable basic auth for API
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             assert token is not None
             assert token.startswith("Basic ")
+            assert base64.b64decode(token.removeprefix("Basic ")).decode() == f"{mock_settings.basic_auth_user}:{mock_settings.basic_auth_password.get_secret_value()}"
 
 
 @pytest.mark.asyncio
@@ -51,7 +54,7 @@ async def test_get_auth_token_basic_fallback_disabled_by_default():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = False  # Disabled by default
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             # Should return None because API_ALLOW_BASIC_AUTH=false
@@ -78,7 +81,7 @@ async def test_get_auth_token_prefers_jwt_over_basic():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = True
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             # JWT should be preferred over Basic auth

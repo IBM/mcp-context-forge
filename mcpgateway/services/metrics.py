@@ -368,7 +368,7 @@ def setup_metrics(app):
         # (tests instantiate multiple FastAPI apps). Prometheus client registries
         # do not allow registering the same metric name twice, so we must re-use
         # an existing collector when present.
-        custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
+        custom_labels = dict(kv.split("=") for kv in settings.METRICS_CUSTOM_LABELS.split(",") if "=" in kv)
 
         # Always include database engine in metrics
         custom_labels["engine"] = db_engine
