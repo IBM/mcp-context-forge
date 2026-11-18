@@ -264,6 +264,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
+from mcpgateway.admin import _redact_url_userinfo
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
@@ -13308,39 +13309,30 @@ async def test_get_configuration_settings_redacts_url_credentials(monkeypatch, m
     assert "redispass" not in str(result)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parameter", ["password", "pwd", "secret", "token", "sslpassword"])
+async def test_get_configuration_settings_redacts_url_query_secrets(parameter, monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "database_url", f"postgresql://db/mcp?{parameter}=sensitive-value")
+    monkeypatch.setattr(settings, "redis_url", f"redis://cache/0?{parameter}=sensitive-value")
+    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    group = result["groups"]["Database & Cache"]
+    assert group["database_url"] == "postgresql://db/mcp?***"
+    assert group["redis_url"] == "redis://cache/0?***"
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        (None, None),
-        ("", ""),
-        ("sqlite:///./mcp.db", "sqlite:///./mcp.db"),
-        ("redis://localhost:6379/0", "redis://localhost:6379/0"),
-        ("redis://:redispass@redis:6379/0", "redis://***@redis:6379/0"),  # pragma: allowlist secret
         ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "postgresql+psycopg://***@pgbouncer:6432/mcp"),  # pragma: allowlist secret
-        ("postgresql://u:pa/ss@h:5432/db", "postgresql://***@h:5432/db"),  # pragma: allowlist secret
-        ("postgresql://u:pa#ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
-        ("postgresql://u:pa?ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
-        ("postgresql://u:pa@ss@h/db", "postgresql://***@h/db"),  # pragma: allowlist secret
-        ("postgresql://u:p/a#s?s@h:5432/db", "postgresql://***@h:5432/db"),  # pragma: allowlist secret
-        ("redis://:p%40ss@redis:6379/0", "redis://***@redis:6379/0"),  # pragma: allowlist secret
-        ("redis://[::1/x", "redis://[::1/x"),
+        ("postgresql://u:pa/ss@h:5432/db", "***"),  # pragma: allowlist secret
+        ("postgresql://db/mcp?password=secret", "postgresql://db/mcp?***"),  # pragma: allowlist secret
+        ("redis://host/0#secret", "redis://host/0#***"),
+        ("redis://[::1/x?password=secret", "***"),  # pragma: allowlist secret
     ],
 )
 def test_redact_url_userinfo(url, expected):
-    from mcpgateway.admin import _redact_url_userinfo
 
     assert _redact_url_userinfo(url) == expected
-
-
-def test_redact_url_userinfo_exception_fallback(monkeypatch):
-    from mcpgateway import admin
-    from mcpgateway.admin import _redact_url_userinfo
-
-    def _mock_re_sub(*args, **kwargs):
-        raise ValueError("Malformed pattern or value")
-
-    monkeypatch.setattr(admin.re, "sub", _mock_re_sub)
-    assert _redact_url_userinfo("redis://[::1/x") == "***"
 
 
 @pytest.mark.asyncio

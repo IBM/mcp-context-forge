@@ -3063,20 +3063,29 @@ async def get_a2a_stats_cache_stats(
 
 
 def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
-    """Replace the user and password of a URL with ***.
+    """Redact URL userinfo, query strings, and fragments.
 
     Args:
-        url: URL that may contain user:password@ credentials.
+        url: URL that may contain credentials.
 
     Returns:
-        The URL with credentials replaced, or the input unchanged when it has none.
+        The URL with sensitive parts replaced, or the input unchanged when it has none.
 
     """
     if not url:
         return url
 
     try:
-        return re.sub(r"^([A-Za-z][\w+.-]*://).*@", r"\1***@", url)
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
+            return "***"
+        parsed = urllib.parse.urlsplit(url)
+        if not url.startswith(f"{parsed.scheme}://") or "@" in parsed.query or "@" in parsed.fragment:
+            return "***"
+        if "@" in parsed.path and ":" in parsed.netloc and "@" not in parsed.netloc:
+            return "***"
+        base = url.split("?", 1)[0].split("#", 1)[0]
+        redacted = re.sub(r"^([A-Za-z][\w+.-]*://)[^/?#]*@", r"\1***@", base)
+        return redacted + ("?***" if parsed.query else "") + ("#***" if parsed.fragment else "")
     except Exception:
         return "***"
 
