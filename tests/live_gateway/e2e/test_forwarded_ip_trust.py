@@ -31,6 +31,7 @@ pytestmark = [pytest.mark.e2e]
 
 FORWARDED_IP = "198.51.100.7"
 LOOPBACK_UNTRUSTED = {"FORWARDED_ALLOW_IPS": "192.0.2.1"}
+LOOPBACK_TRUSTED = {"FORWARDED_ALLOW_IPS": "127.0.0.1,::1"}
 
 
 def _list_tools_with_restricted_token(gateway: _GatewayFixture, cidr: str) -> int:
@@ -59,6 +60,7 @@ def test_untrusted_peer_matched_on_socket_ip(isolated_gateway: _GatewayFixture) 
     assert _list_tools_with_restricted_token(isolated_gateway, "127.0.0.1/32") == 200
 
 
+@pytest.mark.parametrize("isolated_gateway", [LOOPBACK_TRUSTED], indirect=True)
 def test_trusted_loopback_proxy_forwards_client_ip(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811  pylint: disable=redefined-outer-name
-    """With the default setting, a loopback proxy forwards the client address."""
+    """A loopback proxy listed in ``FORWARDED_ALLOW_IPS`` forwards the client address."""
     assert _list_tools_with_restricted_token(isolated_gateway, f"{FORWARDED_IP}/32") == 200

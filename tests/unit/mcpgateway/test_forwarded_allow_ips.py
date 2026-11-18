@@ -7,6 +7,7 @@ Tests for FORWARDED_ALLOW_IPS: forwarded client headers are honored only from co
 """
 
 # Third-Party
+from fastapi import FastAPI
 from pydantic import ValidationError
 import pytest
 from starlette.applications import Starlette
@@ -18,7 +19,9 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway.config import Settings, settings
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
+from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
+from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+from mcpgateway.middleware.token_scoping import token_scoping_middleware, TokenScopingMiddleware
 
 UNTRUSTED_PEER = "192.0.2.10"
 SPOOFED_IP = "198.51.100.7"
@@ -53,13 +56,37 @@ def test_forwarded_allow_ips_rejects_invalid(value):
         Settings(forwarded_allow_ips=value, _env_file=None)
 
 
-def test_app_registers_proxy_headers_with_setting():
+def _registered_middleware(monkeypatch) -> list:
+    """Return ``user_middleware`` (index 0 = outermost) of a fresh app built by ``_register_middleware``."""
     # First-Party
-    from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
+    import mcpgateway.main as main_module  # pylint: disable=import-outside-toplevel
 
-    proxy = [m for m in app.user_middleware if m.cls is ProxyHeadersMiddleware]
+    monkeypatch.setattr(settings, "forwarded_allow_ips", "10.1.2.0/24")
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "rate_limiting_enabled", True)
+    monkeypatch.setattr(settings, "header_size_validation_enabled", True)
+    app = FastAPI()
+    main_module._register_middleware(app)  # pylint: disable=protected-access
+    return app.user_middleware
+
+
+def test_app_registers_proxy_headers_with_setting(monkeypatch):
+    proxy = [m for m in _registered_middleware(monkeypatch) if m.cls is ProxyHeadersMiddleware]
     assert len(proxy) == 1
-    assert proxy[0].kwargs["trusted_hosts"] == settings.forwarded_allow_ips
+    assert proxy[0].kwargs["trusted_hosts"] == "10.1.2.0/24"
+
+
+def test_proxy_headers_wraps_ip_consumers(monkeypatch):
+    middleware = _registered_middleware(monkeypatch)
+    proxy_index = next(i for i, m in enumerate(middleware) if m.cls is ProxyHeadersMiddleware)
+    consumers = {
+        "TokenScoping": [i for i, m in enumerate(middleware) if m.kwargs.get("dispatch") is token_scoping_middleware],
+        "RateLimit": [i for i, m in enumerate(middleware) if m.cls is RateLimitMiddleware],
+        "HeaderSize": [i for i, m in enumerate(middleware) if m.cls is HeaderSizeMiddleware],
+    }
+    for name, indices in consumers.items():
+        assert indices, f"{name} middleware not registered"
+        assert proxy_index < min(indices), f"ProxyHeadersMiddleware must be outside {name}"
 
 
 def test_untrusted_peer_xff_ignored():
