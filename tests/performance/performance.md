@@ -54,7 +54,7 @@ These wrappers target the nginx-exposed compose stack on
 For the fixed-tool workload, run `make perf-benchmark-tools TIME=10s`.
 The default duration is 30 minutes. The default `MODE=legacy` sends `initialize`;
 `MODE=modern` skips it. Any other value stops the target.
-The target checks the gateway with one `initialize` request and stops on any non-2xx reply.
+The target checks the gateway with a preflight request (`tools/list` for modern, `initialize` for legacy) and stops on any non-2xx reply.
 Locust exits 1 when any request failed; set `EXIT_ON_ERROR=0` to exit 0 instead.
 The summary and the report paths print in both cases.
 
@@ -71,9 +71,9 @@ outside swarm, so the declared value never reaches a container.
 The table is omitted when docker is unreachable or the stack is down.
 The Locust table in the report labels percentile columns `p50` through `p100`, not `50%ile (ms)`.
 The report includes initialization requests in legacy mode.
-The run writes one file: `reports/perf_benchmark_tools_<commit>.html`, where `<commit>`
-is the short SHA of `HEAD`. A rerun of the same commit overwrites its own report,
-in either mode; the run context table names the mode that produced it.
+The run writes one file: `reports/perf_benchmark_tools_<commit>_<mode>.html`, where `<commit>`
+is the short SHA of `HEAD` and `<mode>` is `legacy` or `modern`. A rerun of the same commit and mode overwrites its own report;
+the run context table names the mode that produced it.
 Locust also writes a stats CSV, but into a temp dir that the run deletes.
 Each history row in `tests/loadtest/historic_load_data.csv` names the report in the
 `HTML Report` column.

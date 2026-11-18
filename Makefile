@@ -2673,9 +2673,9 @@ MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 MODE ?= legacy
-# modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
-# proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
-HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
+# modern = MCP 2026-07-28 stateless protocol. legacy = MCP 2024-11-05 with initialize handshake.
+# Both serve the same virtual server on the Python gateway.
+HOST ?= $(MCP_BENCHMARK_HOST)
 SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 USERS ?= 125
 SPAWN_RATE ?= 30
@@ -2684,13 +2684,12 @@ EXIT_ON_ERROR ?= 1
 TIME ?= 1800s
 
 # TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
-# With both empty, legacy mode mints a fresh token from the running gateway; modern
-# mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
+# With both empty, a fresh token is minted from the running gateway with JWT_SECRET_KEY.
 # A token that went stale on a stack restart stops at the 401 preflight below.
 JWT_USER ?= admin@example.com
 # Reports carry the commit they measured, so a rerun of the same commit overwrites
 # its own report instead of clobbering another commit's numbers.
-HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit).html
+HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)_$(MODE).html
 # Compose project label of the running stack; its containers carry the resource table.
 PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
 # Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
@@ -2794,7 +2793,6 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 	@echo "   Host: $(HOST)"
 	@echo "   Server: $(SERVER_ID)"
 	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
-	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true) # pragma: allowlist secret
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
@@ -2803,14 +2801,21 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
 			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(JWT_USER) --exp 10080 2>/dev/null); \
 		fi; \
-		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
-			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+		if [ "$(MODE)" = "modern" ]; then \
+			CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
+				-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+				-H "MCP-Protocol-Version: 2026-07-28" -H "Mcp-Method: tools/list" \
+				-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}") || CODE=000; \
+		else \
+			CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
+				-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+				-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+		fi; \
 		case "$$CODE" in \
 			2*) ;; \
 			401) \
 				echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
-				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
+				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN / MCPGATEWAY_BEARER_TOKEN so a fresh token is minted."; \
 				exit 1 ;; \
 			000) \
 				echo "Preflight failed: no HTTP response from $(HOST). Start the stack with: make perf-up"; \
