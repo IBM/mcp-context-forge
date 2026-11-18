@@ -633,6 +633,31 @@ Associate A2A agents with virtual servers to:
 - **Group capabilities** for specific use cases
 - **Enable MCP discovery** for client tools
 
+### Publishing a Virtual Server as an A2A Agent
+
+A virtual server can publish an A2A interface. Send `interfaces` when you create or update the server:
+
+```bash
+curl -s -X POST "http://localhost:4444/v1/virtual-servers" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server": {
+      "name": "support-agent",
+      "interfaces": [
+        {"protocol": "a2a", "binding": "https://agent.example.com/a2a", "version": "1.0"}
+      ]
+    }
+  }'
+```
+
+- `binding` is the agent endpoint URL that the card publishes. It follows the same URL rules as `endpoint_url`, including the SSRF hostname block.
+- A server accepts at most 10 interfaces. Two entries with the same protocol and binding are a duplicate. The protocol, scheme, and host compare without case. The path compares with case.
+- An update that omits `interfaces` keeps the stored interfaces. A list replaces them, and `[]` removes them.
+- `GET /a2a/{server_id}/card` returns the card while an `a2a` interface is enabled. It returns `404` after you disable the interface.
+- The same field works on the legacy `/servers` routes, and `/admin/servers` returns it.
+- Server export and import do not include `interfaces`. Set them again after you import a server.
+
 ## Configuration
 
 | Variable | Description | Default |

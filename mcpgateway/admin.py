@@ -3345,6 +3345,7 @@ async def admin_servers_partial_html(
         with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
         selectinload(DbServer.a2a_agents),
         with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+        selectinload(DbServer.interfaces),
         joinedload(DbServer.email_team),
     )
 
