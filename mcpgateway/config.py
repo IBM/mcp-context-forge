@@ -999,6 +999,23 @@ class Settings(  # pylint: disable=too-many-ancestors
         default=None,
         description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
     )
+    oauth_token_refresh_threshold_seconds: int = Field(
+        default=600,
+        ge=0,
+        le=3600,
+        description="Seconds before expiry to refresh tokens returned by GET /oauth/token/{gateway_id}.",
+    )
+    oauth_token_retrieval_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable GET /oauth/token/{gateway_id}, which returns the caller's own "
+            "current OAuth access_token for a gateway (auto-refreshed if it is within "
+            "OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS of expiring). The refresh_token is never returned by this "
+            "endpoint. Disabled by default since it exposes a live bearer credential "
+            "to the caller. The Vault backend serializes refreshes per process only, so "
+            "concurrent workers can reuse a rotating refresh token."
+        ),
+    )
 
     @field_validator("oauth_redirect_allowed_origin")
     @classmethod

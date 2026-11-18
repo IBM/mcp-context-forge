@@ -799,6 +799,10 @@ class TestRateLimitMiddlewareTiers:
 
         assert tier == "HIGH"
 
+    def test_tier_name_high_oauth_token_retrieval(self, middleware):
+        """GET /oauth/token/{gateway_id} is rate limited in the HIGH tier."""
+        assert middleware._get_tier_name("/oauth/token/gateway123", "GET") == "HIGH"
+
     def test_tier_name_critical_sso(self, middleware):
         """Test tier for SSO auth endpoints."""
         tier = middleware._get_tier_name("/auth/sso/login")

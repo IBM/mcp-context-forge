@@ -9904,6 +9904,22 @@ class PluginStatsResponse(BaseModel):
     plugins_by_mode: Dict[str, int] = Field(default_factory=dict, description="Plugin count by mode")
 
 
+class OAuthAccessTokenResponse(BaseModel):
+    """Response for ``GET /oauth/token/{gateway_id}``.
+
+    The model has no ``refresh_token`` field and forbids extra fields,
+    so a refresh token cannot reach the response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_id: str = Field(..., description="Gateway the access token belongs to")
+    access_token: str = Field(..., description="The caller's current OAuth access token")
+    token_type: str = Field(..., description="Type of the stored token, always Bearer")
+    expires_at: Optional[str] = Field(None, description="ISO 8601 expiry of the access token, or null when the provider gave no lifetime")
+    scopes: Optional[List[str]] = Field(None, description="Scopes granted to the access token")
+
+
 # MCP Server Catalog Schemas
 
 
