@@ -72,6 +72,7 @@
 
 ### Fixed
 
+- Gateway catalog refresh (`POST /gateways/{id}/tools/refresh` and the other callers of `_reconcile_gateway_catalog`) no longer discards in-place tool updates when the same pass also removes stale items. The gateway is now expired per collection instead of as a whole, so pending `input_schema`/`description` updates survive and the reported `tools_updated` count matches the stored rows (#7273, #7152).
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
