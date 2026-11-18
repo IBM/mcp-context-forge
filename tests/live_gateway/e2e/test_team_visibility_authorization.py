@@ -1,4 +1,9 @@
-"""Black-box deny paths for the team-visibility authorization gate.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/live_gateway/e2e/test_team_visibility_authorization.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Black-box deny paths for the team-visibility authorization gate.
 
 A virtual-server row may carry ``visibility="team"`` only when the requester is
 a platform admin or an active ``owner``-role member of the target team. This
