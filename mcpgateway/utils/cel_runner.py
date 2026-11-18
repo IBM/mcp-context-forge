@@ -10,11 +10,13 @@ Sandboxed evaluation of CEL expressions.
 from __future__ import annotations
 
 # Standard
+from datetime import datetime, timedelta
 from functools import lru_cache
 import logging
 import os
+import re
 import sys
-from typing import Any, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 # Third-Party
 import cel
@@ -32,7 +34,9 @@ __all__ = [
     "CelEvaluationError",
     "CelSyntaxError",
     "CelTimeout",
+    "check_expression",
     "evaluate_expression",
+    "evaluate_value",
     "shutdown_cel_pool",
     "start_cel_pool",
     "subprocess_mode_available",
@@ -41,6 +45,10 @@ __all__ = [
 # Upper bound on expression source length. A literal list written into an expression is
 # the only thing a comprehension can iterate over, so bounding the source bounds that.
 MAX_EXPRESSION_LENGTH = 4096
+
+# CEL's comprehension macros bind a loop variable as their first argument.
+# Need to indentify and remove them before the unknown-variable check.
+_MACRO_BOUND_NAME = re.compile(r"\.\s*(?:all|exists|exists_one|filter|map)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
 
 _OUTCOME_OK = "ok"
 _OUTCOME_SYNTAX = "syntax"
@@ -56,7 +64,7 @@ class CelSyntaxError(CelError):
 
 
 class CelEvaluationError(CelError):
-    """Raised when an expression parses but cannot produce a boolean."""
+    """Raised when an expression parses but cannot produce a result."""
 
 
 class CelTimeout(CelError):
@@ -132,22 +140,56 @@ def _compile(expression: str) -> cel.Program:
     return cel.compile(expression)  # pylint: disable=no-member
 
 
-def _evaluate_in_worker(expression: str, variables: Mapping[str, Any]) -> tuple[str, Any]:
+def _to_json(value: Any) -> Any:
+    """Convert a CEL result into plain JSON data
+
+    Args:
+        value: The value the program produced.
+
+    Returns:
+        The same value built only from dict, list, str, int, float, bool and None.
+    """
+    if isinstance(value, dict):
+        return {str(k): _to_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_json(v) for v in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _free_variables(program: cel.Program) -> set[str]:
+    """Return the variables a program needs from its context.
+
+    Args:
+        program: A compiled program.
+
+    Returns:
+        The referenced names minus those bound by a comprehension macro.
+    """
+    return set(program.variables()) - set(_MACRO_BOUND_NAME.findall(program.source))
+
+
+def _run_in_worker(expression: str, variables: Mapping[str, Any]) -> tuple[str, Any]:
     """Compile, check, and execute an expression. This is the worker entry point.
 
     Args:
         expression: The CEL source.
         variables: variables the expression may reference
     Returns:
-        ``("ok", result)`` with a boolean result, or ``("syntax", message)`` /
-        ``("evaluation", message)`` describing why no boolean was produced.
+        ``("ok", result)`` with the result as plain JSON data, or ``("syntax", message)`` /
+        ``("evaluation", message)`` describing why no result was produced.
     """
     try:
         program = _compile(expression)
     except ValueError as exc:
         return (_OUTCOME_SYNTAX, str(exc))
 
-    missing = sorted(set(program.variables()) - set(variables))
+    missing = sorted(_free_variables(program) - set(variables))
     if missing:
         return (_OUTCOME_EVALUATION, f"unknown variable(s) {missing}; available: {sorted(variables)}")
 
@@ -156,23 +198,59 @@ def _evaluate_in_worker(expression: str, variables: Mapping[str, Any]) -> tuple[
     except Exception as exc:  # pylint: disable=broad-except
         return (_OUTCOME_EVALUATION, f"{type(exc).__name__}: {exc}")
 
-    if not isinstance(result, bool):
-        return (_OUTCOME_EVALUATION, f"expression returned {type(result).__name__}, expected bool")
-    return (_OUTCOME_OK, result)
+    return (_OUTCOME_OK, _to_json(result))
 
 
-def _raise_for_outcome(outcome: tuple[str, Any]) -> bool:
-    """Turn a worker outcome into a boolean or the matching exception.
+def _evaluate_in_worker(expression: str, variables: Mapping[str, Any]) -> tuple[str, Any]:
+    """Run an expression that must produce a boolean.
 
     Args:
-        outcome: The pair returned by :func:`_evaluate_in_worker`.
+        expression: The CEL source.
+        variables: variables the expression may reference
+    Returns:
+        ``("ok", result)`` with a boolean result, or ``("syntax", message)`` /
+        ``("evaluation", message)`` describing why no boolean was produced.
+    """
+    outcome = _run_in_worker(expression, variables)
+    status, payload = outcome
+    if status == _OUTCOME_OK and not isinstance(payload, bool):
+        return (_OUTCOME_EVALUATION, f"expression returned {type(payload).__name__}, expected bool")
+    return outcome
+
+
+def _check_expression(expression: str, allowed_variables: frozenset[str]) -> tuple[str, Any]:
+    """Compile an expression and confirm it references only allowed variables.
+
+    Args:
+        expression: The CEL source.
+        allowed_variables: Names the expression may reference.
+    Returns:
+        ``("ok", None)``, or ``("syntax", message)`` / ``("evaluation", message)``
+        describing why the expression can never run.
+    """
+    try:
+        program = _compile(expression)
+    except ValueError as exc:
+        return (_OUTCOME_SYNTAX, str(exc))
+
+    unknown = sorted(_free_variables(program) - allowed_variables)
+    if unknown:
+        return (_OUTCOME_EVALUATION, f"unknown variable(s) {unknown}; available: {sorted(allowed_variables)}")
+    return (_OUTCOME_OK, None)
+
+
+def _raise_for_outcome(outcome: tuple[str, Any]) -> Any:
+    """Turn a worker outcome into its result or the matching exception.
+
+    Args:
+        outcome: The pair returned by a worker entry point.
 
     Returns:
-        The boolean result.
+        The result carried by an ``"ok"`` outcome.
 
     Raises:
         CelSyntaxError: If the expression did not parse.
-        CelEvaluationError: If the expression could not produce a boolean.
+        CelEvaluationError: If the expression could not produce a result.
         CelError: If the worker returned an outcome this module does not know.
     """
     status, payload = outcome
@@ -185,8 +263,43 @@ def _raise_for_outcome(outcome: tuple[str, Any]) -> bool:
     raise CelError(f"unexpected CEL worker outcome {status!r}")
 
 
+def _run(worker: Callable[..., tuple[str, Any]], expression: str, *args: Any) -> Any:
+    """Run a worker entry point under the configured execution mode.
+
+    Args:
+        worker: The entry point to run.
+        expression: The CEL source, checked against the length cap first.
+        *args: Remaining arguments for the entry point.
+
+    Returns:
+        The result carried by the worker's outcome.
+
+    Raises:
+        CelSyntaxError: If the expression is too long or does not parse.
+        CelEvaluationError: If the expression cannot produce a result.
+        CelTimeout: If the evaluation exceeds its wall-clock limit.
+        CelBusy: If every sandbox worker is already running another evaluation.
+        CelError: If the sandbox cannot run the evaluation.
+    """
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        raise CelSyntaxError(f"expression is {len(expression)} characters; the limit is {MAX_EXPRESSION_LENGTH}")
+
+    if not subprocess_mode_available():
+        return _raise_for_outcome(worker(expression, *args))
+
+    try:
+        outcome = _SANDBOX.submit(worker, expression, *args)
+    except SandboxTimeout as exc:
+        raise CelTimeout("CEL expression exceeded the execution time limit") from exc
+    except SandboxBusy as exc:
+        raise CelBusy("CEL sandbox has no free worker") from exc
+    except SandboxError as exc:
+        raise CelError(str(exc)) from exc
+    return _raise_for_outcome(outcome)
+
+
 def evaluate_expression(expression: str, variables: Mapping[str, Any]) -> bool:
-    """Evaluate a CEL expression to a boolean under the configured execution mode.
+    """Evaluate a CEL expression to a boolean.
 
     Args:
         expression: The CEL source.
@@ -203,18 +316,46 @@ def evaluate_expression(expression: str, variables: Mapping[str, Any]) -> bool:
         CelBusy: If every sandbox worker is already running another evaluation.
         CelError: If the sandbox cannot run the evaluation.
     """
+    return _run(_evaluate_in_worker, expression, variables)
+
+
+def evaluate_value(expression: str, variables: Mapping[str, Any]) -> Any:
+    """Evaluate a CEL expression to plain JSON data.
+
+    Args:
+        expression: The CEL source.
+        variables: variables the expression may reference
+
+    Returns:
+        The result, built only from dict, list, str, int, float, bool and None.
+
+    Raises:
+        CelSyntaxError: If the expression is too long or does not parse.
+        CelEvaluationError: If the expression references an unsupplied variable or
+            fails at runtime.
+        CelTimeout: If the evaluation exceeds its wall-clock limit.
+        CelBusy: If every sandbox worker is already running another evaluation.
+        CelError: If the sandbox cannot run the evaluation.
+    """
+    return _run(_run_in_worker, expression, variables)
+
+
+def check_expression(expression: str, allowed_variables: Iterable[str]) -> None:
+    """Confirm an expression compiles and references only the given variables.
+
+    This is the registration-time check for expressions whose real input is not
+    known yet, such as a response filter. It parses the expression and runs
+    nothing, so it needs no sandbox and cannot time out or find the pool busy.
+
+    Args:
+        expression: The CEL source.
+        allowed_variables: Names the expression may reference.
+
+    Raises:
+        CelSyntaxError: If the expression is too long or does not parse.
+        CelEvaluationError: If the expression references a variable not in
+            ``allowed_variables``.
+    """
     if len(expression) > MAX_EXPRESSION_LENGTH:
         raise CelSyntaxError(f"expression is {len(expression)} characters; the limit is {MAX_EXPRESSION_LENGTH}")
-
-    if not subprocess_mode_available():
-        return _raise_for_outcome(_evaluate_in_worker(expression, variables))
-
-    try:
-        outcome = _SANDBOX.submit(_evaluate_in_worker, expression, variables)
-    except SandboxTimeout as exc:
-        raise CelTimeout("CEL expression exceeded the execution time limit") from exc
-    except SandboxBusy as exc:
-        raise CelBusy("CEL sandbox has no free worker") from exc
-    except SandboxError as exc:
-        raise CelError(str(exc)) from exc
-    return _raise_for_outcome(outcome)
+    _raise_for_outcome(_check_expression(expression, frozenset(allowed_variables)))

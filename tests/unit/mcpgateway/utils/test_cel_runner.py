@@ -7,6 +7,7 @@ Tests for sandboxed CEL expression evaluation.
 """
 
 # Standard
+from datetime import datetime, timedelta, timezone
 import multiprocessing
 import os
 import sys
@@ -23,7 +24,9 @@ from mcpgateway.utils.cel_runner import (
     CelEvaluationError,
     CelSyntaxError,
     CelTimeout,
+    check_expression,
     evaluate_expression,
+    evaluate_value,
     MAX_EXPRESSION_LENGTH,
     shutdown_cel_pool,
     start_cel_pool,
@@ -93,10 +96,16 @@ def test_name_check_catches_a_short_circuited_typo(inprocess):
         evaluate_expression('true || gatewy_id == "g1"', VARIABLES)
 
 
-def test_comprehension_loop_variables_are_rejected(inprocess):
-    """Loop variables count as referenced names, so comprehension macros are refused."""
-    with pytest.raises(CelEvaluationError, match=r"unknown variable\(s\) \['cmd'\]"):
-        evaluate_expression('["ls", "cat"].exists(cmd, description.contains(cmd))', VARIABLES)
+def test_comprehension_loop_variables_are_not_unknown(inprocess):
+    """A name bound by a comprehension macro is not a variable the caller must supply."""
+    assert evaluate_expression('["rm", "cat"].exists(cmd, description.contains(cmd))', VARIABLES) is False
+    assert evaluate_expression('["rm", "grep"].exists(cmd, description.contains(cmd))', VARIABLES) is True
+
+
+def test_loop_variable_used_outside_its_macro_is_still_caught(inprocess):
+    """Subtracting bound names does not hide a real unknown variable with the same spelling elsewhere."""
+    with pytest.raises(CelEvaluationError, match="Undefined variable"):
+        evaluate_expression('["ls"].exists(cmd, true) && cmd == "x"', VARIABLES)
 
 
 def test_inprocess_unknown_function(inprocess):
@@ -289,3 +298,122 @@ def test_sandbox_errors_are_translated_without_losing_the_cause(monkeypatch, san
     with pytest.raises(cel_error) as excinfo:
         evaluate_expression(GLOBAL_POLICY, VARIABLES)
     assert excinfo.value.__cause__ is sandbox_error
+
+
+# --- value-returning evaluation -----------------------------------------------
+
+RESPONSE = {"items": [{"name": "a", "size": 1}, {"name": "b", "size": 2}], "total": 2}
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("response.total", 2),
+        ("response.items.map(i, i.name)", ["a", "b"]),
+        ("response.items.filter(i, i.size > 1)", [{"name": "b", "size": 2}]),
+        ("response.items[0]", {"name": "a", "size": 1}),
+        ("response", RESPONSE),
+        ('{"count": response.total, "names": response.items.map(i, i.name)}', {"count": 2, "names": ["a", "b"]}),
+    ],
+)
+def test_evaluate_value_returns_plain_json(inprocess, expression, expected):
+    """A filter returns whatever shape the expression builds, as plain JSON data."""
+    assert evaluate_value(expression, {"response": RESPONSE}) == expected
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("timestamp('2020-01-01T00:00:00Z')", "2020-01-01T00:00:00+00:00"),
+        ("duration('90s')", 90.0),
+        ("b'abc'", "abc"),
+        ("{1: 'one'}", {"1": "one"}),
+        ("[duration('1s')]", [1.0]),
+    ],
+)
+def test_evaluate_value_converts_cel_only_types(inprocess, expression, expected):
+    """Timestamps, durations, bytes and non-string keys come back as JSON values."""
+    assert evaluate_value(expression, {}) == expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (b"\xff\xfeok", "\ufffd\ufffdok"),
+        ({"when": datetime(2020, 1, 1, tzinfo=timezone.utc), "inner": {"d": timedelta(minutes=1)}}, {"when": "2020-01-01T00:00:00+00:00", "inner": {"d": 60.0}}),
+        ({1: "a", "1": "b"}, {"1": "b"}),
+        ((1, (2, 3)), [1, [2, 3]]),
+    ],
+)
+def test_to_json_edge_cases(value, expected):
+    """Undecodable bytes are replaced, nested CEL types are converted, and colliding keys keep the last value."""
+    assert cel_runner._to_json(value) == expected
+
+
+@pytest.mark.parametrize(
+    "expression,error,fragment",
+    [
+        ("response.items[", CelSyntaxError, "parse"),
+        ("payload.total", CelEvaluationError, "unknown variable"),
+        ("response.missing", CelEvaluationError, "KeyError"),
+    ],
+)
+def test_evaluate_value_errors(inprocess, expression, error, fragment):
+    """A value evaluation fails with the same error classes as a policy."""
+    with pytest.raises(error, match=fragment):
+        evaluate_value(expression, {"response": RESPONSE})
+
+
+def test_evaluate_value_does_not_require_a_boolean(inprocess):
+    """The boolean requirement belongs to policies only."""
+    assert evaluate_value("response.total", {"response": RESPONSE}) == 2
+    with pytest.raises(CelEvaluationError, match="expected bool"):
+        evaluate_expression("response.total", {"response": RESPONSE})
+
+
+# --- registration-time check ---------------------------------------------------
+
+
+def test_check_expression_accepts_a_valid_filter(inprocess):
+    """A filter that compiles and uses only the allowed variable passes without data."""
+    assert check_expression("response.items[0].name", {"response"}) is None
+
+
+@pytest.mark.parametrize(
+    "expression,error,fragment",
+    [
+        ("response.items[", CelSyntaxError, "parse"),
+        ("payload.total", CelEvaluationError, r"unknown variable\(s\) \['payload'\]; available: \['response'\]"),
+    ],
+)
+def test_check_expression_rejects_what_can_never_run(inprocess, expression, error, fragment):
+    """Syntax errors and unknown variables are caught at registration."""
+    with pytest.raises(error, match=fragment):
+        check_expression(expression, {"response"})
+
+
+def test_check_expression_applies_the_length_cap(inprocess):
+    """The source length limit applies before compilation, as for policies."""
+    with pytest.raises(CelSyntaxError, match="characters"):
+        check_expression("response." + "a" * MAX_EXPRESSION_LENGTH, {"response"})
+
+
+@linux_only
+def test_value_runs_in_worker(cel_pool):
+    """A value evaluation goes through the sandbox and keeps its error classes."""
+    assert evaluate_value("response.items.map(i, i.size)", {"response": RESPONSE}) == [1, 2]
+    with pytest.raises(CelSyntaxError, match="parse"):
+        evaluate_value("response[", {"response": RESPONSE})
+
+
+def test_check_expression_never_touches_the_sandbox(monkeypatch):
+    """The write-time check parses only, so a busy or dead pool cannot turn a valid filter into a rejection."""
+
+    def refuse(*_args):
+        raise AssertionError("check_expression submitted to the sandbox")
+
+    monkeypatch.setattr(settings, "cel_execution", "subprocess")
+    monkeypatch.setattr(cel_runner._SANDBOX, "submit", refuse)
+    assert check_expression("response.items.map(i, i.name)", {"response"}) is None
+    with pytest.raises(CelEvaluationError, match="unknown variable"):
+        check_expression("payload", {"response"})

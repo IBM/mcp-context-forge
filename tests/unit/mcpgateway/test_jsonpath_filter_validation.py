@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-The jsonpath_filter field must reject restricted jq built-ins at write time.
+The jsonpath_filter field must be a CEL expression over ``response`` at write time.
 """
 
 # Third-Party
@@ -13,33 +13,38 @@ import pytest
 # First-Party
 from mcpgateway.schemas import ToolCreate, ToolUpdate
 
-HOSTILE = ["$ENV", "env", '"\\(env)"', 'include "evil"; leak']
+NOT_CEL = ["$ENV", ".data.items[].id", "$.main", "user@example.com", "response.items["]
+WRONG_VARIABLE = ["data.items", "env", "payload.total"]
 
 
-@pytest.mark.parametrize("jq_filter", HOSTILE)
-def test_tool_create_rejects_hostile_filter(jq_filter):
-    """A hostile filter never reaches the database through ToolCreate."""
-    with pytest.raises(ValidationError, match="restricted"):
-        ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter=jq_filter)
+@pytest.mark.parametrize("expression", NOT_CEL + WRONG_VARIABLE)
+def test_tool_create_rejects_a_filter_that_cannot_run(expression):
+    """A filter that does not compile or names another variable never reaches the database."""
+    with pytest.raises(ValidationError, match="not a valid CEL expression"):
+        ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter=expression)
 
 
-@pytest.mark.parametrize("jq_filter", HOSTILE)
-def test_tool_update_rejects_hostile_filter(jq_filter):
-    """A hostile filter cannot be smuggled in through an update."""
-    with pytest.raises(ValidationError, match="restricted"):
-        ToolUpdate(jsonpath_filter=jq_filter)
+@pytest.mark.parametrize("expression", NOT_CEL + WRONG_VARIABLE)
+def test_tool_update_rejects_a_filter_that_cannot_run(expression):
+    """The same check applies on update."""
+    with pytest.raises(ValidationError, match="not a valid CEL expression"):
+        ToolUpdate(jsonpath_filter=expression)
 
 
-def test_legitimate_filter_is_accepted():
-    """Ordinary field-extraction filters keep working."""
-    tool = ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter=".data.items[].id")
-    assert tool.jsonpath_filter == ".data.items[].id"
+def test_unknown_variable_message_names_the_one_available():
+    """The error tells the author what the response is called."""
+    with pytest.raises(ValidationError, match=r"unknown variable\(s\) \['data'\]; available: \['response'\]"):
+        ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter="data.items")
 
 
-def test_env_named_field_is_accepted():
-    """A field literally named 'env' is data access, not the built-in."""
-    tool = ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter=".env.region")
-    assert tool.jsonpath_filter == ".env.region"
+@pytest.mark.parametrize(
+    "expression",
+    ["response.data.items.map(i, i.id)", "response.env.region", "response", 'response.items.filter(i, i.size > 1)', '{"n": response.total}'],
+)
+def test_legitimate_filter_is_accepted(expression):
+    """Ordinary field-extraction and reshaping filters are stored as written."""
+    tool = ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter=expression)
+    assert tool.jsonpath_filter == expression
 
 
 def test_empty_filter_is_accepted():
@@ -47,32 +52,32 @@ def test_empty_filter_is_accepted():
     assert ToolCreate(name="probe", url="https://example.com/api", jsonpath_filter="").jsonpath_filter == ""
 
 
-def test_federated_peer_tool_with_hostile_filter_is_dropped():
-    """A malicious upstream gateway cannot plant a hostile filter via discovery."""
+def test_federated_peer_tool_with_a_bad_filter_is_dropped():
+    """An upstream gateway cannot plant a filter that can never run via discovery."""
     # First-Party
     from mcpgateway.services.gateway_service import GatewayService
 
     service = GatewayService()
     tools = [
-        {"name": "good_tool", "url": "https://example.com/a", "jsonpath_filter": ".data"},
-        {"name": "evil_tool", "url": "https://example.com/b", "jsonpath_filter": "$ENV"},
+        {"name": "good_tool", "url": "https://example.com/a", "jsonpath_filter": "response.data"},
+        {"name": "bad_tool", "url": "https://example.com/b", "jsonpath_filter": "$ENV"},
     ]
     valid, errors = service._validate_tools(tools)  # pylint: disable=protected-access
 
     assert [tool.name for tool in valid] == ["good_tool"]
-    assert any("evil_tool" in err and "restricted" in err for err in errors)
+    assert any("bad_tool" in err and "not a valid CEL expression" in err for err in errors)
 
 
 def test_all_tools_rejected_reports_the_reason():
-    """A wholly hostile peer fails registration with a legible cause."""
+    """A peer whose tools all fail validation fails registration with a legible cause."""
     # First-Party
     from mcpgateway.services.gateway_service import GatewayService
 
     service = GatewayService()
-    tools = [{"name": "evil_tool", "url": "https://example.com/b", "jsonpath_filter": "$ENV"}]
+    tools = [{"name": "bad_tool", "url": "https://example.com/b", "jsonpath_filter": "$ENV"}]
 
     with pytest.raises(Exception) as excinfo:
         service._validate_tools(tools)  # pylint: disable=protected-access
 
-    assert "restricted" in str(excinfo.value)
-    assert "evil_tool" in str(excinfo.value)
+    assert "not a valid CEL expression" in str(excinfo.value)
+    assert "bad_tool" in str(excinfo.value)
