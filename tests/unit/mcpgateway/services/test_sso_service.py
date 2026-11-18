@@ -64,6 +64,7 @@ def _make_provider(**overrides):
         "scope": "user:email",
         "issuer": None,
         "jwks_uri": None,
+        "ca_certificate": None,
         "auto_create_users": True,
         "trusted_domains": None,
         "provider_metadata": None,
@@ -5487,7 +5488,7 @@ def test_jwks_fetch_uses_default_verify(monkeypatch, skip_ssl_verify, expected_v
     monkeypatch.setattr(settings, "skip_ssl_verify", skip_ssl_verify)
     uri = "https://issuer.example.com/jwks"
     headers = {"Accept": "application/json"}
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         http_client = mock_client.return_value.__enter__.return_value
         http_client.get.return_value.json.return_value = {"keys": []}
 
@@ -5506,9 +5507,9 @@ def test_jwks_fetch_warns_when_tls_verification_disabled(monkeypatch, caplog):
 
     monkeypatch.setattr(settings, "skip_ssl_verify", True)
     uri = "https://issuer.example.com/jwks"
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.oidc_tls"):
             _NoRedirectPyJWKClient(uri).fetch_data()
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING and uri in r.getMessage()]
@@ -5524,9 +5525,9 @@ def test_jwks_fetch_no_warning_when_tls_verification_enabled(monkeypatch, caplog
     from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
 
     monkeypatch.setattr(settings, "skip_ssl_verify", False)
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.oidc_tls"):
             _NoRedirectPyJWKClient("https://issuer.example.com/jwks").fetch_data()
 
     assert not [r for r in caplog.records if "TLS verification disabled" in r.getMessage()]

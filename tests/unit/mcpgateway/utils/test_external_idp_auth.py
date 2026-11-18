@@ -228,7 +228,7 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     prov.jwks_uri = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
         assert authorization_servers == ["https://kc/realms/m"]
         assert expected_audience == "api://my-app"
         assert jwks_uri_override == "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
@@ -340,7 +340,7 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
@@ -979,7 +979,7 @@ async def test_deny_id_token_rejected(monkeypatch):
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
     # verify_oauth_access_token rejects nonce/at_hash -> returns None
-    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
+    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
@@ -1561,7 +1561,7 @@ def test_no_redirect_jwks_client_uses_httpx_no_follow_redirects(monkeypatch):
     follow_redirects=False so an HTTP redirect from the same-origin jwks_uri
     cannot escape the SSRF same-origin check performed before key fetch."""
     # First-Party
-    from mcpgateway.services import sso_service
+    from mcpgateway.services import oidc_tls
     from mcpgateway.utils import verify_credentials as vc
 
     captured: dict = {}
@@ -1586,7 +1586,7 @@ def test_no_redirect_jwks_client_uses_httpx_no_follow_redirects(monkeypatch):
         def get(self, *_a, **_kw):
             return _FakeResponse()
 
-    monkeypatch.setattr(sso_service.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(oidc_tls.httpx, "Client", _FakeClient)
 
     client = vc._NoRedirectPyJWKClient("https://idp.example.com/.well-known/jwks.json")
     client.fetch_data()
@@ -1911,7 +1911,7 @@ async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider
         sso_service.invalidate_trusted_provider_cache()
         oauth_calls = []
 
-        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
+        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
             oauth_calls.append(authorization_servers)
             return _alt_claims()
 

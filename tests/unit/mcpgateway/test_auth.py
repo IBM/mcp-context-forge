@@ -5490,7 +5490,7 @@ class TestVerifyOauthAccessToken:
         assert result is not None
         assert result["sub"] == "user@example.com"
         # The constructor was called exactly once with the discovered JWKS URI.
-        mock_ctor.assert_called_once_with(self.JWKS_URI)
+        mock_ctor.assert_called_once_with(self.JWKS_URI, ssl_context=None)
         assert self.JWKS_URI in vc._oauth_jwks_client_cache  # pylint: disable=protected-access
 
 

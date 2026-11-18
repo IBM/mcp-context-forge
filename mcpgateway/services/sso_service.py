@@ -26,7 +26,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 # Third-Party
-import httpx
 import jwt
 import orjson
 from sqlalchemy import and_, select
@@ -38,7 +37,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.http_client_service import get_default_verify
+from mcpgateway.services.oidc_tls import _NoRedirectPyJWKClient, ca_fingerprint, evict_ca_entries, provider_http_client, provider_ssl_context, tls_cache_key, validate_ca_certificate
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
@@ -47,31 +46,6 @@ logger = logging.getLogger(__name__)
 
 # Constants
 ADFS_PROVIDER_ID = "adfs"
-
-
-class _NoRedirectPyJWKClient(jwt.PyJWKClient):
-    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
-
-    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
-    redirects transparently, bypassing the same-origin check on jwks_uri.
-    Overriding with httpx (follow_redirects=False) closes the SSRF redirect bypass.
-    TLS verification follows get_default_verify(), so SKIP_SSL_VERIFY applies.
-    JWKS holds the signing keys that verify tokens, so a fetch with TLS
-    verification off logs a warning that names the jwks_uri.
-    """
-
-    def fetch_data(self) -> Any:
-        """Fetch JWKS data without following redirects."""
-        verify = get_default_verify()
-        if not verify:
-            logger.warning("Fetching JWKS from %s with TLS verification disabled (SKIP_SSL_VERIFY=true). Token signing keys are not authenticated.", sanitize_for_log(self.uri))
-        try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout, verify=verify) as _client:
-                resp = _client.get(self.uri, headers=self.headers)
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPError as exc:
-            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
 
 
 class SSOError(Exception):
@@ -211,30 +185,29 @@ class SSOService:
             logger.warning("Failed to decode JWT claims: %s", e)
             return None
 
-    async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
+    async def _get_oidc_provider_metadata(self, issuer: str, ca_certificate: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Discover and cache OIDC provider metadata.
 
         Args:
             issuer: OIDC issuer URL.
+            ca_certificate: Optional provider CA bundle (PEM) trusted for discovery.
 
         Returns:
             Provider metadata dict from discovery endpoint, or None on failure.
         """
         normalized_issuer = issuer.rstrip("/")
-        cached = self._oidc_config_cache.get(normalized_issuer)
+        cache_key = tls_cache_key(normalized_issuer, ca_certificate)
+        cached = self._oidc_config_cache.get(cache_key)
         if cached is not None:
             cached_at, cached_metadata = cached
             if monotonic() - cached_at < self._OIDC_METADATA_CACHE_TTL_SECONDS:
                 return cached_metadata
-            self._oidc_config_cache.pop(normalized_issuer, None)
-
-        # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+            self._oidc_config_cache.pop(cache_key, None)
 
         discovery_url = f"{normalized_issuer}/.well-known/openid-configuration"
         try:
-            client = await get_http_client()
-            response = await client.get(discovery_url, timeout=settings.oauth_request_timeout)
+            async with provider_http_client(ca_certificate) as client:
+                response = await client.get(discovery_url, timeout=settings.oauth_request_timeout)
             if response.status_code != 200:
                 logger.warning("OIDC discovery failed for issuer %s with HTTP %s", normalized_issuer, response.status_code)
                 return None
@@ -243,7 +216,7 @@ class SSOService:
             if not isinstance(metadata, dict):
                 logger.warning("OIDC discovery response for issuer %s is not a JSON object", normalized_issuer)
                 return None
-            self._oidc_config_cache[normalized_issuer] = (monotonic(), metadata)
+            self._oidc_config_cache[cache_key] = (monotonic(), metadata)
             return metadata
         except Exception as exc:
             logger.warning("OIDC discovery request failed for issuer %s: %s", normalized_issuer, exc)
@@ -262,7 +235,7 @@ class SSOService:
         jwks_uri = provider.jwks_uri.strip() if isinstance(provider.jwks_uri, str) and provider.jwks_uri.strip() else None
 
         if issuer and not jwks_uri:
-            metadata = await self._get_oidc_provider_metadata(issuer)
+            metadata = await self._get_oidc_provider_metadata(issuer, provider.ca_certificate)
             if metadata:
                 discovered_jwks = metadata.get("jwks_uri")
                 discovered_issuer = metadata.get("issuer")
@@ -273,18 +246,20 @@ class SSOService:
 
         return issuer, jwks_uri
 
-    def _get_jwks_client(self, jwks_uri: str) -> _NoRedirectPyJWKClient:
+    def _get_jwks_client(self, jwks_uri: str, ca_certificate: Optional[str] = None) -> _NoRedirectPyJWKClient:
         """Get or create a cached PyJWKClient instance.
 
         Args:
             jwks_uri: JWKS endpoint URL.
+            ca_certificate: Optional provider CA bundle (PEM) trusted for the JWKS fetch.
 
         Returns:
             Cached or newly created `PyJWKClient`.
         """
-        if jwks_uri not in self._jwks_client_cache:
-            self._jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
-        return self._jwks_client_cache[jwks_uri]
+        key = tls_cache_key(jwks_uri, ca_certificate)
+        if key not in self._jwks_client_cache:
+            self._jwks_client_cache[key] = _NoRedirectPyJWKClient(jwks_uri, ssl_context=provider_ssl_context(ca_certificate))
+        return self._jwks_client_cache[key]
 
     async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Verify OIDC ID token signature and claims.
@@ -306,7 +281,7 @@ class SSOService:
             return None
 
         try:
-            jwks_client = self._get_jwks_client(jwks_uri)
+            jwks_client = self._get_jwks_client(jwks_uri, provider.ca_certificate)
             signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, id_token)
 
             decode_kwargs: Dict[str, Any] = {
@@ -770,6 +745,9 @@ class SSOService:
             True
         """
         self._enforce_allowed_issuer(provider_data.get("issuer"))
+        provider_data["ca_certificate"] = validate_ca_certificate(provider_data.get("ca_certificate"))
+        if provider_data["ca_certificate"]:
+            logger.info("SSO provider %s CA set (sha256=%s)", sanitize_for_log(provider_data.get("id")), ca_fingerprint(provider_data["ca_certificate"]))
 
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
@@ -807,7 +785,7 @@ class SSOService:
             >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = SSOService(MagicMock())
             >>> # Existing provider object
-            >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True)
+            >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True, ca_certificate=None)
             >>> svc.get_provider = lambda _id: existing
             >>> svc._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC-' + s)
             >>> svc.db.commit = lambda: None
@@ -824,6 +802,17 @@ class SSOService:
 
         if "issuer" in provider_data:
             self._enforce_allowed_issuer(provider_data.get("issuer"))
+        old_ca = provider.ca_certificate
+        if "ca_certificate" in provider_data:
+            provider_data["ca_certificate"] = validate_ca_certificate(provider_data["ca_certificate"])
+            new_ca = provider_data["ca_certificate"]
+            if new_ca != old_ca:
+                # First-Party
+                from mcpgateway.utils import verify_credentials  # pylint: disable=import-outside-toplevel
+
+                evict_ca_entries(old_ca, self._oidc_config_cache, self._jwks_client_cache, verify_credentials._oauth_oidc_metadata_cache, verify_credentials._oauth_jwks_client_cache)  # pylint: disable=protected-access
+                action = "changed" if old_ca and new_ca else "set" if new_ca else "cleared"
+                logger.info("SSO provider %s CA %s (sha256=%s)", sanitize_for_log(provider_id), action, ca_fingerprint(new_ca) if new_ca else "none")
 
         # Handle client secret encryption if provided
         if "client_secret" in provider_data:
@@ -1395,11 +1384,8 @@ class SSOService:
                 token_params["client_secret"] = client_secret
             logger.debug("Using POST body for SSO token endpoint authentication")
 
-        # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-        client = await get_http_client()
-        response = await client.post(provider.token_url, data=token_params, headers=headers)
+        async with provider_http_client(provider.ca_certificate) as client:
+            response = await client.post(provider.token_url, data=token_params, headers=headers)
 
         if response.status_code == 200:
             return response.json()
@@ -1532,10 +1518,6 @@ class SSOService:
         Raises:
             SSOProviderConfigError: If the ADFS provider is missing the required id_token.
         """
-        # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-        client = await get_http_client()
         verified_id_token_claims: Optional[Dict[str, Any]] = None
         if token_data and isinstance(token_data.get("_verified_id_token_claims"), dict):
             verified_id_token_claims = token_data.get("_verified_id_token_claims")
@@ -1607,7 +1589,8 @@ class SSOService:
             logger.error("ADFS provider requires id_token but none was provided in token_data")
             raise SSOProviderConfigError("ADFS provider requires id_token in token response")
 
-        response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
+        async with provider_http_client(provider.ca_certificate) as client:
+            response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
         if response.status_code == 200:
             user_data = response.json()
