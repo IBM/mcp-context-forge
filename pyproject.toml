@@ -207,7 +207,7 @@ dev = [
 
 # ----------------------------------------------------------------
 # Documentation dependencies (MkDocs site build: `make -C docs venv|serve|build`)
-# Install with: uv pip install --group docs   (also included by the dev group)
+# Install with: make install-docs
 # ----------------------------------------------------------------
 docs = [
     "mike>=2.2.0",
