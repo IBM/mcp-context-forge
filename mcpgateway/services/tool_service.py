@@ -35,18 +35,6 @@ import uuid
 
 # Third-Party
 import anyio
-from cpex.framework import (
-    GlobalContext,
-    HttpHeaderPayload,
-    PluginContextTable,
-    PluginError,
-    PluginMode,
-    PluginViolationError,
-    ToolHookType,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-)
-from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
 import httpx2
 import jsonschema
@@ -63,6 +51,19 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
+from mcpgateway.plugins.contracts import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginMode,
+    PluginRuntimeUnavailable,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
+from mcpgateway.plugins.contracts import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
@@ -7640,6 +7641,8 @@ class ToolService(BaseService):
         _tool_team_id = tool_payload.get("team_id")
         plugin_context_id = self._derive_plugin_context_id(tool_payload, name, server_id)
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
+        if plugin_manager and getattr(plugin_manager, "supports_preview", True) is False:
+            raise PluginRuntimeUnavailable("Native tool preview is not implemented")
         if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
             # server_id mirrors invoke_tool's fallback-context derivation so server-scoped
             # plugin conditions evaluate the same way in preview as they would live.

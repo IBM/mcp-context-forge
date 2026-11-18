@@ -14,9 +14,10 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
-from cpex.framework import PluginManager
-from cpex.framework.models import PluginMode
 from fastapi import Request
+
+# First-Party
+from mcpgateway.plugins.contracts import PluginManager, PluginMode
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class PluginService:
         Returns:
             List of plugin dictionaries containing configuration and status.
         """
-        if not self._plugin_manager:
+        if not self._plugin_manager or getattr(self._plugin_manager, "supports_plugin_management", True) is False:
             return []
 
         plugins = []
@@ -202,7 +203,7 @@ class PluginService:
         Returns:
             Plugin dictionary with full configuration or None if not found.
         """
-        if not self._plugin_manager:
+        if not self._plugin_manager or getattr(self._plugin_manager, "supports_plugin_management", True) is False:
             return None
 
         registry = self._plugin_manager._registry  # pylint: disable=protected-access
@@ -263,7 +264,7 @@ class PluginService:
         Returns:
             Dictionary containing plugin statistics by various dimensions.
         """
-        if not self._plugin_manager:
+        if not self._plugin_manager or getattr(self._plugin_manager, "supports_plugin_management", True) is False:
             return {
                 "total_plugins": 0,
                 "enabled_plugins": 0,

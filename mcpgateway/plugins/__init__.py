@@ -26,20 +26,21 @@ import time
 from typing import Any, Callable, Literal, Optional, TYPE_CHECKING, Union
 
 # Third-Party
-from cpex.framework import ObservabilityProvider, TenantPluginManager
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as _ValidationError
 
 # First-Party
+from mcpgateway.plugins.contracts import LEGACY_RUNTIME_AVAILABLE, ObservabilityProvider, TenantPluginManager, require_plugin_runtime
 from mcpgateway.plugins import _state
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 
 if TYPE_CHECKING:
     from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
+    from mcpgateway.plugins.native import NativeToolManagerFactory
 
 # --- Global plugin manager factory singleton ---
 _PLUGINS_ENABLED = False
-_plugin_manager_factory: Optional[TenantPluginManagerFactory] = None
+_plugin_manager_factory: TenantPluginManagerFactory | NativeToolManagerFactory | None = None
 _observability_service: Optional[ObservabilityProvider] = None
 DEFAULT_SERVER_ID = "__global__"
 
@@ -204,6 +205,8 @@ def _invalidate_shared_enabled_cache() -> None:
 def enable_plugins(toggle: bool) -> None:
     """Toggle the in-memory flag. Use ``enable_plugins_shared`` for cross-worker reach."""
     global _PLUGINS_ENABLED
+    if toggle:
+        require_plugin_runtime()
     _PLUGINS_ENABLED = toggle
     _invalidate_shared_enabled_cache()
 
@@ -214,6 +217,8 @@ async def enable_plugins_shared(toggle: bool) -> bool:
     Returns True when Redis accepted the write.
     """
     global _PLUGINS_ENABLED
+    if toggle:
+        require_plugin_runtime()
     _PLUGINS_ENABLED = toggle
     _invalidate_shared_enabled_cache()
 
@@ -312,6 +317,18 @@ def init_plugin_manager_factory(
     global _plugin_manager_factory
     global _observability_service
     _observability_service = observability
+    require_plugin_runtime()
+    if not LEGACY_RUNTIME_AVAILABLE:
+        from mcpgateway.plugins.native import NativeToolManagerFactory
+        from mcpgateway.plugins.settings import get_plugin_settings
+
+        _plugin_manager_factory = NativeToolManagerFactory(
+            policy_path=get_plugin_settings().native_config_file,
+            timeout=timeout,
+            db_factory=db_factory,
+            observability=observability,
+        )
+        return
     # First-Party
     from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory  # pylint: disable=import-outside-toplevel
 
@@ -328,7 +345,12 @@ async def get_plugin_manager(server_id: str = DEFAULT_SERVER_ID) -> Optional[Ten
     """Return the context-scoped manager, reading the shared toggle so runtime enable/disable propagates."""
     if not await are_plugins_enabled_shared():
         return None
+    require_plugin_runtime()
     if _plugin_manager_factory is None:
+        if not LEGACY_RUNTIME_AVAILABLE:
+            from mcpgateway.plugins.contracts import PluginRuntimeUnavailable
+
+            raise PluginRuntimeUnavailable("Native plugin initialization did not complete")
         _warn_factory_init_degraded_once()
         return None
     return await _plugin_manager_factory.get_manager(server_id)
@@ -384,7 +406,7 @@ def reset_plugin_manager_factory() -> None:
     _plugin_manager_factory = None
 
 
-def get_plugin_manager_factory() -> Optional[TenantPluginManagerFactory]:
+def get_plugin_manager_factory() -> TenantPluginManagerFactory | NativeToolManagerFactory | None:
     """Return the active factory without leaking the private module binding."""
     return _plugin_manager_factory
 

@@ -74,7 +74,6 @@ from urllib.parse import urlparse
 import uuid
 
 # Third-Party
-from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import redis
@@ -88,6 +87,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.plugins.contracts import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginRuntimeUnavailable, PluginViolationError
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.transports.context import UserContext
@@ -1692,6 +1692,8 @@ async def get_current_user(
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 
+    except PluginRuntimeUnavailable as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except PluginViolationError as e:
         # Plugin explicitly denied authentication with custom message
         logger.warning(f"Authentication denied by plugin: {SecurityValidator.sanitize_log_message(e.message)}")

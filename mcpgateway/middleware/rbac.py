@@ -20,7 +20,6 @@ import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import GlobalContext
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -29,6 +28,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth_context import get_user_id
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
+from mcpgateway.plugins.contracts import GlobalContext
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
@@ -792,11 +792,10 @@ async def check_permission_inline(
         return False
 
     # First, check if any plugins want to handle permission checking
-    # Third-Party
-    from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
-
+    # First-Party
     # First-Party
     from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins.contracts import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
     plugin_manager = await get_plugin_manager()
     if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):

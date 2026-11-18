@@ -15,12 +15,13 @@ import logging
 from typing import Optional
 
 # Third-Party
-from cpex.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
 # First-Party
+from mcpgateway.plugins.contracts import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager, PluginRuntimeUnavailable
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -170,7 +171,10 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         # this middleware runs before virtual server routing. Per-tenant HTTP hooks
         # would require extracting server_id from the request path, which is not
         # currently implemented. This is acceptable for auth-layer middleware.
-        plugin_manager = await get_plugin_manager()
+        try:
+            plugin_manager = await get_plugin_manager()
+        except PluginRuntimeUnavailable as exc:
+            return JSONResponse(status_code=503, content={"detail": str(exc)})
         if not plugin_manager:
             logger.debug("HttpAuthMiddleware: no plugin_manager, skipping hooks")
             return await call_next(request)

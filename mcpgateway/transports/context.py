@@ -19,8 +19,8 @@ from __future__ import annotations
 import contextvars
 from typing import Any, Dict, Optional
 
-# Third-Party
-from cpex.framework import UserContext
+# First-Party
+from mcpgateway.plugins.contracts import UserContext
 
 # Per-request HTTP headers. Set by the streamable-http ASGI layer before
 # dispatching into business logic; read by anything that needs the caller's
@@ -31,9 +31,7 @@ request_headers_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.Contex
 # ContextVar — transport layer fills it, service layer reads it.
 user_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 
-# UserContext is now defined in cpex.framework (single source of truth) and
-# re-exported here so that existing imports of the form
-# ``from mcpgateway.transports.context import UserContext`` keep working.
+# Re-export the gateway identity contract for existing transport imports.
 __all__ = ["UserContext", "request_headers_var", "user_context_var", "user_identity_var"]
 
 

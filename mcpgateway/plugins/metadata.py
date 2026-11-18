@@ -6,14 +6,16 @@ SPDX-License-Identifier: Apache-2.0
 Resolve plugin display metadata from installed packages.
 """
 
+# Future
+from __future__ import annotations
+
 # Standard
 from importlib import metadata as importlib_metadata
 import sys
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple, TYPE_CHECKING
 
-# Third-Party
-from cpex.framework.models import Config
-from cpex.framework.utils import parse_class_name
+if TYPE_CHECKING:
+    from cpex.framework.models import Config
 
 
 def _safe_str(value: Any) -> Optional[str]:
@@ -29,7 +31,7 @@ def _module_name_from_kind(kind: Optional[str]) -> Optional[str]:
     if ":" in kind:
         module_name = kind.split(":", 1)[0]
     else:
-        module_name, _class_name = parse_class_name(kind)
+        module_name = kind.rpartition(".")[0]
 
     return module_name or None
 

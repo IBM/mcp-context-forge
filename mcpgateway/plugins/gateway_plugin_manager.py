@@ -24,23 +24,28 @@ collides with a real tool. ``_aliases`` maps each such ``context_id`` to the
 shared key. Tools with tool-specific rows keep their own slot.
 """
 
+# Future
+from __future__ import annotations
+
 # Standard
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 # Third-Party
-from cpex.framework import ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
-from cpex.framework.models import Config
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.plugins.contracts import HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager, require_legacy_runtime
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 from mcpgateway.plugins._state import active_local_mode_overrides, prune_expired_local_overrides
 from mcpgateway.plugins.metadata import enrich_config_plugin_metadata
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
+
+if TYPE_CHECKING:
+    from cpex.framework.models import Config
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +95,9 @@ class TenantPluginManagerFactory:
         db_factory: Optional[Callable[[], Session]] = None,
     ):
         """Initialise the factory, loading base config from *yaml_path*."""
+        require_legacy_runtime()
+        from cpex.framework import ConfigLoader
+
         self._base_config: Config = enrich_config_plugin_metadata(ConfigLoader.load_config(yaml_path))
         self._timeout = timeout
         self._observability = observability
@@ -179,6 +187,8 @@ class TenantPluginManagerFactory:
         ``initialize()``, the key is checked again so that a concurrent build
         never replaces a manager that another request already received.
         """
+        from cpex.framework import TenantPluginManager
+
         manager = None
         try:
             bindings = await self._fetch_bindings(context_id)

@@ -1,0 +1,14 @@
+engine_settings:
+  dispatch: hooks
+
+plugins:
+  - name: output-length-guard
+    kind: isolated_venv
+    hooks:
+      - cmf.tool_post_invoke
+    config:
+      class_name: cpex_output_length_guard.output_length_guard.OutputLengthGuardPlugin
+      requirements_file: requirements.txt
+      max_chars: 12
+      strategy: block
+      ellipsis: "..."

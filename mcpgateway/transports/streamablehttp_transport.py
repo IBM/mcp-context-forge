@@ -47,7 +47,6 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
-from cpex.framework import GlobalContext, PluginContextTable, PluginViolationError
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
@@ -70,6 +69,7 @@ from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_403_FORBID
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.plugins.contracts import GlobalContext, PluginContextTable, PluginViolationError
 from mcpgateway import __version__
 from mcpgateway.cache.catalog_change_bus import get_listen_handler
 from mcpgateway.cache.global_config_cache import global_config_cache

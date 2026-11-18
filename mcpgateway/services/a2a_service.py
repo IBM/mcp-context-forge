@@ -2885,8 +2885,8 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
         # ═══════════════════════════════════════════════════════════════════════════
-        # Third-Party
-        from cpex.framework import (
+        # First-Party
+        from mcpgateway.plugins.contracts import (
             AgentHookType,
             AgentPreInvokePayload,
             GlobalContext,
@@ -3172,8 +3172,8 @@ class A2AAgentService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
                     try:
-                        # Third-Party
-                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+                        # First-Party
+                        from mcpgateway.plugins.contracts import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
 
                         post_result, _ = await plugin_manager.invoke_hook(
                             AgentHookType.AGENT_POST_INVOKE,

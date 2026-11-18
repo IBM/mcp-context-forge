@@ -47,7 +47,6 @@ import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import PluginError, PluginViolationError
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exceptions import RequestValidationError
@@ -69,7 +68,6 @@ from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-# First-Party
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
@@ -90,9 +88,8 @@ from mcpgateway.auth_context import (
     selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.common.models import InitializeResult
+from mcpgateway.common.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
-from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, QueryPaginationCursor, QueryTeamId, QueryVisibility, resolve_gateway_id_filter
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
@@ -126,6 +123,9 @@ from mcpgateway.plugins import (
     start_plugin_invalidation_listener,
     stop_plugin_invalidation_listener,
 )
+
+# First-Party
+from mcpgateway.plugins.contracts import PluginError, PluginViolationError
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -192,11 +192,11 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
+    completion_error_code,
     CompletionError,
     CompletionInvalidParamsError,
     CompletionNotSupportedError,
     CompletionService,
-    completion_error_code,
 )
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
@@ -213,9 +213,8 @@ from mcpgateway.services.gateway_service import (
     GatewayToolNameConflictError,
     test_server_handshake,
 )
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -232,10 +231,10 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
-from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -249,12 +248,13 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import (
-    PUBLIC_REASON_CODES,
     ErrorFormatter,
     extract_reason_code,
+    PUBLIC_REASON_CODES,
     PublicValidationError,
     safe_error_detail,
     sanitize_validation_error_for_log,
@@ -262,7 +262,6 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
-from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -2431,8 +2430,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
                      otherwise defaults to 200 for JSON-RPC compliance.
 
     Examples:
-        >>> from cpex.framework import PluginViolationError
-        >>> from cpex.framework.models import PluginViolation
+        >>> from mcpgateway.plugins.contracts import PluginViolationError
+        >>> from mcpgateway.plugins.contracts import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
@@ -2514,8 +2513,8 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from cpex.framework import PluginError
-        >>> from cpex.framework.models import PluginErrorModel
+        >>> from mcpgateway.plugins.contracts import PluginError
+        >>> from mcpgateway.plugins.contracts import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
