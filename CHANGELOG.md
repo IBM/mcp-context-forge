@@ -72,6 +72,7 @@
 
 ### Fixed
 
+- `make compose-pull` no longer exits non-zero with `pull access denied for mcpgateway/mcpgateway`. The helper services that only consume the locally built gateway image (`prometheus_token`, `register_fast_time`, `register_slow_time`, `register_a2a_echo`, `locust_token`, `register_benchmark`) now declare `pull_policy: never`, and the target passes `--ignore-buildable`, so a pull only fetches images that exist on a registry (#7307).
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
