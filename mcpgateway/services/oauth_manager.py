@@ -42,7 +42,7 @@ from mcpgateway.common.oauth import (
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_private_key
-from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
@@ -821,6 +821,81 @@ class OAuthManager:
         token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         return token_response["access_token"]
 
+    async def _resolve_client_credentials_token_url(self, runtime_credentials: Dict[str, Any]) -> str:
+        """Return the token URL, resolving it from OIDC discovery when it is not typed.
+
+        A2A Agent Cards may advertise an openIdConnectUrl instead of a token URL.
+        The stored oauth_config then carries that URL under discovery.openIdConnectUrl,
+        and the token endpoint is read from the discovery document at request time.
+
+        Args:
+            runtime_credentials: Decrypted OAuth configuration.
+
+        Returns:
+            The token endpoint URL to use for the client-credentials grant.
+
+        Raises:
+            OAuthError: If no token_url is present and discovery cannot supply one.
+        """
+        token_url = runtime_credentials.get("token_url")
+        if isinstance(token_url, str) and token_url:
+            return token_url
+
+        discovery = runtime_credentials.get("discovery")
+        oidc_url = discovery.get("openIdConnectUrl") if isinstance(discovery, dict) else None
+        if not isinstance(oidc_url, str) or not oidc_url.strip():
+            raise OAuthError("OAuth configuration missing valid token_url")
+
+        try:
+            oidc_url = validate_core_url(oidc_url, "OAuth config discovery.openIdConnectUrl")
+        except ValueError as exc:
+            raise OAuthError(f"OAuth discovery URL is invalid: {exc}") from exc
+
+        try:
+            pinned_target = await resolve_pinned_target(oidc_url, "OAuth discovery URL")
+            pinned_url = pinned_target.pin(oidc_url)
+            pinned_headers = pinned_target.apply_headers({})
+        except ValueError as exc:
+            raise OAuthError(f"OAuth discovery URL blocked by URL policy: {exc}") from exc
+
+        try:
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.get(
+                    pinned_url,
+                    timeout=self.request_timeout,
+                    follow_redirects=False,
+                    headers=pinned_headers,
+                    extensions=pinned_target.extensions,
+                )
+        except httpx.HTTPError as exc:
+            raise OAuthError(f"Failed to fetch OAuth discovery document: {unexpected_error_detail(exc)}") from exc
+
+        if 300 <= response.status_code < 400:
+            raise OAuthError(f"OAuth discovery redirect refused (status: {response.status_code})")
+        if response.status_code != 200:
+            raise OAuthError(f"OAuth discovery document was not found (status: {response.status_code})")
+        try:
+            metadata = response.json()
+        except ValueError as exc:
+            raise OAuthError("OAuth discovery document is not valid JSON") from exc
+        if not isinstance(metadata, dict):
+            raise OAuthError("OAuth discovery document is not a JSON object")
+
+        token_endpoint = metadata.get("token_endpoint")
+        if not isinstance(token_endpoint, str) or not token_endpoint:
+            raise OAuthError("OAuth discovery document did not contain token_endpoint")
+
+        # Scope the discovered token endpoint to the configured discovery URL origin so a
+        # hostile document cannot send the client secret to another host.
+        try:
+            await validate_issuer_scoped_endpoint(token_endpoint, oidc_url, "token_endpoint")
+            token_endpoint = validate_core_url(token_endpoint, "OAuth config token_url")
+        except (DcrError, ValueError) as exc:
+            raise OAuthError(f"Discovered token_endpoint was rejected: {exc}") from exc
+
+        runtime_credentials["token_url"] = token_endpoint
+        return token_endpoint
+
     async def get_client_credentials_token_response(
         self,
         credentials: Dict[str, Any],
@@ -847,9 +922,7 @@ class OAuthManager:
             OAuthError: If token acquisition fails after all retries
         """
         runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
-        token_url = runtime_credentials["token_url"]
-        if not isinstance(token_url, str):
-            raise OAuthError("OAuth configuration missing valid token_url")
+        token_url = await self._resolve_client_credentials_token_url(runtime_credentials)
         scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data and apply the configured client

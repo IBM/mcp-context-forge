@@ -1590,3 +1590,88 @@ class TestOAuthManager:
                 assert result["access_token"] == "refreshed_token"
                 assert result["refresh_token"] == "new_refresh_token"
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
+
+
+class TestClientCredentialsOidcDiscovery:
+    """Resolve token_url from discovery.openIdConnectUrl when it is not typed."""
+
+    _DISCOVERY_URL = "https://idp.example.com/.well-known/openid-configuration"
+    _TOKEN_URL = "https://idp.example.com/token"
+
+    def _credentials(self, **overrides):
+        credentials = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",  # pragma: allowlist secret
+            "discovery": {"grant_type": "client_credentials", "openIdConnectUrl": self._DISCOVERY_URL},
+        }
+        credentials.update(overrides)
+        return credentials
+
+    def _token_response(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.json = MagicMock(return_value={"access_token": "discovered_token", "expires_in": 3600})
+        response.headers = {"content-type": "application/json"}
+        response.raise_for_status = MagicMock()
+        return response
+
+    def _discovery_response(self, payload=None, status_code=200):
+        response = MagicMock()
+        response.status_code = status_code
+        response.json = MagicMock(return_value=payload if payload is not None else {"token_endpoint": self._TOKEN_URL, "issuer": "https://idp.example.com"})
+        return response
+
+    @pytest.mark.asyncio
+    async def test_resolves_token_url_from_openid_connect_discovery(self):
+        """A config with only openIdConnectUrl fetches token_endpoint and uses it."""
+        manager = OAuthManager()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=self._discovery_response())
+        mock_client.post = AsyncMock(return_value=self._token_response())
+
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            result = await manager.get_client_credentials_token_response(self._credentials())
+
+        assert result["access_token"] == "discovered_token"
+        mock_client.get.assert_awaited()
+        mock_client.post.assert_awaited()
+        headers = mock_client.post.await_args.kwargs.get("headers") or {}
+        assert headers.get("Host") == "idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_typed_token_url_is_not_replaced_by_discovery(self):
+        """An explicit token_url is used and the discovery document is not fetched."""
+        manager = OAuthManager()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=self._token_response())
+
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            result = await manager.get_client_credentials_token_response(self._credentials(token_url="https://oauth.example.com/token"))
+
+        assert result["access_token"] == "discovered_token"
+        mock_client.get.assert_not_called()
+        mock_client.post.assert_awaited()
+        headers = mock_client.post.await_args.kwargs.get("headers") or {}
+        assert headers.get("Host") == "oauth.example.com"
+
+    @pytest.mark.asyncio
+    async def test_missing_token_url_without_discovery_raises(self):
+        """A client-credentials config still requires a token URL when discovery is absent."""
+        manager = OAuthManager()
+        with pytest.raises(OAuthError, match="missing valid token_url"):
+            await manager.get_client_credentials_token_response({"grant_type": "client_credentials", "client_id": "test_client"})
+
+    @pytest.mark.asyncio
+    async def test_discovered_token_endpoint_on_another_origin_is_rejected(self):
+        """A discovery document cannot send the client secret to a different host."""
+        manager = OAuthManager()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=self._discovery_response({"token_endpoint": "https://evil.example.net/token", "issuer": "https://evil.example.net"}))
+        mock_client.post = AsyncMock()
+
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match="token_endpoint was rejected"):
+                await manager.get_client_credentials_token_response(self._credentials())
+        mock_client.post.assert_not_called()
+

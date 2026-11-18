@@ -451,7 +451,7 @@ def _suggest_auth(card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             elif fields:
                 warnings.append(f"Security scheme '{name}' is an alternative that was not selected.")
             else:
-                warnings.append(f"Security scheme '{name}' is not supported and was ignored.")
+                warnings.append(_unsupported_scheme_warning(name, key, body))
     return chosen, warnings
 
 
@@ -481,6 +481,33 @@ def _skill_auth_warnings(card: Dict[str, Any]) -> List[str]:
     return [f"{subject} {own} security requirements. ContextForge stores one authentication configuration per agent, so configure authentication for {pronoun} manually."]
 
 
+def _unsupported_scheme_warning(name: str, key: str, body: Dict[str, Any]) -> str:
+    """Explain why a required scheme produced no auth suggestion.
+
+    Authorization-code is named when it is the card's only OAuth flow, because A2A
+    agents accept only ``client_credentials`` (#7592).
+
+    Args:
+        name: Security scheme name from the card.
+        key: Oneof key such as ``oauth2SecurityScheme``.
+        body: The scheme body.
+
+    Returns:
+        A warning that names an unsupported authorization_code flow, or a generic skip.
+
+    Examples:
+        >>> _unsupported_scheme_warning("s", "oauth2SecurityScheme", {"flows": {"authorizationCode": {}}})
+        "Security scheme 's' only offers the authorization_code flow, which A2A agents do not support, and was ignored."
+        >>> _unsupported_scheme_warning("s", "mtlsSecurityScheme", {})
+        "Security scheme 's' is not supported and was ignored."
+    """
+    if key == "oauth2SecurityScheme":
+        flows = body.get("flows") or {}
+        if "clientCredentials" not in flows and "authorizationCode" in flows:
+            return f"Security scheme '{name}' only offers the authorization_code flow, which A2A agents do not support, and was ignored."
+    return f"Security scheme '{name}' is not supported and was ignored."
+
+
 def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
     """Map one 1.0 security scheme to ``A2AAgentCreate`` auth fields.
 
@@ -508,17 +535,20 @@ def _auth_fields(key: str, body: Dict[str, Any], scopes: Any) -> Dict[str, Any]:
         if "clientCredentials" in flows:
             flow = flows["clientCredentials"]
             return {"auth_type": "oauth", "oauth_config": {"grant_type": "client_credentials", "token_url": flow.get("tokenUrl"), "scopes": required_scopes}}
-        if "authorizationCode" in flows:
-            flow = flows["authorizationCode"]
-            return {
-                "auth_type": "oauth",
-                "oauth_config": {
-                    "grant_type": "authorization_code",
-                    "authorization_url": flow.get("authorizationUrl"),
-                    "token_url": flow.get("tokenUrl"),
-                    "scopes": required_scopes,
+        return {}
+    if key == "openIdConnectSecurityScheme" and body.get("openIdConnectUrl"):
+        required_scopes = list(scopes.get("list") or []) if isinstance(scopes, dict) else []
+        return {
+            "auth_type": "oauth",
+            "oauth_config": {
+                "grant_type": "client_credentials",
+                "discovery": {
+                    "grant_type": "client_credentials",
+                    "openIdConnectUrl": body["openIdConnectUrl"],
                 },
-            }
+                "scopes": required_scopes,
+            },
+        }
     return {}
 
 
@@ -541,8 +571,12 @@ def _oauth_host_warnings(fields: Dict[str, Any], endpoint_url: str) -> List[str]
     """
     agent_host = urlparse(endpoint_url).hostname
     warnings = []
-    for key in ("authorization_url", "token_url"):
-        url = (fields.get("oauth_config") or {}).get(key)
+    cfg = fields.get("oauth_config") or {}
+    urls: Dict[str, Any] = {key: cfg.get(key) for key in ("authorization_url", "token_url")}
+    discovery = cfg.get("discovery")
+    if isinstance(discovery, dict):
+        urls["openIdConnectUrl"] = discovery.get("openIdConnectUrl")
+    for key, url in urls.items():
         parsed = urlparse(url) if isinstance(url, str) else None
         if not parsed or not parsed.hostname:
             continue

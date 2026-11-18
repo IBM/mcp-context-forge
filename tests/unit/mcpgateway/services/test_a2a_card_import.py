@@ -308,17 +308,56 @@ class TestAuthFields:
         fields, warnings = suggest_agent_fields(card)
         assert "auth_type" not in fields and warnings
 
-    def test_oauth_authorization_code_maps_flow(self):
-        """An authorization-code flow keeps its URLs and requested scopes."""
-        flow = {"authorizationUrl": "https://idp/a", "tokenUrl": "https://idp/t", "scopes": {"read": "r"}}
+    def test_oauth_authorization_code_is_not_suggested(self):
+        """An authorization-code-only card produces no oauth suggestion and names the flow."""
+        flow = {"authorizationUrl": "https://idp.example.com/a", "tokenUrl": "https://idp.example.com/t", "scopes": {"read": "r"}}
         card = {
             "name": "a",
             "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
             "securitySchemes": {"s": {"oauth2SecurityScheme": {"flows": {"authorizationCode": flow}}}},
             "securityRequirements": [{"schemes": {"s": {"list": ["write"]}}}],
         }
+        fields, warnings = suggest_agent_fields(card)
+        assert "auth_type" not in fields and "oauth_config" not in fields
+        assert any("authorization_code" in warning and "do not support" in warning for warning in warnings)
+
+    def test_openid_connect_maps_discovery_url_without_token_url(self):
+        """An OIDC card suggests client_credentials with the discovery URL, not a typed token URL."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {"s": {"openIdConnectSecurityScheme": {"openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"}}},
+            "securityRequirements": [{"schemes": {"s": {"list": ["read"]}}}],
+        }
         fields, _ = suggest_agent_fields(card)
-        assert fields["oauth_config"] == {"grant_type": "authorization_code", "authorization_url": "https://idp/a", "token_url": "https://idp/t", "scopes": ["write"]}
+        assert fields["auth_type"] == "oauth"
+        assert fields["oauth_config"] == {
+            "grant_type": "client_credentials",
+            "discovery": {"grant_type": "client_credentials", "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"},
+            "scopes": ["read"],
+        }
+        assert "token_url" not in fields["oauth_config"]
+        assert A2AAgentCreate(**fields).oauth_config["discovery"]["openIdConnectUrl"] == "https://idp.example.com/.well-known/openid-configuration"
+
+    def test_client_credentials_is_preferred_over_authorization_code_in_same_scheme(self):
+        """A scheme that also advertises authorization_code still maps the supported flow."""
+        card = {
+            "name": "a",
+            "supportedInterfaces": [{"url": "https://a.example.com", "protocolBinding": "JSONRPC"}],
+            "securitySchemes": {
+                "s": {
+                    "oauth2SecurityScheme": {
+                        "flows": {
+                            "authorizationCode": {"authorizationUrl": "https://idp.example.com/a", "tokenUrl": "https://idp.example.com/t"},
+                            "clientCredentials": {"tokenUrl": "https://idp.example.com/t"},
+                        }
+                    }
+                }
+            },
+            "securityRequirements": [{"schemes": {"s": {"list": ["read"]}}}],
+        }
+        fields, _ = suggest_agent_fields(card)
+        assert fields["oauth_config"] == {"grant_type": "client_credentials", "token_url": "https://idp.example.com/t", "scopes": ["read"]}
 
     def test_schemes_in_one_requirement_are_not_mapped_separately(self):
         """Schemes in one requirement apply together, so no single auth type is suggested."""
@@ -343,7 +382,7 @@ class TestAuthFields:
         fields, _ = suggest_agent_fields(card)
         assert fields["auth_type"] == "bearer"
 
-    @pytest.mark.parametrize("flow_name, extra", [("clientCredentials", {}), ("authorizationCode", {"authorizationUrl": "https://a.example.com/auth"})])
+    @pytest.mark.parametrize("flow_name, extra", [("clientCredentials", {})])
     def test_empty_required_scopes_are_not_widened_to_advertised_scopes(self, flow_name, extra):
         """A requirement with no scopes requests none, even when the flow advertises some."""
         flow = {"tokenUrl": "https://a.example.com/t", "scopes": {"read": "r", "admin": "a"}, **extra}
@@ -415,6 +454,18 @@ class TestSkillAuthAndTransportWarnings:
         fields, warnings = suggest_agent_fields(card)
         assert "auth_type" not in fields
         assert any("is not supported and was ignored" in warning for warning in warnings)
+
+    def test_openid_connect_url_on_foreign_host_warns(self):
+        """A discovery URL that leaves the agent host is flagged before a client secret is entered."""
+        card = {
+            **self._BASE,
+            "securitySchemes": {"s": {"openIdConnectSecurityScheme": {"openIdConnectUrl": "http://idp.example.net/.well-known/openid-configuration"}}},
+            "securityRequirements": [{"schemes": {"s": {}}}],
+        }
+        fields, warnings = suggest_agent_fields(card)
+        assert fields["oauth_config"]["discovery"]["openIdConnectUrl"] == "http://idp.example.net/.well-known/openid-configuration"
+        assert any("idp.example.net" in warning for warning in warnings)
+        assert any("not https" in warning and "openIdConnectUrl" in warning for warning in warnings)
 
     @pytest.mark.parametrize("url, warns", [("http://a.example.com/t", True), ("https://a.example.com/t", False)])
     def test_oauth_url_without_tls_warns_even_on_the_agent_host(self, url, warns):
