@@ -74,6 +74,40 @@ The gateway injects HTTP headers into upstream requests:
 
 The header prefix is configurable via `IDENTITY_PROPAGATION_HEADERS_PREFIX`.
 
+#### Non-ASCII values
+
+HTTP header values are ASCII on the wire, so a `full_name` such as `José Núñez` (or a
+group name in any non-Latin script) cannot be sent as-is: httpx raises
+`UnicodeEncodeError` while building the upstream request and the tool call fails.
+Identity headers therefore carry **percent-encoded UTF-8** whenever a value is not
+pure ASCII:
+
+| Identity | Header value sent |
+|----------|-------------------|
+| `José Núñez` | `Jos%C3%A9%20N%C3%BA%C3%B1ez` |
+| `研究開発` | `%E7%A0%94%E7%A9%B6%E9%96%8B%E7%99%BA` |
+| `Alice Test` | `Alice Test` (unchanged) |
+
+Encoding is applied only when needed: ASCII values are sent byte-for-byte as before,
+so existing upstream servers see no change. Comma-separated headers
+(`-Groups`, `-Teams`, `-Roles`, `-Delegation-Chain`) encode each element separately,
+so the commas remain unambiguous separators.
+
+Upstream servers decode the values with `urllib.parse.unquote`:
+
+```python
+from urllib.parse import unquote
+
+full_name = unquote(request.headers["X-Forwarded-User-Full-Name"])  # "José Núñez"
+groups = [unquote(g) for g in request.headers.get("X-Forwarded-User-Groups", "").split(",") if g]
+```
+
+The HMAC claims signature is computed over the **decoded** `user_id` and `email`, so
+decode the headers before verifying it (see [Claim Signing](#claim-signing)).
+
+Values propagated through `_meta` (the `meta` and `both` modes) are unaffected: JSON
+carries non-ASCII text natively.
+
 ### MCP Meta (`meta`)
 
 The gateway injects user identity into the MCP `_meta` field:
@@ -125,7 +159,7 @@ When `IDENTITY_SIGN_CLAIMS=true`, the gateway appends an HMAC-SHA256 signature t
 - **Headers mode**: Adds `X-Forwarded-User-Claims-Signature` header
 - **Meta mode**: Adds `claims_signature` field to the `_meta.user` object
 
-The signature covers the canonical JSON representation of the identity payload. Upstream servers can verify the signature using the shared secret to confirm the claims originated from the gateway.
+The signature is the hex HMAC-SHA256 of `<user_id>:<email>` using the shared secret, computed over the original (decoded) values, so an upstream server can verify it after percent-decoding the headers. It confirms the claims originated from the gateway.
 
 ```bash
 # Enable claim signing

@@ -24,6 +24,7 @@ Tests cover:
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import unquote
 
 # Third-Party
 import httpx
@@ -210,6 +211,135 @@ class TestBuildIdentityHeaders:
         uc = UserContext(user_id="alice@co.com")
         headers = build_identity_headers(uc, gateway=MockGateway())
         assert "X-GW-User-Id" in headers
+
+
+# ---------------------------------------------------------------------------
+# Non-ASCII header value encoding tests
+# ---------------------------------------------------------------------------
+class TestNonAsciiHeaderValues:
+    """Header values that are not ASCII are sent percent-encoded as UTF-8.
+
+    HTTP header values travel as ASCII bytes and httpx encodes them as such, so a
+    raw ``full_name`` like ``José Núñez`` makes the outbound request impossible to
+    build (``UnicodeEncodeError``) and every tool call for that user fails. Values
+    containing non-ASCII characters are therefore percent-encoded as UTF-8 with
+    ``urllib.parse.quote(value, safe="")``; pure ASCII values are sent unchanged so
+    existing deployments see byte-identical headers.
+    """
+
+    @staticmethod
+    def _headers(mock_settings, sign_claims=False, **user_context_fields):
+        """Build headers for a user context under a headers-mode configuration.
+
+        Args:
+            mock_settings: Patched settings object used by ``build_identity_headers``.
+            sign_claims: Whether to sign the identity claims.
+            **user_context_fields: Fields forwarded to ``UserContext``.
+
+        Returns:
+            Dict of propagated identity headers.
+        """
+        mock_settings.identity_propagation_enabled = True
+        mock_settings.identity_propagation_mode = "headers"
+        mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
+        mock_settings.identity_sign_claims = sign_claims
+        mock_settings.identity_sensitive_attributes = []
+        return build_identity_headers(UserContext(**user_context_fields))
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_non_ascii_full_name_does_not_break_request_construction(self, mock_settings):
+        """A non-ASCII full name must still yield a buildable httpx request."""
+        headers = self._headers(
+            mock_settings,
+            user_id="jose@example.com",
+            email="jose@example.com",
+            full_name="José Núñez",
+        )
+
+        # Building the outbound request is what raised UnicodeEncodeError before
+        # the fix, so assert on it first.
+        request = httpx.Request("POST", "http://upstream/mcp", headers=headers)
+        assert request.headers["x-forwarded-user-full-name"] == "Jos%C3%A9%20N%C3%BA%C3%B1ez"
+        assert unquote(headers["X-Forwarded-User-Full-Name"]) == "José Núñez"
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_non_ascii_groups_keep_the_comma_separator(self, mock_settings):
+        """Each list element is encoded on its own so commas stay separators."""
+        headers = self._headers(
+            mock_settings,
+            user_id="alice@co.com",
+            groups=["engineering", "研究開発", "équipe"],
+            teams=["team-é"],
+            roles=["développeur"],
+        )
+
+        httpx.Request("POST", "http://upstream/mcp", headers=headers)
+
+        assert headers["X-Forwarded-User-Groups"] == "engineering,%E7%A0%94%E7%A9%B6%E9%96%8B%E7%99%BA,%C3%A9quipe"
+        assert headers["X-Forwarded-User-Teams"] == "team-%C3%A9"
+        assert headers["X-Forwarded-User-Roles"] == "d%C3%A9veloppeur"
+        assert [unquote(group) for group in headers["X-Forwarded-User-Groups"].split(",")] == ["engineering", "研究開発", "équipe"]
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_ascii_values_are_byte_identical(self, mock_settings):
+        """ASCII identity values are not re-encoded, so existing deployments are unaffected."""
+        headers = self._headers(
+            mock_settings,
+            user_id="alice@co.com",
+            email="alice@co.com",
+            full_name="Alice Test",
+            groups=["engineering", "platform"],
+            teams=["team-alpha"],
+            roles=["developer"],
+            auth_method="bearer",
+            service_account="ci-bot",
+            delegation_chain=["ci-bot", "alice@co.com"],
+        )
+
+        assert headers["X-Forwarded-User-Full-Name"] == "Alice Test"
+        assert headers["X-Forwarded-User-Groups"] == "engineering,platform"
+        assert headers["X-Forwarded-User-Delegation-Chain"] == "ci-bot,alice@co.com"
+        for value in headers.values():
+            assert value.isascii(), value
+            assert "%" not in value, value
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_signed_claims_verify_after_decoding(self, mock_settings):
+        """The signature is computed over the decoded values, so an upstream can verify it."""
+        mock_settings.identity_claims_secret = SecretStr("test-secret")  # pragma: allowlist secret
+        mock_settings.jwt_secret_key = SecretStr("test-jwt-secret")  # pragma: allowlist secret
+        headers = self._headers(
+            mock_settings,
+            sign_claims=True,
+            user_id="josé@example.com",
+            email="josé@example.com",
+            full_name="José Núñez",
+        )
+
+        httpx.Request("POST", "http://upstream/mcp", headers=headers)
+
+        # Transport values are ASCII on the wire.
+        assert headers["X-Forwarded-User-Id"] == "jos%C3%A9%40example.com"
+        assert headers["X-Forwarded-User-Email"] == "jos%C3%A9%40example.com"
+
+        # An upstream decodes the headers and then verifies the signature.
+        decoded_id = unquote(headers["X-Forwarded-User-Id"])
+        decoded_email = unquote(headers["X-Forwarded-User-Email"])
+        assert decoded_id == "josé@example.com"
+        assert decoded_email == "josé@example.com"
+        assert headers["X-Forwarded-User-Claims-Signature"] == _sign_claims(f"{decoded_id}:{decoded_email}")
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_non_ascii_delegation_chain_is_encoded_per_hop(self, mock_settings):
+        """Delegation chain hops are encoded individually, keeping the chain readable."""
+        headers = self._headers(
+            mock_settings,
+            user_id="alice@co.com",
+            delegation_chain=["service-ü", "alice@co.com"],
+        )
+
+        httpx.Request("POST", "http://upstream/mcp", headers=headers)
+        assert headers["X-Forwarded-User-Delegation-Chain"] == "service-%C3%BC,alice@co.com"
 
 # ---------------------------------------------------------------------------
 # build_identity_meta tests

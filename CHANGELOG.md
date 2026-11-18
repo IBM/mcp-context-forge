@@ -72,6 +72,8 @@
 
 ### Fixed
 
+- **Identity headers carry non-ASCII values percent-encoded as UTF-8** ([#7525](https://github.com/IBM/mcp-context-forge/issues/7525)) - With `IDENTITY_PROPAGATION_MODE` set to `headers` or `both`, a user whose `full_name`, user id, email, or group, team, role, or delegation value contained non-ASCII characters failed on every tool call with `UnicodeEncodeError`, because httpx cannot encode such a header value as ASCII. `build_identity_headers` now percent-encodes only the values that are not pure ASCII, as UTF-8, and encodes each element of the comma-separated headers separately so the commas stay separators. ASCII values, which covers a typical deployment, are sent unchanged. An upstream server decodes a value with `urllib.parse.unquote` before use, and before verifying `X-Forwarded-User-Claims-Signature`, which is computed over the decoded values.
+
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
