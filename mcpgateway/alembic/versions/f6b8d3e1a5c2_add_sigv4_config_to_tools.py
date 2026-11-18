@@ -12,6 +12,10 @@ Revises: 7ac83e50bd12
 The column stores the AWS Signature V4 configuration of a REST tool. The secret access
 key and the session token inside it are encrypted. NULL means the tool has no SigV4
 configuration of its own and inherits the gateway configuration, if any.
+
+The downgrade drops the column. Older code does not know ``auth_type = 'sigv4'`` on a
+tool, so the downgrade first disables each tool that uses it and clears its
+``auth_type``. An operator re-enables those tools after setting another auth type.
 """
 
 # Standard
@@ -39,12 +43,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the sigv4_config column when it exists."""
-    inspector = sa.inspect(op.get_bind())
+    """Disable and reset tools that use sigv4, then drop the sigv4_config column when it exists."""
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     if "tools" not in inspector.get_table_names():
         return
     columns = [column["name"] for column in inspector.get_columns("tools")]
     if "sigv4_config" not in columns:
         return
+    tools = sa.table("tools", sa.column("auth_type", sa.String), sa.column("enabled", sa.Boolean))
+    bind.execute(sa.update(tools).where(tools.c.auth_type == "sigv4").values(enabled=False, auth_type=None))
     with op.batch_alter_table("tools") as batch:
         batch.drop_column("sigv4_config")

@@ -7,6 +7,7 @@ Create, update, read, export and access-control behavior of REST tools with auth
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -229,11 +230,19 @@ class TestRegisterTool:
         db.add.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unknown_gateway_is_rejected(self, service):
-        db = _db_for_create()
-        db.get.return_value = None
-        with pytest.raises(ToolError):
-            await service.register_tool(db, _create(sigv4_config=None, gateway_id="missing"), owner_email="member@example.com")
+    async def test_unknown_and_forbidden_gateways_return_the_same_error(self, service):
+        """A caller cannot tell an unknown gateway ID from a gateway hidden from them."""
+        unknown_db = _db_for_create()
+        unknown_db.get.return_value = None
+        with pytest.raises(PermissionError) as unknown:
+            await service.register_tool(unknown_db, _create(sigv4_config=None, gateway_id="missing"), owner_email="member@example.com")
+
+        hidden_db = _db_for_create()
+        hidden_db.get.return_value = SimpleNamespace(id="gw-1", visibility="private", owner_email="someone-else@example.com", team_id=None, auth_type="sigv4")
+        with pytest.raises(PermissionError) as hidden:
+            await service.register_tool(hidden_db, _create(sigv4_config=None, gateway_id="gw-1"), owner_email="member@example.com")
+
+        assert str(unknown.value) == str(hidden.value)
 
 
 def _stored_tool(**overrides):
@@ -644,10 +653,19 @@ class TestPresignedUrlOnSigV4Tool:
 
 class TestInheritedGatewayAccessWithoutIdentity:
     @pytest.mark.asyncio
-    async def test_internal_caller_without_identity_skips_the_check(self, service):
+    async def test_caller_without_identity_fails_closed(self, service):
         db = MagicMock()
 
-        await service._require_inherited_gateway_access(db, "gw-1", None)
+        with pytest.raises(PermissionError, match="requester identity is required"):
+            await service._require_inherited_gateway_access(db, "gw-1", None)
+
+        db.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tool_without_a_gateway_needs_no_identity(self, service):
+        db = MagicMock()
+
+        await service._require_inherited_gateway_access(db, None, None)
 
         db.get.assert_not_called()
 
@@ -722,3 +740,164 @@ class TestFullExportSkipsSigV4Tools:
         exported = await service._export_tools(MagicMock(), None, False)
 
         assert [entry["name"] for entry in exported] == ["plain"]
+
+
+def _inheriting_tool(name="inheriting"):
+    return _create(name=name, sigv4_config=None, gateway_id="gw-1")
+
+
+class TestBulkRegistrationEnforcesGatewayOwnership:
+    """The bulk path applies the same gateway checks as register_tool."""
+
+    @pytest.mark.asyncio
+    async def test_inheriting_tool_is_dropped_when_access_is_denied(self, service):
+        db = MagicMock()
+        plain = ToolCreate(name="plain", url="https://api.example.com/x", integration_type="REST", request_type="GET")
+
+        with (
+            patch.object(service, "_require_inherited_gateway_access", AsyncMock(side_effect=PermissionError("No access"))) as guard,
+            patch.object(service, "_load_authorized_tool_conflicts", AsyncMock(return_value=({}, set()))),
+            patch.object(service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}) as process,
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=MagicMock(invalidate_tools=AsyncMock())),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=MagicMock(invalidate=AsyncMock())),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache.invalidate_tags", AsyncMock()),
+            patch.object(service, "_server_ids_for_tool_names_cache_invalidation", return_value=set()),
+        ):
+            stats = await service.register_tools_bulk(db, [_inheriting_tool(), plain], user_email="dev@example.com", token_teams=["team-a"])
+
+        guard.assert_awaited_once()
+        assert guard.await_args.args[1:] == ("gw-1", "dev@example.com", ["team-a"])
+        assert [tool.name for tool in process.call_args.kwargs["chunk"]] == ["plain"]
+        assert stats["failed"] == 1
+        assert "inheriting" in stats["errors"][0]
+        assert "No access" in stats["errors"][0]
+
+    @pytest.mark.asyncio
+    async def test_inheriting_tool_is_dropped_without_a_requester(self, service):
+        db = MagicMock()
+
+        with patch.object(service, "_process_tool_chunk") as process:
+            stats = await service.register_tools_bulk(db, [_inheriting_tool()])
+
+        process.assert_not_called()
+        assert stats["failed"] == 1
+        assert stats["created"] == 0
+        assert "requester identity is required" in stats["errors"][0]
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowed_inheriting_tool_is_registered(self, service):
+        db = MagicMock()
+
+        with (
+            patch.object(service, "_require_inherited_gateway_access", AsyncMock(return_value=None)),
+            patch.object(service, "_load_authorized_tool_conflicts", AsyncMock(return_value=({}, set()))),
+            patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}) as process,
+        ):
+            stats = await service.register_tools_bulk(db, [_inheriting_tool()], user_email="owner@example.com", token_teams=None)
+
+        assert [tool.name for tool in process.call_args.kwargs["chunk"]] == ["inheriting"]
+        assert stats["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_standalone_sigv4_tool_needs_no_gateway_check(self, service):
+        db = MagicMock()
+
+        with (
+            patch.object(service, "_require_inherited_gateway_access", AsyncMock()) as guard,
+            patch.object(service, "_load_authorized_tool_conflicts", AsyncMock(return_value=({}, set()))),
+            patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}),
+        ):
+            await service.register_tools_bulk(db, [_create()], user_email="dev@example.com")
+
+        guard.assert_not_awaited()
+
+
+class TestUrlChangeOnInheritingTool:
+    """An unchanged url, as the admin edit form submits it, must not trigger the gateway check."""
+
+    @pytest.mark.asyncio
+    async def test_unchanged_url_skips_the_gateway_check(self, service):
+        tool = _stored_tool(sigv4_config=None, gateway_id="gw-1", url="https://api.example.com/x")
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(service, "_require_inherited_gateway_access", AsyncMock()) as guard,
+            patch.object(service, "convert_tool_to_read", return_value={}),
+        ):
+            await service.update_tool(db, "t1", _update(url="https://api.example.com/x", description="edited"), user_email="owner@example.com")
+
+        guard.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_changed_url_runs_the_gateway_check(self, service):
+        tool = _stored_tool(sigv4_config=None, gateway_id="gw-1", url="https://api.example.com/x")
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(service, "_require_inherited_gateway_access", AsyncMock()) as guard,
+            patch.object(service, "convert_tool_to_read", return_value={}),
+        ):
+            await service.update_tool(db, "t1", _update(url="https://api.example.com/y"), user_email="owner@example.com", token_teams=["team-a"])
+
+        guard.assert_awaited_once()
+        assert guard.await_args.args[1:] == ("gw-1", "owner@example.com", ["team-a"])
+
+
+class TestResignRetryBudget:
+    @pytest.mark.asyncio
+    async def test_resign_is_logged_with_the_tool_id(self, caplog):
+        statuses = iter([401, 200])
+
+        async def send(headers):
+            return SimpleNamespace(status_code=next(statuses))
+
+        with caplog.at_level("DEBUG", logger="mcpgateway.services.tool_service"):
+            await ToolService._send_with_resign_retry(send, {}, "tool-42")
+
+        assert any("tool-42" in record.getMessage() and "signing again" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_one_timeout_covers_both_sends(self):
+        calls = []
+
+        async def send(headers):
+            calls.append(headers)
+            await asyncio.sleep(0.05)
+            return SimpleNamespace(status_code=401)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(ToolService._send_with_resign_retry(send, {}), timeout=0.07)
+
+        assert len(calls) == 2
+
+
+class TestIsolatedClientTrustStore:
+    @pytest.mark.asyncio
+    async def test_builder_reuses_the_cached_ssl_context(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _build_pinned_rest_http_client  # pylint: disable=import-outside-toplevel
+
+        sentinel = object()
+        with patch("mcpgateway.services.tool_service.get_cached_ssl_context", return_value=sentinel) as cached, patch.object(settings, "skip_ssl_verify", False):
+            client = _build_pinned_rest_http_client()
+        try:
+            assert client.client_args["verify"] is sentinel
+            cached.assert_called_once_with(None)
+        finally:
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_skip_ssl_verify_disables_verification_without_loading_a_context(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _build_pinned_rest_http_client  # pylint: disable=import-outside-toplevel
+
+        with patch("mcpgateway.services.tool_service.get_cached_ssl_context") as cached, patch.object(settings, "skip_ssl_verify", True):
+            client = _build_pinned_rest_http_client()
+        try:
+            assert client.client_args["verify"] is False
+            cached.assert_not_called()
+        finally:
+            await client.aclose()

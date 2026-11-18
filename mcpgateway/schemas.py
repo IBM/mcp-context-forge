@@ -367,7 +367,24 @@ def _validate_sigv4_config_input(v: Optional[Dict[str, Any]], allow_unsigned_pay
     return v
 
 
-def _mask_sigv4_config(sigv4_config: Any) -> Any:
+class _SigV4ConfigValidatorMixin:
+    """Shared ``sigv4_config`` field validator for the REST tool schemas."""
+
+    @field_validator("sigv4_config", mode="before", check_fields=False)
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration, or None.
+        """
+        return _validate_sigv4_config_input(v)
+
+
+def mask_sigv4_config(sigv4_config: Any) -> Any:
     """Mask the secret fields of a ``sigv4_config`` dict.
 
     Args:
@@ -1162,7 +1179,7 @@ def check_tool_validation_policy(value: Optional[str]) -> Optional[str]:
     return policy
 
 
-class ToolCreate(BaseModel):
+class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
 
@@ -1847,7 +1864,7 @@ class ToolCreate(BaseModel):
         return self
 
 
-class ToolUpdate(BaseModelWithConfigDict):
+class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
     Similar to ToolCreate but all fields are optional to allow partial updates.
@@ -5041,7 +5058,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
         # Mask SigV4 secret access key and session token
         if masked_data.get("sigv4_config"):
-            masked_data["sigv4_config"] = _mask_sigv4_config(masked_data["sigv4_config"])
+            masked_data["sigv4_config"] = mask_sigv4_config(masked_data["sigv4_config"])
 
         # SECURITY: Never expose unmasked credentials in API responses
         masked_data["auth_password_unmasked"] = None

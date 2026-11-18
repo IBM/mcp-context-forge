@@ -16,6 +16,8 @@
     - `unsigned_payload: true` in `sigv4_config` sends `UNSIGNED-PAYLOAD` for services that accept it. After an HTTP 401, the request is signed again once. A 403 is not retried.
     - The tool `sigv4_config` is stored encrypted and read back masked. A masked value on update keeps the stored secret. Export skips SigV4 tools.
     - A tool inherits a gateway credential only when the caller owns the gateway, holds the team owner role for it, or is a platform admin. A public gateway does not grant its credential.
+    - The check fails closed without a caller identity. An unknown gateway and a hidden gateway return the same error. Bulk registration applies the check to each inheriting tool.
+    - Both sends of a 401 re-sign share the tool timeout. The downgrade of `f6b8d3e1a5c2` disables tools with `auth_type: "sigv4"` and clears their `auth_type` before it drops the column.
     - A gateway `sigv4_config` rejects `unsigned_payload` with HTTP 422. A tool with `auth_type: "sigv4"` rejects a presigned URL.
     - Behavior change for gateways: a masked `secret_access_key` with no stored secret now fails with HTTP 400. Before, the gateway stored nothing.
     - A new migration, `f6b8d3e1a5c2`, adds the `tools.sigv4_config` column. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md#sign-rest-tool-calls).
