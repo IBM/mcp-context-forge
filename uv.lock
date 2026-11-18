@@ -3402,18 +3402,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/de/a9/b1d27d3f82cda5c444513dc0dcd63785ab3191a6ea3c047cb69f692f5890/markdown-blockdiag-0.8.0.tar.gz", hash = "sha256:5383e3d6b15baa904c020d2bc6de17182d2c2ca7e5f8e51cf5f78124690ddeee", size = 3415, upload-time = "2021-12-14T09:39:16.448Z" }
 
 [[package]]
-name = "markdown-include"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/d8/66bf162fe6c1adb619f94a6da599323eecacf15b6d57469d0fd0421c10df/markdown-include-0.8.1.tar.gz", hash = "sha256:1d0623e0fc2757c38d35df53752768356162284259d259c486b4ab6285cdbbe3", size = 21873, upload-time = "2023-02-07T09:47:26.608Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/e2/c4d20b21a05fe0fee571649cebc05f7f72e80b1a743f932e7326125e6c9e/markdown_include-0.8.1-py3-none-any.whl", hash = "sha256:32f0635b9cfef46997b307e2430022852529f7a5b87c0075c504283e7cc7db53", size = 18837, upload-time = "2023-02-07T09:47:25.03Z" },
-]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3791,7 +3779,6 @@ docs = [
     { name = "livereload" },
     { name = "markdown" },
     { name = "markdown-blockdiag" },
-    { name = "markdown-include" },
     { name = "markupsafe" },
     { name = "mergedeep" },
     { name = "mike" },
@@ -4052,7 +4039,6 @@ docs = [
     { name = "livereload", specifier = ">=2.7.1" },
     { name = "markdown", specifier = ">=3.11.3" },
     { name = "markdown-blockdiag", specifier = ">=0.8.0" },
-    { name = "markdown-include", specifier = ">=0.8.1" },
     { name = "markupsafe", specifier = ">=3.0.4" },
     { name = "mergedeep", specifier = ">=1.3.4" },
     { name = "mike", specifier = ">=2.2.0" },
