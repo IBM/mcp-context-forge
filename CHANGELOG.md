@@ -72,6 +72,8 @@
 
 ### Fixed
 
+- **Stale catalog reconciliation no longer hard-deletes tools, resources, or prompts** ([#7014](https://github.com/IBM/mcp-context-forge/issues/7014)) - When a refresh or auto-refresh no longer lists an upstream catalog item, ContextForge marks it `deprecated` instead of deleting the row. Virtual-server membership, metrics history, and admin-applied disabled state are kept, and a later reappearance reuses the same id (clearing only the deprecation flags). Hard deletion is a separate cleanup for entries whose `deprecated_at` is older than `GATEWAY_STALE_CATALOG_RETENTION_DAYS` (default `30`; `0` disables deletion), so a single partial catalog cannot wipe state. Adds migration `f8c4a19e2b70`. Rendering deprecated state in the new UI remains tracked in [#7019](https://github.com/IBM/mcp-context-forge/issues/7019).
+
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.

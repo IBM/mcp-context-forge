@@ -821,6 +821,7 @@ class PromptService(BaseService):
             "created_at": db_prompt.created_at,
             "updated_at": db_prompt.updated_at,
             "enabled": db_prompt.enabled,
+            "deprecated": bool(getattr(db_prompt, "deprecated", False)),
             "metrics": metrics_dict,
             "tags": db_prompt.tags or [],
             "visibility": db_prompt.visibility,

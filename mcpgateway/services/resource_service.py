@@ -565,6 +565,7 @@ class ResourceService(BaseService):
         resource_dict["updated_at"] = getattr(resource, "updated_at", resource_dict.get("updated_at"))
         resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
         resource_dict["enabled"] = getattr(resource, "enabled", resource_dict.get("enabled"))
+        resource_dict["deprecated"] = bool(getattr(resource, "deprecated", resource_dict.get("deprecated", False)))
 
         # Compute aggregated metrics from the resource's metrics list (only if requested)
         if include_metrics:

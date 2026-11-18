@@ -2222,7 +2222,9 @@ class TestGatewayService:
         mock_gateway.oauth_config = oauth_config
         mock_gateway.resources = []
         mock_gateway.prompts = []
-        mock_gateway.tools = [MagicMock(spec=DbTool, id=400 + i, name=f"te-tool-{i}", original_name=f"te-tool-{i}") for i in range(3)]
+        mock_gateway.tools = [
+            MagicMock(spec=DbTool, id=400 + i, name=f"te-tool-{i}", original_name=f"te-tool-{i}", created_via="oauth", deprecated=False, deprecated_at=None) for i in range(3)
+        ]
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -2463,7 +2465,8 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
 
-        assert mock_gateway.tools == []
+        assert len(mock_gateway.tools) == 3
+        assert all(tool.deprecated is True for tool in mock_gateway.tools)
 
     @pytest.mark.asyncio
     async def test_update_gateway_url_initialization_failure(self, gateway_service, mock_gateway, test_db):
@@ -3302,13 +3305,13 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_non_authcode_empty_result_still_cleans(self, gateway_service, mock_gateway, test_db):
-        """Non-auth_code gateway with empty results must still run stale cleanup (tools list filtered)."""
+        """Non-auth_code gateway with empty results must still mark stale tools deprecated."""
         mock_gateway.enabled = True
         mock_gateway.reachable = False
         mock_gateway.oauth_config = None  # NOT authorization_code
         mock_gateway.auth_type = "bearer"
 
-        tool = MagicMock(spec=DbTool, id=200, name="tool-1", original_name="tool-1")
+        tool = MagicMock(spec=DbTool, id=200, name="tool-1", original_name="tool-1", created_via="health_check", deprecated=False, deprecated_at=None)
         mock_gateway.tools = [tool]
         mock_gateway.resources = []
         mock_gateway.prompts = []
@@ -3316,9 +3319,6 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=mock_gateway),  # SELECT
-                Mock(),  # DELETE ToolMetric
-                Mock(),  # DELETE server_tool_association
-                Mock(),  # DELETE DbTool
                 _make_execute_result(rowcount=1),  # UPDATE tools reachable
             ]
         )
@@ -3336,19 +3336,20 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
 
-        # For non-auth_code, in-memory list gets filtered to empty (stale tool removed)
-        assert len(mock_gateway.tools) == 0
+        # For non-auth_code, the stale tool is marked deprecated instead of being deleted
+        assert len(mock_gateway.tools) == 1
+        assert mock_gateway.tools[0].deprecated is True
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_authcode_partial_result_still_cleans(self, gateway_service, mock_gateway, test_db):
-        """Auth_code gateway with partial results (one tool returned) must still clean stale items."""
+        """Auth_code gateway with partial results (one tool returned) must still deprecate stale items."""
         mock_gateway.enabled = True
         mock_gateway.reachable = False
         mock_gateway.oauth_config = {"grant_type": "authorization_code"}
         mock_gateway.auth_type = "oauth"
 
-        stale_tool = MagicMock(spec=DbTool, id=200, name="stale-tool", original_name="stale-tool")
-        kept_tool = MagicMock(spec=DbTool, id=201, name="kept-tool", original_name="kept-tool")
+        stale_tool = MagicMock(spec=DbTool, id=200, name="stale-tool", original_name="stale-tool", created_via="health_check", deprecated=False, deprecated_at=None)
+        kept_tool = MagicMock(spec=DbTool, id=201, name="kept-tool", original_name="kept-tool", created_via="health_check", deprecated=False, deprecated_at=None)
         mock_gateway.tools = [stale_tool, kept_tool]
         mock_gateway.resources = []
         mock_gateway.prompts = []
@@ -3360,9 +3361,6 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=mock_gateway),  # SELECT
-                Mock(),  # DELETE ToolMetric (stale-tool)
-                Mock(),  # DELETE server_tool_association
-                Mock(),  # DELETE DbTool
                 _make_execute_result(rowcount=1),  # UPDATE tools reachable
             ]
         )
@@ -3382,9 +3380,11 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
 
-        # Stale cleanup ran — stale-tool removed, kept-tool preserved
-        assert len(mock_gateway.tools) == 1
-        assert mock_gateway.tools[0].original_name == "kept-tool"
+        # Stale handling ran — stale-tool is deprecated, kept-tool is unchanged
+        assert len(mock_gateway.tools) == 2
+        tools_by_name = {tool.original_name: tool for tool in mock_gateway.tools}
+        assert tools_by_name["stale-tool"].deprecated is True
+        assert tools_by_name["kept-tool"].deprecated is False
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_authcode_empty_result_preserves_resources_prompts(self, gateway_service, mock_gateway, test_db):
@@ -6820,9 +6820,13 @@ async def test_fetch_tools_after_oauth_replaces_stale_discovered_alias(gateway_s
     await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
 
     persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
-    assert len(persisted) == 1
-    assert persisted[0].id != stale_id
-    assert (persisted[0].original_name, persisted[0].name, persisted[0].created_via) == ("search", invocation_name, "oauth")
+    by_id = {tool.id: tool for tool in persisted}
+    assert stale_id in by_id
+    assert by_id[stale_id].deprecated is True
+    assert by_id[stale_id].original_name == "local_lookup"
+    newcomers = [tool for tool in persisted if tool.id != stale_id]
+    assert len(newcomers) == 1
+    assert (newcomers[0].original_name, newcomers[0].name, newcomers[0].created_via) == ("search", invocation_name, "oauth")
 
 
 @pytest.mark.asyncio
@@ -6941,20 +6945,20 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     gateway.oauth_config = {"grant_type": "authorization_code"}
     gateway.transport = "sse"
     gateway.tools = [
-        SimpleNamespace(id=1, original_name="old-tool", created_via="oauth", name="gw-old-tool", visibility="public", team_id=None, owner_email=None),
-        SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None),
-        SimpleNamespace(id=7, original_name="ui-tool", created_via="ui", name="gw-ui-tool", visibility="public", team_id=None, owner_email=None),
-        SimpleNamespace(id=10, original_name="notify-tool", created_via="notification_service", name="gw-notify-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=1, original_name="old-tool", created_via="oauth", name="gw-old-tool", visibility="public", team_id=None, owner_email=None, deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None, deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=7, original_name="ui-tool", created_via="ui", name="gw-ui-tool", visibility="public", team_id=None, owner_email=None, deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=10, original_name="notify-tool", created_via="notification_service", name="gw-notify-tool", visibility="public", team_id=None, owner_email=None, deprecated=False, deprecated_at=None),
     ]
     gateway.resources = [
-        SimpleNamespace(id=3, uri="old://res", created_via="oauth"),
-        SimpleNamespace(id=4, uri="keep://res", created_via="oauth"),
-        SimpleNamespace(id=8, uri="api://res", created_via="api"),
+        SimpleNamespace(id=3, uri="old://res", created_via="oauth", deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=4, uri="keep://res", created_via="oauth", deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=8, uri="api://res", created_via="api", deprecated=False, deprecated_at=None),
     ]
     gateway.prompts = [
-        SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"),
-        SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth"),
-        SimpleNamespace(id=9, original_name="ui-prompt", created_via="ui"),
+        SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth", deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth", deprecated=False, deprecated_at=None),
+        SimpleNamespace(id=9, original_name="ui-prompt", created_via="ui", deprecated=False, deprecated_at=None),
     ]
     gateway.capabilities = {}
     gateway.last_seen = None
@@ -7037,19 +7041,26 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
         result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
-    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
-    assert {resource.uri for resource in gateway.resources} == ({"api://res"} if partial_catalog else {"keep://res", "api://res"})
-    assert {prompt.original_name for prompt in gateway.prompts} == ({"ui-prompt"} if partial_catalog else {"keep-prompt", "ui-prompt"})
+    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool", "old-tool", "notify-tool"}
+    tools_by_name = {tool.original_name: tool for tool in gateway.tools}
+    assert tools_by_name["old-tool"].deprecated is True
+    assert tools_by_name["notify-tool"].deprecated is True
+    assert tools_by_name["keep-tool"].deprecated is False
+    assert tools_by_name["ui-tool"].deprecated is False
+    assert {resource.uri for resource in gateway.resources} == {"old://res", "keep://res", "api://res"}
+    resources_by_uri = {resource.uri: resource for resource in gateway.resources}
+    assert resources_by_uri["old://res"].deprecated is True
+    assert resources_by_uri["keep://res"].deprecated is bool(partial_catalog)
+    assert resources_by_uri["api://res"].deprecated is False
+    assert {prompt.original_name for prompt in gateway.prompts} == {"old-prompt", "keep-prompt", "ui-prompt"}
+    prompts_by_name = {prompt.original_name: prompt for prompt in gateway.prompts}
+    assert prompts_by_name["old-prompt"].deprecated is True
+    assert prompts_by_name["keep-prompt"].deprecated is bool(partial_catalog)
+    assert prompts_by_name["ui-prompt"].deprecated is False
     assert "preserving existing items" not in caplog.text
 
     deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
-    deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
-    # notify-tool carries created_via="notification_service", which MCP_SYNC_CREATED_VIA_VALUES
-    # treats as MCP-discovered, so a stale one is pruned like any other discovered entry.
-    assert deleted_ids[DbTool.__tablename__] == {1, 10}
-    assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
-    assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
-    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6, 10} if partial_catalog else {1, 3, 5, 10})
+    assert deletes == []
 
 
 # ---------------------------------------------------------------------------
@@ -10138,7 +10149,7 @@ class TestUpdateGatewayAdvanced:
 
     @pytest.mark.asyncio
     async def test_update_stale_tools_cleaned_up(self, gateway_service, mock_gateway, monkeypatch):
-        """Stale tools/resources/prompts are deleted during update."""
+        """Stale tools/resources/prompts are marked deprecated during update."""
         db = MagicMock()
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         mock_gateway.auth_type = None
@@ -10962,7 +10973,7 @@ class TestSetGatewayStateActivation:
 
     @pytest.mark.asyncio
     async def test_activate_with_stale_cleanup(self, gateway_service, mock_gateway, monkeypatch):
-        """Activating gateway refreshes tools and cleans stale ones."""
+        """Activating gateway refreshes tools and deprecates stale ones."""
         db = MagicMock()
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         mock_gateway.enabled = False
@@ -12431,16 +12442,16 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
 
 class TestStaleCatalogPruning:
-    """Prune safelist: rows created by automated MCP sync paths are removable, user-created rows are not."""
+    """Safelist: rows created by automated MCP sync paths are deprecated when stale; user-created rows are not."""
 
     def test_notification_service_rows_are_prunable(self):
-        """A stale tool ingested via a change notification must be pruned; user-created rows must survive."""
+        """A stale tool ingested via a change notification must be deprecated; user-created rows stay active."""
         assert "notification_service" in MCP_SYNC_CREATED_VIA_VALUES
         assert "api" not in MCP_SYNC_CREATED_VIA_VALUES
         assert "ui" not in MCP_SYNC_CREATED_VIA_VALUES
 
-        stale_notif = MagicMock(id="t-notif", original_name="gone_tool", created_via="notification_service")
-        user_made = MagicMock(id="t-ui", original_name="user_tool", created_via="ui")
+        stale_notif = MagicMock(id="t-notif", original_name="gone_tool", created_via="notification_service", deprecated=False, deprecated_at=None)
+        user_made = MagicMock(id="t-ui", original_name="user_tool", created_via="ui", deprecated=False, deprecated_at=None)
         gateway = MagicMock()
         gateway.tools = [stale_notif, user_made]
         gateway.resources = []
@@ -12464,8 +12475,12 @@ class TestStaleCatalogPruning:
             stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
         )
 
-        assert result.tools_removed == 1
-        assert gateway.tools == [user_made]  # ui-created row survives the prune
+        assert result.tools_removed == 0
+        assert result.tools_deprecated == 1
+        assert stale_notif.deprecated is True
+        assert stale_notif.deprecated_at is not None
+        assert user_made.deprecated is False
+        assert gateway.tools == [stale_notif, user_made]  # both rows stay; only the MCP-synced one is deprecated
 
 
 class TestGatewayImpactPreviewTeamResolution:
