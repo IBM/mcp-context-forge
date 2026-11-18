@@ -7,6 +7,8 @@ Unit tests for mcpgateway/tools/builder/build_hooks.py.
 """
 
 # Standard
+from importlib.metadata import PackageNotFoundError, version
+import importlib.util
 import os
 import subprocess
 import sys
@@ -26,9 +28,18 @@ from mcpgateway.tools.builder.build_hooks import BuildPyWithUI
 
 
 def _has_build_module() -> bool:
-    """Check if the PyPA build frontend is executable."""
-    result = subprocess.run([sys.executable, "-m", "build", "--version"], capture_output=True, text=True)
-    return result.returncode == 0
+    """Check if the PyPA build frontend is importable."""
+    return importlib.util.find_spec("build") is not None
+
+
+def _can_build_without_isolation() -> bool:
+    """Check if the running environment already satisfies the wheel test's build requirements."""
+    try:
+        installed = tuple(int(part) for part in version("setuptools").split(".")[:3])
+    except (PackageNotFoundError, ValueError):
+        return False
+    return installed >= (78, 1, 1)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -341,58 +352,50 @@ mcpgateway = [
 """
 
 
+_WHEEL_BUNDLE_NAME = "bundle-deadbeef.js"
+
+
+def _build_wheel(project_dir: Path) -> Path:
+    """Build a wheel from the minimal project in project_dir; return the .whl path."""
+    dist_dir = project_dir / "dist"
+    env = {k: v for k, v in os.environ.items() if k != "BUILD_UI_ASSETS"}
+    command = [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)]
+    # Trade-off: the host setuptools (>=78.1.1) replaces the isolated build env, which avoids a network install of the
+    # build backend. The real pyproject.toml pins a newer setuptools; this test project does not need it.
+    if _can_build_without_isolation():
+        command.append("--no-isolation")
+    result = subprocess.run(command, check=False, cwd=str(project_dir), env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"wheel build failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    wheels = list(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
+    return wheels[0]
+
+
+@pytest.fixture(scope="module")
+def wheel_names(tmp_path_factory) -> list:
+    """Build a wheel once for the module and return the names of its entries."""
+    project_dir = tmp_path_factory.mktemp("wheel-project")
+    static = project_dir / "mcpgateway" / "static"
+    static.mkdir(parents=True)
+    (project_dir / "mcpgateway" / "__init__.py").write_text("")
+    (static / _WHEEL_BUNDLE_NAME).write_text("// vite bundle")
+    (static / "tailwind.min.css").write_text("/* tailwind */")
+    (static / "secret.txt").write_text("should not ship")
+    (project_dir / "pyproject.toml").write_text(_MINIMAL_PYPROJECT)
+    with zipfile.ZipFile(_build_wheel(project_dir)) as zf:
+        return zf.namelist()
+
+
 @pytest.mark.slow
+@pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
 class TestWheelContents:
-    """Build a real (minimal) wheel and verify UI assets are present inside."""
+    """Verify which UI assets the shared minimal wheel contains."""
 
-    def _build_wheel(self, tmp_path: Path) -> Path:
-        """Build a wheel from a minimal project in tmp_path; return the .whl path."""
-        dist_dir = tmp_path / "dist"
-        env = {k: v for k, v in os.environ.items() if k != "BUILD_UI_ASSETS"}
-        result = subprocess.run(
-            [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)],
-            cwd=str(tmp_path),
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, f"wheel build failed:\n{result.stderr}"
-        wheels = list(dist_dir.glob("*.whl"))
-        assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
-        return wheels[0]
+    def test_wheel_contains_bundle_js(self, wheel_names):
+        assert any(_WHEEL_BUNDLE_NAME in n for n in wheel_names), f"{_WHEEL_BUNDLE_NAME} not found in wheel: {wheel_names}"
 
-    def _setup_project(self, tmp_path: Path, *, bundle_name: str = "bundle-abc123.js") -> None:
-        """Create a minimal package tree with pre-seeded UI assets."""
-        static = tmp_path / "mcpgateway" / "static"
-        static.mkdir(parents=True)
-        (tmp_path / "mcpgateway" / "__init__.py").write_text("")
-        (static / bundle_name).write_text("// vite bundle")
-        (static / "tailwind.min.css").write_text("/* tailwind */")
-        (tmp_path / "pyproject.toml").write_text(_MINIMAL_PYPROJECT)
+    def test_wheel_contains_tailwind_css(self, wheel_names):
+        assert any("tailwind.min.css" in n for n in wheel_names), f"tailwind.min.css not found in wheel: {wheel_names}"
 
-    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
-    def test_wheel_contains_bundle_js(self, tmp_path):
-        bundle_name = "bundle-deadbeef.js"
-        self._setup_project(tmp_path, bundle_name=bundle_name)
-        wheel = self._build_wheel(tmp_path)
-        with zipfile.ZipFile(wheel) as zf:
-            names = zf.namelist()
-        assert any(bundle_name in n for n in names), f"{bundle_name} not found in wheel: {names}"
-
-    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
-    def test_wheel_contains_tailwind_css(self, tmp_path):
-        self._setup_project(tmp_path)
-        wheel = self._build_wheel(tmp_path)
-        with zipfile.ZipFile(wheel) as zf:
-            names = zf.namelist()
-        assert any("tailwind.min.css" in n for n in names), f"tailwind.min.css not found in wheel: {names}"
-
-    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
-    def test_wheel_excludes_files_outside_globs(self, tmp_path):
-        self._setup_project(tmp_path)
-        static = tmp_path / "mcpgateway" / "static"
-        (static / "secret.txt").write_text("should not ship")
-        wheel = self._build_wheel(tmp_path)
-        with zipfile.ZipFile(wheel) as zf:
-            names = zf.namelist()
-        assert not any("secret.txt" in n for n in names)
+    def test_wheel_excludes_files_outside_globs(self, wheel_names):
+        assert not any("secret.txt" in n for n in wheel_names)

@@ -19,7 +19,6 @@ import asyncio
 import base64
 from datetime import datetime
 import logging
-import os
 from pathlib import Path
 import sys
 from typing import Any, Dict, Optional
@@ -31,6 +30,7 @@ import orjson
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.config import settings
+from mcpgateway.config_sections import ClientAuthSettings
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +54,13 @@ async def get_auth_token() -> Optional[str]:
         Authentication token string or None if not configured
     """
     # Try environment variable first (preferred)
-    token = os.getenv("MCPGATEWAY_BEARER_TOKEN")
-    if token:
-        return token
+    token = ClientAuthSettings().mcpgateway_bearer_token
+    if token and token.get_secret_value():
+        return token.get_secret_value()
 
     # Fallback to basic auth only if enabled and configured
     if settings.api_allow_basic_auth and settings.basic_auth_user and settings.basic_auth_password:
-        creds = base64.b64encode(f"{settings.basic_auth_user}:{settings.basic_auth_password}".encode()).decode()
+        creds = base64.b64encode(f"{settings.basic_auth_user}:{settings.basic_auth_password.get_secret_value()}".encode()).decode()
         return f"Basic {creds}"
 
     return None

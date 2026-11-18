@@ -48,10 +48,9 @@ data:
         keepalive 32;
       }
 
-      # A2A API: prefer Rust sidecar when enabled, fallback to Python gateway.
+      # A2A API uses the Python gateway.
       upstream a2a_upstream {
-        server {{ $gatewayServiceName }}:8788;
-        server {{ $gatewayServiceName }}:{{ $gatewayServicePort }} backup;
+        server {{ $gatewayServiceName }}:{{ $gatewayServicePort }};
         keepalive 32;
       }
 

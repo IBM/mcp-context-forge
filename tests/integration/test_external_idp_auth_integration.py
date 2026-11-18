@@ -59,11 +59,12 @@ async def test_g1_real_signature_valid_and_tampered(monkeypatch, rsa_keypair):
     prov.api_audience = aud
     prov.is_enabled = True
     prov.trusted_for_api_auth = True
+    prov.ca_certificate = None
     prov.id = "kc"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
     # Patch ONLY discovery + JWKS key resolution; the signature/aud/exp/iss checks run for real.
-    async def fake_discovery(iss):
+    async def fake_discovery(iss, *_):
         return {"jwks_uri": f"{issuer}/protocol/openid-connect/certs", "issuer": issuer}
 
     monkeypatch.setattr(vc, "_discover_oidc_metadata", fake_discovery)
@@ -72,7 +73,7 @@ async def test_g1_real_signature_valid_and_tampered(monkeypatch, rsa_keypair):
         key = rsa_keypair.public_key()
 
     class FakeJWKClient:
-        def __init__(self, uri):
+        def __init__(self, uri, **_):
             pass
 
         def get_signing_key_from_jwt(self, tok):
@@ -100,7 +101,7 @@ async def test_g1_real_signature_valid_and_tampered(monkeypatch, rsa_keypair):
         must reject the mismatch.
         """
 
-        def __init__(self, uri):
+        def __init__(self, uri, **_):
             pass
 
         def get_signing_key_from_jwt(self, tok):
@@ -131,10 +132,11 @@ async def test_g6_wrong_audience_rejected(monkeypatch, rsa_keypair):
     prov.api_audience = "mcp-gateway"
     prov.is_enabled = True
     prov.trusted_for_api_auth = True
+    prov.ca_certificate = None
     prov.id = "kc"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_discovery(iss):
+    async def fake_discovery(iss, *_):
         return {"jwks_uri": f"{issuer}/certs", "issuer": issuer}
 
     monkeypatch.setattr(vc, "_discover_oidc_metadata", fake_discovery)
@@ -143,7 +145,7 @@ async def test_g6_wrong_audience_rejected(monkeypatch, rsa_keypair):
         key = rsa_keypair.public_key()
 
     class FakeJWKClient:
-        def __init__(self, uri):
+        def __init__(self, uri, **_):
             pass
 
         def get_signing_key_from_jwt(self, tok):

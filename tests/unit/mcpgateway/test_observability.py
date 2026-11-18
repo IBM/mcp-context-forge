@@ -7,6 +7,7 @@ Tests for observability module.
 """
 
 # Standard
+import asyncio
 import inspect
 import logging
 import os
@@ -29,6 +30,7 @@ from mcpgateway.observability import (
     otel_context_active,
     otel_tracing_enabled,
     trace_operation,
+    upstream_request_context,
 )
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
@@ -523,6 +525,55 @@ class TestObservability:
         assert "tracestate" not in lowered
         assert "baggage" not in lowered
         assert result["Authorization"] == "Bearer keep"
+
+    @pytest.mark.parametrize(
+        ("mark_ok", "expected_code", "expect_error_attributes"),
+        [(True, "OK", False), (False, "ERROR", True)],
+        ids=["ok_status_wins", "unset_status_errors"],
+    )
+    def test_create_span_cancellation_respects_ok_status(self, monkeypatch, mark_ok, expected_code, expect_error_attributes):
+        """A cancellation leaves a span the caller marked OK untouched and still fails any other span."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("cancel-status-test"))
+
+        with pytest.raises(asyncio.CancelledError):
+            with create_span("cancelled.op", {"op": "x"}) as span:
+                if mark_ok:
+                    observability.set_span_ok(span)
+                raise asyncio.CancelledError()
+
+        (finished,) = exporter.get_finished_spans()
+        assert finished.status.status_code.name == expected_code
+        assert ("error" in finished.attributes) is expect_error_attributes
+
+    def test_create_span_ordinary_exception_marks_span_failed(self, monkeypatch):
+        """An ordinary exception still marks the span as failed."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("error-status-test"))
+
+        with pytest.raises(RuntimeError):
+            with create_span("failing.op", {"op": "x"}):
+                raise RuntimeError("boom")
+
+        (finished,) = exporter.get_finished_spans()
+        assert finished.status.status_code.name == "ERROR"
+        assert finished.attributes["error"] is True
+
+    def test_set_span_ok_is_noop_without_span(self):
+        """``set_span_ok`` ignores a missing span."""
+        observability.set_span_ok(None)
 
     @pytest.mark.asyncio
     async def test_a2a_request_adopts_incoming_w3c_parent(self, monkeypatch):
@@ -1072,3 +1123,11 @@ class TestLegacyInstanaContextCompat:
         monkeypatch.setitem(sys.modules, "instana.span_context", span_context_mod)
         assert observability.ensure_legacy_instana_context_compat() is False
         assert InstanaTracer.start_span is print
+
+
+def test_upstream_request_context_is_a_noop_without_otel_baggage(monkeypatch):
+    """Without OTEL baggage support the context manager yields without touching the context."""
+    monkeypatch.setattr(observability, "otel_baggage", None)
+    with upstream_request_context():
+        reached = True
+    assert reached

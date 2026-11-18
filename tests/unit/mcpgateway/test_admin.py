@@ -2183,21 +2183,21 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", user_id="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", user_id="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user", user_id="test-user")
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_error_handlers(self, mock_toggle_status, mock_request, mock_db):
@@ -3881,6 +3881,45 @@ class TestAdminGatewayRoutes:
         call_args = mock_update_gateway.call_args
         gateway_update = call_args[1].get("gateway") or call_args[0][2]
         assert gateway_update.team_id == existing_team_id
+
+    @pytest.mark.parametrize(
+        "stored_auth_type, form_auth_type, expected",
+        [
+            ("sigv4", "", None),
+            ("sigv4", "bearer", "bearer"),
+            ("bearer", "", ""),
+        ],
+        ids=["sigv4-empty-keeps-stored", "sigv4-explicit-switch-allowed", "other-type-empty-still-clears"],
+    )
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_empty_auth_type_keeps_sigv4(self, mock_update_gateway, mock_request, mock_db, monkeypatch, stored_auth_type, form_auth_type, expected):
+        """An empty auth_type from the edit form must not clear a stored SigV4 gateway."""
+        form = {"name": "gw", "url": "http://example.com:9000/mcp", "transport": "STREAMABLEHTTP", "visibility": "private", "auth_type": form_auth_type}
+        if form_auth_type == "bearer":
+            form["auth_token"] = "new-token"  # pragma: allowlist secret
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+
+        mock_existing_gw = MagicMock()
+        mock_existing_gw.team_id = "team-1"
+        mock_existing_gw.auth_type = stored_auth_type
+        mock_db.get.return_value = mock_existing_gw
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        result = await admin_edit_gateway("gateway-99", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        call_args = mock_update_gateway.call_args
+        gateway_update = call_args[1].get("gateway") or call_args[0][2]
+        assert gateway_update.auth_type == expected
+        assert gateway_update.sigv4_config is None
 
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
@@ -8020,6 +8059,20 @@ class TestRegistrationMethodAdminForm:
         config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
         assert "registration_method" not in config
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"), [("https://idp.example.com", "https://idp.example.com"), (" https://a.example.com, https://b.example.com ", ["https://a.example.com", "https://b.example.com"])]
+    )
+    async def test_assemble_token_issuer(self, raw, expected):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_token_issuer": raw}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["token_issuer"] == expected
+        assert config["issuer"] == "https://as.example.com"
+
+    async def test_assemble_omits_blank_token_issuer(self):
+        fields = {"oauth_grant_type": "authorization_code", "oauth_issuer": "https://as.example.com", "oauth_token_issuer": "  "}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "token_issuer" not in config
+
 
 class TestTokenExchangeAdminForms:
     """Admin UI form handling for token-exchange gateways."""
@@ -8039,6 +8092,12 @@ class TestTokenExchangeAdminForms:
             "subject_token_source": "inbound_user_jwt",
             "token_endpoint_auth_method": "client_secret_post",
         }
+
+    async def test_assemble_keeps_resource_for_a2a_client_credentials_form(self):
+        """A2A form handlers assemble ``oauth_resource`` into ``oauth_config["resource"]``."""
+        fields = {"oauth_grant_type": "client_credentials", "oauth_client_id": "c", "oauth_resource": "https://agent.example.com"}
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["resource"] == "https://agent.example.com"
 
     @pytest.mark.parametrize("include_resource", [True, False])
     async def test_assemble_ignores_token_exchange_fields_for_other_grants(self, include_resource):
@@ -13044,6 +13103,32 @@ async def test_admin_servers_partial_html_renders(monkeypatch, mock_request, moc
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_servers_partial_html_eager_loads_interfaces(monkeypatch, mock_request, mock_db):
+    """The partial loads interfaces with the servers, so rendering each row runs no extra query."""
+    paginate = AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": make_pagination_meta(), "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate)
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
+
+    mock_request.headers = {}
+    await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    query = next(arg for arg in [*paginate.call_args.args, *paginate.call_args.kwargs.values()] if hasattr(arg, "_with_options"))
+    assert any("Server.interfaces" in str(getattr(option, "path", "")) for option in query._with_options)
 
 
 @pytest.mark.asyncio
@@ -19043,10 +19128,10 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com", "user_id": "u-1"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#tools"
-    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True)  # pragma: allowlist secret
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True, user_id="u-1")  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -19099,10 +19184,10 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com", "user_id": "u-1"})
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#gateways"
-    mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
+    mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com", user_id="u-1")
 
 
 @pytest.mark.asyncio
@@ -20128,7 +20213,7 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",
@@ -20163,6 +20248,47 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     assert agent_data.oauth_config["audience"] == "api.atlassian.com"
     assert agent_data.oauth_config["client_id"] == "client-id"
     assert agent_data.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
+
+
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_does_not_log_form_secrets(monkeypatch, mock_db, caplog):
+    """The creation handler logs form field names, never values such as the OAuth client secret."""
+    secret = "plaintext-client-secret-for-log-check"  # pragma: allowlist secret
+    form_data = FakeForm(
+        {
+            "name": "Agent_Log_Check",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_client_id": "client-id",
+            "oauth_client_secret": secret,
+            "oauth_config": json.dumps({"grant_type": "client_credentials", "client_id": "client-id", "client_secret": secret}),
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    with caplog.at_level("DEBUG", logger="mcpgateway.admin"):
+        await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+
+    assert secret not in caplog.text
+    assert "oauth_client_secret" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -20404,7 +20530,7 @@ async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "name": "Agent_With_Audience",
             "endpoint_url": "http://agent.example.com",
             "auth_type": "oauth",
-            "oauth_grant_type": "authorization_code",
+            "oauth_grant_type": "client_credentials",
             "oauth_client_id": "client-id",
             "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",

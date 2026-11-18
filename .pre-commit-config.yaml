@@ -97,7 +97,7 @@ repos:
         entry: '\([A-Z][a-z]+,?\s+\d{4}\)'
         language: pygrep
         types: [text]
-        exclude: ^\.pre-commit-config\.yaml$
+        exclude: ^(\.pre-commit-config\.yaml|\.agents/skills/asd-ste100/)
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
       - id: forbid-source-placeholders
@@ -117,7 +117,7 @@ repos:
         entry: '````+'
         language: pygrep
         types: [text]
-        exclude: ^\.pre-commit-config\.yaml$
+        exclude: ^(\.pre-commit-config\.yaml|\.agents/skills/asd-ste100/)
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
       - id: warn-ai-transitions
@@ -128,7 +128,7 @@ repos:
         language: pygrep
         types: [text]
         verbose: true
-        exclude: ^\.pre-commit-config\.yaml$
+        exclude: ^(\.pre-commit-config\.yaml|\.agents/skills/asd-ste100/)
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
 
@@ -149,12 +149,15 @@ repos:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
         description: Replaces smart/curly quotes with standard ASCII quotes.
+        exclude: ^\.agents/skills/asd-ste100/
       - id: fix-ligatures
         name: 🔡 Normalize Ligatures
         description: Replaces typographic ligatures with standard characters.
+        exclude: ^\.agents/skills/asd-ste100/
       - id: fix-spaces
         name: ␣ Normalize Unicode Spaces
         description: Replaces non-breaking or exotic space characters with regular spaces.
+        exclude: ^\.agents/skills/asd-ste100/
       - id: forbid-bidi-controls
         priority: 50
         name: 🚫 Forbid BiDi Unicode Controls
@@ -413,7 +416,7 @@ repos:
         description: Ensures mcpgateway/ and tests/ .py files have the correct license header.
         entry: >-
           bash -c '
-          uv run .github/tools/fix_file_headers.py --fix-all "$@";
+          uv run --no-project .github/tools/fix_file_headers.py --fix-all "$@";
           ' --
         language: system
         types: [python]

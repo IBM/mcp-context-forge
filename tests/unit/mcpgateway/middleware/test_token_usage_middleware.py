@@ -28,7 +28,7 @@ async def _make_asgi_call(middleware, scope, receive=None, send=None):
     return send
 
 
-def _trusted_internal_scope(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_scope(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a loopback internal ASGI scope for trust-gate exemption tests."""
     # First-Party
     from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header

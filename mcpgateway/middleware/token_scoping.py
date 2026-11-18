@@ -159,6 +159,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # server-scoped API token whose permissions list does not include gateways.read is
     # rejected at the middleware layer rather than reaching the handler and failing there.
     ("GET", re.compile(r"^/oauth/status(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth per-caller access token retrieval (GET /oauth/token/{gateway_id}); returns a
+    # live bearer token, so it requires gateways.token_read.
+    ("GET", re.compile(r"^/oauth/token(?:$|/)"), Permissions.GATEWAYS_TOKEN_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
@@ -1318,10 +1321,10 @@ class TokenScopingMiddleware:
             if normalized_path == "/":
                 return await call_next(request)
 
-            # Trusted internal Rust -> Python MCP dispatch already carries a
+            # Trusted Python affinity dispatch already carries a
             # normalized auth context and is re-authorized by the internal MCP
-            # handlers. Re-applying token-scoping path checks here would reject
-            # the private /_internal/mcp/* hop for scoped tokens.
+            # dispatcher. Re-applying token-scoping path checks here would reject
+            # the private /_internal/mcp/rpc hop for scoped tokens.
             if self._is_trusted_internal_mcp_runtime_request(request, normalized_path):
                 return await call_next(request)
 
@@ -1458,19 +1461,17 @@ class TokenScopingMiddleware:
             )
 
     def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
-        """Return whether the request is a trusted internal MCP/A2A runtime hop.
+        """Return whether the request is a trusted Python affinity RPC hop.
 
-        Delegates to the shared gate in ``auth_context`` so the trust decision is
-        defined in one place. Unlike the previous local check, this trusts both
-        the ``rust`` and ``affinity`` runtime markers — closing the gap where the
-        in-process session-affinity dispatch was still token-scoped.
+        Delegate to the shared gate in ``auth_context`` to keep middleware and
+        internal dispatch on the same trust boundary.
 
         Args:
             request: Incoming HTTP request.
             normalized_path: Canonicalized request path used for route matching.
 
         Returns:
-            ``True`` when the request is a trusted internal MCP/A2A hop.
+            ``True`` when the request is a trusted Python affinity RPC hop.
         """
         # First-Party
         from mcpgateway.auth_context import is_trusted_internal_mcp_request  # pylint: disable=import-outside-toplevel

@@ -88,7 +88,6 @@ error
 import argparse
 import asyncio
 import logging
-import os
 import random
 import ssl
 import sys
@@ -97,16 +96,16 @@ from typing import Any, Optional
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.config_sections import RedisReadinessSettings
 from mcpgateway.utils.db_isready import _sanitize
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
-# Environment variables
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "30"))
-REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
-REDIS_MAX_BACKOFF_SECONDS = float(os.getenv("REDIS_MAX_BACKOFF_SECONDS", "30"))
-
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+probe_settings = RedisReadinessSettings()
+REDIS_URL = probe_settings.redis_url
+REDIS_MAX_RETRIES = probe_settings.redis_max_retries
+REDIS_RETRY_INTERVAL_MS = probe_settings.redis_retry_interval_ms
+REDIS_MAX_BACKOFF_SECONDS = probe_settings.redis_max_backoff_seconds
+LOG_LEVEL = probe_settings.log_level
 
 
 def wait_for_redis_ready(

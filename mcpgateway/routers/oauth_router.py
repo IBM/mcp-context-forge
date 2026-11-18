@@ -13,6 +13,8 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 import asyncio
+from functools import wraps
+import hashlib
 from html import escape
 import json
 import logging
@@ -36,19 +38,23 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
-from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.routers.email_auth import get_client_ip, get_user_agent
+from mcpgateway.schemas import EmailUserResponse, OAuthAccessTokenResponse
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cimd_service import CimdService
 from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service import GatewayToolNameConflictError
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, STATE_TTL_SECONDS
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.oauth_errors import oauth_failure
+from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -58,6 +64,46 @@ logger = logging.getLogger(__name__)
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
+
+
+def _binding_cookie_name(state: str) -> str:
+    """Return the transaction-specific cookie name."""
+    return "oauth_bind_" + hashlib.sha256(state.encode()).hexdigest()
+
+
+def _binding_cookie_options(request: Request) -> dict:
+    """Return host-only cookie attributes shared by creation and deletion."""
+    return {"path": resolve_root_path(request).rstrip("/") + "/oauth/callback", "httponly": True, "secure": settings.environment == "production" or settings.secure_cookies, "samesite": "lax"}
+
+
+def _set_binding_cookie(response, request: Request, state: str, binding: str):
+    """Attach the browser transaction secret to the initiating response."""
+    response.set_cookie(_binding_cookie_name(state), binding, max_age=STATE_TTL_SECONDS, **_binding_cookie_options(request))
+    return response
+
+
+def _cleanup_binding_cookie(handler):
+    """Delete the transaction cookie from the final callback response."""
+
+    @wraps(handler)
+    async def wrapped(request: Request, *args, **kwargs):
+        """Return the callback response after transaction-cookie cleanup.
+
+        Args:
+            request: Callback request containing transaction cookies.
+            args: Positional callback arguments.
+            kwargs: Named callback arguments.
+
+        Returns:
+            Callback response with the transaction cookie removed.
+        """
+        response = await handler(request, *args, **kwargs)
+        state = kwargs.get("state") or request.query_params.get("state")
+        if isinstance(state, str) and state:
+            response.delete_cookie(_binding_cookie_name(state), **_binding_cookie_options(request))
+        return response
+
+    return wrapped
 
 
 def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
@@ -327,8 +373,9 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
       string or non-empty list of non-empty strings.  Anything else (numbers,
       empty containers, mixed types) is silently dropped so a malformed IdP
       response cannot pollute persisted state.
-    * **Issuer pinning** -- when ``oauth_config["issuer"]`` is configured, the
-      token's ``iss`` claim must match it.  This prevents a stale or misrouted
+    * **Issuer pinning** -- when ``oauth_config["token_issuer"]`` (or, absent
+      that, ``oauth_config["issuer"]``) is configured, the token's ``iss``
+      claim must match it.  This prevents a stale or misrouted
       token from a different AS from injecting an audience for the wrong IdP.
       The check is skipped when no issuer is configured (preserves existing
       behavior for non-OIDC / non-discovery setups).
@@ -370,10 +417,10 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     # ``https://idp.example.com/`` are treated as equivalent (matches the
     # convention used by token_validation_service for issuer comparison).
     # See docstring for the cross-IdP bleed scenario this prevents.
-    configured_issuer = oauth_config.get("issuer")
-    if configured_issuer:
+    expected_issuers = resolve_expected_token_issuers(oauth_config)
+    if expected_issuers:
         token_iss = oauth_result.get("token_iss")
-        if not isinstance(token_iss, str) or token_iss.rstrip("/") != configured_issuer.rstrip("/"):
+        if not isinstance(token_iss, str) or token_iss.rstrip("/") not in expected_issuers:
             logger.debug(
                 "Skipping audience persistence for gateway %s: token iss does not match configured issuer",
                 gateway.name,
@@ -899,12 +946,13 @@ async def initiate_oauth_flow(
         user_context = _build_user_context(current_user, db=db)
 
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db, user_context))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
+        binding = secrets.token_urlsafe(32)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup, browser_binding=binding)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
         # Redirect user to OAuth provider
-        return RedirectResponse(url=auth_data["authorization_url"])
+        return _set_binding_cookie(RedirectResponse(url=auth_data["authorization_url"]), request, auth_data["state"], binding)
 
     except HTTPException:
         raise
@@ -927,6 +975,7 @@ async def initiate_oauth_flow(
         }
     },
 )
+@_cleanup_binding_cookie
 async def oauth_callback(
     request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
@@ -984,20 +1033,41 @@ async def oauth_callback(
         root_path = resolve_root_path(request) if request else ""
         safe_root_path = escape(str(root_path), quote=True)
 
-        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
-        # Resolve the gateway behind the state without consuming it. The error branch needs it
-        # for the issuer check and the code exchange below reuses it.
-        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False) if state else None
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+        def _invalid_state_response() -> HTMLResponse:
+            """Return an HTML error page for invalid or missing OAuth state.
 
-        if error:
-            if gateway and gateway.oauth_config:
-                try:
-                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
-                except OAuthError:
-                    # RFC 9207: discard provider errors when the response issuer does not match.
-                    error = "issuer_mismatch"
-            failure = oauth_failure(error)
+            Returns:
+                HTMLResponse: A 400 error page describing the invalid state.
+            """
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
+                )
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p>Error: Invalid OAuth state parameter.</p>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
+
+        def _authorization_error_response(provider_error: str) -> HTMLResponse:
+            """Return safe provider-error guidance for the callback.
+
+            Args:
+                provider_error: Provider or internal error code.
+
+            Returns:
+                Popup or HTML response with fixed corrective guidance.
+            """
+            failure = oauth_failure(provider_error)
             error_text = escape(failure.code)
             description_text = escape(failure.message)
             logger.warning("OAuth provider callback failed: %s", failure.code)
@@ -1031,6 +1101,41 @@ async def oauth_callback(
                 status_code=400,
             )
 
+        if not state:
+            if error:
+                return _authorization_error_response(error)
+            logger.warning("OAuth callback missing state parameter")
+            return _invalid_state_response()
+
+        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        # Resolve the gateway behind the state without consuming it. The error branch needs it
+        # for the issuer check and the code exchange below reuses it.
+        gateway_id = await OAuthManager(token_storage=None).resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none() if gateway_id else None
+
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return _invalid_state_response()
+
+        if not gateway:
+            logger.warning("OAuth callback state resolved to unknown gateway id")
+            return _invalid_state_response()
+
+        if not gateway.oauth_config:
+            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
+            return _invalid_state_response()
+
+        state_data = await OAuthManager(token_storage=None).consume_and_validate_authorization_state(gateway_id, state, request.cookies.get(_binding_cookie_name(state)))
+
+        if error:
+            if gateway and gateway.oauth_config:
+                try:
+                    await OAuthManager(token_storage=None).validate_authorization_response_issuer(gateway.oauth_config, iss, gateway_id=gateway_id)
+                except OAuthError:
+                    # RFC 9207: discard provider errors when the response issuer does not match.
+                    error = "issuer_mismatch"
+            return _authorization_error_response(error)
+
         if not code:
             logger.warning("OAuth callback missing authorization code")
             if is_popup:
@@ -1052,52 +1157,7 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        def _invalid_state_response() -> HTMLResponse:
-            """Return an HTML error page for invalid or missing OAuth state.
-
-            Returns:
-                HTMLResponse: A 400 error page describing the invalid state.
-            """
-            if is_popup:
-                return _popup_callback_response(
-                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
-                )
-            return HTMLResponse(
-                content=f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>OAuth Authorization Failed</title></head>
-                <body>
-                    <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Invalid OAuth state parameter.</p>
-                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
-                </body>
-                </html>
-                """,
-                status_code=400,
-            )
-
-        if not state:
-            logger.warning("OAuth callback missing state parameter")
-            return _invalid_state_response()
-
-        # The state was only resolved above, not consumed: complete_authorization_code_flow
-        # validates and consumes it atomically and returns state_data.
-        if not gateway_id:
-            logger.warning("OAuth callback received invalid or unknown state token")
-            return _invalid_state_response()
-
-        if not gateway:
-            logger.warning("OAuth callback state resolved to unknown gateway id")
-            return _invalid_state_response()
-
-        if not gateway.oauth_config:
-            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
-            return _invalid_state_response()
-
-        # SECURITY FIX (TOCTOU): Complete OAuth code exchange WITHOUT token storage first
-        # This atomically consumes state and returns state_data, eliminating the TOCTOU race
-        # from the previous _peek_state_data() approach
+        # Store tokens only after the exchange uses the validated transaction context.
         no_storage_oauth_manager = OAuthManager(token_storage=None)
 
         oauth_config_with_resource = gateway.oauth_config.copy()
@@ -1113,7 +1173,7 @@ async def oauth_callback(
             if origin:
                 oauth_config_with_resource["resource"] = origin
 
-        # Complete flow WITHOUT storing tokens (atomically returns state_data + token_response).
+        # Complete the exchange with the previously consumed transaction context.
         # Pass default_redirect_uri so complete_authorization_code_flow can fall back to it
         # when no redirect_uri was pinned in state (e.g. state stored before pinning existed).
         result = await no_storage_oauth_manager.complete_authorization_code_flow(
@@ -1126,9 +1186,10 @@ async def oauth_callback(
             client_key=gateway.client_key,
             default_redirect_uri=_default_redirect_uri(request),
             iss=iss,
+            validated_state=state_data,
         )
 
-        # Extract state_data from result (was atomically consumed and returned)
+        # Extract the transaction context returned with the token response.
         state_data = result.get("state_data", {})
         app_user_email = state_data.get("app_user_email")
         team_id = state_data.get("team_id")
@@ -1164,6 +1225,7 @@ async def oauth_callback(
         # OAuthManager.complete_authorization_code_flow and
         # token_validation_service._validate_audience for the full trust model.
         if app_user_email and result.get("success"):
+            # First-Party
             from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
 
             token_response = result.get("token_response", {})
@@ -1398,7 +1460,7 @@ async def oauth_callback(
         # Provider exception text can contain tokens or unsafe response bodies.
         failure = oauth_failure(e.error_code)
         logger.error("OAuth callback failed: %s", failure.code)
-        _oauth_user_msg = failure.message
+        _oauth_user_msg = "Invalid OAuth state parameter. Restart authorization." if e.error_code == "invalid_state" else failure.message
         if is_popup:
             return _popup_callback_response(
                 csp_nonce,
@@ -1795,6 +1857,151 @@ async def get_oauth_status_batch(
         results[gateway_id]["user_token_status"] = _token_info_to_status_payload(bulk_token_info.get(gateway_id))
 
     return results
+
+
+def _refuse_token_retrieval(request: Request, gateway_id: str, user_email: str, status_code: int, detail: str, reason: str) -> HTTPException:
+    """Audit a refused token retrieval and build the matching HTTP error.
+
+    Args:
+        request: Incoming request, used for client details.
+        gateway_id: Gateway requested by the caller.
+        user_email: Authenticated caller's email, or ``unknown``.
+        status_code: HTTP status for the error.
+        detail: Error detail returned to the caller.
+        reason: Stable reason code recorded in the audit entry.
+
+    Returns:
+        The ``HTTPException`` for the caller to raise.
+    """
+    _audit_token_retrieval(request, gateway_id, user_email, success=False, reason=reason)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _audit_token_retrieval(request: Request, gateway_id: str, user_email: str, success: bool, reason: Optional[str] = None) -> None:
+    """Record one token retrieval outcome in the audit trail.
+
+    The audit entry never contains token values.
+
+    Args:
+        request: Incoming request, used for client details.
+        gateway_id: Gateway requested by the caller.
+        user_email: Authenticated caller's email, or ``unknown``.
+        success: True when the token was issued.
+        reason: Stable reason code for a refusal.
+    """
+    get_audit_trail_service().log_action(
+        action="gateway.oauth_token_issuance",
+        resource_type="gateway",
+        resource_id=gateway_id,
+        user_id=user_email,
+        user_email=user_email,
+        client_ip=get_client_ip(request),
+        user_agent=get_user_agent(request),
+        request_path=request.url.path,
+        request_method=request.method,
+        success=success,
+        error_message=reason,
+    )
+
+
+@oauth_router.get("/token/{gateway_id}", response_model=OAuthAccessTokenResponse)
+@require_permission(Permissions.GATEWAYS_TOKEN_READ)
+async def get_gateway_oauth_token(
+    gateway_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> OAuthAccessTokenResponse:
+    """Return the caller's own current OAuth access token for a gateway.
+
+    This endpoint is **disabled by default** and must be explicitly enabled via
+    ``OAUTH_TOKEN_RETRIEVAL_ENABLED=true``. It resolves the stored OAuth
+    token for the *authenticated caller's own* session against the given gateway,
+    refreshing it first if it is within ``OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS``
+    (600 seconds by default) of expiring, and returns only the ``access_token`` -- the
+    ``refresh_token`` is never included in the response. Operators configure the threshold
+    server-side within 0–3600 seconds. Callers cannot override it per request.
+    ``SecurityHeadersMiddleware`` marks the response non-cacheable. Every outcome after
+    the feature check is recorded in the audit trail (gateway and user, never the token).
+
+    Args:
+        gateway_id: ID of the gateway whose stored token to resolve.
+        request: Request with token-scoping context, forwarded to gateway access checks.
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        OAuthAccessTokenResponse: ``gateway_id``, ``access_token``, ``token_type``,
+            ``expires_at``, and ``scopes`` for the caller's own token.
+
+    Raises:
+        HTTPException:
+            404 if the feature flag is disabled, the gateway is not found, or no token is stored;
+            400 if the gateway has no OAuth configuration or does not use the Authorization Code grant;
+            401 or 403 if the caller's identity or access is not accepted for this gateway;
+            409 if OAuth reauthorization is required;
+            502 if the provider fails;
+            503 if token storage fails or holds an unreadable token.
+    """
+    if not settings.oauth_token_retrieval_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    app_user_email = get_user_email(current_user)
+
+    gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+    if not gateway:
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 404, "Gateway not found", "gateway_not_found")
+
+    try:
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+    except HTTPException as exc:
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, exc.status_code, exc.detail, "access_denied") from exc
+
+    if not gateway.oauth_config:
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 400, "Gateway is not configured for OAuth", "not_oauth")
+
+    if gateway.oauth_config.get("grant_type") != "authorization_code":
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 400, "Gateway is not configured for Authorization Code flow", "unsupported_grant")
+
+    user_context = _build_user_context(current_user, db=db)
+    try:
+        token_storage = TokenStorageService(db, user_context)
+        token_details = await token_storage.get_user_token_details(gateway_id, app_user_email, threshold_seconds=settings.oauth_token_refresh_threshold_seconds)
+    except TokenReauthorizationRequired as exc:
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 409, "OAuth reauthorization required for this gateway and user", "reauth_required") from exc
+    except OAuthError as exc:
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 502, "OAuth provider could not refresh the access token", "provider_error") from exc
+    except ValueError as exc:
+        logger.error("OAuth stored token is unreadable: %s", type(exc).__name__)
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 503, "Stored OAuth token is unreadable", "token_unreadable") from exc
+    except Exception as exc:
+        # Backend exception messages can contain tokens; log only the exception type.
+        logger.error("OAuth token storage retrieval failed: %s", type(exc).__name__)
+        raise _refuse_token_retrieval(request, gateway_id, app_user_email, 503, "OAuth token storage unavailable", "storage_error") from exc
+    if token_details is None:
+        raise _refuse_token_retrieval(
+            request,
+            gateway_id,
+            app_user_email,
+            404,
+            "No OAuth token found for this gateway and user. Complete the OAuth flow at /oauth/authorize/{gateway_id} first.",
+            "no_token",
+        )
+
+    _audit_token_retrieval(request, gateway_id, app_user_email, success=True)
+    logger.info(
+        "OAuth access token issued for gateway %s, user %s",
+        SecurityValidator.sanitize_log_message(gateway_id),
+        SecurityValidator.sanitize_log_message(app_user_email),
+    )
+
+    return OAuthAccessTokenResponse(
+        gateway_id=gateway_id,
+        access_token=token_details.access_token,
+        token_type=token_details.token_type,
+        expires_at=token_details.expires_at.isoformat() if token_details.expires_at else None,
+        scopes=token_details.scopes,
+    )
 
 
 async def _fetch_tools_via_token_exchange(

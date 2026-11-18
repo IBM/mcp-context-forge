@@ -2993,6 +2993,65 @@ class TestCallA2AAgent:
         assert result == {"result": "ok"}
 
     @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_sends_resolved_token(self, tool_service):
+        """Should resolve the agent-level OAuth token and send it as Authorization."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        resolve = AsyncMock(return_value={"Authorization": "Bearer agent-token"})
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", resolve),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"result": "ok"}
+        resolve.assert_awaited_once_with("agent-1", "oauth-agent", "http://agent.example.com/", agent.oauth_config)
+        sent_headers = {key.lower(): value for key, value in mock_client.post.call_args.kwargs["headers"].items()}
+        assert sent_headers["authorization"] == "Bearer agent-token"
+
+    @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_token_failure_raises_agent_error_without_calling_agent(self, tool_service):
+        """A token failure raises A2AAgentError and the agent receives no request."""
+        # First-Party
+        from mcpgateway.services.a2a_oauth import A2AOAuthError
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_client = AsyncMock()
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            with pytest.raises(A2AAgentError, match="token refused"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_call_a2a_custom_agent(self, tool_service):
         """Should build custom request for non-jsonrpc agent."""
         agent = MagicMock()

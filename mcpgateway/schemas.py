@@ -25,12 +25,13 @@ from enum import Enum
 import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     AnyHttpUrl,
     BaseModel,
@@ -69,6 +70,7 @@ from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRE
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sigv4 import SIGV4_SENSITIVE_KEYS, SigV4ConfigError, validate_sigv4_config
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
@@ -337,6 +339,48 @@ def _reject_token_exchange_keys_outside_token_exchange(v: Optional[Dict[str, Any
     return v
 
 
+def _validate_sigv4_config_input(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate a ``sigv4_config`` payload, keeping masked placeholders on update.
+
+    Args:
+        v: The sigv4_config value, or None.
+
+    Returns:
+        The validated configuration, or None.
+
+    Raises:
+        ValueError: If the configuration is malformed.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("sigv4_config must be an object")
+    placeholders = {key for key in SIGV4_SENSITIVE_KEYS if v.get(key) == settings.masked_auth_value}
+    candidate = {key: ("placeholder-secret" if key in placeholders else value) for key, value in v.items()}
+    try:
+        validate_sigv4_config(candidate)
+    except SigV4ConfigError as exc:
+        raise ValueError(str(exc)) from exc
+    return v
+
+
+def _mask_sigv4_config(sigv4_config: Any) -> Any:
+    """Mask the secret fields of a ``sigv4_config`` dict.
+
+    Args:
+        sigv4_config: The sigv4_config value to mask.
+
+    Returns:
+        The masked copy, or the input when it is not a dict.
+    """
+    if not isinstance(sigv4_config, dict):
+        return sigv4_config
+    return {key: (settings.masked_auth_value if key in SIGV4_SENSITIVE_KEYS and value else value) for key, value in sigv4_config.items()}
+
+
+_MAX_TOKEN_ISSUERS = 5
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -365,6 +409,13 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    raw_token_issuer = v.get("token_issuer")
+    if raw_token_issuer not in (None, ""):
+        token_issuers = raw_token_issuer if isinstance(raw_token_issuer, list) else [raw_token_issuer]
+        if not token_issuers or len(token_issuers) > _MAX_TOKEN_ISSUERS or not all(isinstance(item, str) and item for item in token_issuers):
+            raise ValueError(f"oauth_config.token_issuer must be a URL string or a list of 1-{_MAX_TOKEN_ISSUERS} URL strings")
+        for item in token_issuers:
+            validate_core_url(item, "OAuth config token_issuer")
     _validate_oauth_discovery(v.get("discovery"))
     _validate_oauth_actor_token(v)
     if "redirect_uri_after_oauth" in v:
@@ -382,6 +433,43 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(server, str):
             raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
         validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
+
+
+_A2A_OAUTH_GRANT_TYPE = "client_credentials"
+
+
+def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate the OAuth configuration of an A2A agent.
+
+    The gateway requests an agent-level token with the ``client_credentials`` grant,
+    so ``token_url`` is an outbound target that receives the client secret.
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a URL fails the core URL rules or the grant type is not supported.
+
+    Examples:
+        >>> _validate_a2a_oauth_config(None) is None
+        True
+        >>> _validate_a2a_oauth_config({"grant_type": "client_credentials"})["grant_type"]
+        'client_credentials'
+        >>> _validate_a2a_oauth_config({"grant_type": "authorization_code"})
+        Traceback (most recent call last):
+            ...
+        ValueError: A2A agents support only the client_credentials OAuth grant type, got 'authorization_code'
+    """
+    v = _validate_oauth_config_urls(v)
+    if v is None:
+        return v
+    grant_type = v.get("grant_type", _A2A_OAUTH_GRANT_TYPE)
+    if grant_type != _A2A_OAUTH_GRANT_TYPE:
+        raise ValueError(f"A2A agents support only the {_A2A_OAUTH_GRANT_TYPE} OAuth grant type, got '{grant_type}'")
     return v
 
 
@@ -3642,7 +3730,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, sigv4, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -3657,6 +3745,12 @@ class GatewayCreate(BaseModelWithConfigDict):
         description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
         "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
         "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
+    )
+
+    # AWS Signature V4 configuration
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for auth_type 'sigv4': access_key_id, secret_access_key, region, service and optional session_token. Secrets are stored encrypted.",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3816,6 +3910,19 @@ class GatewayCreate(BaseModelWithConfigDict):
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
 
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_sigv4_config_input(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -3968,11 +4075,34 @@ class GatewayCreate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
+        if auth_type == "sigv4":
+            # SigV4 signs each request; credentials live in sigv4_config, not in a stored header.
+            return None
+
         # Handle no authentication (None or already normalized from "none")
         if auth_type is None or auth_type == "":
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, sigv4, or none.")
+
+    @model_validator(mode="after")
+    def validate_sigv4_auth(self) -> "GatewayCreate":
+        """Require a complete sigv4_config when auth_type is 'sigv4', and reject it otherwise.
+
+        Returns:
+            GatewayCreate: The validated instance.
+
+        Raises:
+            ValueError: If the SigV4 configuration is missing, incomplete or unexpected.
+        """
+        if self.auth_type == "sigv4":
+            if not self.sigv4_config:
+                raise ValueError("sigv4_config is required when auth_type is 'sigv4'")
+            if settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
+                raise ValueError("sigv4_config must carry the real secret_access_key on registration")
+        elif self.sigv4_config:
+            raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")
+        return self
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -4054,6 +4184,25 @@ class GatewayUpdate(BaseModelWithConfigDict):
             The normalised policy, or None when empty.
         """
         return check_tool_validation_policy(v)
+
+    # AWS Signature V4 configuration
+    sigv4_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="AWS SigV4 configuration for auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
+    )
+
+    @field_validator("sigv4_config", mode="before")
+    @classmethod
+    def validate_sigv4_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the SigV4 configuration shape.
+
+        Args:
+            v: The sigv4_config value.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_sigv4_config_input(v)
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -4337,11 +4486,15 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
+        if auth_type == "sigv4":
+            # SigV4 signs each request; credentials live in sigv4_config, not in a stored header.
+            return None
+
         # Handle no authentication (None or already normalized from "none")
         if auth_type is None or auth_type == "":
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, sigv4, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -4490,6 +4643,9 @@ class GatewayRead(BaseModelWithConfigDict):
         None,
         description="How the gateway registered as an OAuth client: auto, cimd, or dcr. Mirrors oauth_config.registration_method; null when none is recorded",
     )
+
+    # AWS Signature V4 configuration (secret fields masked on every read)
+    sigv4_config: Optional[Dict[str, Any]] = Field(None, description="AWS SigV4 configuration. secret_access_key and session_token are masked.")
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -4708,6 +4864,10 @@ class GatewayRead(BaseModelWithConfigDict):
             # One-time auth gateways don't store auth_value
             return self
 
+        if auth_type == "sigv4":
+            # SigV4 gateways keep credentials in sigv4_config; there is no auth_value to decode
+            return self
+
         if auth_type == "query_param":
             # Query param auth is handled by the before validator
             # (auth_query_params from DB model is processed there)
@@ -4791,6 +4951,10 @@ class GatewayRead(BaseModelWithConfigDict):
         # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
         if masked_data.get("oauth_config"):
             masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+
+        # Mask SigV4 secret access key and session token
+        if masked_data.get("sigv4_config"):
+            masked_data["sigv4_config"] = _mask_sigv4_config(masked_data["sigv4_config"])
 
         # SECURITY: Never expose unmasked credentials in API responses
         masked_data["auth_password_unmasked"] = None
@@ -5118,6 +5282,118 @@ def _validate_instructions_length(value: Optional[str]) -> Optional[str]:
     return value
 
 
+class ServerInterfaceInput(BaseModel):
+    """Protocol interface declared on a virtual server through the server create and update schemas."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    protocol: str = Field(..., min_length=1, max_length=50, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", description="Interface protocol, for example 'a2a'")
+    binding: str = Field(..., min_length=1, max_length=255, description="Agent endpoint URL that the interface publishes, for example 'https://agent.example.com/a2a'")
+    version: Optional[str] = Field(None, max_length=20, pattern=r"^[0-9A-Za-z][0-9A-Za-z._+-]*$", description="Protocol version, for example '1.0'")
+    tenant: Optional[str] = Field(None, max_length=255, description="Optional tenant identifier")
+    enabled: bool = Field(True, description="Whether the interface is active")
+
+    @field_validator("binding")
+    @classmethod
+    def validate_binding(cls, v: str) -> str:
+        """Validate the binding as an endpoint URL.
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as a safe URL
+
+        Examples:
+            >>> ServerInterfaceInput.validate_binding("https://8.8.8.8/a2a")
+            'https://8.8.8.8/a2a'
+            >>> try:
+            ...     ServerInterfaceInput.validate_binding("JSONRPC")
+            ... except ValueError:
+            ...     print("rejected")
+            rejected
+        """
+        return validate_core_url(v, "Interface binding")
+
+
+MAX_SERVER_INTERFACES = 10
+
+
+def interface_identity(protocol: str, binding: str) -> tuple[str, str]:
+    """Return the key that identifies an interface within one server.
+
+    The protocol, URL scheme, and host compare case-insensitively. The path and query keep their case.
+
+    Args:
+        protocol: Interface protocol.
+        binding: Interface endpoint URL.
+
+    Returns:
+        The protocol and normalized binding pair.
+
+    Examples:
+        >>> interface_identity("A2A", "HTTPS://Agent.Example.com/Path") == interface_identity("a2a", "https://agent.example.com/Path")
+        True
+        >>> interface_identity("a2a", "https://agent.example.com/Path") == interface_identity("a2a", "https://agent.example.com/path")
+        False
+    """
+    parts = urlsplit(binding)
+    return protocol.lower(), urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
+
+
+def _reject_duplicate_interfaces(interfaces: List["ServerInterfaceInput"]) -> List["ServerInterfaceInput"]:
+    """Reject interface lists that repeat a protocol and binding pair.
+
+    Args:
+        interfaces: Interfaces declared by the caller.
+
+    Returns:
+        The unchanged list.
+
+    Raises:
+        ValueError: If two entries share the same protocol and binding.
+    """
+    seen: set[tuple[str, str]] = set()
+    for item in interfaces:
+        key = interface_identity(item.protocol, item.binding)
+        if key in seen:
+            raise ValueError(f"Duplicate interface for protocol '{item.protocol}' and binding '{item.binding}'")
+        seen.add(key)
+    return interfaces
+
+
+ServerInterfaceList = Annotated[List[ServerInterfaceInput], Field(max_length=MAX_SERVER_INTERFACES), AfterValidator(_reject_duplicate_interfaces)]
+
+
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a server interface."""
+
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool = True
+    config: Optional[Dict[str, Any]] = None
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a server interface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool
+    config: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -5175,6 +5451,7 @@ class ServerCreate(BaseModel):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -5405,6 +5682,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     @field_validator("name")
     @classmethod
@@ -5516,6 +5794,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
+    interfaces: List[ServerInterfaceRead] = Field(default_factory=list, description="Protocol interfaces published by this server")
     metrics: Optional[ServerMetrics] = Field(None, description="Server metrics (may be None in list operations)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
@@ -5967,6 +6246,18 @@ def validate_a2a_card_path(path: str) -> str:
     return path
 
 
+class A2AStoredCardRead(BaseModelWithConfigDict):
+    """The current stored Agent Card of a registered agent, as fetched."""
+
+    version: int = Field(..., description="Stored card version, starting at 1")
+    card: Dict[str, Any] = Field(..., description="Card document as fetched")
+    detected_version: str = Field(..., description="Card format version detected at fetch time: 1.0 or 0.3")
+    source_url: str = Field(..., description="URL the card was fetched from")
+    etag: Optional[str] = Field(None, description="ETag returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds returned with the card")
+    fetched_at: datetime = Field(..., description="When the card was fetched")
+
+
 class A2AFetchCardRequest(BaseModelWithConfigDict):
     """Request to fetch an A2A Agent Card from an endpoint that is not yet registered."""
 
@@ -6050,6 +6341,8 @@ class A2AFetchCardResponse(BaseModelWithConfigDict):
     raw_card: Optional[Dict[str, Any]] = Field(None, description="Card as fetched; omitted when identical to card")
     suggested_agent: Optional[Dict[str, Any]] = Field(None, description="Suggested A2AAgentCreate fields derived from the card")
     warnings: List[str] = Field(default_factory=list, description="Notes on card content that ContextForge could not map")
+    etag: Optional[str] = Field(None, description="ETag the agent returned with the card")
+    max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds the agent returned with the card")
 
 
 class A2AAgentCreate(BaseModel):
@@ -6150,6 +6443,23 @@ class A2AAgentCreate(BaseModel):
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+    card_url: Optional[str] = Field(
+        None,
+        description="Agent Card endpoint or card URL. The gateway fetches the card itself and stores it as fetched; a card supplied by the client is never accepted. Registration fails when no card is found",
+    )
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the OAuth configuration URLs and grant type.
+
+        Args:
+            v: OAuth configuration dict or ``None``.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_a2a_oauth_config(v)
 
     @field_validator("passthrough_headers")
     @classmethod
@@ -6485,6 +6795,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate the OAuth configuration URLs and grant type.
+
+        Args:
+            v: OAuth configuration dict or ``None``.
+
+        Returns:
+            The validated configuration.
+        """
+        return _validate_a2a_oauth_config(v)
 
     @field_validator("passthrough_headers")
     @classmethod
@@ -7352,35 +7675,6 @@ class A2ATaskUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Server Interface Schemas
 # ---------------------------------------------------------------------------
-
-
-class ServerInterfaceCreate(BaseModel):
-    """Schema for creating a server interface."""
-
-    server_id: str
-    protocol: str
-    binding: str
-    version: Optional[str] = None
-    tenant: Optional[str] = None
-    enabled: bool = True
-    config: Optional[Dict[str, Any]] = None
-
-
-class ServerInterfaceRead(BaseModel):
-    """Schema for reading a server interface."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    server_id: str
-    protocol: str
-    binding: str
-    version: Optional[str] = None
-    tenant: Optional[str] = None
-    enabled: bool
-    config: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -9610,6 +9904,22 @@ class PluginStatsResponse(BaseModel):
     plugins_by_mode: Dict[str, int] = Field(default_factory=dict, description="Plugin count by mode")
 
 
+class OAuthAccessTokenResponse(BaseModel):
+    """Response for ``GET /oauth/token/{gateway_id}``.
+
+    The model has no ``refresh_token`` field and forbids extra fields,
+    so a refresh token cannot reach the response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_id: str = Field(..., description="Gateway the access token belongs to")
+    access_token: str = Field(..., description="The caller's current OAuth access token")
+    token_type: str = Field(..., description="Type of the stored token, always Bearer")
+    expires_at: Optional[str] = Field(None, description="ISO 8601 expiry of the access token, or null when the provider gave no lifetime")
+    scopes: Optional[List[str]] = Field(None, description="Scopes granted to the access token")
+
+
 # MCP Server Catalog Schemas
 
 
@@ -10066,7 +10376,7 @@ class ObservabilitySpanBase(BaseModel):
     start_time: datetime = Field(..., description="Span start timestamp")
     end_time: Optional[datetime] = Field(None, description="Span end timestamp")
     duration_ms: Optional[float] = Field(None, description="Span duration in milliseconds")
-    status: str = Field("unset", description="Span status (unset, ok, error)")
+    status: str = Field("unset", description="Span status (unset, ok, error, cancelled)")
     status_message: Optional[str] = Field(None, description="Status message")
     attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Span attributes")
     resource_name: Optional[str] = Field(None, description="Resource name")

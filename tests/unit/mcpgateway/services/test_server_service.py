@@ -915,6 +915,24 @@ class TestServerService:
         assert mock_server.owner_email == original_owner
 
     @pytest.mark.asyncio
+    async def test_update_server_audit_records_interface_count_without_urls(self, server_service, mock_server):
+        """The update audit entry names the interface change by count and never logs the binding URLs."""
+        db = MagicMock()
+        db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=mock_server))])
+        mock_server.interfaces = []
+        server_service._notify_server_updated = AsyncMock()
+        server_service._audit_trail = MagicMock()
+        server_service.convert_server_to_read = Mock(return_value=MagicMock(name="server_read"))
+
+        update = ServerUpdate(interfaces=[{"protocol": "a2a", "binding": "https://8.8.8.8/a2a"}])
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(db, "550e8400e29b41d4a716446655440001", update, "user@example.com")  # pragma: allowlist secret
+
+        details = server_service._audit_trail.log_action.call_args.kwargs["details"]
+        assert details["changes"] == "interfaces: 1"
+        assert "8.8.8.8" not in str(details)
+
+    @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
         # Standard
         import types
@@ -2024,6 +2042,7 @@ class TestServerService:
             associated_tools = None
             associated_resources = None
             associated_prompts = None
+            interfaces = None
             tags = None
             oauth_enabled = None
             oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}  # pragma: allowlist secret

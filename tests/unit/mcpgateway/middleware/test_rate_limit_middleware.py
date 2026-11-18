@@ -22,7 +22,7 @@ def server_keys(server, pattern):
     return fakeredis.FakeRedis(server=server).keys(pattern)
 
 
-def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_request(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
 
@@ -798,6 +798,10 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware._get_tier_name("/oauth/authorize")
 
         assert tier == "HIGH"
+
+    def test_tier_name_high_oauth_token_retrieval(self, middleware):
+        """GET /oauth/token/{gateway_id} is rate limited in the HIGH tier."""
+        assert middleware._get_tier_name("/oauth/token/gateway123", "GET") == "HIGH"
 
     def test_tier_name_critical_sso(self, middleware):
         """Test tier for SSO auth endpoints."""

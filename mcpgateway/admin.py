@@ -75,6 +75,7 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+    get_user_id as get_canonical_user_id,
     import_envelope_includes_roots,
     is_unrestricted_platform_admin,
     selective_selection_includes_roots,
@@ -1112,6 +1113,7 @@ async def _assemble_actor_from_fields(fields: Any, *, encrypt_secret: bool) -> O
 
 _CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
     "oauth_issuer": "issuer",
+    "oauth_token_issuer": "token_issuer",
     "oauth_token_url": "token_url",
     "oauth_authorization_url": "authorization_url",
     "oauth_redirect_uri": "redirect_uri",
@@ -1137,8 +1139,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
       :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
       (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
       Pass ``include_resource=False`` for entity types that do not consume
-      ``oauth_config["resource"]`` (A2A agents) so the value is neither
-      assembled nor able to trigger assembly on its own.
+      ``oauth_config["resource"]`` so the value is neither assembled nor able
+      to trigger assembly on its own.
     * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
       (UI edit/add handlers); ``False`` stores it as submitted (the gateway
       create path, where encryption happens downstream in the service layer).
@@ -1155,6 +1157,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     """
     oauth_grant_type = str(fields.get("oauth_grant_type", ""))
     oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_issuers = str(fields.get("oauth_token_issuer", "")).replace(",", " ").split()
     oauth_token_url = str(fields.get("oauth_token_url", ""))
     oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
     oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
@@ -1177,6 +1180,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["grant_type"] = oauth_grant_type
     if oauth_issuer:
         oauth_config["issuer"] = oauth_issuer
+    if oauth_token_issuers:
+        oauth_config["token_issuer"] = oauth_token_issuers[0] if len(oauth_token_issuers) == 1 else oauth_token_issuers
     if oauth_token_url:
         oauth_config["token_url"] = oauth_token_url
     if oauth_authorization_url:
@@ -3340,6 +3345,7 @@ async def admin_servers_partial_html(
         with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
         selectinload(DbServer.a2a_agents),
         with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+        selectinload(DbServer.interfaces),
         joinedload(DbServer.email_team),
     )
 
@@ -4144,7 +4150,7 @@ async def admin_set_gateway_state(
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
 
     try:
-        await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
+        await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_code = "permission_denied"
@@ -12629,6 +12635,7 @@ async def admin_add_tool(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_canonical_user_id(user),
         )
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -12786,6 +12793,7 @@ async def admin_edit_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
@@ -12966,7 +12974,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
     error_code = None
     try:
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_code = "permission_denied"
@@ -13019,7 +13027,7 @@ async def admin_set_tool_state(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
+        await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
         error_code = "permission_denied"
@@ -13322,6 +13330,7 @@ async def admin_add_gateway(
             team_id=team_id_cast,
             owner_email=user_email,
             initialize_timeout=settings.httpx_admin_read_timeout,
+            user_id=get_canonical_user_id(user),
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
@@ -13478,6 +13487,7 @@ async def admin_update_gateway_rest(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         is_pending = _gateway_result_status(result) == "pending"
         # Keep accepted/success text in `message`; reserve `error` for failures.
@@ -13549,7 +13559,7 @@ async def admin_delete_gateway_rest(
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
 
     try:
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_canonical_user_id(user))
         if getattr(result, "status", None) == "deleting":
             return ORJSONResponse(
                 content={
@@ -13734,13 +13744,20 @@ async def admin_edit_gateway(
             auth_type_from_form = "oauth"
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
+        # The edit form has no SigV4 option and submits an empty auth_type for these gateways.
+        # Keep the stored SigV4 auth instead of clearing it.
+        if existing_gateway is not None and getattr(existing_gateway, "auth_type", None) == "sigv4" and not auth_type_from_form:
+            auth_type_for_update: Optional[str] = None
+        else:
+            auth_type_for_update = auth_type_from_form
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
-            auth_type=auth_type_from_form,
+            auth_type=auth_type_for_update,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
             auth_token=str(form.get("auth_token", "")),
@@ -13769,6 +13786,7 @@ async def admin_edit_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         is_pending = _gateway_result_status(result) == "pending"
         # Keep accepted/success text in `message`; reserve `error` for failures.
@@ -13840,7 +13858,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     error_code = None
     accepted_message = None
     try:
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_canonical_user_id(user))
         if getattr(result, "status", None) == "deleting":
             accepted_message = "gateway_delete_pending"
     except PermissionError as e:
@@ -15724,6 +15742,7 @@ async def admin_import_tools(
                     federation_source=base_metadata["federation_source"],
                     team_id=team_id,
                     owner_email=user_email,
+                    user_id=get_canonical_user_id(user),
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
@@ -16816,7 +16835,7 @@ async def admin_add_a2a_agent(
     form = await request.form()
     team_id = _form_team_id(form)
     try:
-        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+        LOGGER.info("A2A agent creation form fields: %s", sorted(str(key) for key in form.keys()))
 
         _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
@@ -16842,7 +16861,7 @@ async def admin_add_a2a_agent(
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info("DEBUG: oauth_config_json from form present: %s", oauth_config_json != "None")
         LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
 
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
@@ -16858,11 +16877,8 @@ async def admin_add_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
@@ -17087,11 +17103,8 @@ async def admin_edit_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 

@@ -18,9 +18,6 @@ DEPRECATION_RESPONSE_HEADERS = {
     "Link": DEPRECATION_LINK_VALUE,
 }
 
-RUST_MCP_RUNTIME_DEPRECATION_MESSAGE = (
-    "The Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python MCP transport path. See https://ibm.github.io/mcp-context-forge/deprecations/."
-)
 VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE = (
     "ValidationMiddleware is deprecated as of 2026-06-11 and will sunset on 2026-07-07. "
     "Use endpoint-level Pydantic validation and existing protocol-specific validation. "

@@ -30,13 +30,14 @@ Features
 * Works **synchronously** (blocking) or **asynchronously** - simply
   ``await wait_for_db_ready()``.
 * Credentials appearing in log lines are automatically **redacted**.
-* Depends only on ``sqlalchemy`` (already required by *mcpgateway*).
+* Uses shared validated settings when installed with *mcpgateway*.
+* Retains SQLAlchemy-only operation when copied without the gateway package.
 
 Environment variables
 ---------------------
-The script falls back to :pydata:`mcpgateway.config.settings`, but the values
-below can be overridden via environment variables *or* the corresponding
-command-line options.
+Installed probes use shared settings with environment and `.env` support.
+Copied SQLAlchemy-only probes read process environment variables.
+Command-line options override configured values.
 
 +----------------------------+----------------------------------------------+-----------+
 | Name                       | Description                                  | Default   |
@@ -46,7 +47,7 @@ command-line options.
 | ``DB_WAIT_INTERVAL``       | Delay between attempts *(seconds)*           | ``2``     |
 | ``DB_CONNECT_TIMEOUT``     | Per-attempt connect timeout *(seconds)*      | ``2``     |
 | ``DB_MAX_BACKOFF_SECONDS`` | Max backoff cap *(seconds, jitter added)*    | ``30``    |
-| ``LOG_LEVEL``              | Log verbosity when not set via ``--log-level`` | ``INFO`` |
+| ``LOG_LEVEL``              | Log verbosity; standalone fallback uses INFO | ``ERROR`` |
 +----------------------------+----------------------------------------------+-----------+
 
 Usage examples
@@ -123,21 +124,24 @@ except ImportError:  # pragma: no cover - handled at runtime for the CLI
     sys.stderr.write("SQLAlchemy not installed - aborting (pip install sqlalchemy)\n")
     sys.exit(2)
 
-# ---------------------------------------------------------------------------
-# Optional project settings (silently ignored if mcpgateway package is absent)
-# ---------------------------------------------------------------------------
 try:
     # First-Party
-    from mcpgateway.config import settings
-except Exception:  # pragma: no cover - fallback minimal settings
+    from mcpgateway.config_sections import DatabaseSettings
 
-    class _Settings:
-        """Fallback dummy settings when *mcpgateway* is not import-able."""
+    settings = DatabaseSettings()
+except ImportError:
+    # A copied probe can run without the gateway package or Pydantic installed.
+    class _StandaloneSettings:
+        """Preserve configuration for the SQLAlchemy-only probe entry point."""
 
-        database_url: str = "sqlite:///./mcp.db"
-        log_level: str = "INFO"
+        database_url = os.getenv("DATABASE_URL", "sqlite:///./mcp.db")
+        db_wait_max_tries = int(os.getenv("DB_WAIT_MAX_TRIES", "30"))
+        db_wait_interval = float(os.getenv("DB_WAIT_INTERVAL", "2"))
+        db_connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "2"))
+        db_max_backoff_seconds = float(os.getenv("DB_MAX_BACKOFF_SECONDS", "30"))
+        log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    settings = _Settings()  # type: ignore
+    settings = _StandaloneSettings()  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Environment variable names
@@ -151,12 +155,12 @@ ENV_MAX_BACKOFF: Final[str] = "DB_MAX_BACKOFF_SECONDS"
 # ---------------------------------------------------------------------------
 # Defaults - overridable via env-vars or CLI flags
 # ---------------------------------------------------------------------------
-DEFAULT_DB_URL: Final[str] = os.getenv(ENV_DB_URL, settings.database_url)
-DEFAULT_MAX_TRIES: Final[int] = int(os.getenv(ENV_MAX_TRIES, "30"))
-DEFAULT_INTERVAL: Final[float] = float(os.getenv(ENV_INTERVAL, "2"))
-DEFAULT_TIMEOUT: Final[int] = int(os.getenv(ENV_TIMEOUT, "2"))
-DEFAULT_MAX_BACKOFF: Final[float] = float(os.getenv(ENV_MAX_BACKOFF, "30"))
-DEFAULT_LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", settings.log_level).upper()
+DEFAULT_DB_URL: Final[str] = settings.database_url
+DEFAULT_MAX_TRIES: Final[int] = settings.db_wait_max_tries
+DEFAULT_INTERVAL: Final[float] = settings.db_wait_interval
+DEFAULT_TIMEOUT: Final[int] = settings.db_connect_timeout
+DEFAULT_MAX_BACKOFF: Final[float] = settings.db_max_backoff_seconds
+DEFAULT_LOG_LEVEL: Final[str] = settings.log_level
 
 # ---------------------------------------------------------------------------
 # Helpers - sanitising / formatting util functions
