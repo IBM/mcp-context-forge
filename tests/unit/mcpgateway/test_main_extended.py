@@ -40,6 +40,7 @@ from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.main import (
+    _bounded_elicitation_timeout,
     _build_internal_mcp_forwarded_user,
     _ensure_rpc_permission,
     _extract_scoped_permissions,
@@ -85,6 +86,7 @@ from mcpgateway.main import (
 )
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerCreateRequest, ToolCreate, ToolUpdate
+from mcpgateway.validation.jsonrpc import JSONRPCError
 
 
 def _make_request(
@@ -6576,6 +6578,7 @@ class TestRpcHandling:
             patch("mcpgateway.services.elicitation_service.get_elicitation_service", return_value=_ElicitationService()),
             patch("mcpgateway.main.session_registry.get_elicitation_capable_sessions", new=AsyncMock(return_value=["sess-1"])),
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="user@example.com")),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -6835,7 +6838,10 @@ class TestRpcHandling:
             "params": {"message": "Need input", "requestedSchema": {"type": "object", "properties": {"x": {"type": "string"}}}, "session_id": "sess-1"},
         }
         request_not_capable = self._make_request(payload_not_capable)
-        with patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=False)):
+        with (
+            patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="user@example.com")),
+        ):
             result = await handle_rpc(request_not_capable, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32000
 
@@ -6856,6 +6862,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.services.elicitation_service.get_elicitation_service", return_value=_EmptyService()),
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="user@example.com")),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_empty_pending, db=MagicMock(), user={"email": "user@example.com"})
@@ -6878,6 +6885,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.services.elicitation_service.get_elicitation_service", return_value=_TimeoutService()),
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="user@example.com")),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_timeout, db=MagicMock(), user={"email": "user@example.com"})
@@ -7128,6 +7136,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.services.elicitation_service.get_elicitation_service", return_value=_BadElicitationService()),
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value="user@example.com")),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -7137,6 +7146,122 @@ class TestRpcHandling:
         request_other = self._make_request(payload_other)
         result = await handle_rpc(request_other, db=MagicMock(), user={"email": "user@example.com"})
         assert result["result"] == {}
+
+    async def _run_elicitation(self, monkeypatch, params, *, owners, capable=(), identity=("caller@example.com", False)):
+        """Run ``elicitation/create`` with mocked sessions; return (result, create kwargs, broadcast mock)."""
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", True)
+        calls = []
+
+        class _Service:
+            def __init__(self):
+                self._pending = {sid: SimpleNamespace(downstream_session_id=sid, request_id=f"req-{sid}") for sid in owners}
+
+            async def create_elicitation(self, **kwargs):
+                calls.append(kwargs)
+                return SimpleNamespace(model_dump=lambda **_kw: {"action": "accept"})
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "elic",
+            "method": "elicitation/create",
+            "params": {"message": "Need input", "requestedSchema": {"type": "object", "properties": {"x": {"type": "string"}}}, **params},
+        }
+        broadcast = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.services.elicitation_service.get_elicitation_service", return_value=_Service()),
+            patch("mcpgateway.main.session_registry.get_elicitation_capable_sessions", new=AsyncMock(return_value=list(capable))),
+            patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(side_effect=owners.get)),
+            patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(side_effect=lambda sid: sid in owners)),
+            patch("mcpgateway.main.session_registry.broadcast", new=broadcast),
+            patch("mcpgateway.main.get_request_identity", return_value=identity),
+        ):
+            result = await handle_rpc(self._make_request(payload), db=MagicMock(), user={"email": identity[0]})
+        return result, calls, broadcast
+
+    async def test_elicitation_explicit_foreign_session_denied(self, monkeypatch):
+        result, calls, broadcast = await self._run_elicitation(monkeypatch, {"session_id": "victim-sess"}, owners={"victim-sess": "victim@example.com"})
+        assert result["error"]["code"] == -32003
+        assert not calls
+        broadcast.assert_not_awaited()
+
+    async def test_elicitation_explicit_foreign_session_camel_case_denied(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"sessionId": "victim-sess"}, owners={"victim-sess": "victim@example.com"})
+        assert result["error"]["code"] == -32003
+        assert not calls
+
+    async def test_elicitation_explicit_unknown_session_not_found(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"session_id": "missing"}, owners={})
+        assert result["error"]["code"] == -32002
+        assert not calls
+
+    async def test_elicitation_explicit_session_without_owner_denied(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"session_id": "orphan"}, owners={"orphan": None})
+        assert result["error"]["code"] == -32003
+        assert not calls
+
+    async def test_elicitation_explicit_own_session_allowed(self, monkeypatch):
+        result, calls, broadcast = await self._run_elicitation(monkeypatch, {"session_id": "own-sess"}, owners={"own-sess": "caller@example.com"})
+        assert result["result"] == {"action": "accept"}
+        assert calls[0]["downstream_session_id"] == "own-sess"
+        assert broadcast.await_args.args[0] == "own-sess"
+
+    async def test_elicitation_implicit_skips_foreign_sessions(self, monkeypatch):
+        owners = {"victim-sess": "victim@example.com", "own-sess": "caller@example.com"}
+        result, calls, broadcast = await self._run_elicitation(monkeypatch, {}, owners=owners, capable=["victim-sess", "own-sess"])
+        assert result["result"] == {"action": "accept"}
+        assert calls[0]["downstream_session_id"] == "own-sess"
+        assert broadcast.await_args.args[0] == "own-sess"
+
+    async def test_elicitation_implicit_no_owned_session(self, monkeypatch):
+        result, calls, broadcast = await self._run_elicitation(monkeypatch, {}, owners={"victim-sess": "victim@example.com"}, capable=["victim-sess"])
+        assert result["error"]["code"] == -32000
+        assert result["error"]["message"] == "No elicitation-capable clients available"
+        assert not calls
+        broadcast.assert_not_awaited()
+
+    async def test_elicitation_admin_explicit_foreign_session_allowed(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"session_id": "victim-sess"}, owners={"victim-sess": "victim@example.com"}, identity=("admin@example.com", True))
+        assert result["result"] == {"action": "accept"}
+        assert calls[0]["downstream_session_id"] == "victim-sess"
+
+    async def test_elicitation_admin_implicit_only_own_sessions(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {}, owners={"victim-sess": "victim@example.com"}, capable=["victim-sess"], identity=("admin@example.com", True))
+        assert result["error"]["code"] == -32000
+        assert not calls
+
+    @pytest.mark.parametrize("params,capable,expected_code", [({"session_id": "s"}, [], -32003), ({}, ["s"], -32000)], ids=["explicit", "implicit"])
+    async def test_elicitation_unknown_identity_owns_nothing(self, monkeypatch, params, capable, expected_code):
+        result, calls, _ = await self._run_elicitation(monkeypatch, params, owners={"s": "unknown"}, capable=capable, identity=("unknown", False))
+        assert result["error"]["code"] == expected_code
+        assert not calls
+
+    async def test_elicitation_non_string_session_id(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"session_id": {"a": 1}}, owners={})
+        assert result["error"]["code"] == -32602
+        assert not calls
+
+    @pytest.mark.parametrize("timeout,expected", [(None, 60.0), (5, 5.0), (10**9, 60.0)], ids=["default", "within", "clamped"])
+    async def test_elicitation_timeout_bounded(self, monkeypatch, timeout, expected):
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_timeout", 60)
+        params = {"session_id": "own-sess"} if timeout is None else {"session_id": "own-sess", "timeout": timeout}
+        _, calls, _ = await self._run_elicitation(monkeypatch, params, owners={"own-sess": "caller@example.com"})
+        assert calls[0]["timeout"] == expected
+
+    async def test_elicitation_invalid_timeout_rejected(self, monkeypatch):
+        result, calls, _ = await self._run_elicitation(monkeypatch, {"session_id": "own-sess", "timeout": -1}, owners={"own-sess": "caller@example.com"})
+        assert result["error"]["code"] == -32602
+        assert not calls
+
+    @pytest.mark.parametrize("value", [True, "60", 0, -1, float("inf"), float("nan"), [5]])
+    def test_bounded_elicitation_timeout_rejects(self, value):
+        with pytest.raises(JSONRPCError) as exc:
+            _bounded_elicitation_timeout({"timeout": value})
+        assert exc.value.code == -32602
+
+    def test_bounded_elicitation_timeout_huge_int_clamped(self, monkeypatch):
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_timeout", 60)
+        assert _bounded_elicitation_timeout({"timeout": 10**400}) == 60.0
 
     async def test_handle_rpc_fallback_method_not_found_and_internal_error(self):
         """Cover fallback error when tool not found (gateway forwarding removed) and generic internal error."""
@@ -7560,6 +7685,7 @@ class TestMessageEndpointElicitation:
 
         elicitation_service = MagicMock()
         elicitation_service.complete_elicitation.return_value = True
+        elicitation_service.get_pending_elicitation.return_value = SimpleNamespace(downstream_session_id="session-1")
         monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
         monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
 
@@ -7569,6 +7695,42 @@ class TestMessageEndpointElicitation:
         response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
         assert response.status_code == 202
         broadcast.assert_not_called()
+
+    @pytest.mark.parametrize("pending", [SimpleNamespace(downstream_session_id="other-session"), None], ids=["foreign", "unknown"])
+    async def test_message_endpoint_elicitation_response_not_for_session_is_not_completed(self, monkeypatch, pending):
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-1"}
+        request.body = AsyncMock(return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode())
+
+        elicitation_service = MagicMock()
+        elicitation_service.get_pending_elicitation.return_value = pending
+        monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
+
+        broadcast = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
+
+        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        assert response.status_code == 202
+        elicitation_service.complete_elicitation.assert_not_called()
+        broadcast.assert_awaited_once()
+
+    async def test_message_endpoint_elicitation_response_unhashable_id_broadcasts(self, monkeypatch):
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-1"}
+        request.body = AsyncMock(return_value=json.dumps({"id": [1], "result": {"action": "accept", "content": {}}}).encode())
+
+        elicitation_service = MagicMock()
+        elicitation_service.get_pending_elicitation.side_effect = TypeError("unhashable type: 'list'")
+        monkeypatch.setattr("mcpgateway.services.elicitation_service.get_elicitation_service", lambda: elicitation_service)
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="user@example.com"))
+
+        broadcast = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
+
+        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        assert response.status_code == 202
+        broadcast.assert_awaited_once()
 
     async def test_message_endpoint_missing_session_id_raises_400(self):
         request = MagicMock(spec=Request)
