@@ -79,6 +79,8 @@ def _make_mock_tool(tool_id: str, name: str, created_via: str = "health_check") 
     mock.id = tool_id
     mock.original_name = name
     mock.created_via = created_via
+    mock.deprecated = False
+    mock.deprecated_at = None
     return mock
 
 
@@ -88,6 +90,8 @@ def _make_mock_resource(resource_id: str, uri: str, created_via: str = "health_c
     mock.id = resource_id
     mock.uri = uri
     mock.created_via = created_via
+    mock.deprecated = False
+    mock.deprecated_at = None
     return mock
 
 
@@ -97,6 +101,8 @@ def _make_mock_prompt(prompt_id: str, name: str, created_via: str = "health_chec
     mock.id = prompt_id
     mock.original_name = name
     mock.created_via = created_via
+    mock.deprecated = False
+    mock.deprecated_at = None
     return mock
 
 
@@ -152,12 +158,15 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         assert result == {
             "tools_added": 0,
             "tools_removed": 0,
+            "tools_deprecated": 0,
             "tools_updated": 0,
             "resources_added": 0,
             "resources_removed": 0,
+            "resources_deprecated": 0,
             "resources_updated": 0,
             "prompts_added": 0,
             "prompts_removed": 0,
+            "prompts_deprecated": 0,
             "prompts_updated": 0,
             "success": True,
             "error": None,
@@ -298,8 +307,10 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
-        # Old tool should be marked for removal
-        assert result["tools_removed"] == 1
+        # Old tool should be marked deprecated, not deleted, on a single refresh
+        assert result["tools_removed"] == 0
+        assert result["tools_deprecated"] == 1
+        assert mock_gateway.tools[0].deprecated is True
 
     @pytest.mark.asyncio
     async def test_refresh_preserves_user_created_items(self, gateway_service):
@@ -333,9 +344,15 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
-        # Only MCP-discovered tool (health_check) should be removed
+        # Only MCP-discovered tool (health_check) should be deprecated
         # ui, api, and None (legacy) should be preserved
-        assert result["tools_removed"] == 1
+        assert result["tools_removed"] == 0
+        assert result["tools_deprecated"] == 1
+        tools_by_name = {tool.original_name: tool for tool in mock_gateway.tools}
+        assert tools_by_name["mcp-tool"].deprecated is True
+        assert tools_by_name["ui-tool"].deprecated is False
+        assert tools_by_name["api-tool"].deprecated is False
+        assert tools_by_name["legacy-tool"].deprecated is False
 
     @pytest.mark.asyncio
     async def test_refresh_passes_pre_auth_headers_to_initialize_gateway(self, gateway_service):

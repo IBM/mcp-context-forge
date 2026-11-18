@@ -1228,6 +1228,7 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs) and catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
+| `GATEWAY_STALE_CATALOG_RETENTION_DAYS` | Days to keep catalog-deprecated tools/resources/prompts before deleting them (`0` disables deletion) | `30` | int >= 0 |
 | `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to modern upstream servers for refresh | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Path for primary-worker election lock file | (none) | string |

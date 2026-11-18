@@ -102,7 +102,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import EmailUser as DbEmailUser
-from mcpgateway.db import fresh_db_session
+from mcpgateway.db import fresh_db_session, utc_now
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
@@ -997,6 +997,71 @@ class GatewayCatalogSyncResult:
         return len(self.tools_to_add) + len(self.resources_to_add) + len(self.prompts_to_add)
 
 
+def _catalog_datetime(value: Any) -> Optional[datetime]:
+    """Return a timezone-aware datetime, or None when value is not a timestamp.
+
+    Args:
+        value: Candidate timestamp, typically ``deprecated_at``.
+
+    Returns:
+        The value as a timezone-aware datetime, or ``None``.
+    """
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _clear_catalog_deprecation(item: Any) -> bool:
+    """Clear stale-catalog deprecation when an item reappears upstream.
+
+    Args:
+        item: Tool, resource, or prompt ORM instance.
+
+    Returns:
+        True if a deprecation flag or timestamp was cleared.
+    """
+    changed = False
+    if getattr(item, "deprecated", False) is True:
+        item.deprecated = False
+        changed = True
+    if _catalog_datetime(getattr(item, "deprecated_at", None)) is not None:
+        item.deprecated_at = None
+        changed = True
+    return changed
+
+
+def _reconcile_count(result: Any, field_name: str) -> int:
+    """Return a numeric reconcile count, treating non-ints as zero.
+
+    Args:
+        result: Reconcile result object or test double.
+        field_name: Attribute name such as ``tools_deprecated``.
+
+    Returns:
+        The integer count, or 0 when the attribute is missing or not an int.
+    """
+    value = getattr(result, field_name, 0)
+    return value if isinstance(value, int) else 0
+
+
+def _stale_catalog_cutoff(now: datetime) -> Optional[datetime]:
+    """Return the deletion cutoff for catalog-deprecated entries, if any.
+
+    Args:
+        now: Current UTC timestamp.
+
+    Returns:
+        Cutoff datetime, or ``None`` when automatic deletion is disabled
+        (``GATEWAY_STALE_CATALOG_RETENTION_DAYS=0``).
+    """
+    retention_days = settings.gateway_stale_catalog_retention_days
+    if retention_days <= 0:
+        return None
+    return now - timedelta(days=retention_days)
+
+
 @dataclass(frozen=True)
 class GatewayCatalogReconcileResult:
     """Counts produced by applying synced catalog changes to DB state."""
@@ -1007,6 +1072,9 @@ class GatewayCatalogReconcileResult:
     tools_removed: int
     resources_removed: int
     prompts_removed: int
+    tools_deprecated: int = 0
+    resources_deprecated: int = 0
+    prompts_deprecated: int = 0
 
 
 @dataclass(frozen=True)
@@ -7429,6 +7497,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     apply_refusal(existing_tool, refusals.get(tool.name))
 
+                    if _clear_catalog_deprecation(existing_tool):
+                        fields_to_update = True
+
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
 
@@ -7529,6 +7600,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
                         or existing_resource.title != getattr(resource, "title", None)
                     ):
+                        fields_to_update = True
+
+                    if _clear_catalog_deprecation(existing_resource):
                         fields_to_update = True
 
                     if fields_to_update:
@@ -7647,6 +7721,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or (existing_prompt.argument_schema or {}) != new_argument_schema
                         or existing_prompt.title != getattr(prompt, "title", None)
                     ):
+                        fields_to_update = True
+
+                    if _clear_catalog_deprecation(existing_prompt):
                         fields_to_update = True
 
                     if fields_to_update:
@@ -7828,7 +7905,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         stale_created_via_values: Optional[Set[str]] = None,
         skip_stale_cleanup: bool = False,
     ) -> GatewayCatalogReconcileResult:
-        """Prune stale rows and attach new catalog rows in caller transaction."""
+        """Deprecate stale rows (and delete those past retention) then attach new catalog rows in caller transaction."""
 
         if catalog_sync.items_added > 0:
             if catalog_sync.tools_to_add:
@@ -7840,59 +7917,124 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.info(f"Total {catalog_sync.items_added} new items added during {log_context}")
 
         def _created_via_allowed(created_via: Optional[str]) -> bool:
-            """Check if already created"""
+            """Return True when this row may be marked stale or cleaned up."""
             return stale_created_via_values is None or created_via in stale_created_via_values
 
-        stale_tool_ids = []
+        def _classify_stale_items(items: List[Any], is_stale) -> tuple[List[Any], int]:
+            """Mark stale items deprecated, or collect those past retention for deletion.
+
+            Args:
+                items: Current catalog rows attached to the gateway.
+                is_stale: Predicate that is true when the item is missing from the fetched catalog.
+
+            Returns:
+                A tuple of (items to delete, count newly marked deprecated).
+            """
+            to_delete: List[Any] = []
+            newly_deprecated = 0
+            for item in items:
+                if not is_stale(item) or not _created_via_allowed(getattr(item, "created_via", None)):
+                    continue
+                deprecated_at = _catalog_datetime(getattr(item, "deprecated_at", None))
+                if cutoff is not None and deprecated_at is not None and deprecated_at <= cutoff:
+                    to_delete.append(item)
+                    continue
+                if getattr(item, "deprecated", False) is not True:
+                    item.deprecated = True
+                    newly_deprecated += 1
+                if deprecated_at is None:
+                    item.deprecated_at = now
+            return to_delete, newly_deprecated
+
+        def _delete_in_chunks(item_ids: List[Any], *deleters: Any) -> None:
+            """Run delete statements in chunks of 500 identifiers.
+
+            Args:
+                item_ids: Primary keys to delete.
+                deleters: Callables that accept a chunk of ids and execute a delete.
+            """
+            for i in range(0, len(item_ids), 500):
+                chunk = item_ids[i : i + 500]
+                for deleter in deleters:
+                    deleter(chunk)
+
+        now = utc_now()
+        cutoff = None if skip_stale_cleanup else _stale_catalog_cutoff(now)
+
+        stale_tool_ids: List[Any] = []
+        tools_deprecated = 0
         if not skip_stale_cleanup:
-            stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in catalog_sync.new_tool_names and _created_via_allowed(getattr(tool, "created_via", None))]
+            stale_tools, tools_deprecated = _classify_stale_items(
+                list(gateway.tools),
+                lambda tool: tool.original_name not in catalog_sync.new_tool_names,
+            )
+            stale_tool_ids = list(dict.fromkeys(tool.id for tool in stale_tools))
             if stale_tool_ids:
-                for i in range(0, len(stale_tool_ids), 500):
-                    chunk = stale_tool_ids[i : i + 500]
-                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                _delete_in_chunks(
+                    stale_tool_ids,
+                    lambda chunk: db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(DbTool).where(DbTool.id.in_(chunk))),
+                )
 
-        stale_resource_ids = []
+        stale_resource_ids: List[Any] = []
+        resources_deprecated = 0
         if not skip_stale_cleanup and catalog_sync.new_resource_uris is not None:
-            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in catalog_sync.new_resource_uris and _created_via_allowed(getattr(resource, "created_via", None))]
+            stale_resources, resources_deprecated = _classify_stale_items(
+                list(gateway.resources),
+                lambda resource: resource.uri not in catalog_sync.new_resource_uris,
+            )
+            stale_resource_ids = list(dict.fromkeys(resource.id for resource in stale_resources))
             if stale_resource_ids:
-                for i in range(0, len(stale_resource_ids), 500):
-                    chunk = stale_resource_ids[i : i + 500]
-                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                _delete_in_chunks(
+                    stale_resource_ids,
+                    lambda chunk: db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(DbResource).where(DbResource.id.in_(chunk))),
+                )
 
-        stale_prompt_ids = []
+        stale_prompt_ids: List[Any] = []
+        prompts_deprecated = 0
         if not skip_stale_cleanup and catalog_sync.new_prompt_names is not None:
-            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in catalog_sync.new_prompt_names and _created_via_allowed(getattr(prompt, "created_via", None))]
+            stale_prompts, prompts_deprecated = _classify_stale_items(
+                list(gateway.prompts),
+                lambda prompt: prompt.original_name not in catalog_sync.new_prompt_names,
+            )
+            stale_prompt_ids = list(dict.fromkeys(prompt.id for prompt in stale_prompts))
             if stale_prompt_ids:
-                for i in range(0, len(stale_prompt_ids), 500):
-                    chunk = stale_prompt_ids[i : i + 500]
-                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                _delete_in_chunks(
+                    stale_prompt_ids,
+                    lambda chunk: db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk))),
+                    lambda chunk: db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk))),
+                )
 
         if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
-            db.expire(gateway)
-
-        if not skip_stale_cleanup:
-            gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
+            deleted_tool_ids = set(stale_tool_ids)
+            deleted_resource_ids = set(stale_resource_ids)
+            deleted_prompt_ids = set(stale_prompt_ids)
+            gateway.tools = [tool for tool in gateway.tools if tool.id not in deleted_tool_ids]
             if catalog_sync.new_resource_uris is not None:
-                gateway.resources = [resource for resource in gateway.resources if resource.uri in catalog_sync.new_resource_uris or not _created_via_allowed(getattr(resource, "created_via", None))]
+                gateway.resources = [resource for resource in gateway.resources if resource.id not in deleted_resource_ids]
             if catalog_sync.new_prompt_names is not None:
-                gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in catalog_sync.new_prompt_names or not _created_via_allowed(getattr(prompt, "created_via", None))]
+                gateway.prompts = [prompt for prompt in gateway.prompts if prompt.id not in deleted_prompt_ids]
 
         tools_removed = len(stale_tool_ids)
         resources_removed = len(stale_resource_ids)
         prompts_removed = len(stale_prompt_ids)
+        if tools_deprecated > 0:
+            logger.info(f"Deprecated {tools_deprecated} tools no longer available during {log_context}")
+        if resources_deprecated > 0:
+            logger.info(f"Deprecated {resources_deprecated} resources no longer available during {log_context}")
+        if prompts_deprecated > 0:
+            logger.info(f"Deprecated {prompts_deprecated} prompts no longer available during {log_context}")
         if tools_removed > 0:
-            logger.info(f"Removed {tools_removed} tools no longer available during {log_context}")
+            logger.info(f"Removed {tools_removed} tools deprecated and unseen past retention during {log_context}")
         if resources_removed > 0:
-            logger.info(f"Removed {resources_removed} resources no longer available during {log_context}")
+            logger.info(f"Removed {resources_removed} resources deprecated and unseen past retention during {log_context}")
         if prompts_removed > 0:
-            logger.info(f"Removed {prompts_removed} prompts no longer available during {log_context}")
+            logger.info(f"Removed {prompts_removed} prompts deprecated and unseen past retention during {log_context}")
 
         chunk_size = 50
         if catalog_sync.tools_to_add:
@@ -7918,6 +8060,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             tools_removed=tools_removed,
             resources_removed=resources_removed,
             prompts_removed=prompts_removed,
+            tools_deprecated=tools_deprecated,
+            resources_deprecated=resources_deprecated,
+            prompts_deprecated=prompts_deprecated,
         )
 
     async def _resolve_auth_code_refresh_headers(
@@ -8094,10 +8239,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         result = {
             "tools_added": 0,
             "tools_removed": 0,
+            "tools_deprecated": 0,
             "resources_added": 0,
             "resources_removed": 0,
+            "resources_deprecated": 0,
             "prompts_added": 0,
             "prompts_removed": 0,
+            "prompts_deprecated": 0,
             "tools_updated": 0,
             "resources_updated": 0,
             "prompts_updated": 0,
@@ -8298,12 +8446,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 log_context=f"gateway refresh ({created_via})",
                 stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
             )
-            result["tools_removed"] = reconcile_result.tools_removed
-            result["resources_removed"] = reconcile_result.resources_removed
-            result["prompts_removed"] = reconcile_result.prompts_removed
-            result["tools_added"] = reconcile_result.tools_added
-            result["resources_added"] = reconcile_result.resources_added
-            result["prompts_added"] = reconcile_result.prompts_added
+            result["tools_removed"] = _reconcile_count(reconcile_result, "tools_removed")
+            result["resources_removed"] = _reconcile_count(reconcile_result, "resources_removed")
+            result["prompts_removed"] = _reconcile_count(reconcile_result, "prompts_removed")
+            result["tools_deprecated"] = _reconcile_count(reconcile_result, "tools_deprecated")
+            result["resources_deprecated"] = _reconcile_count(reconcile_result, "resources_deprecated")
+            result["prompts_deprecated"] = _reconcile_count(reconcile_result, "prompts_deprecated")
+            result["tools_added"] = _reconcile_count(reconcile_result, "tools_added")
+            result["resources_added"] = _reconcile_count(reconcile_result, "resources_added")
+            result["prompts_added"] = _reconcile_count(reconcile_result, "prompts_added")
 
             # Anchor to the cycle timestamp so the throttle comparison is symmetric.
             gateway.last_refresh_at = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
@@ -8312,12 +8463,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             total_changes = (
                 result["tools_added"]
                 + result["tools_removed"]
+                + result["tools_deprecated"]
                 + result["tools_updated"]
                 + result["resources_added"]
                 + result["resources_removed"]
+                + result["resources_deprecated"]
                 + result["resources_updated"]
                 + result["prompts_added"]
                 + result["prompts_removed"]
+                + result["prompts_deprecated"]
                 + result["prompts_updated"]
             )
 
@@ -8326,26 +8480,29 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if has_changes:
                 db.commit()
                 logger.info(
-                    "Refreshed gateway %s: tools(+%s/-%s/~%s), resources(+%s/-%s/~%s), prompts(+%s/-%s/~%s)",
+                    "Refreshed gateway %s: tools(+%s/-%s/~%s/deprecated %s), resources(+%s/-%s/~%s/deprecated %s), prompts(+%s/-%s/~%s/deprecated %s)",
                     gateway_name,
                     result["tools_added"],
                     result["tools_removed"],
                     result["tools_updated"],
+                    result["tools_deprecated"],
                     result["resources_added"],
                     result["resources_removed"],
                     result["resources_updated"],
+                    result["resources_deprecated"],
                     result["prompts_added"],
                     result["prompts_removed"],
                     result["prompts_updated"],
+                    result["prompts_deprecated"],
                 )
 
                 # Invalidate caches per-type based on actual changes
                 cache = _get_registry_cache()
-                if result["tools_added"] > 0 or result["tools_removed"] > 0 or result["tools_updated"] > 0:
+                if result["tools_added"] > 0 or result["tools_removed"] > 0 or result["tools_deprecated"] > 0 or result["tools_updated"] > 0:
                     await cache.invalidate_tools()
-                if result["resources_added"] > 0 or result["resources_removed"] > 0 or result["resources_updated"] > 0:
+                if result["resources_added"] > 0 or result["resources_removed"] > 0 or result["resources_deprecated"] > 0 or result["resources_updated"] > 0:
                     await cache.invalidate_resources()
-                if result["prompts_added"] > 0 or result["prompts_removed"] > 0 or result["prompts_updated"] > 0:
+                if result["prompts_added"] > 0 or result["prompts_removed"] > 0 or result["prompts_deprecated"] > 0 or result["prompts_updated"] > 0:
                     await cache.invalidate_prompts()
 
                 # Invalidate tool lookup cache for this gateway
@@ -8471,10 +8628,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return {
                 "tools_added": 0,
                 "tools_removed": 0,
+                "tools_deprecated": 0,
                 "resources_added": 0,
                 "resources_removed": 0,
+                "resources_deprecated": 0,
                 "prompts_added": 0,
                 "prompts_removed": 0,
+                "prompts_deprecated": 0,
                 "tools_updated": 0,
                 "resources_updated": 0,
                 "prompts_updated": 0,

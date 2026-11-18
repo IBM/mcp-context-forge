@@ -3028,6 +3028,15 @@ class Settings(BaseSettings):
     # When enabled, tools/resources/prompts are fetched and synced with DB during health checks
     auto_refresh_servers: bool = Field(default=False, description="Enable automatic tool/resource/prompt refresh during gateway health checks")
 
+    # Days a catalog entry can stay deprecated (unseen upstream) before it is deleted.
+    # Default 30 so a single refresh or a brief partial catalog cannot wipe associations,
+    # metrics, or admin-applied state. 0 disables automatic deletion entirely.
+    gateway_stale_catalog_retention_days: int = Field(
+        default=30,
+        ge=0,
+        description="Days to retain catalog-deprecated tools, resources, and prompts before deleting them. 0 disables deletion.",
+    )
+
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")

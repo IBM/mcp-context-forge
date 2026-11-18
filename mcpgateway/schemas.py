@@ -2974,6 +2974,7 @@ class ResourceRead(McpServerIdResponseMixin):
     created_at: datetime
     updated_at: datetime
     enabled: bool
+    deprecated: bool = Field(default=False, description="Whether the resource is deprecated (kept after disappearing from the upstream catalog)")
     metrics: Optional[ResourceMetrics] = Field(None, description="Resource metrics (may be None in list operations)")
     tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorizing the resource")
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
@@ -3583,6 +3584,7 @@ class PromptRead(McpServerIdResponseMixin):
     updated_at: datetime
     # is_active: bool
     enabled: bool
+    deprecated: bool = Field(default=False, description="Whether the prompt is deprecated (kept after disappearing from the upstream catalog)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: Optional[PromptMetrics] = Field(None, description="Prompt metrics (may be None in list operations)")
 
@@ -4977,13 +4979,16 @@ class GatewayRefreshResponse(RequiredMcpServerIdResponseMixin):
     error: Optional[str] = Field(None, description="Error message if the refresh failed")
     tools_added: int = Field(default=0, description="Number of tools added")
     tools_updated: int = Field(default=0, description="Number of tools updated")
-    tools_removed: int = Field(default=0, description="Number of tools removed")
+    tools_removed: int = Field(default=0, description="Number of tools deleted after the stale-catalog retention period")
+    tools_deprecated: int = Field(default=0, description="Number of tools marked deprecated because they disappeared from the upstream catalog")
     resources_added: int = Field(default=0, description="Number of resources added")
     resources_updated: int = Field(default=0, description="Number of resources updated")
-    resources_removed: int = Field(default=0, description="Number of resources removed")
+    resources_removed: int = Field(default=0, description="Number of resources deleted after the stale-catalog retention period")
+    resources_deprecated: int = Field(default=0, description="Number of resources marked deprecated because they disappeared from the upstream catalog")
     prompts_added: int = Field(default=0, description="Number of prompts added")
     prompts_updated: int = Field(default=0, description="Number of prompts updated")
-    prompts_removed: int = Field(default=0, description="Number of prompts removed")
+    prompts_removed: int = Field(default=0, description="Number of prompts deleted after the stale-catalog retention period")
+    prompts_deprecated: int = Field(default=0, description="Number of prompts marked deprecated because they disappeared from the upstream catalog")
     validation_errors: List[str] = Field(default_factory=list, description="List of validation errors encountered")
     duration_ms: float = Field(..., description="Duration of the refresh operation in milliseconds")
     refreshed_at: datetime = Field(..., description="Timestamp when the refresh completed")
