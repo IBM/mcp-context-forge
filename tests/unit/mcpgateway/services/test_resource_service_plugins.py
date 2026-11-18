@@ -447,7 +447,7 @@ class TestResourceServicePluginIntegration:
         assert result.text == resolved_sentinel
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="])
+    @pytest.mark.parametrize("blob", ["", "AP9iaW5hcnk="]) # pragma: allowlist secret
     async def test_read_resource_post_fetch_receives_blob(self, resource_service_with_plugins, mock_db, monkeypatch, blob):
         """Post-fetch hooks receive resolved blobs and can replace their contents."""
         monkeypatch.setattr("mcpgateway.services.resource_service.PLUGINS_AVAILABLE", True)

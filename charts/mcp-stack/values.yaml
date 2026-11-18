@@ -930,6 +930,8 @@ mcpContextForge:
     # ─ OAuth Configuration ─
     OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
     OAUTH_MAX_RETRIES: "3"                 # maximum retries for OAuth token requests
+    OAUTH_TOKEN_RETRIEVAL_ENABLED: "false" # allow callers to retrieve their OAuth access token
+    OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS: "600" # refresh tokens within this window
 
     # ─ OAuth Dynamic Client Registration (DCR) & PKCE ─
     DCR_ENABLED: "true"                    # enable Dynamic Client Registration (RFC 7591)

@@ -25,12 +25,13 @@ from enum import Enum
 import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     AnyHttpUrl,
     BaseModel,
@@ -5281,6 +5282,118 @@ def _validate_instructions_length(value: Optional[str]) -> Optional[str]:
     return value
 
 
+class ServerInterfaceInput(BaseModel):
+    """Protocol interface declared on a virtual server through the server create and update schemas."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    protocol: str = Field(..., min_length=1, max_length=50, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", description="Interface protocol, for example 'a2a'")
+    binding: str = Field(..., min_length=1, max_length=255, description="Agent endpoint URL that the interface publishes, for example 'https://agent.example.com/a2a'")
+    version: Optional[str] = Field(None, max_length=20, pattern=r"^[0-9A-Za-z][0-9A-Za-z._+-]*$", description="Protocol version, for example '1.0'")
+    tenant: Optional[str] = Field(None, max_length=255, description="Optional tenant identifier")
+    enabled: bool = Field(True, description="Whether the interface is active")
+
+    @field_validator("binding")
+    @classmethod
+    def validate_binding(cls, v: str) -> str:
+        """Validate the binding as an endpoint URL.
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as a safe URL
+
+        Examples:
+            >>> ServerInterfaceInput.validate_binding("https://8.8.8.8/a2a")
+            'https://8.8.8.8/a2a'
+            >>> try:
+            ...     ServerInterfaceInput.validate_binding("JSONRPC")
+            ... except ValueError:
+            ...     print("rejected")
+            rejected
+        """
+        return validate_core_url(v, "Interface binding")
+
+
+MAX_SERVER_INTERFACES = 10
+
+
+def interface_identity(protocol: str, binding: str) -> tuple[str, str]:
+    """Return the key that identifies an interface within one server.
+
+    The protocol, URL scheme, and host compare case-insensitively. The path and query keep their case.
+
+    Args:
+        protocol: Interface protocol.
+        binding: Interface endpoint URL.
+
+    Returns:
+        The protocol and normalized binding pair.
+
+    Examples:
+        >>> interface_identity("A2A", "HTTPS://Agent.Example.com/Path") == interface_identity("a2a", "https://agent.example.com/Path")
+        True
+        >>> interface_identity("a2a", "https://agent.example.com/Path") == interface_identity("a2a", "https://agent.example.com/path")
+        False
+    """
+    parts = urlsplit(binding)
+    return protocol.lower(), urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
+
+
+def _reject_duplicate_interfaces(interfaces: List["ServerInterfaceInput"]) -> List["ServerInterfaceInput"]:
+    """Reject interface lists that repeat a protocol and binding pair.
+
+    Args:
+        interfaces: Interfaces declared by the caller.
+
+    Returns:
+        The unchanged list.
+
+    Raises:
+        ValueError: If two entries share the same protocol and binding.
+    """
+    seen: set[tuple[str, str]] = set()
+    for item in interfaces:
+        key = interface_identity(item.protocol, item.binding)
+        if key in seen:
+            raise ValueError(f"Duplicate interface for protocol '{item.protocol}' and binding '{item.binding}'")
+        seen.add(key)
+    return interfaces
+
+
+ServerInterfaceList = Annotated[List[ServerInterfaceInput], Field(max_length=MAX_SERVER_INTERFACES), AfterValidator(_reject_duplicate_interfaces)]
+
+
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a server interface."""
+
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool = True
+    config: Optional[Dict[str, Any]] = None
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a server interface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool
+    config: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -5338,6 +5451,7 @@ class ServerCreate(BaseModel):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -5568,6 +5682,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    interfaces: Optional[ServerInterfaceList] = Field(None, description="Protocol interfaces published by this server, for example an A2A interface")
 
     @field_validator("name")
     @classmethod
@@ -5679,6 +5794,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
+    interfaces: List[ServerInterfaceRead] = Field(default_factory=list, description="Protocol interfaces published by this server")
     metrics: Optional[ServerMetrics] = Field(None, description="Server metrics (may be None in list operations)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
@@ -7559,35 +7675,6 @@ class A2ATaskUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Server Interface Schemas
 # ---------------------------------------------------------------------------
-
-
-class ServerInterfaceCreate(BaseModel):
-    """Schema for creating a server interface."""
-
-    server_id: str
-    protocol: str
-    binding: str
-    version: Optional[str] = None
-    tenant: Optional[str] = None
-    enabled: bool = True
-    config: Optional[Dict[str, Any]] = None
-
-
-class ServerInterfaceRead(BaseModel):
-    """Schema for reading a server interface."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    server_id: str
-    protocol: str
-    binding: str
-    version: Optional[str] = None
-    tenant: Optional[str] = None
-    enabled: bool
-    config: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -9815,6 +9902,22 @@ class PluginStatsResponse(BaseModel):
     disabled_plugins: int = Field(..., description="Number of disabled plugins")
     plugins_by_hook: Dict[str, int] = Field(default_factory=dict, description="Plugin count by hook type")
     plugins_by_mode: Dict[str, int] = Field(default_factory=dict, description="Plugin count by mode")
+
+
+class OAuthAccessTokenResponse(BaseModel):
+    """Response for ``GET /oauth/token/{gateway_id}``.
+
+    The model has no ``refresh_token`` field and forbids extra fields,
+    so a refresh token cannot reach the response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    gateway_id: str = Field(..., description="Gateway the access token belongs to")
+    access_token: str = Field(..., description="The caller's current OAuth access token")
+    token_type: str = Field(..., description="Type of the stored token, always Bearer")
+    expires_at: Optional[str] = Field(None, description="ISO 8601 expiry of the access token, or null when the provider gave no lifetime")
+    scopes: Optional[List[str]] = Field(None, description="Scopes granted to the access token")
 
 
 # MCP Server Catalog Schemas
