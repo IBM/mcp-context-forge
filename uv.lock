@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -52,18 +52,6 @@ wheels = [
 http-server = [
     { name = "sse-starlette" },
     { name = "starlette" },
-]
-
-[[package]]
-name = "actdiag"
-version = "3.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "blockdiag" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/19/7511fa0a0048ddb56966e2ef9bcd0971a9496cbdb1487b0b3e16a79f7acb/actdiag-3.0.0.tar.gz", hash = "sha256:0efc9b2887d3ec765b0f45bde1d5757a52301151ea62bcc2297e77aad9264006", size = 2574809, upload-time = "2021-12-06T16:57:59.862Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/8b/db1a406c6a2238c29b13c22c0dd2171464bfb6672e71c43feaae7ca872e0/actdiag-3.0.0-py3-none-any.whl", hash = "sha256:1b24410a4796ab0d704fcaa96d132b559d2b9b0af194ccc663d7761623cd0581", size = 2581739, upload-time = "2021-12-06T16:57:58.219Z" },
 ]
 
 [[package]]
@@ -603,21 +591,6 @@ wheels = [
 ]
 
 [[package]]
-name = "blockdiag"
-version = "3.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "funcparserlib" },
-    { name = "pillow" },
-    { name = "setuptools" },
-    { name = "webcolors" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/eb/e2a4b6d5bf7f7121104ac7a1fc80b5dfa86ba286adbd1f25bf32a090a5eb/blockdiag-3.0.0.tar.gz", hash = "sha256:dee4195bb87d23654546ba2bf5091480dbf253b409891fce2cd527c91d00a3e2", size = 2694464, upload-time = "2021-12-06T16:43:56.394Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/cd/b82f859a9ebc4d24c1a8b901a68df0d90aa717fd4d47d6166db9449dc0ff/blockdiag-3.0.0-py3-none-any.whl", hash = "sha256:4031bfae6a7f36071d733dec639987346e10f7871356ee2c7a221961c64961d8", size = 2721044, upload-time = "2021-12-06T16:43:55.022Z" },
-]
-
-[[package]]
 name = "boolean-py"
 version = "5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -760,34 +733,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5f/6b/6c1553e1e8f672f9423344a1915aad1537439ad3d14a3fbc1a02159cfd94/cachetools-7.3.0.tar.gz", hash = "sha256:3f63fc208410f0c3a3b37883c4903ecdacd6f0b259134e6d2e82debd5b2e01de", size = 48563, upload-time = "2026-11-05T20:38:46.434Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/aa/e54a49d0927b2fa7b86bc94dbde57125e38e8cfca7a31b6764e8dbf35e9f/cachetools-7.3.0-py3-none-any.whl", hash = "sha256:2105787c94619bde7072624fec0fe7b8a08bb7bf6c757c318f8925573c6f07c9", size = 19575, upload-time = "2026-11-05T20:38:44.928Z" },
-]
-
-[[package]]
-name = "cairocffi"
-version = "1.7.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/70/c5/1a4dc131459e68a173cbdab5fad6b524f53f9c1ef7861b7698e998b837cc/cairocffi-1.7.1.tar.gz", hash = "sha256:2e48ee864884ec4a3a34bfa8c9ab9999f688286eb714a15a43ec9d068c36557b", size = 88096, upload-time = "2024-06-18T10:56:06.741Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/d8/ba13451aa6b745c49536e87b6bf8f629b950e84bd0e8308f7dc6883b67e2/cairocffi-1.7.1-py3-none-any.whl", hash = "sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f", size = 75611, upload-time = "2024-06-18T10:55:59.489Z" },
-]
-
-[[package]]
-name = "cairosvg"
-version = "2.9.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cairocffi" },
-    { name = "cssselect2" },
-    { name = "defusedxml" },
-    { name = "pillow" },
-    { name = "tinycss2" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/80/db62c0a96d2e55282c83524f6b1d02f09c7fd7f612e93bf83e30de1dc75c/cairosvg-2.9.1.tar.gz", hash = "sha256:861bc28ad97ce4f537d50eb3d6ee97a7afcccec9c61ac25c4e7d073fe409aec7", size = 41256, upload-time = "2026-09-07T10:35:09.563Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/51/8041c2e70649e5b7f2a0aedbbbd0609ac099cfaa0cbde2014279c9c05756/cairosvg-2.9.1-py3-none-any.whl", hash = "sha256:f91c5628e834be024a0ed4544d76261cd84016a4c73bcdf26c386495825c05a1", size = 46165, upload-time = "2026-09-07T10:35:07.952Z" },
 ]
 
 [[package]]
@@ -1576,15 +1521,6 @@ wheels = [
 ]
 
 [[package]]
-name = "editorconfig"
-version = "0.17.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/88/3a/a61d9a1f319a186b05d14df17daea42fcddea63c213bcd61a929fb3a6796/editorconfig-0.17.1.tar.gz", hash = "sha256:23c08b00e8e08cc3adcddb825251c497478df1dada6aefeb01e626ad37303745", size = 14695, upload-time = "2025-06-09T08:21:37.097Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/fd/a40c621ff207f3ce8e484aa0fc8ba4eb6e3ecf52e15b42ba764b457a9550/editorconfig-0.17.1-py3-none-any.whl", hash = "sha256:1eda9c2c0db8c16dbd50111b710572a5e6de934e39772de1959d41f64fc17c82", size = 16360, upload-time = "2025-06-09T08:21:35.654Z" },
-]
-
-[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1720,18 +1656,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c3/6e/2f4e13e373bb49e68c02c51ceadd22d172715a06716f9299d9df01b6ddb2/Flask-Login-0.6.3.tar.gz", hash = "sha256:5e23d14a607ef12806c699590b89d0f0e0d67baeec599d75947bf9c147330333", size = 48834, upload-time = "2023-10-30T14:53:21.151Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/59/f5/67e9cc5c2036f58115f9fe0f00d203cf6780c3ff8ae0e705e7a9d9e8ff9e/Flask_Login-0.6.3-py3-none-any.whl", hash = "sha256:849b25b82a436bf830a054e74214074af59097171562ab10bfa999e6b78aae5d", size = 17303, upload-time = "2023-10-30T14:53:19.636Z" },
-]
-
-[[package]]
-name = "flatten-json"
-version = "0.1.14"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "six" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/14/e9b5e4a8dd7edccc9d0791c4ed2180e50b00ab4c19b07081308814dd4e68/flatten_json-0.1.14.tar.gz", hash = "sha256:4008b1bd81743e6fcdc29ddbb640f5c1589376116e0c8f36cb4a0003d41fe102", size = 7806, upload-time = "2023-10-27T17:20:54.562Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/b5/99f20a19b839e04fffab924be192681b797b40bcf83abdfa508371c6273c/flatten_json-0.1.14-py3-none-any.whl", hash = "sha256:75e455dbbb5be2431546024039cac094a8ed1dfedcf36ab1e7c9d01459fa410c", size = 7962, upload-time = "2023-10-27T17:20:40.455Z" },
 ]
 
 [[package]]
@@ -1873,15 +1797,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/89/76/c615883b7b521ead2944bb3480398cbb07e12b7b4e4d073d3752eb721558/frozenlist-1.8.0-cp314-cp314t-win_amd64.whl", hash = "sha256:06be8f67f39c8b1dc671f5d83aaefd3358ae5cdcf8314552c57e7ed3e6475bdd", size = 49451, upload-time = "2025-10-06T05:37:53.425Z" },
     { url = "https://files.pythonhosted.org/packages/e0/a3/5982da14e113d07b325230f95060e2169f5311b1017ea8af2a29b374c289/frozenlist-1.8.0-cp314-cp314t-win_arm64.whl", hash = "sha256:102e6314ca4da683dca92e3b1355490fed5f313b768500084fbe6371fddfdb79", size = 42507, upload-time = "2025-10-06T05:37:54.513Z" },
     { url = "https://files.pythonhosted.org/packages/9a/9a/e35b4a917281c0b8419d4207f4334c8e8c5dbf4f3f5f9ada73958d937dcc/frozenlist-1.8.0-py3-none-any.whl", hash = "sha256:0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d", size = 13409, upload-time = "2025-10-06T05:38:16.721Z" },
-]
-
-[[package]]
-name = "funcparserlib"
-version = "1.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/93/44/a21dfd9c45ad6909257e5186378a4fedaf41406824ce1ec06bc2a6c168e7/funcparserlib-1.0.1.tar.gz", hash = "sha256:a2c4a0d7942f7a0e7635c369d921066c8d4cae7f8b5bf7914466bec3c69837f4", size = 17238, upload-time = "2022-11-03T23:10:54.553Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/66/acd740d84f59c655935f586c113a863aa404dfe932052a68a1163d88ea63/funcparserlib-1.0.1-py2.py3-none-any.whl", hash = "sha256:95da15d3f0d00b9b6f4bf04005c708af3faa115f7b45692ace064ebe758c68e8", size = 17842, upload-time = "2022-11-03T23:10:53.434Z" },
 ]
 
 [[package]]
@@ -2322,19 +2237,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/26/5b/fcabf6028144a8723726318b07a32c2f3314acdff6265743cf08a344b18e/hpack-4.2.0.tar.gz", hash = "sha256:0895cfa3b5531fc65fe439c05eb65144f123bf7a394fcaa56aa423548d8e45c0", size = 51300, upload-time = "2026-06-23T18:34:46.667Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/b4/4a9fcfb2aef6ba44d9073ecd301443aa00b3dac95de5619f2a7de7ec8a91/hpack-4.2.0-py3-none-any.whl", hash = "sha256:858ac0b02280fa582b5080d68db0899c62a80375e0e5413a74970c5e518b6986", size = 34246, upload-time = "2026-06-23T18:34:45.472Z" },
-]
-
-[[package]]
-name = "html5lib"
-version = "1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "six" },
-    { name = "webencodings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/b6/b55c3f49042f1df3dcd422b7f224f939892ee94f22abcf503a9b7339eaf2/html5lib-1.1.tar.gz", hash = "sha256:b2e5b40261e20f354d198eae92afc10d750afb487ed5e50f9c4eaf07c184146f", size = 272215, upload-time = "2020-06-22T23:32:38.834Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/dd/a834df6482147d48e225a49515aabc28974ad5a4ca3215c18a882565b028/html5lib-1.1-py2.py3-none-any.whl", hash = "sha256:0d78f8fde1c230e99fe37986a60526d7049ed4bf8a9fadbad5f00e22e58e041d", size = 112173, upload-time = "2020-06-22T23:32:36.781Z" },
 ]
 
 [[package]]
@@ -2892,18 +2794,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jsbeautifier"
-version = "2.0.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "editorconfig" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/81/e0e11e305caa89831a0c8e555638d588c28b426d1105e734e113b00efd5d/jsbeautifier-2.0.3.tar.gz", hash = "sha256:9579d4e9dbaa00383f3efdff4c98c8140bb85ba319398e8b97cdaba27abd6ba3", size = 74659, upload-time = "2026-06-30T15:41:13.691Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/0b/607e06204b207c29a86759c763624aabbdd16613844564536847d71ad461/jsbeautifier-2.0.3-py3-none-any.whl", hash = "sha256:f0190e279a2cdb827556ada63f41c9c63c11f8116ee06e264b24aa50311cbee3", size = 93877, upload-time = "2026-06-30T15:41:11.731Z" },
-]
-
-[[package]]
 name = "jsmin"
 version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3266,18 +3156,6 @@ wheels = [
 ]
 
 [[package]]
-name = "livereload"
-version = "2.7.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tornado" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/43/6e/f2748665839812a9bbe5c75d3f983edbf3ab05fa5cd2f7c2f36fffdf65bd/livereload-2.7.1.tar.gz", hash = "sha256:3d9bf7c05673df06e32bea23b494b8d36ca6d10f7d5c3c8a6989608c09c986a9", size = 22255, upload-time = "2024-12-18T13:42:01.461Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/3e/de54dc7f199e85e6ca37e2e5dae2ec3bce2151e9e28f8eb9076d71e83d56/livereload-2.7.1-py3-none-any.whl", hash = "sha256:5201740078c1b9433f4b2ba22cd2729a39b9d0ec0a2cc6b4d3df257df5ad0564", size = 22657, upload-time = "2024-12-18T13:41:56.35Z" },
-]
-
-[[package]]
 name = "locust"
 version = "2.47.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3387,19 +3265,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/ca/eb/dc0fd6eff604bfb87
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/6f/1fa8970e960e5c832874399e6efa564870ade8206d57fef5d5e296b834f5/markdown-3.11.3-py3-none-any.whl", hash = "sha256:e1a31a112232504d753e5c01bb8c2de90d3f0ba986b063e10770cf7695b09e73", size = 116758, upload-time = "2026-11-05T20:30:51.775Z" },
 ]
-
-[[package]]
-name = "markdown-blockdiag"
-version = "0.8.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "actdiag" },
-    { name = "blockdiag" },
-    { name = "markdown" },
-    { name = "nwdiag" },
-    { name = "seqdiag" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/de/a9/b1d27d3f82cda5c444513dc0dcd63785ab3191a6ea3c047cb69f692f5890/markdown-blockdiag-0.8.0.tar.gz", hash = "sha256:5383e3d6b15baa904c020d2bc6de17182d2c2ca7e5f8e51cf5f78124690ddeee", size = 3415, upload-time = "2021-12-14T09:39:16.448Z" }
 
 [[package]]
 name = "markdown-it-py"
@@ -3745,97 +3610,20 @@ dev = [
     { name = "websockets" },
 ]
 docs = [
-    { name = "actdiag" },
-    { name = "babel" },
-    { name = "beautifulsoup4" },
-    { name = "blockdiag" },
-    { name = "bracex" },
-    { name = "brotli" },
-    { name = "cairocffi" },
-    { name = "cairosvg" },
-    { name = "certifi" },
-    { name = "cffi" },
-    { name = "charset-normalizer" },
-    { name = "click" },
-    { name = "colorama" },
-    { name = "csscompressor" },
-    { name = "cssselect2" },
-    { name = "defusedxml" },
-    { name = "editorconfig" },
-    { name = "flatten-json" },
-    { name = "fonttools" },
-    { name = "funcparserlib" },
-    { name = "ghp-import" },
-    { name = "gitdb" },
-    { name = "gitpython" },
-    { name = "html5lib" },
-    { name = "htmlmin2" },
-    { name = "idna" },
-    { name = "importlib-metadata" },
-    { name = "jinja2" },
-    { name = "jsbeautifier" },
-    { name = "jsmin" },
-    { name = "libsass" },
-    { name = "livereload" },
-    { name = "markdown" },
-    { name = "markdown-blockdiag" },
-    { name = "markupsafe" },
-    { name = "mergedeep" },
     { name = "mike" },
     { name = "mkdocs" },
     { name = "mkdocs-awesome-pages-plugin" },
-    { name = "mkdocs-blog-plugin" },
-    { name = "mkdocs-enumerate-headings-plugin" },
     { name = "mkdocs-git-authors-plugin" },
     { name = "mkdocs-git-revision-date-localized-plugin" },
     { name = "mkdocs-glightbox" },
-    { name = "mkdocs-include-markdown-plugin" },
     { name = "mkdocs-material" },
     { name = "mkdocs-material-extensions" },
-    { name = "mkdocs-mermaid-plugin" },
-    { name = "mkdocs-mermaid2-plugin" },
     { name = "mkdocs-minify-plugin" },
     { name = "mkdocs-pdf-export-plugin" },
-    { name = "mkdocs-plugin-inline-svg" },
     { name = "mkdocs-rss-plugin" },
     { name = "mkdocs-table-reader-plugin" },
     { name = "mkdocs-with-pdf" },
-    { name = "natsort" },
-    { name = "numpy" },
-    { name = "nwdiag" },
-    { name = "packaging" },
-    { name = "paginate" },
-    { name = "pandas" },
-    { name = "pathspec" },
-    { name = "pillow" },
-    { name = "platformdirs" },
-    { name = "pycparser" },
-    { name = "pydyf" },
-    { name = "pygments" },
     { name = "pymdown-extensions" },
-    { name = "pyparsing" },
-    { name = "pyphen" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "pyyaml" },
-    { name = "pyyaml-env-tag" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "seqdiag" },
-    { name = "six" },
-    { name = "smmap" },
-    { name = "soupsieve" },
-    { name = "tabulate" },
-    { name = "tinycss2" },
-    { name = "tzdata" },
-    { name = "urllib3" },
-    { name = "watchdog" },
-    { name = "wcmatch" },
-    { name = "weasyprint" },
-    { name = "webcolors" },
-    { name = "webencodings" },
-    { name = "zipp" },
-    { name = "zopfli" },
 ]
 
 [package.metadata]
@@ -4005,97 +3793,20 @@ dev = [
     { name = "websockets", specifier = ">=16.0" },
 ]
 docs = [
-    { name = "actdiag", specifier = ">=3.0.0" },
-    { name = "babel", specifier = ">=2.18.0" },
-    { name = "beautifulsoup4", specifier = ">=4.15.0" },
-    { name = "blockdiag", specifier = ">=3.0.0" },
-    { name = "bracex", specifier = ">=3.2.1" },
-    { name = "brotli", specifier = ">=1.2.1" },
-    { name = "cairocffi", specifier = ">=1.7.1" },
-    { name = "cairosvg", specifier = ">=2.9.1" },
-    { name = "certifi", specifier = ">=2026.10.23" },
-    { name = "cffi", specifier = ">=2.1.1" },
-    { name = "charset-normalizer", specifier = ">=3.5.2" },
-    { name = "click", specifier = ">=8.5.1" },
-    { name = "colorama", specifier = ">=0.4.6" },
-    { name = "csscompressor", specifier = ">=0.9.5" },
-    { name = "cssselect2", specifier = ">=0.10.1" },
-    { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "editorconfig", specifier = ">=0.17.1" },
-    { name = "flatten-json", specifier = ">=0.1.14" },
-    { name = "fonttools", specifier = ">=4.68.0" },
-    { name = "funcparserlib", specifier = ">=1.0.1" },
-    { name = "ghp-import", specifier = ">=2.1.0" },
-    { name = "gitdb", specifier = ">=4.0.12" },
-    { name = "gitpython", specifier = ">=3.2.1" },
-    { name = "html5lib", specifier = ">=1.1" },
-    { name = "htmlmin2", specifier = ">=0.1.13" },
-    { name = "idna", specifier = ">=3.20" },
-    { name = "importlib-metadata", specifier = ">=10.1.0" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "jsbeautifier", specifier = ">=2.0.3" },
-    { name = "jsmin", specifier = ">=3.0.1" },
-    { name = "libsass", specifier = ">=0.23.0" },
-    { name = "livereload", specifier = ">=2.7.1" },
-    { name = "markdown", specifier = ">=3.11.3" },
-    { name = "markdown-blockdiag", specifier = ">=0.8.0" },
-    { name = "markupsafe", specifier = ">=3.0.4" },
-    { name = "mergedeep", specifier = ">=1.3.4" },
     { name = "mike", specifier = ">=2.2.0" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-awesome-pages-plugin", specifier = ">=2.10.1" },
-    { name = "mkdocs-blog-plugin", specifier = ">=0.25" },
-    { name = "mkdocs-enumerate-headings-plugin", specifier = ">=0.7.0" },
     { name = "mkdocs-git-authors-plugin", specifier = ">=0.10.0" },
     { name = "mkdocs-git-revision-date-localized-plugin", specifier = ">=1.6.3" },
     { name = "mkdocs-glightbox", specifier = ">=0.5.3" },
-    { name = "mkdocs-include-markdown-plugin", specifier = ">=7.3.1" },
     { name = "mkdocs-material", specifier = ">=9.8.1" },
     { name = "mkdocs-material-extensions", specifier = ">=1.3.1" },
-    { name = "mkdocs-mermaid-plugin", specifier = ">=0.1.1" },
-    { name = "mkdocs-mermaid2-plugin", specifier = ">=1.2.3" },
     { name = "mkdocs-minify-plugin", specifier = ">=0.8.0" },
     { name = "mkdocs-pdf-export-plugin", specifier = ">=0.5.10" },
-    { name = "mkdocs-plugin-inline-svg", specifier = ">=0.1.0" },
     { name = "mkdocs-rss-plugin", specifier = ">=1.20.0" },
     { name = "mkdocs-table-reader-plugin", specifier = ">=4.0.2" },
     { name = "mkdocs-with-pdf", specifier = ">=0.9.3" },
-    { name = "natsort", specifier = ">=8.4.0" },
-    { name = "numpy", specifier = ">=2.5.4" },
-    { name = "nwdiag", specifier = ">=3.0.0" },
-    { name = "packaging", specifier = ">=26.3" },
-    { name = "paginate", specifier = ">=0.5.7" },
-    { name = "pandas", specifier = ">=3.1.1" },
-    { name = "pathspec", specifier = ">=1.1.1" },
-    { name = "pillow", specifier = ">=13.0.0" },
-    { name = "platformdirs", specifier = ">=4.14.5" },
-    { name = "pycparser", specifier = ">=3.12" },
-    { name = "pydyf", specifier = ">=0.13.0" },
-    { name = "pygments", specifier = ">=2.21.0" },
     { name = "pymdown-extensions", specifier = ">=12.3" },
-    { name = "pyparsing", specifier = ">=3.3.3" },
-    { name = "pyphen", specifier = ">=0.18.1" },
-    { name = "python-dateutil", specifier = ">=4.0.0" },
-    { name = "pytz", specifier = ">=2026.6" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "pyyaml-env-tag", specifier = ">=1.1" },
-    { name = "regex", specifier = ">=2026.11.7" },
-    { name = "requests", specifier = ">=2.34.2" },
-    { name = "seqdiag", specifier = ">=3.0.0" },
-    { name = "six", specifier = ">=1.17.0" },
-    { name = "smmap", specifier = ">=5.0.3" },
-    { name = "soupsieve", specifier = ">=4.0.1" },
-    { name = "tabulate", specifier = ">=0.10.0" },
-    { name = "tinycss2", specifier = ">=1.5.1" },
-    { name = "tzdata", specifier = ">=2026.6" },
-    { name = "urllib3", specifier = ">=2.8.0" },
-    { name = "watchdog", specifier = ">=7.1.0" },
-    { name = "wcmatch", specifier = ">=12.0" },
-    { name = "weasyprint", specifier = ">=70.0" },
-    { name = "webcolors", specifier = ">=25.10.0" },
-    { name = "webencodings", specifier = ">=0.6.1" },
-    { name = "zipp", specifier = ">=4.1.2" },
-    { name = "zopfli", specifier = ">=0.4.3" },
 ]
 
 [[package]]
@@ -4238,25 +3949,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mkdocs-blog-plugin"
-version = "0.25"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a4/de/cd98844ffa535f3d56d78437ecdf0c351d486f91933683f926dfac15b149/mkdocs-blog-plugin-0.25.tar.gz", hash = "sha256:36dcd804f6ab1314d19c32e46bf21076d5f4425e1bca22f2e735b9b4baaec836", size = 6117, upload-time = "2020-04-13T08:07:03.446Z" }
-
-[[package]]
-name = "mkdocs-enumerate-headings-plugin"
-version = "0.7.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "mkdocs" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/ce/6b2b9ee8f42fe40a74898c1a24f3192debb7ac6da38e00b9d8ef617296a3/mkdocs_enumerate_headings_plugin-0.7.0.tar.gz", hash = "sha256:5e63c5cf868de3d2c735ea4a0874c70b7f3214053f05248c1e22cb7bc8850f44", size = 16165, upload-time = "2026-03-26T17:28:25.293Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/6c/2b9fe10a9e2a27e72f88291f6f6957db09215d6782a758785cf1ce40ba6f/mkdocs_enumerate_headings_plugin-0.7.0-py3-none-any.whl", hash = "sha256:d3c644cdf736d0bfc3468dc7b5b4838870462038039e7fa3b2fd6910e9519c32", size = 12044, upload-time = "2026-03-26T17:28:23.942Z" },
-]
-
-[[package]]
 name = "mkdocs-get-deps"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -4311,19 +4003,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mkdocs-include-markdown-plugin"
-version = "7.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mkdocs" },
-    { name = "wcmatch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/40/3f/d891a714a6e0153872760eed0ee7440512f6bb8effab5dccfb703b2c5ccc/mkdocs_include_markdown_plugin-7.3.1.tar.gz", hash = "sha256:d61f0d50035171ba4524ac36cf55229577e7b62bfb2d23a0b9db3397f59d3f71", size = 25564, upload-time = "2026-11-07T10:11:55.414Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/d3/1ad7117d7eb43f7224f48f1d25fce62b7f357509d3d78a5337920817e439/mkdocs_include_markdown_plugin-7.3.1-py3-none-any.whl", hash = "sha256:8f3fd8a0b71fbdee091bfe4df47aa9c011435e345828ccc6b5572dfd3d1b615d", size = 29713, upload-time = "2026-11-07T10:11:54.342Z" },
-]
-
-[[package]]
 name = "mkdocs-material"
 version = "9.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4355,32 +4034,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mkdocs-mermaid-plugin"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mkdocs" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/92/4f8bd0c107b44a0cf03e689b1902b04736ba877a09aefe8d98962bbb95f3/mkdocs-mermaid-plugin-0.1.1.tar.gz", hash = "sha256:b761f49a37b251335efee5413306194705fd72dfa6b02380eb7a86b0f68f8de9", size = 2025, upload-time = "2018-11-29T01:36:57.105Z" }
-
-[[package]]
-name = "mkdocs-mermaid2-plugin"
-version = "1.2.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "jsbeautifier" },
-    { name = "mkdocs" },
-    { name = "pymdown-extensions" },
-    { name = "requests" },
-    { name = "setuptools" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/6d/308f443a558b6a97ce55782658174c0d07c414405cfc0a44d36ad37e36f9/mkdocs_mermaid2_plugin-1.2.3.tar.gz", hash = "sha256:fb6f901d53e5191e93db78f93f219cad926ccc4d51e176271ca5161b6cc5368c", size = 16220, upload-time = "2025-10-17T19:38:53.047Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/4b/6fd6dd632019b7f522f1b1f794ab6115cd79890330986614be56fd18f0eb/mkdocs_mermaid2_plugin-1.2.3-py3-none-any.whl", hash = "sha256:33f60c582be623ed53829a96e19284fc7f1b74a1dbae78d4d2e47fe00c3e190d", size = 17299, upload-time = "2025-10-17T19:38:51.874Z" },
-]
-
-[[package]]
 name = "mkdocs-minify-plugin"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4407,18 +4060,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ae/3c/5dd22c24873cb8ddd9e8700c82e75322ce617505dd68df54cdb4dccc5140/mkdocs-pdf-export-plugin-0.5.10.tar.gz", hash = "sha256:77ba89ebea6f565286fb04360e3d9810567e27302383c9e2b6fa386f8ecca7d9", size = 10180, upload-time = "2021-10-05T01:33:29.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/51/1ee5dd2b18acd7c18580cb6b58190d3e7a07c8719d6fd7fd58136a236ccc/mkdocs_pdf_export_plugin-0.5.10-py3-none-any.whl", hash = "sha256:e6e58f8bdedb300423336b00ea1846516f471b529ea85cb7f254fa2a2ee577d8", size = 10810, upload-time = "2021-10-05T01:33:27.436Z" },
-]
-
-[[package]]
-name = "mkdocs-plugin-inline-svg"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mkdocs" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/81/33/ba546dc1916a305ffe65c4c0e4404b97bc7c2eb3f1ee689cfbe410ead042/mkdocs-plugin-inline-svg-0.1.0.tar.gz", hash = "sha256:30753efd1769ad68aade76c95382695ef2b9b153ed765167d5137f7bb6c85130", size = 3022, upload-time = "2021-05-12T10:26:10.706Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/3d/020a6b6248c3d4a37797db068256f0b3f15b01bc481327ba888c50309aa8/mkdocs_plugin_inline_svg-0.1.0-py3-none-any.whl", hash = "sha256:a5aab2d98a19b24019f8e650f54fc647c2f31e7d0e36fc5cf2d2161acc0ea49a", size = 3664, upload-time = "2021-05-12T10:26:09.564Z" },
 ]
 
 [[package]]
@@ -4866,18 +4507,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/fa/84ab064514440c1f64a1b21088f2c82756defdd05e07c75ab233899565b2/numpy-2.5.4-cp314-cp314t-win32.whl", hash = "sha256:64d1c8ac28a4077cf987e0a71a7a0ef7e2df70722f07f0baa42dbb7eb6938647", size = 6340926, upload-time = "2026-10-10T20:04:22.865Z" },
     { url = "https://files.pythonhosted.org/packages/7e/7e/6cd886876f435b10685db9b9f7eeb70356f99e052116f4e5f11c5792c714/numpy-2.5.4-cp314-cp314t-win_amd64.whl", hash = "sha256:067374eb538c34c745436365cf7b0112595c1d326f21ce4ff340f61230239fbb", size = 12901584, upload-time = "2026-10-10T20:04:24.99Z" },
     { url = "https://files.pythonhosted.org/packages/38/1b/3c1684f6a06f7307f2335fca6e486cb162847fb97e91d65f8eb5cabad213/numpy-2.5.4-cp314-cp314t-win_arm64.whl", hash = "sha256:e94aef2c639da4a960ad0db8e06471208d8589974953d78b61d345b4eb99e394", size = 10891152, upload-time = "2026-10-10T20:04:27.52Z" },
-]
-
-[[package]]
-name = "nwdiag"
-version = "3.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "blockdiag" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/75/06920ff030f924638b045be3d1dbaf92b8fc462d154515ef5b6c57d7d561/nwdiag-3.0.0.tar.gz", hash = "sha256:e267530fcaac8a1d9e7403048597ed30e031e17f0191569dc6f704087bacb2eb", size = 7750437, upload-time = "2021-12-06T17:02:48.953Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/36/efc7814620986220290ebbe2f270f31043280d37d4e094226b1ede12087d/nwdiag-3.0.0-py3-none-any.whl", hash = "sha256:549cab5400ca33b8c05ea119414fa41e6bd85be222ba524418c2c176eea87e80", size = 7736537, upload-time = "2021-12-06T17:02:47.173Z" },
 ]
 
 [[package]]
@@ -6526,15 +6155,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytz"
-version = "2026.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f5/b0/168030b0bfcc334cf09fa3313afdb888d892c8a0027324683d1de0ec277e/pytz-2026.6.tar.gz", hash = "sha256:3b0fc2727707663d6e517936f444fd8a8b240f1fc32f4bf7ee03274245945284", size = 318520, upload-time = "2026-10-29T09:05:47.011Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/25/564f3fc5b70c1398d706c51f2b1470d0ea0b1b2f96fee67877b6f5bdf3b6/pytz-2026.6-py2.py3-none-any.whl", hash = "sha256:7fed3fee8fd6bd4a2b7b75a8d56021d0624127bf69bd5691f115db929ac570b3", size = 506321, upload-time = "2026-10-29T09:05:45.14Z" },
-]
-
-[[package]]
 name = "pyupgrade"
 version = "3.22.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7153,18 +6773,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/61/751039976d90be88d73592dfdd1f3f7d869aad5602a443831ead5fe7daee/selectolax-1.0.2-cp314-cp314t-win32.whl", hash = "sha256:fdfffd30a171630d598553ae3afe642b48ab39afbe19ac35c4b4c348211a0ef7", size = 1271335, upload-time = "2026-10-22T15:44:28.384Z" },
     { url = "https://files.pythonhosted.org/packages/5c/7b/d9323463b5d960d282a622d6b4fbefa3485995f78408264dfca615a56af2/selectolax-1.0.2-cp314-cp314t-win_amd64.whl", hash = "sha256:06041d922864c7c2c4047b6a47b59501a9e051e8e3589152dd0172c9f449bc52", size = 1336199, upload-time = "2026-10-22T15:44:29.737Z" },
     { url = "https://files.pythonhosted.org/packages/5d/d5/8e8f88ac1489aa0814370f364e801a10426bd0f2ef24e4a3132364707529/selectolax-1.0.2-cp314-cp314t-win_arm64.whl", hash = "sha256:5f679f6240c4aa19fda210cb102d14bd877489d78cc2c851d5ad636eca152bd0", size = 1317560, upload-time = "2026-10-22T15:44:31.049Z" },
-]
-
-[[package]]
-name = "seqdiag"
-version = "3.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "blockdiag" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/66/7d344b87f0a4ce761efe8a16fa41bad28d4685502540899004c5b3ca34ca/seqdiag-3.0.0.tar.gz", hash = "sha256:e15113a28bd075460a62da44e15a88fafa3c81fdf3a35dcd5e3cd64ef15e961a", size = 2619076, upload-time = "2021-12-06T16:56:31.452Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/0c/66a3bedcc9fc972031dec8da2a57d92b1970dc58e23ba69178061f73cee3/seqdiag-3.0.0-py3-none-any.whl", hash = "sha256:8fc941a0badc992766ffb393cf46d56f087e6c58438bc20699e7cdbae202033d", size = 2588169, upload-time = "2021-12-06T16:56:29.448Z" },
 ]
 
 [[package]]
@@ -8107,15 +7715,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8d/0e/461aeb736762862b511034933d5b98d68f812431b7393b026d9ace5f6b42/weasyprint-70.0.tar.gz", hash = "sha256:c263abf0e86c747b12af678b67f85f4abbfb97d18a20503031e7ba94e4b8cf8c", size = 1565482, upload-time = "2026-09-08T12:25:41.484Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/22/8b/0c53c869f29d3273536b896dd17f092549e34e35ffba4c7a60a6de1cb1c2/weasyprint-70.0-py3-none-any.whl", hash = "sha256:5043e55e38d2a2af2b2b871e869697b1f65dad5f8b4a3677961d04ceacf9c5fe", size = 328889, upload-time = "2026-09-08T12:25:39.796Z" },
-]
-
-[[package]]
-name = "webcolors"
-version = "25.10.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1d/7a/eb316761ec35664ea5174709a68bbd3389de60d4a1ebab8808bfc264ed67/webcolors-25.10.0.tar.gz", hash = "sha256:62abae86504f66d0f6364c2a8520de4a0c47b80c03fc3a5f1815fedbef7c19bf", size = 53491, upload-time = "2025-10-31T07:51:03.977Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/cc/e097523dd85c9cf5d354f78310927f1656c422bd7b2613b2db3e3f9a0f2c/webcolors-25.10.0-py3-none-any.whl", hash = "sha256:032c727334856fc0b968f63daa252a1ac93d33db2f5267756623c210e57a4f1d", size = 14905, upload-time = "2025-10-31T07:51:01.778Z" },
 ]
 
 [[package]]
