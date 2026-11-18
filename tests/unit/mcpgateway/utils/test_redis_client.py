@@ -1020,7 +1020,7 @@ class TestMaskRedisUrl:
         """Percent-encoded password is fully masked and the username kept."""
         from mcpgateway.utils.redis_client import _mask_redis_url
 
-        result = _mask_redis_url("redis://user:p%40ss%3Aw@host:6379")
+        result = _mask_redis_url("redis://user:p%40ss%3Aw@host:6379")  # pragma: allowlist secret
         assert result == "redis://user:***@host:6379"
 
     def test_masks_ipv6_host(self):
