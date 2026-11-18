@@ -321,6 +321,31 @@ class TestAuthFields:
         assert "auth_type" not in fields and "oauth_config" not in fields
         assert any("authorization_code" in warning and "do not support" in warning for warning in warnings)
 
+    @pytest.mark.parametrize("code_first", [True, False])
+    def test_authorization_code_beside_supported_alternatives(self, code_first):
+        """Unsupported flow warnings must not describe a supported unselected alternative."""
+        requirements = [{"schemes": {"code": {}}}, {"schemes": {"bearer": {}}}, {"schemes": {"basic": {}}}]
+        if not code_first:
+            requirements = requirements[1:] + requirements[:1]
+        card = {
+            **V1_CARD,
+            "securitySchemes": {
+                "code": {"oauth2SecurityScheme": {"flows": {"authorizationCode": {"tokenUrl": "https://idp.example.com/token"}}}},
+                "bearer": {"httpAuthSecurityScheme": {"scheme": "bearer"}},
+                "basic": {"httpAuthSecurityScheme": {"scheme": "basic"}},
+            },
+            "securityRequirements": requirements,
+        }
+        fields, warnings = suggest_agent_fields(card)
+        assert fields["auth_type"] == "bearer"
+        assert "oauth_config" not in fields
+        assert sorted(warnings) == sorted(
+            [
+                "Security scheme 'code' only offers the authorization_code flow, which A2A agents do not support, and was ignored.",
+                "Security scheme 'basic' is an alternative that was not selected.",
+            ]
+        )
+
     def test_openid_connect_maps_discovery_url_without_token_url(self):
         """An OIDC card suggests client_credentials with the discovery URL, not a typed token URL."""
         card = {

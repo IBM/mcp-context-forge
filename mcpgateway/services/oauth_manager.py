@@ -828,6 +828,14 @@ class OAuthManager:
         The stored oauth_config then carries that URL under discovery.openIdConnectUrl,
         and the token endpoint is read from the discovery document at request time.
 
+        This is endpoint discovery, not full OIDC provider validation. It does
+        not validate the metadata issuer or use it to widen the configured URL's origin.
+        Discovered token endpoints must use the same scheme, host, and port as
+        the discovery URL. Cross-origin providers (for example, Google discovery
+        on accounts.google.com with tokens on oauth2.googleapis.com) are not
+        supported by this fallback. Configure token_url explicitly for them.
+        This helper also serves non-A2A client-credentials callers.
+
         Args:
             runtime_credentials: Decrypted OAuth configuration.
 
@@ -893,7 +901,6 @@ class OAuthManager:
         except (DcrError, ValueError) as exc:
             raise OAuthError(f"Discovered token_endpoint was rejected: {exc}") from exc
 
-        runtime_credentials["token_url"] = token_endpoint
         return token_endpoint
 
     async def get_client_credentials_token_response(
@@ -907,9 +914,11 @@ class OAuthManager:
         """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
 
         Callers that cache the token use this instead of ``get_access_token()`` to learn its lifetime.
+        If token_url is absent, discovery.openIdConnectUrl can supply a same-origin
+        endpoint. This fallback applies to every caller, not only A2A agents.
 
         Args:
-            credentials: OAuth configuration with client_id, client_secret, token_url
+            credentials: OAuth configuration with client_id, client_secret, and token_url or discovery.openIdConnectUrl
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
@@ -919,10 +928,13 @@ class OAuthManager:
             Parsed token endpoint response containing at least ``access_token``.
 
         Raises:
-            OAuthError: If token acquisition fails after all retries
+            OAuthError: If token_url and discovery are absent, discovery fails validation, or token acquisition fails after all retries
         """
-        runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
+        # Decryption failure can return the caller's original dict. Keep the resolved
+        # URL local, including for private_key_jwt assertion audiences and retries.
+        runtime_credentials = dict(await self._prepare_runtime_credentials(credentials, "client_credentials"))
         token_url = await self._resolve_client_credentials_token_url(runtime_credentials)
+        runtime_credentials["token_url"] = token_url
         scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data and apply the configured client

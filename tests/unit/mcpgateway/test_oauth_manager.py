@@ -8,6 +8,7 @@ Unit tests for OAuth Manager and Token Storage Service.
 
 # Standard
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -1675,3 +1676,116 @@ class TestClientCredentialsOidcDiscovery:
                 await manager.get_client_credentials_token_response(self._credentials())
         mock_client.post.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("decryption_fails", [False, True])
+    async def test_discovery_does_not_mutate_stored_credentials(self, decryption_fails):
+        """Keep the stored config unchanged, including when runtime decryption fails."""
+        manager = OAuthManager()
+        credentials = self._credentials(token_endpoint_auth_method="private_key_jwt")
+        original = deepcopy(credentials)
+        mock_client = AsyncMock()
+        mock_client.get.return_value = self._discovery_response()
+        mock_client.post.return_value = self._token_response()
+
+        async def decrypt(config, **_kwargs):
+            if decryption_fails:
+                raise ValueError("decryption unavailable")
+            return deepcopy(config)
+
+        with (
+            patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", side_effect=decrypt),
+            patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)),
+            patch.object(manager, "_build_client_assertion", new_callable=AsyncMock, return_value="signed-assertion") as assertion,
+        ):
+            result = await manager.get_client_credentials_token_response(credentials)
+
+        assert result["access_token"] == "discovered_token"
+        assert credentials == original
+        assert assertion.await_count == 2  # Initial assertion and first-attempt refresh.
+        assert all(call.args[0]["token_url"] == self._TOKEN_URL for call in assertion.await_args_list)
+        assert mock_client.post.await_args.kwargs["data"]["client_assertion"] == "signed-assertion"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [301, 302, 307, 308, 400, 404, 500])
+    async def test_discovery_http_status_fails_without_sending_credentials(self, status_code):
+        """Refuse redirects and unsuccessful responses before a token request."""
+        mock_client = AsyncMock()
+        response = self._discovery_response(status_code=status_code)
+        mock_client.get.return_value = response
+        message = "redirect refused" if 300 <= status_code < 400 else "was not found"
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match=message):
+                await OAuthManager().get_client_credentials_token_response(self._credentials())
+        assert mock_client.get.await_args.kwargs["follow_redirects"] is False
+        assert not ({"Authorization", "client_secret"} & mock_client.get.await_args.kwargs["headers"].keys())
+        response.json.assert_not_called()
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload", "message"),
+        [
+            ([], "not a JSON object"),
+            ("text", "not a JSON object"),
+            ({}, "did not contain token_endpoint"),
+            ({"token_endpoint": ""}, "did not contain token_endpoint"),
+            ({"token_endpoint": 123}, "did not contain token_endpoint"),
+        ],
+    )
+    async def test_discovery_invalid_metadata_fails_without_sending_credentials(self, payload, message):
+        """Require an object with a nonempty string token_endpoint."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = self._discovery_response(payload)
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match=message):
+                await OAuthManager().get_client_credentials_token_response(self._credentials())
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discovery_non_json_fails_without_sending_credentials(self):
+        """Reject a successful response whose body cannot be decoded as JSON."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = self._discovery_response()
+        mock_client.get.return_value.json.side_effect = ValueError("not JSON")
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match="not valid JSON"):
+                await OAuthManager().get_client_credentials_token_response(self._credentials())
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unreachable_discovery_fails_without_sending_credentials(self):
+        """Wrap transport errors and do not attempt to send credentials."""
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.ConnectError("unreachable")
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match="Failed to fetch OAuth discovery document"):
+                await OAuthManager().get_client_credentials_token_response(self._credentials())
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blocked_by_policy", [False, True])
+    async def test_discovery_url_validation_fails_before_network(self, blocked_by_policy):
+        """Validate URL syntax and URL policy before fetching discovery metadata."""
+        mock_client = AsyncMock()
+        credentials = self._credentials()
+        if not blocked_by_policy:
+            credentials["discovery"]["openIdConnectUrl"] = "file:///etc/hosts"
+        with (
+            patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)),
+            patch("mcpgateway.services.oauth_manager.resolve_pinned_target", side_effect=ValueError("blocked target")),
+        ):
+            with pytest.raises(OAuthError, match="blocked by URL policy" if blocked_by_policy else "URL is invalid"):
+                await OAuthManager().get_client_credentials_token_response(credentials)
+        mock_client.get.assert_not_called()
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["https://idp.example.com:8443/token", "http://idp.example.com/token", "https://oauth2.googleapis.com/token"])
+    async def test_metadata_issuer_cannot_authorize_a_different_origin(self, endpoint):
+        """The metadata issuer cannot widen the configured discovery origin."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = self._discovery_response({"issuer": endpoint.rsplit("/", 1)[0], "token_endpoint": endpoint})
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
+            with pytest.raises(OAuthError, match="token_endpoint was rejected"):
+                await OAuthManager().get_client_credentials_token_response(self._credentials())
+        mock_client.post.assert_not_called()

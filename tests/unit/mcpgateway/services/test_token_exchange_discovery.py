@@ -235,6 +235,40 @@ _WITH_DISCOVERY = _te_config(discovery={"grant_type": "client_credentials", "sco
 
 @pytest.mark.asyncio
 class TestResolveDiscoveryHeader:
+    @pytest.mark.parametrize("has_token_url", [True, False])
+    async def test_gateway_does_not_inherit_oidc_discovery_metadata(self, has_token_url):
+        """The real OAuth manager must not fetch an OIDC URL from a discovery credential."""
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        service = GatewayService()
+        service.oauth_manager = OAuthManager()
+        config = _te_config(discovery={"grant_type": "client_credentials", "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"})
+        if not has_token_url:
+            config.pop("token_url")
+        response = MagicMock()
+        response.headers = {"content-type": "application/json"}
+        response.json.return_value = {"access_token": "svc-tok", "expires_in": 3600}
+        with (
+            patch("mcpgateway.services.oauth_manager.get_isolated_http_client") as http_client,
+            patch.object(service.oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=response) as post,
+            patch("mcpgateway.services.gateway_service.audit_token_exchange") as audit,
+        ):
+            if has_token_url:
+                header = await service._resolve_discovery_header(config, gateway_id=None, gateway_name="gw")
+                assert header == {"Authorization": "Bearer svc-tok"}
+                assert post.await_args.args[0] == config["token_url"]
+            else:
+                with pytest.raises(GatewayConnectionError, match="Discovery credential token request failed"):
+                    await service._resolve_discovery_header(config, gateway_id=None, gateway_name="gw")
+                post.assert_not_called()
+            http_client.assert_not_called()
+            assert audit.call_args.kwargs["success"] is has_token_url
+
     async def test_none_without_discovery(self):
         service = _discovery_service()
         assert await service._resolve_discovery_header(_te_config(), gateway_id="gw1", gateway_name="gw") is None

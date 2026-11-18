@@ -1178,4 +1178,3 @@ class TestA2AOauthDiscoveryConfig:
         )
         assert agent.oauth_config["discovery"]["openIdConnectUrl"] == "https://idp.example.com/.well-known/openid-configuration"
         assert "token_url" not in agent.oauth_config
-
