@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/live_gateway/a2a/test_a2a_oauth_invoke_e2e.py
+"""Location: ./tests/live_gateway/a2a/test_a2a_oauth_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Black-box checks that an OAuth-protected A2A agent is invoked with a client-credentials token (#7382).
+Black-box checks that an OAuth-protected A2A agent is invoked with a client-credentials token (#5815).
 
 Loopback servers play the identity provider and the remote agent. The gateway registers
 the agent over HTTP, stores the client secret encrypted, and invokes the agent through
@@ -40,6 +40,7 @@ PASSTHROUGH_AGENT = "oauth-e2e-passthrough"
 FAIL_AGENT = "oauth-e2e-failing-idp"
 DISABLED_AGENT = "oauth-e2e-disabled"
 PRIVATE_AGENT = "oauth-e2e-private"
+EVICT_AGENT = "oauth-e2e-evicted"
 
 
 def _free_port():
@@ -212,6 +213,7 @@ def gateway(tmp_path_factory, servers):
                 disabled = register(DISABLED_AGENT, "/token")
                 assert client.post(f"/a2a/{disabled['id']}/state", params={"activate": "false"}).status_code == 200
                 register(PRIVATE_AGENT, "/token", visibility="private")
+                register(EVICT_AGENT, "/token")
             yield base, signing_key
         finally:
             process.terminate()
@@ -321,3 +323,117 @@ def test_other_users_private_agent_acquires_no_token(gateway, servers):
 
     assert response.status_code in (403, 404)
     assert recorder.token_requests == [] and recorder.agent_requests == []
+
+
+def test_token_request_carries_the_agent_origin_as_resource(gateway, servers):
+    """The token request sends the RFC 8707 resource derived from the agent endpoint origin."""
+    _idp, agent_url, recorder = servers
+    recorder.clear()
+    name = f"oauth-e2e-resource-{secrets.token_hex(3)}"
+    base, key = gateway
+    admin = make_auth_headers(make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256"))
+    body = {
+        "agent": {
+            "name": name,
+            "endpoint_url": f"{agent_url}/invoke",
+            "agent_type": "generic",
+            "protocol_version": "1.0",
+            "auth_type": "oauth",
+            "oauth_config": {"grant_type": "client_credentials", "token_url": f"{servers[0]}/token", "client_id": "cid", "client_secret": CLIENT_SECRET},
+        },
+        "visibility": "public",
+    }
+    with httpx.Client(base_url=base, headers=admin, timeout=30, trust_env=False) as client:
+        assert client.post("/a2a", json=body).status_code in (200, 201)
+    assert _invoke(gateway, name).status_code == 200
+
+    assert recorder.token_requests[0]["form"]["resource"] == [agent_url]
+
+
+@pytest.mark.parametrize(
+    "oauth_config",
+    [
+        {"grant_type": "authorization_code", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": CLIENT_SECRET},
+        {"grant_type": "client_credentials", "token_url": "http://169.254.169.254/latest/meta-data", "client_id": "cid", "client_secret": CLIENT_SECRET},
+    ],
+    ids=["unsupported-grant", "metadata-token-url"],
+)
+def test_registration_rejects_unusable_oauth_config(gateway, servers, oauth_config):
+    """An unsupported grant or a blocked token URL is refused at registration with 422."""
+    _idp, agent_url, recorder = servers
+    recorder.clear()
+    base, key = gateway
+    admin = make_auth_headers(make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256"))
+    body = {
+        "agent": {
+            "name": f"oauth-e2e-rejected-{secrets.token_hex(3)}",
+            "endpoint_url": f"{agent_url}/invoke",
+            "agent_type": "generic",
+            "protocol_version": "1.0",
+            "auth_type": "oauth",
+            "oauth_config": oauth_config,
+        }
+    }
+
+    with httpx.Client(base_url=base, headers=admin, timeout=30, trust_env=False) as client:
+        response = client.post("/a2a", json=body)
+
+    assert response.status_code == 422, response.text
+    assert CLIENT_SECRET not in response.text
+    assert recorder.token_requests == []
+
+
+def test_disabling_an_agent_evicts_its_cached_token(gateway, servers):
+    """A cached token does not survive a disable and enable cycle."""
+    _idp, _agent, recorder = servers
+    recorder.clear()
+    base, key = gateway
+    admin = make_auth_headers(make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256"))
+
+    assert _invoke(gateway, EVICT_AGENT).status_code == 200
+    assert _invoke(gateway, EVICT_AGENT).status_code == 200
+    assert len(recorder.token_requests) == 1
+
+    with httpx.Client(base_url=base, headers=admin, timeout=30, trust_env=False) as client:
+        agent_id = next(item["id"] for item in client.get("/a2a", params={"include_inactive": "true"}).json() if item["name"] == EVICT_AGENT)
+        assert client.post(f"/a2a/{agent_id}/state", params={"activate": "false"}).status_code == 200
+        assert client.post(f"/a2a/{agent_id}/state", params={"activate": "true"}).status_code == 200
+
+    assert _invoke(gateway, EVICT_AGENT).status_code == 200
+    assert len(recorder.token_requests) == 2
+
+
+def test_masked_secret_cannot_follow_a_changed_token_url(gateway, servers):
+    """The stored client secret never reaches a new token host unless the caller sends the secret again."""
+    idp_url, agent_url, recorder = servers
+    base, key = gateway
+    admin = make_auth_headers(make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256"))
+    name = f"oauth-e2e-secret-{secrets.token_hex(3)}"
+    config = {"grant_type": "client_credentials", "token_url": f"{idp_url}/token", "client_id": "cid", "client_secret": CLIENT_SECRET}
+    other_recorder = _Recorder()
+    other_idp = _serve(_make_idp_handler(other_recorder))
+    other_token_url = f"http://127.0.0.1:{other_idp.server_address[1]}/token"
+    try:
+        with httpx.Client(base_url=base, headers=admin, timeout=30, trust_env=False) as client:
+            created = client.post(
+                "/a2a",
+                json={
+                    "agent": {"name": name, "endpoint_url": f"{agent_url}/invoke", "agent_type": "generic", "protocol_version": "1.0", "auth_type": "oauth", "oauth_config": config},
+                    "visibility": "public",
+                },
+            )
+            assert created.status_code in (200, 201), created.text
+            agent_id = created.json()["id"]
+            recorder.clear()
+
+            refused = client.put(f"/a2a/{agent_id}", json={"oauth_config": {**config, "client_secret": "*****", "token_url": other_token_url}})  # pragma: allowlist secret
+            assert refused.status_code >= 400, refused.text
+            assert "client secret again" in refused.text
+            assert _invoke(gateway, name).status_code == 200
+            assert len(recorder.token_requests) == 1
+            assert other_recorder.token_requests == []
+
+            accepted = client.put(f"/a2a/{agent_id}", json={"oauth_config": {**config, "client_secret": "replacement-secret-value", "token_url": other_token_url}})  # pragma: allowlist secret
+            assert accepted.status_code == 200, accepted.text
+    finally:
+        other_idp.shutdown()

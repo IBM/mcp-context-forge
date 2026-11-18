@@ -257,6 +257,9 @@ Response:
 !!! important "One Email, One Provider"
     A verified email is bound to the SSO provider it first signed in through. Signing in again with the same email from a *different* provider is refused by default (`SSO_ALLOW_PROVIDER_LINKING=false`) to stop account takeover via an unvetted provider. Set `SSO_ALLOW_PROVIDER_LINKING=true` to allow relinking — this is a global switch across all configured providers, not scoped to a specific pair, and admin status is always re-vetted against the new provider on relink (see [Configuration Reference](configuration.md)).
 
+!!! warning "Relinking Needs a Verified-Email Claim"
+    With `SSO_ALLOW_PROVIDER_LINKING=true`, an account is rebound only when the new provider sends an explicit verified-email claim (`email_verified=true`, or Microsoft Entra ID's `verified_primary_email` / `verified_secondary_email`). A login that omits the claim is refused for an account bound to another provider. GitHub and most Entra ID tenants send no such claim, so relinking to them is refused; sign-in through the account's own provider is unaffected. ADFS is the exception: the gateway treats every ADFS identity as verified, because ADFS addresses come from the organization's directory, so an ADFS login can relink without sending the claim. Enable linking only for identity providers that verify email ownership before asserting the claim.
+
 ## Provider Configuration
 
 ### GitHub OAuth Setup

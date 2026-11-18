@@ -1582,6 +1582,24 @@ class TestToolEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
+    @patch("mcpgateway.main.tool_service.delete_tool")
+    def test_delete_tool_passes_canonical_user_id(self, mock_delete, test_client, auth_headers):
+        """The router passes the canonical user_id to the service next to the caller e-mail."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        mock_delete.return_value = None
+        overrides = test_client.app.dependency_overrides
+        original = overrides[get_current_user_with_permissions]
+        overrides[get_current_user_with_permissions] = lambda: {"email": "diverged@example.com", "user_id": "u-123", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+        try:
+            response = test_client.delete("/tools/1", headers=auth_headers)
+        finally:
+            overrides[get_current_user_with_permissions] = original
+        assert response.status_code == 200
+        assert mock_delete.call_args.kwargs["user_email"] == "diverged@example.com"
+        assert mock_delete.call_args.kwargs["user_id"] == "u-123"
+
 
 # ----------------------------------------------------- #
 # Resource Management Tests                             #
@@ -7011,6 +7029,115 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
 
     warning_found = any("DATABASE POOL: Running with 13 gunicorn workers" in record.message and "1560" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
+
+
+def _stub_lifespan_dependencies(monkeypatch, main_mod):
+    """Replace every lifespan dependency with a mock so only the sandbox pool hooks are under test."""
+    for name in (
+        "db_pool_size",
+        "db_max_overflow",
+    ):
+        monkeypatch.setattr(main_mod.settings, name, 5)
+    for name in (
+        "mcpgateway_session_affinity_enabled",
+        "enable_header_passthrough",
+        "mcpgateway_tool_cancellation_enabled",
+        "mcpgateway_elicitation_enabled",
+        "metrics_buffer_enabled",
+        "db_metrics_recording_enabled",
+        "metrics_cleanup_enabled",
+        "metrics_rollup_enabled",
+        "sso_enabled",
+        "metrics_aggregation_enabled",
+        "llmchat_enabled",
+        "mcpgateway_a2a_enabled",
+    ):
+        monkeypatch.setattr(main_mod.settings, name, False)
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, attr, service)
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+
+def _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, *, failing=None):
+    """Patch the six sandbox pool hooks on ``main`` to append their name to ``calls``; ``failing`` raises instead."""
+
+    def make_hook(name):
+        def hook():
+            calls.append(name)
+            if name == failing:
+                raise RuntimeError(f"{name} failed")
+
+        return hook
+
+    for name in ("start_jq_pool", "start_validation_pool", "start_cel_pool", "shutdown_jq_pool", "shutdown_validation_pool", "shutdown_cel_pool"):
+        monkeypatch.setattr(main_mod, name, make_hook(name))
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_sandbox_pools_in_order_and_shuts_them_down(monkeypatch):
+    """The lifespan starts the jq, validation and CEL pools before bootstrap, and stops them in the same order on exit."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    _stub_lifespan_dependencies(monkeypatch, main_mod)
+    calls = []
+    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls)
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock(side_effect=lambda: calls.append("bootstrap_db")))
+
+    async with main_mod.lifespan(main_mod.app):
+        assert calls == ["start_jq_pool", "start_validation_pool", "start_cel_pool", "bootstrap_db"]
+
+    assert calls[4:] == ["shutdown_jq_pool", "shutdown_validation_pool", "shutdown_cel_pool"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_aborts_boot_when_a_sandbox_pool_fails_to_start(monkeypatch):
+    """A pool that fails to start aborts the boot before bootstrap and before later pools start."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    _stub_lifespan_dependencies(monkeypatch, main_mod)
+    calls = []
+    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, failing="start_jq_pool")
+    bootstrap = AsyncMock()
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", bootstrap)
+
+    with pytest.raises(RuntimeError, match="start_jq_pool failed"):
+        async with main_mod.lifespan(main_mod.app):
+            pytest.fail("lifespan must not yield when a sandbox pool fails to start")
+
+    assert calls == ["start_jq_pool"]
+    bootstrap.assert_not_awaited()
 
 
 # ========================================================================== #

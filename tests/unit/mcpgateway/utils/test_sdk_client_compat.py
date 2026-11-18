@@ -457,3 +457,30 @@ async def test_compat_shim_default_client_applies_kwargs() -> None:
     with patch.object(compat, "_sdk_streamable_http_client", side_effect=fake_sdk_acm):
         async with compat.streamable_http_client("http://x.example/mcp", headers={"A": "b"}, timeout=5.0, auth=auth) as streams:
             assert streams == ("r", "w")
+
+
+@pytest.mark.asyncio
+async def test_compat_shim_builds_a_client_with_headers_timeout_auth_and_session_tracking() -> None:
+    """Without a client factory the shim builds its own client and installs session capture."""
+    # First-Party
+    from mcpgateway.utils.streamable_http_compat import UpstreamSessionInfo
+
+    mock_acm = AsyncMock()
+    mock_acm.__aenter__.return_value = (MagicMock(), MagicMock())
+    mock_acm.__aexit__.return_value = None
+    session_info = UpstreamSessionInfo()
+    captured: dict[str, Any] = {}
+
+    with patch("mcpgateway.utils.streamable_http_compat._sdk_streamable_http_client", side_effect=lambda **kwargs: captured.update(kwargs) or mock_acm):
+        async with compat_streamable_http_client(
+            "http://localhost:9000/mcp",
+            headers={"X-Test": "1"},
+            timeout=5.0,
+            auth=MagicMock(),
+            session_info=session_info,
+        ):
+            client = captured["http_client"]
+            assert client.headers["X-Test"] == "1"
+            assert client.timeout.read == 5.0
+            assert client.auth is not None
+            assert session_info.capture_response in client.event_hooks["response"]

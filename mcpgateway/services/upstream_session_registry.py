@@ -42,11 +42,12 @@ import mcp_types
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.observability import create_span, upstream_transport_context
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.session_compat import RequestResponder
 from mcpgateway.utils.ssrf_pinning import PinnedTarget, resolve_pinned_target
-from mcpgateway.utils.streamable_http_compat import streamable_http_client
+from mcpgateway.utils.streamable_http_compat import streamable_http_client, UpstreamSessionInfo
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)
@@ -422,6 +423,7 @@ class SessionLifecycle:
     owner_task: asyncio.Task
     shutdown_event: asyncio.Event
     client: Any
+    session_info: UpstreamSessionInfo | None = None
 
 
 @dataclass
@@ -452,12 +454,18 @@ class UpstreamSession:
     _closed: bool = field(default=False, repr=False)
     _owner_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _shutdown_event: Optional[asyncio.Event] = field(default=None, repr=False)
+    session_info: UpstreamSessionInfo | None = None
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Reject post-construction reassignment of identity fields."""
         if name in _IDENTITY_FIELDS and name in self.__dict__:
             raise AttributeError(f"{name!r} is immutable on UpstreamSession after construction")
         super().__setattr__(name, value)
+
+    @property
+    def upstream_session_id(self) -> str | None:
+        """Return the session ID assigned by the upstream server, when available."""
+        return self.session_info.session_id if self.session_info is not None else None
 
     @property
     def idle_seconds(self) -> float:
@@ -643,6 +651,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     only a caller's own per-call fallback path (as some already do) would
     leave this pooled path, which every such caller also uses, unpinned.
     """
+    session_info = UpstreamSessionInfo()
     pinned_target = await _resolve_pinned_session_target(req.url)
     if req.httpx_client_factory is not None:
         pinned_httpx_client_factory = _wrap_httpx_client_factory(pinned_target, req.httpx_client_factory)
@@ -652,16 +661,18 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     if req.transport_type is TransportType.SSE:
         transport_ctx = sse_client(
             url=req.url,
-            headers=req.headers,
+            headers=dict(req.headers),
             httpx_client_factory=pinned_httpx_client_factory,
             timeout=req.timeout_seconds,
+            on_session_created=session_info.capture_sse,
         )
     else:
         transport_ctx = streamable_http_client(
             url=req.url,
-            headers=req.headers,
+            headers=dict(req.headers),
             httpx_client_factory=pinned_httpx_client_factory,
             timeout=req.timeout_seconds,
+            session_info=session_info,
         )
 
     shutdown_event = asyncio.Event()
@@ -699,6 +710,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # __aenter__ enters the transport and performs the mode-driven
             # handshake; no explicit session.initialize() here.
             async with client:
+                session_info.annotate(init_span)
                 if not ready.done():
                     ready.set_result((client.session, client))
                 # Block until the registry signals shutdown; do NOT rely on
@@ -794,100 +806,103 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                 # - DNS resolution failures
                 ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [{error_category}] {exception_type}: {sanitized_message}"))
 
-    task = asyncio.create_task(owner(), name=f"upstream-session-{sanitize_url_for_logging(req.url)}")
+    with create_span("mcp.client.initialize", {"contextforge.transport": req.transport_type.value, "contextforge.runtime": "python"}) as init_span:
+        task = asyncio.create_task(owner(), name=f"upstream-session-{sanitize_url_for_logging(req.url)}", context=upstream_transport_context(init_span))
 
-    def _log_owner_exit(done_task: asyncio.Task) -> None:
-        """Surface unexpected owner-task deaths so an orphaned upstream session is visible to ops."""
-        if done_task.cancelled():
-            return
-        exc = done_task.exception()
-        if exc is not None:
-            logger.warning(
-                "Upstream MCP owner task for %s exited with %s: %s — upstream session may be orphaned",
-                sanitize_url_for_logging(req.url),
-                type(exc).__name__,
-                exc,
-            )
+        def _log_owner_exit(done_task: asyncio.Task) -> None:
+            """Surface unexpected owner-task deaths so an orphaned upstream session is visible to ops."""
+            if done_task.cancelled():
+                return
+            exc = done_task.exception()
+            if exc is not None:
+                logger.warning(
+                    "Upstream MCP owner task for %s exited with %s: %s — upstream session may be orphaned",
+                    sanitize_url_for_logging(req.url),
+                    type(exc).__name__,
+                    exc,
+                )
 
-    task.add_done_callback(_log_owner_exit)
+        task.add_done_callback(_log_owner_exit)
 
-    success = False
-    try:
-        session, client = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
-        success = True
-    except asyncio.TimeoutError as timeout_exc:
-        # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
-        # never responds) and we timeout waiting for the ready future. The owner
-        # task never hits its `except Exception` handler (it receives CancelledError
-        # instead, which is a BaseException and deliberately excluded). So we must
-        # categorize, sanitize, and log here to ensure timeout failures are diagnosable.
-        safe_url = sanitize_url_for_logging(req.url)
-
-        # Categorize as timeout (no credentials in TimeoutError message, but
-        # sanitize_exception_message is safe to call on any exception text)
-        from mcpgateway.utils.url_auth import sanitize_exception_message
-
-        timeout_msg = str(timeout_exc) if str(timeout_exc) else f"Timeout after {req.timeout_seconds}s waiting for upstream session"
-        sanitized_timeout_msg = sanitize_exception_message(timeout_msg, auth_query_params=None)
-
-        logger.error(
-            "Failed to create upstream MCP session for %s: [timeout] TimeoutError: %s",
-            safe_url,
-            sanitized_timeout_msg,
-        )
-
-        # Structured logging for timeout path (mirrors the owner-task structured log)
+        success = False
         try:
-            from mcpgateway.services.structured_logger import get_structured_logger
-            from mcpgateway.utils.correlation_id import get_correlation_id
+            session, client = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
+            success = True
+        except asyncio.TimeoutError as timeout_exc:
+            # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
+            # never responds) and we timeout waiting for the ready future. The owner
+            # task never hits its `except Exception` handler (it receives CancelledError
+            # instead, which is a BaseException and deliberately excluded). So we must
+            # categorize, sanitize, and log here to ensure timeout failures are diagnosable.
+            safe_url = sanitize_url_for_logging(req.url)
 
-            structured_logger = get_structured_logger()
-            correlation_id = get_correlation_id()
-            structured_logger.log(
-                level="ERROR",
-                message="Upstream MCP session creation failed",
-                component="upstream_session_registry",
-                correlation_id=correlation_id,
-                error_details={
-                    "error_type": "TimeoutError",
-                    "error_message": sanitized_timeout_msg,
-                    "error_category": "timeout",
-                    "exception_count": 1,
-                },
-                metadata={
-                    "url": safe_url,
-                    "downstream_session_id": req.downstream_session_id,
-                    "gateway_id": req.gateway_id or "none",
-                    "transport_type": req.transport_type.value,
-                },
+            # Categorize as timeout (no credentials in TimeoutError message, but
+            # sanitize_exception_message is safe to call on any exception text)
+            # First-Party
+            from mcpgateway.utils.url_auth import sanitize_exception_message
+
+            timeout_msg = str(timeout_exc) if str(timeout_exc) else f"Timeout after {req.timeout_seconds}s waiting for upstream session"
+            sanitized_timeout_msg = sanitize_exception_message(timeout_msg, auth_query_params=None)
+
+            logger.error(
+                "Failed to create upstream MCP session for %s: [timeout] TimeoutError: %s",
+                safe_url,
+                sanitized_timeout_msg,
             )
-        except Exception as log_exc:  # noqa: BLE001 — don't let logging failure break error flow
-            logger.debug("Structured logging failed for upstream session timeout: %s", log_exc, exc_info=True)
 
-        # Re-wrap as RuntimeError with categorized message for the caller
-        raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [timeout] TimeoutError: {sanitized_timeout_msg}") from timeout_exc
-    finally:
-        if not success:
-            shutdown_event.set()
-            task.cancel()
-            with anyio.move_on_after(_DEFAULT_SHUTDOWN_TIMEOUT_SECONDS):
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    # The owner task itself got cancelled during cleanup — expected after task.cancel().
-                    pass
-                except Exception as exc:  # noqa: BLE001 — cleanup unwind after failed ready  # pragma: no cover
-                    # Defensive: the owner's own `except Exception` swallows all Exception
-                    # subclasses before they can escape the task, so reaching this branch
-                    # would require a BaseException that slipped through — unreachable
-                    # in practice but kept to narrow against future refactors.
-                    logger.debug(
-                        "Owner-task cleanup after failed session create raised %s: %s",
-                        type(exc).__name__,
-                        exc,
-                    )
+            # Structured logging for timeout path (mirrors the owner-task structured log)
+            try:
+                # First-Party
+                from mcpgateway.services.structured_logger import get_structured_logger
+                from mcpgateway.utils.correlation_id import get_correlation_id
 
-    return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=client)
+                structured_logger = get_structured_logger()
+                correlation_id = get_correlation_id()
+                structured_logger.log(
+                    level="ERROR",
+                    message="Upstream MCP session creation failed",
+                    component="upstream_session_registry",
+                    correlation_id=correlation_id,
+                    error_details={
+                        "error_type": "TimeoutError",
+                        "error_message": sanitized_timeout_msg,
+                        "error_category": "timeout",
+                        "exception_count": 1,
+                    },
+                    metadata={
+                        "url": safe_url,
+                        "downstream_session_id": req.downstream_session_id,
+                        "gateway_id": req.gateway_id or "none",
+                        "transport_type": req.transport_type.value,
+                    },
+                )
+            except Exception as log_exc:  # noqa: BLE001 — don't let logging failure break error flow
+                logger.debug("Structured logging failed for upstream session timeout: %s", log_exc, exc_info=True)
+
+            # Re-wrap as RuntimeError with categorized message for the caller
+            raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [timeout] TimeoutError: {sanitized_timeout_msg}") from timeout_exc
+        finally:
+            if not success:
+                shutdown_event.set()
+                task.cancel()
+                with anyio.move_on_after(_DEFAULT_SHUTDOWN_TIMEOUT_SECONDS):
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        # The owner task itself got cancelled during cleanup — expected after task.cancel().
+                        pass
+                    except Exception as exc:  # noqa: BLE001 — cleanup unwind after failed ready  # pragma: no cover
+                        # Defensive: the owner's own `except Exception` swallows all Exception
+                        # subclasses before they can escape the task, so reaching this branch
+                        # would require a BaseException that slipped through — unreachable
+                        # in practice but kept to narrow against future refactors.
+                        logger.debug(
+                            "Owner-task cleanup after failed session create raised %s: %s",
+                            type(exc).__name__,
+                            exc,
+                        )
+
+        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=client, session_info=session_info)
 
 
 class UpstreamSessionRegistry:
@@ -1122,11 +1137,10 @@ class UpstreamSessionRegistry:
         merged_headers = {"Accept": "application/json, text/event-stream"}
         if headers:
             merged_headers.update(headers)
-        # Strip gateway-internal session affinity headers; they must not be
-        # forwarded upstream. Upstream sees its own session id, which it
-        # assigns via its initialize response.
+        # Persistent defaults must exclude downstream session IDs and request-specific
+        # propagation headers. Each MCP message carries its own trace context.
         for hdr in list(merged_headers):
-            if hdr.lower() in ("x-mcp-session-id", "mcp-session-id"):
+            if hdr.lower() in ("x-mcp-session-id", "mcp-session-id", "traceparent", "tracestate", "baggage", "x-correlation-id"):
                 del merged_headers[hdr]
 
         req = SessionCreateRequest(
@@ -1147,6 +1161,7 @@ class UpstreamSessionRegistry:
             transport_type=transport_type,
             session=session,
             client=lifecycle.client,
+            session_info=lifecycle.session_info,
             _owner_task=lifecycle.owner_task,
             _shutdown_event=lifecycle.shutdown_event,
         )

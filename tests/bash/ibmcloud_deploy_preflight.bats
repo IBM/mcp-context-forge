@@ -10,7 +10,7 @@
 #   - a real ibmcloud binary installed on the developer's PATH cannot be
 #     discovered by any test case, including the missing-CLI case
 
-load test_helper/helpers
+REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

@@ -883,7 +883,7 @@ clean:
 
 .PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity \
 	test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
-	test-private-key-jwt-live \
+	test-private-key-jwt-live test-sigv4-live \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -920,6 +920,12 @@ bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
 	echo "$$files" | sed 's/^/   /'; \
 	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
 	@echo "✅ bats tests passed!"
+
+.PHONY: test-oauth-browser-binding
+test-oauth-browser-binding: uv  ## Test OAuth binding with isolated HTTPS servers and Chromium
+	@$(UV_BIN) run rstest -n 0 -c pyproject.toml -o addopts='' -p playwright \
+		tests/live_gateway/e2e/test_oauth_browser_binding.py \
+		tests/playwright/test_oauth_browser_binding.py --browser chromium -v --tb=short
 
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -976,6 +982,14 @@ test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt to
 	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
 		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
 	@echo "✅ private_key_jwt live tests passed!"
+
+test-sigv4-live: uv  ## Black-box test for AWS SigV4 (auth_type=sigv4) gateways against a running gateway
+	@echo "🧪 Running SigV4 live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; the stub upstream runs on host.docker.internal"
+	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."
+	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_sigv4_gateway_e2e.py -v -s --tb=short \
+		|| { echo "❌ SigV4 live tests failed!"; exit 1; }
+	@echo "✅ SigV4 live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -3181,7 +3195,7 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go).
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip).
 # help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
 # help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
@@ -3538,6 +3552,7 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+# Go builds external linters: actionlint, reviewdog, chart-testing, and kube-linter.
 LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
@@ -3839,9 +3854,6 @@ _prek:
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
-			'$(CURDIR)/.cache/go-cache' \
-			'$(CURDIR)/.cache/go-mod' \
-			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
 		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
@@ -3851,28 +3863,38 @@ _prek:
 			TMPDIR='$(CURDIR)/.cache/tmp' \
 			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
 			PIP_USE_PEP517='0' \
-			PIP_NO_BUILD_ISOLATION='1' \
-			GOPATH='$(CURDIR)/.cache/go-cache' \
-			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-			GOCACHE='$(CURDIR)/.cache/go-build'; \
+			PIP_NO_BUILD_ISOLATION='1'; \
 		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
 .PHONY: install-pre-commit-hooks
-install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
-	@echo "🪝  Installing pre-commit hooks..."
-	@# pre-commit refuses to install when core.hooksPath is set (e.g. an
-	@# MDM-managed global hook such as vault-radar in ~/.gitconfig). Shadow
-	@# the global git config for this invocation only — nothing is modified —
-	@# so the shim lands in <git-common-dir>/hooks, where the hooksPath hook's
-	@# own chain probe (vault-radar's probe_chain) detects and executes it.
+install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks with prek
+	@echo "🪝  Installing pre-commit hooks (prek $(PREK_VERSION))..."
+	@# prek is the only supported hook installer. It is installed as a uv tool
+	@# (its own venv, outside the repository) so the hook shim points at a
+	@# stable binary instead of a throwaway uv cache entry or a checkout's .venv.
+	@# A hook generated by the pre-commit framework is removed first: prek would
+	@# otherwise keep it as pre-commit.legacy and run every check twice.
+	@# prek refuses to install when core.hooksPath is set (e.g. an MDM-managed
+	@# global hook such as vault-radar in ~/.gitconfig). Shadow the global git
+	@# config for this invocation only — nothing is modified — so the shim
+	@# lands in <git-common-dir>/hooks, where the hooksPath hook's own chain
+	@# probe (vault-radar's probe_chain) detects and executes it.
 	@# Only the global scope is shadowed; a repo-local hooksPath still refuses.
-	@if git config --global core.hooksPath >/dev/null 2>&1; then \
+	@set -eu; \
+	$(UV_BIN) tool install --quiet "prek==$(PREK_VERSION)"; \
+	prek_bin="$$($(UV_BIN) tool dir --bin)/prek"; \
+	hook="$$(cd "$$(git rev-parse --git-common-dir)" && pwd)/hooks/pre-commit"; \
+	if [ -f "$$hook" ] && grep -q '^# File generated by pre-commit:' "$$hook"; then \
+		rm -f "$$hook"; \
+		echo "🔄  Removed pre-commit framework hook (replaced by prek)"; \
+	fi; \
+	if git config --global core.hooksPath >/dev/null 2>&1; then \
 		echo "⚠️  Global core.hooksPath detected ($$(git config --global core.hooksPath)); installing shim into default hooks dir for chaining"; \
-		GIT_CONFIG_GLOBAL=/dev/null $(UV_BIN) run pre-commit install; \
+		GIT_CONFIG_GLOBAL=/dev/null "$$prek_bin" --no-progress install --config .pre-commit-config.yaml; \
 	else \
-		$(UV_BIN) run pre-commit install; \
+		"$$prek_bin" --no-progress install --config .pre-commit-config.yaml; \
 	fi
 	@echo "✅  Pre-commit hooks installed"
 
@@ -3914,32 +3936,84 @@ configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secr
 	fi
 	@echo "✅  Git merge driver configured for .secrets.baseline"
 
+# POST_REWRITE_HOOK_MODE selects how the post-rewrite hook is installed:
+#   auto   - config hook on Git >= 2.54, hooks-directory file otherwise
+#   config - config-based hook (hook.<name>.command/event); requires Git >= 2.54
+#   file   - legacy <git-common-dir>/hooks/post-rewrite file
+POST_REWRITE_HOOK_MODE ?= auto
+POST_REWRITE_HOOK_NAME := contextforge-secrets-refresh
+
 .PHONY: install-post-rewrite-detect-secrets-hook
-install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook (config-based on Git >= 2.54, file-based otherwise) that refreshes .secrets.baseline after rebase and stages it
 	@echo "🪝  Installing post-rewrite secrets refresh hook..."
 	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
 		echo "❌  Not in a git repository"; \
 		exit 1; \
 	fi
-	@# Idempotent + non-destructive install:
+	@# Config mode (Git >= 2.54): the script is copied to <git-common-dir>/git-drivers/
+	@# (like the merge driver, so it outlives rebases over history that predates
+	@# it) and registered as hook.<name>.command/event in the repo-local config.
+	@# Git runs it alongside any other post-rewrite hooks, so nothing is chained.
+	@# Migration: a legacy hook file carrying our marker is removed, and a
+	@# post-rewrite.chain it was chaining is moved back to post-rewrite.
+	@#
+	@# File mode (older Git) is idempotent and non-destructive:
 	@#  - hook missing or already ours (marker comment) -> (over)write ours
 	@#  - foreign hook, no chain yet -> move it to post-rewrite.chain; our
 	@#    hook executes the chain after itself, so both still run
 	@#  - foreign hook AND chain present -> ambiguous; never clobber
-	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
-	target="$$hooks_dir/post-rewrite" && \
-	chain="$$hooks_dir/post-rewrite.chain" && \
-	if [ -f "$$target" ] && ! grep -q '^# contextforge: post-rewrite-secrets-refresh$$' "$$target"; then \
-		if [ -e "$$chain" ]; then \
-			echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
-			exit 1; \
+	@set -eu; \
+	mode="$(POST_REWRITE_HOOK_MODE)"; \
+	name="$(POST_REWRITE_HOOK_NAME)"; \
+	marker='^# contextforge: post-rewrite-secrets-refresh$$'; \
+	common_dir=$$(cd "$$(git rev-parse --git-common-dir)" && pwd); \
+	target="$$common_dir/hooks/post-rewrite"; \
+	chain="$$common_dir/hooks/post-rewrite.chain"; \
+	gv=$$(git version | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); \
+	gmaj=$${gv% *}; gmin=$${gv#* }; gmaj=$${gmaj:-0}; gmin=$${gmin:-0}; \
+	if [ "$$gmaj" -gt 2 ] || { [ "$$gmaj" -eq 2 ] && [ "$$gmin" -ge 54 ]; }; then supports_config=1; else supports_config=0; fi; \
+	case "$$mode" in \
+		auto) if [ "$$supports_config" -eq 1 ]; then mode=config; else mode=file; fi ;; \
+		config) if [ "$$supports_config" -ne 1 ]; then \
+				echo "❌  Config-based hooks need Git >= 2.54 (found $$gmaj.$$gmin); use POST_REWRITE_HOOK_MODE=file" >&2; \
+				exit 1; \
+			fi ;; \
+		file) ;; \
+		*) echo "❌  POST_REWRITE_HOOK_MODE must be auto, config, or file (got '$$mode')" >&2; exit 1 ;; \
+	esac; \
+	if [ "$$mode" = config ]; then \
+		drivers_dir="$$common_dir/git-drivers"; \
+		script="$$drivers_dir/post-rewrite-secrets-refresh.sh"; \
+		mkdir -p "$$drivers_dir"; \
+		cp scripts/git/post-rewrite-secrets-refresh.sh "$$script"; \
+		chmod +x "$$script"; \
+		git config --local "hook.$$name.command" "'$$script'"; \
+		git config --local --replace-all "hook.$$name.event" post-rewrite; \
+		if [ -f "$$target" ] && grep -q "$$marker" "$$target"; then \
+			rm -f "$$target"; \
+			echo "🔄  Removed legacy post-rewrite hook file (replaced by config hook $$name)"; \
+			if [ -e "$$chain" ]; then \
+				mv "$$chain" "$$target"; \
+				echo "🔀  Moved post-rewrite.chain back to post-rewrite (Git now runs it after the config hook)"; \
+			fi; \
 		fi; \
-		mv "$$target" "$$chain" && chmod +x "$$chain" && \
-		echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
-	fi && \
-	cp scripts/git/post-rewrite-secrets-refresh.sh "$$target" && \
-	chmod +x "$$target" && \
-	echo "✅  Installed $$target"
+		echo "✅  Installed config hook $$name -> $$script"; \
+	else \
+		git config --local --unset-all "hook.$$name.command" || true; \
+		git config --local --unset-all "hook.$$name.event" || true; \
+		if [ -f "$$target" ] && ! grep -q "$$marker" "$$target"; then \
+			if [ -e "$$chain" ]; then \
+				echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
+				exit 1; \
+			fi; \
+			mv "$$target" "$$chain"; \
+			chmod +x "$$chain"; \
+			echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
+		fi; \
+		cp scripts/git/post-rewrite-secrets-refresh.sh "$$target"; \
+		chmod +x "$$target"; \
+		echo "✅  Installed $$target"; \
+	fi
 
 .PHONY: configure-git
 configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-detect-secrets-hook  ## 🔧  Configure git hooks and merge drivers
@@ -5774,8 +5848,7 @@ compose-sso-seed-audience:
 	@command -v jq >/dev/null 2>&1 || { echo "❌ jq is required"; exit 1; }
 	@set -eu; \
 	TOKEN=$$($(COMPOSE_CMD) $(SSO_SEED_COMPOSE_FILES) --profile sso exec -T gateway sh -c \
-		'for v in $$(env | sed -n "s/^\(EXPERIMENTAL_RUST_MCP_[A-Z_]*\)=$$/\1/p"); do unset $$v; done; \
-		python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
+		'python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
 	case "$$TOKEN" in *.*.*) ;; *) echo "❌ Could not mint an admin JWT in the gateway container (is 'make compose-sso' up?)"; exit 1;; esac; \
 	URL="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers/$(SSO_SEED_PROVIDER_ID)"; \
 	OUT=$$(mktemp); trap 'rm -f "$$OUT"' EXIT; \

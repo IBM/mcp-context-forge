@@ -8,7 +8,7 @@
 # on compose backends without `config --format json` (podman-compose,
 # docker-compose v1), and the stub cases pin the backend dispatch.
 #
-# This suite is self-contained: the helpers in test_helper/helpers.bash are
+# This suite is self-contained: the helpers in git/test_helper/helpers.bash are
 # git-fixture utilities for the secrets merge driver and do not apply here.
 
 setup() {

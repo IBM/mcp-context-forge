@@ -24,11 +24,19 @@ from typing import Any, Dict, List
 import pytest
 
 # First-Party
-import mcpgateway.cli as cli
+from mcpgateway import cli
 
 # ---------------------------------------------------------------------------
 # helpers / fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_listener_config(monkeypatch, tmp_path):
+    """Prevent developer environment and files from changing CLI defaults."""
+    monkeypatch.chdir(tmp_path)
+    for name in ("HOST", "PORT", "MCG_HOST", "MCG_PORT"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +57,63 @@ def _capture_uvicorn_main(monkeypatch) -> Dict[str, Any]:
 
     monkeypatch.setattr(cli.uvicorn, "main", _fake_main)
     return captured
+
+
+@pytest.mark.parametrize("options", [["--port", "0"], ["--port=0"]])
+def test_ephemeral_port_overrides_invalid_defaults(monkeypatch, tmp_path, options):
+    """Explicit ephemeral ports reach Uvicorn despite invalid unused configuration."""
+    monkeypatch.setenv("PORT", "invalid")
+    (tmp_path / ".env").write_text("PORT=invalid\n")
+    captured = _capture_uvicorn_main(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["mcpgateway", *options])
+    cli.main()
+    assert captured["argv"] == ["mcpgateway", cli.DEFAULT_APP, *options, "--host", cli.DEFAULT_HOST]
+
+
+def test_invalid_required_listener_default_exits_cleanly(monkeypatch, capsys):
+    """Invalid required settings produce a clear CLI error before invoking Uvicorn."""
+    monkeypatch.setenv("PORT", "invalid")
+    captured = _capture_uvicorn_main(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["mcpgateway"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    assert captured == {}
+    error = capsys.readouterr().err
+    assert "Invalid listener configuration" in error
+    assert "port" in error
+    assert "Traceback" not in error
+
+
+@pytest.mark.parametrize("name", ["HOST", "MCG_HOST"])
+@pytest.mark.parametrize("source", ["process", "file"])
+def test_empty_required_host_exits_before_uvicorn(monkeypatch, tmp_path, capsys, name, source):
+    """Empty configured hosts fail before Uvicorn can bind a wildcard socket."""
+    if source == "process":
+        monkeypatch.setenv(name, "")
+    else:
+        (tmp_path / ".env").write_text(f"{name}=\n")
+    captured = _capture_uvicorn_main(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["mcpgateway"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    assert captured == {}
+    error = capsys.readouterr().err
+    assert "Invalid listener configuration" in error
+    assert "host" in error
+    assert "Traceback" not in error
+
+
+@pytest.mark.parametrize("options", [["--host", "127.0.0.2"], ["--host=127.0.0.2"]])
+def test_explicit_host_overrides_unused_empty_configuration(monkeypatch, tmp_path, options):
+    """Explicit Uvicorn host options bypass unused empty process and file defaults."""
+    monkeypatch.setenv("HOST", "")
+    (tmp_path / ".env").write_text("HOST=\nMCG_HOST=\n")
+    captured = _capture_uvicorn_main(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["mcpgateway", *options])
+    cli.main()
+    assert captured["argv"] == ["mcpgateway", cli.DEFAULT_APP, *options, "--port", str(cli.DEFAULT_PORT)]
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 import pytest
 
-# First-Party
+# Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 pytestmark = pytest.mark.e2e
@@ -95,8 +95,11 @@ def _ready(url: str, process: subprocess.Popen[Any]) -> bool:
 def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Any]:
     """Start an authenticated gateway, MCP SDK upstream, and recording OTLP collector."""
     pytest.importorskip("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+    # Third-Party
     from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
+    options = request.param if isinstance(request.param, dict) else {}
+    transport = options.get("transport", "STREAMABLEHTTP")
     batches: list[list[dict[str, Any]]] = []
     lock = threading.Lock()
     payload_path = tmp_path / "collector.jsonl"
@@ -117,7 +120,9 @@ def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[A
                     "span_id": span.span_id.hex(),
                     "parent_span_id": span.parent_span_id.hex(),
                     "kind": span.kind,
-                    "attributes": {item.key: item.value.string_value for item in span.attributes},
+                    "status": span.status.code,
+                    "duration_ns": span.end_time_unix_nano - span.start_time_unix_nano,
+                    "attributes": {item.key: getattr(item.value, item.value.WhichOneof("value")) for item in span.attributes},
                 }
                 for resource in message.resource_spans
                 for scope in resource.scope_spans
@@ -148,7 +153,12 @@ def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[A
         upstream_port, gateway_port = _port(), _port()
         upstream_events = tmp_path / "upstream.jsonl"
         upstream_log = stack.enter_context((tmp_path / "upstream.log").open("w", encoding="utf-8"))
-        upstream = subprocess.Popen([sys.executable, "-c", _UPSTREAM, str(upstream_port), str(upstream_events)], stdout=upstream_log, stderr=subprocess.STDOUT, cwd=tmp_path)
+        upstream = subprocess.Popen(
+            [sys.executable, "-c", options.get("upstream", _UPSTREAM), str(upstream_port), str(upstream_events), f"http://127.0.0.1:{collector.server_port}"],
+            stdout=upstream_log,
+            stderr=subprocess.STDOUT,
+            cwd=tmp_path,
+        )
         stack.callback(_stop, upstream)
         _wait(lambda: _ready(f"http://127.0.0.1:{upstream_port}/", upstream), "MCP upstream")
         signing_key = secrets.token_urlsafe(48)
@@ -178,7 +188,7 @@ def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[A
             "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{collector.server_port}",
             "OTEL_BSP_SCHEDULE_DELAY": "100",
             "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "1",
-            "OTEL_SYSTEM_TRACES_ENABLED": str(request.param).lower(),
+            "OTEL_SYSTEM_TRACES_ENABLED": str(options.get("system_traces", request.param if isinstance(request.param, bool) else False)).lower(),
             "OTEL_HTTPX_INSTRUMENTATION_ENABLED": "true",
             "OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED": "false",
             "OTEL_REDIS_INSTRUMENTATION_ENABLED": "false",
@@ -189,15 +199,20 @@ def traced_gateway(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[A
             "LOG_LEVEL": "ERROR",
             "PYTHONUNBUFFERED": "1",
         }
+        env.update(options.get("env", {}))
         gateway_log = stack.enter_context((tmp_path / "gateway.log").open("w", encoding="utf-8"))
         gateway = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "mcpgateway.main:app", "--host", "127.0.0.1", "--port", str(gateway_port)], env=env, cwd=tmp_path, stdout=gateway_log, stderr=subprocess.STDOUT
         )
         stack.callback(_stop, gateway)
         _wait(lambda: _ready(f"http://127.0.0.1:{gateway_port}/health", gateway), "gateway readiness", timeout=60)
+        if options:
+            options["token_factory"] = lambda **claims: make_test_jwt(secret=signing_key, **claims)
         token = make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=signing_key)
         client = stack.enter_context(httpx.Client(base_url=f"http://127.0.0.1:{gateway_port}", headers=make_auth_headers(token), timeout=30, trust_env=False))
-        response = client.post("/gateways", json={"name": "trace-upstream", "url": f"http://127.0.0.1:{upstream_port}/mcp", "transport": "STREAMABLEHTTP", "visibility": "public"})
+        response = client.post(
+            "/gateways", json={"name": "trace-upstream", "url": f"http://127.0.0.1:{upstream_port}/{'sse' if transport == 'SSE' else 'mcp'}", "transport": transport, "visibility": "public"}
+        )
         assert response.status_code in (200, 201), response.text
         tools = client.get("/tools").json()
         if isinstance(tools, dict):
@@ -215,12 +230,14 @@ def _spans(snapshot: Callable[[], list[list[dict[str, Any]]]]) -> list[dict[str,
 
 def _invoke(client: httpx.Client, server_id: str, tool_name: str, trace_id: str, sampled: str) -> None:
     """Invoke a federated MCP tool with explicit trace and baggage headers."""
+    # Third-Party
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
     async def invoke() -> None:
         headers = dict(client.headers)
         headers.update({"traceparent": f"00-{trace_id}-0123456789abcdef-{sampled}", "X-Tenant-ID": "tenant-a", "X-Sensitive-Probe": "private-probe-value"})
+        # Third-Party
         import httpx2
 
         async with httpx2.AsyncClient(headers=headers, timeout=30, trust_env=False) as http_client:
@@ -231,6 +248,7 @@ def _invoke(client: httpx.Client, server_id: str, tool_name: str, trace_id: str,
                     assert not result.is_error, result
                     assert any(getattr(item, "text", "") == "trace-probe" for item in result.content)
 
+    # Standard
     import asyncio
 
     asyncio.run(invoke())

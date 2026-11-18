@@ -10,6 +10,7 @@ Unit tests for SSOService.
 from __future__ import annotations
 
 # Standard
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import urllib.parse
@@ -64,6 +65,7 @@ def _make_provider(**overrides):
         "scope": "user:email",
         "issuer": None,
         "jwks_uri": None,
+        "ca_certificate": None,
         "auto_create_users": True,
         "trusted_domains": None,
         "provider_metadata": None,
@@ -4245,6 +4247,188 @@ class TestAuthenticateOrCreateUser:
         sso_service.auth_service._invalidate_user_auth_cache.assert_awaited_once_with("user@test.com")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            {},
+            {"email_verified": False},
+            {"email_verified": None},
+        ],
+        ids=["claim-absent", "claim-false", "claim-null"],
+    )
+    async def test_cross_provider_login_refused_without_explicit_verified_claim(self, sso_service, mock_db, claims, caplog):
+        """With linking enabled, a relink still needs the provider to assert the email as verified."""
+        caplog.set_level(logging.WARNING, logger="mcpgateway.services.sso_service")
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="local",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user({"email": "user@test.com", "full_name": "User", "provider": "provider-b", **claims})
+
+        assert result is None
+        assert existing_user.auth_provider == "local"
+        assert existing_user.last_login is None
+        mock_db.commit.assert_not_called()
+        mock_jwt.assert_not_awaited()
+        sso_service.auth_service._invalidate_user_auth_cache.assert_not_awaited()
+        refused_for_missing_claim = "did not supply a verified-email claim" in caplog.text
+        assert refused_for_missing_claim is (not claims)
+
+    @pytest.mark.asyncio
+    async def test_cross_provider_refusal_log_neutralizes_line_breaks(self, sso_service, mock_db, caplog):
+        """Provider-supplied values in the refusal warning cannot start a new log line."""
+        existing_user = SimpleNamespace(
+            email="user@test.com\nforged entry",
+            full_name="User",
+            auth_provider="local",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+        caplog.set_level(logging.WARNING, logger="mcpgateway.services.sso_service")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_allow_provider_linking = True
+            result = await sso_service.authenticate_or_create_user({"email": "user@test.com\nforged entry", "full_name": "User", "provider": "provider-b"})
+
+        assert result is None
+        refusals = [r.getMessage() for r in caplog.records if "did not supply a verified-email claim" in r.getMessage()]
+        assert len(refusals) == 1
+        assert "\n" not in refusals[0]
+
+    @pytest.mark.asyncio
+    async def test_cross_provider_login_relinks_on_alternate_verified_claim(self, sso_service, mock_db):
+        """A truthy ``verified_primary_email`` claim alone is enough to relink."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user({"email": "user@test.com", "full_name": "User", "provider": "provider-b", "verified_primary_email": True})
+
+        assert result == "jwt-token"
+        assert existing_user.auth_provider == "provider-b"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw_claims,relinked",
+        [
+            ({"sub": "s-1", "email": "user@test.com", "name": "User"}, False),
+            ({"sub": "s-1", "email": "user@test.com", "name": "User", "email_verified": True}, True),
+        ],
+        ids=["payload-without-claim", "payload-with-claim"],
+    )
+    async def test_cross_provider_relink_from_raw_provider_payload(self, sso_service, mock_db, raw_claims, relinked):
+        """A raw generic-OIDC payload, normalized by the service, relinks only when it carries the claim."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="local",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        provider = _make_provider(id="provider-b", provider_type="oidc", provider_metadata={})
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: provider
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_settings.sso_generic_provider_id = None
+            mock_settings.sso_generic_admin_groups = []
+            mock_jwt.return_value = "jwt-token"
+            user_info = sso_service._normalize_user_info(provider, raw_claims)
+            result = await sso_service.authenticate_or_create_user(user_info)
+
+        assert ("email_verified" in user_info) is relinked
+        assert result == ("jwt-token" if relinked else None)
+        assert existing_user.auth_provider == ("provider-b" if relinked else "local")
+
+    @pytest.mark.asyncio
+    async def test_same_provider_login_allowed_without_verified_claim(self, sso_service, mock_db):
+        """A login through the account's own provider is unaffected by a missing verification claim."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-b",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user({"email": "user@test.com", "full_name": "User", "provider": "provider-b"})
+
+        assert result == "jwt-token"
+        assert existing_user.auth_provider == "provider-b"
+
+    @pytest.mark.parametrize(
+        "user_info,expected",
+        [
+            ({}, None),
+            ({"email": "user@test.com"}, None),
+            ({"email_verified": True}, True),
+            ({"email_verified": "true"}, True),
+            ({"email_verified": False}, False),
+            ({"email_verified": None}, False),
+            ({"verified_primary_email": True}, True),
+            ({"email_verified": False, "verified_primary_email": True}, False),
+        ],
+    )
+    def test_resolve_email_verified_claim(self, user_info, expected):
+        """An absent claim resolves to ``None``, distinct from a truthy or falsy claim."""
+        assert SSOService._resolve_email_verified_claim(user_info) is expected
+
+    @pytest.mark.asyncio
     async def test_relink_demotes_api_origin_admin_when_new_provider_grants_no_admin(self, sso_service, mock_db):
         """Relinking an API/manually-granted admin to a provider that doesn't vet for admin must demote.
 
@@ -5487,7 +5671,7 @@ def test_jwks_fetch_uses_default_verify(monkeypatch, skip_ssl_verify, expected_v
     monkeypatch.setattr(settings, "skip_ssl_verify", skip_ssl_verify)
     uri = "https://issuer.example.com/jwks"
     headers = {"Accept": "application/json"}
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         http_client = mock_client.return_value.__enter__.return_value
         http_client.get.return_value.json.return_value = {"keys": []}
 
@@ -5506,9 +5690,9 @@ def test_jwks_fetch_warns_when_tls_verification_disabled(monkeypatch, caplog):
 
     monkeypatch.setattr(settings, "skip_ssl_verify", True)
     uri = "https://issuer.example.com/jwks"
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.oidc_tls"):
             _NoRedirectPyJWKClient(uri).fetch_data()
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING and uri in r.getMessage()]
@@ -5524,9 +5708,9 @@ def test_jwks_fetch_no_warning_when_tls_verification_enabled(monkeypatch, caplog
     from mcpgateway.services.sso_service import _NoRedirectPyJWKClient
 
     monkeypatch.setattr(settings, "skip_ssl_verify", False)
-    with patch("mcpgateway.services.sso_service.httpx.Client") as mock_client:
+    with patch("mcpgateway.services.oidc_tls.httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.get.return_value.json.return_value = {"keys": []}
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.oidc_tls"):
             _NoRedirectPyJWKClient("https://issuer.example.com/jwks").fetch_data()
 
     assert not [r for r in caplog.records if "TLS verification disabled" in r.getMessage()]

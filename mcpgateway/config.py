@@ -61,14 +61,21 @@ from urllib.parse import urlparse, urlsplit
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, SecretStr, ValidationInfo
+from pydantic_settings import NoDecode
 
-# First-Party
 from mcpgateway._security_constants import calculate_entropy
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+
+# First-Party
+from mcpgateway.config_sections import (
+    DatabaseSettings,
+    ListenerSettings,
+    RedisSettings,
+    TransportSettings,
+)
 from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
@@ -133,7 +140,7 @@ _normalize_env_list_vars()
 
 
 # Default content type for outgoing requests to Forge
-FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+FORGE_CONTENT_TYPE = TransportSettings().forge_content_type
 
 # UI embedding / visibility controls
 UI_HIDABLE_SECTIONS = frozenset(
@@ -175,7 +182,11 @@ class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
 
 
-class Settings(BaseSettings):
+class Settings(  # pylint: disable=too-many-ancestors
+    ListenerSettings,
+    DatabaseSettings,
+    RedisSettings,
+):
     """
     ContextForge AI Gateway configuration settings.
 
@@ -226,22 +237,12 @@ class Settings(BaseSettings):
 
     # Basic Settings
     app_name: str = "ContextForge"
-    host: str = "127.0.0.1"
-    port: PositiveInt = Field(default=4444, ge=1, le=65535)
+    gateway_replicas: int = Field(default=1, description="Gateway replica count used during database bootstrap")
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     api_allow_basic_auth: bool = Field(
         default=False,
         description="Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
-    )
-    database_url: str = Field(
-        default="sqlite:///./mcp.db",
-        description=(
-            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
-            "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma: allowlist secret
-            "(See Issue #1535 for details)"
-        ),
     )
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -399,7 +400,7 @@ class Settings(BaseSettings):
             "/teams/",
             "/llmchat/",
             "/api/logs/",
-            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity/Rust forwards); not browser-reachable
+            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity); not browser-reachable
         ],
         description="Paths exempt from CSRF protection",
     )
@@ -534,6 +535,7 @@ class Settings(BaseSettings):
         description=(
             "Allow an existing account (matched by verified email) to sign in through a different trusted SSO provider, "
             "rebinding it to the new provider. Only applies to email-verified logins that already pass trusted-domain policy. "
+            "Relinking requires the new provider to send an explicit verified-email claim; a login that omits the claim is refused. "
             "This is a single global switch for ALL configured providers, not scoped to a specific trusted pair — enabling it "
             "allows relinking between any two providers on this gateway. Admin status is re-vetted against the new provider "
             "on relink regardless of how admin was originally granted, so a non-admin-granting provider cannot inherit admin. "
@@ -2230,7 +2232,6 @@ class Settings(BaseSettings):
         return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
     # Logging
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
@@ -2549,6 +2550,7 @@ class Settings(BaseSettings):
     auth_cache_teams_enabled: bool = Field(default=True, description="Enable caching for get_user_teams() (default: true)")
     auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
+    auth_cache_key_version: str = Field(default="v1", description="Redis key version prefix for auth cache namespace isolation")
 
     # Registry Cache Configuration (reduces DB queries for list endpoints)
     registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
@@ -2709,32 +2711,6 @@ class Settings(BaseSettings):
             logger.warning("Failed loading SIEM destinations file '%s': %s", self.siem_destinations_file, exc)
 
         return self
-
-    @field_validator("log_level", mode="before")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        """
-        Normalize and validate the log level value.
-
-        Ensures that the input string matches one of the allowed log levels,
-        case-insensitively. The value is uppercased before validation so that
-        "debug", "Debug", etc. are all accepted as "DEBUG".
-
-        Args:
-            v (str): The log level string provided via configuration or environment.
-
-        Returns:
-            str: The validated and normalized (uppercase) log level.
-
-        Raises:
-            ValueError: If the provided value is not one of
-                {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}.
-        """
-        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        v_up = v.upper()
-        if v_up not in allowed:
-            raise ValueError(f"Invalid log_level: {v}")
-        return v_up
 
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
@@ -3111,7 +3087,6 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 3600
     db_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
     db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
-    db_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
     # Database Performance Optimization
     use_postgresdb_percentiles: bool = Field(
@@ -3150,14 +3125,9 @@ class Settings(BaseSettings):
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
-    redis_url: Optional[str] = "redis://localhost:6379/0"
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
-    redis_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
-    redis_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
-    redis_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
-
     # GlobalConfig In-Memory Cache (Issue #1715)
     # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries
     global_config_cache_ttl: int = Field(
@@ -3420,7 +3390,6 @@ Disallow: /
     # ===================================
 
     slug_refresh_batch_size: int = Field(default=1000, description="Batch size for gateway/tool slug refresh at startup")
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
     valid_slug_separator_regexp: ClassVar[str] = r"^(-{1,2}|[_.])$"
@@ -3917,7 +3886,7 @@ Disallow: /
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
     validation_max_json_depth: int = Field(
-        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        default=30,
         description=(
             "Maximum allowed JSON nesting depth for tool/resource schemas. "
             "Increased from 10 to 30 for compatibility with deeply nested schemas "
@@ -4022,7 +3991,7 @@ Disallow: /
     )
 
     # Passthrough headers configuration
-    default_passthrough_headers: List[str] = Field(default_factory=list)
+    default_passthrough_headers: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["X-Tenant-Id", "X-Trace-Id"])
 
     # Passthrough headers source priority
     # - "env": Environment variable always wins (ideal for Kubernetes/containerized deployments)
@@ -4128,6 +4097,29 @@ Disallow: /
 
         return self
 
+    @field_validator("default_passthrough_headers", mode="before")
+    @classmethod
+    def parse_passthrough_headers(cls, value: Any) -> Any:
+        """Parse JSON arrays or comma-separated passthrough header names.
+
+        Args:
+            value: Header names from constructor, environment, or file configuration.
+
+        Returns:
+            A list of header names for validation.
+        """
+        if isinstance(value, str):
+            if not value:
+                return ["X-Tenant-Id", "X-Trace-Id"]
+            try:
+                parsed = orjson.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except orjson.JSONDecodeError:
+                pass
+            return [header.strip() for header in value.split(",") if header.strip()]
+        return value
+
     def __init__(self, **kwargs: Any) -> None:
         """Initialize Settings with environment variable parsing.
 
@@ -4152,25 +4144,9 @@ Disallow: /
         """
         super().__init__(**kwargs)
 
-        # Parse DEFAULT_PASSTHROUGH_HEADERS environment variable
-        default_value = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS")
-        if default_value:
-            try:
-                # Try JSON parsing first
-                self.default_passthrough_headers = orjson.loads(default_value)
-                if not isinstance(self.default_passthrough_headers, list):
-                    raise ValueError("Must be a JSON array")
-            except (orjson.JSONDecodeError, ValueError):
-                # Fallback to comma-separated parsing
-                self.default_passthrough_headers = [h.strip() for h in default_value.split(",") if h.strip()]
-                logger.info(f"Parsed comma-separated passthrough headers: {self.default_passthrough_headers}")
-        else:
-            # Safer defaults without Authorization header
-            self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
-
         # Configure environment-aware CORS origins if not explicitly set via env or kwargs
         # Only apply defaults if using the default allowed_origins value
-        if not os.environ.get("ALLOWED_ORIGINS") and "allowed_origins" not in kwargs and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
+        if "allowed_origins" not in self.model_fields_set and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
             if self.environment == "development":
                 self.allowed_origins = {
                     "http://localhost",
