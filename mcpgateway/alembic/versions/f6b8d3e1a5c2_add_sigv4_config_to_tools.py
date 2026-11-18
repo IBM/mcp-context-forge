@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 Add sigv4_config to tools.
 
 Revision ID: f6b8d3e1a5c2
-Revises: 7ac83e50bd12
+Revises: a7c3e9d1b5f2
 
 The column stores the AWS Signature V4 configuration of a REST tool. The secret access
 key and the session token inside it are encrypted. NULL means the tool has no SigV4
@@ -26,7 +26,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "f6b8d3e1a5c2"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "7ac83e50bd12"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "a7c3e9d1b5f2"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
