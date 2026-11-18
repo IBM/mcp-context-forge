@@ -20,14 +20,14 @@ venv:
 	@mkdir -p "$(VENV_DIR)"
 	@rm -Rf "$(VENV_DIR)"
 	@eval '$(BREW_SHELLENV)' && python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install markdown-blockdiag && pip install -r requirements.txt"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install markdown-blockdiag && pip install --group ../pyproject.toml:docs"
 	@echo -e "Enter virtual environment using:\n. $(VENV_DIR)/bin/activate\n"
 
 
 # help: venv-update                    - update a virtual environment for development
 .PHONY: venv-update
 venv-update:
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install --upgrade markdown-blockdiag && pip install --upgrade -r requirements.txt"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install --upgrade markdown-blockdiag && pip install --upgrade --group ../pyproject.toml:docs"
 	@echo -e "Enter virtual environment using:\n. $(VENV_DIR)/bin/activate\n"
 
 

@@ -4865,7 +4865,7 @@ hadolint:
 # 📦 DEPENDENCY MANAGEMENT
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
-# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
+# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml (including the docs group)
 
 .PHONY: deps-update
 
@@ -4873,8 +4873,7 @@ deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
 	@test -f ./.github/tools/update_dependencies.py || { echo "❌ update_dependencies.py not found in ./.github/tools."; exit 1; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
-	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
+	@echo "✅ Dependencies updated in pyproject.toml"
 
 
 # =============================================================================
