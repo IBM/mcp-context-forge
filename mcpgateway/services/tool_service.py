@@ -76,7 +76,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, upstream_request_context
+from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, set_span_ok, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
@@ -5485,7 +5485,7 @@ class ToolService(BaseService):
         request_state: Optional[str] = None,
     ) -> ToolResult:
         """
-        Invoke a registered tool and record execution metrics.
+        Invoke a registered tool and record execution metrics, except for a call cancelled before a failure is known.
 
         Args:
             db: Database session.
@@ -5529,6 +5529,8 @@ class ToolService(BaseService):
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
+            asyncio.CancelledError: Propagated unchanged. A call cancelled before a failure is
+                known logs at INFO and records no execution metric.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -5832,6 +5834,10 @@ class ToolService(BaseService):
 
         start_time = time.monotonic()
         success = False
+        cancelled = False
+        # Every upstream path that observes a failure must set this before its next await,
+        # or a later cancel records that failure as a cancellation.
+        upstream_failed = False
         error_message = None
         tool_result: Optional[ToolResult] = None
         tool_team_scope = format_trace_team_scope(token_teams)
@@ -6176,6 +6182,7 @@ class ToolService(BaseService):
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6660,6 +6667,7 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
@@ -6691,6 +6699,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6784,6 +6793,7 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
@@ -6815,6 +6825,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6967,11 +6978,12 @@ class ToolService(BaseService):
                             structured = dump.get("structuredContent")
                             if structured is None:
                                 structured = dump.get("structured_content")
-                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
-
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
+                            upstream_failed = bool(is_err)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
+
                             # A refused or timed-out filter must be reported as an error here
                             # too. Without this the refusal string was recorded as a successful
                             # invocation carrying it as if it were real tool output.
@@ -7092,6 +7104,7 @@ class ToolService(BaseService):
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -7152,6 +7165,7 @@ class ToolService(BaseService):
                         # PR #3202 review B7.
                         raise
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        upstream_failed = True
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
                             await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
@@ -7293,7 +7307,10 @@ class ToolService(BaseService):
                     )
                 raise
             except asyncio.CancelledError:
-                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
+                # Never wrap a cancellation as a ToolInvocationError.
+                # A failure known before the cancel stays a failure; otherwise the call is a cancellation.
+                cancelled = not (upstream_failed or (tool_result is not None and tool_result.is_error))
+                success = False
                 raise
             except ToolInputRequired:
                 # 2026 MRTR control flow, not a failure - let the transport handle it.
@@ -7381,10 +7398,11 @@ class ToolService(BaseService):
                     try:
                         observability_service.end_span(
                             span_id=db_span_id,
-                            status="ok" if success else "error",
+                            status="cancelled" if cancelled else ("ok" if success else "error"),
                             status_message=error_message if error_message else None,
                             attributes={
                                 "success": success,
+                                "cancelled": cancelled,
                                 "duration_ms": duration_ms,
                             },
                         )
@@ -7396,6 +7414,9 @@ class ToolService(BaseService):
                 # Add final span attributes for OpenTelemetry
                 if span:
                     set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "cancelled", cancelled)
+                    if cancelled:
+                        set_span_ok(span)
                     set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
@@ -7403,8 +7424,9 @@ class ToolService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
-                # Only record metrics if tool_id is valid (skip for direct_proxy mode)
-                if tool_id:
+                # Only record metrics if tool_id is valid (skip for direct_proxy mode).
+                # ToolMetric and ServerMetric have no cancelled outcome, so a cancellation records no metric.
+                if tool_id and not cancelled:
                     try:
                         metrics_buffer.record_tool_metric(
                             tool_id=tool_id,
@@ -7418,7 +7440,7 @@ class ToolService(BaseService):
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint
                 # Direct tool calls via /rpc should NOT populate server metrics
-                if tool_id and server_id:
+                if tool_id and server_id and not cancelled:
                     try:
                         # Record server metric only for the specific virtual server being accessed
                         metrics_buffer.record_server_metric(
@@ -7431,7 +7453,17 @@ class ToolService(BaseService):
                         logger.warning("Failed to record server metric: %s", metric_error)
 
                 # Log structured message with performance tracking (using local variables)
-                if success:
+                if cancelled:
+                    structured_logger.info(
+                        f"Tool '{name}' invocation cancelled",  # noqa: G004
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=tool_id,
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "cancelled": True},
+                    )
+                elif success:
                     structured_logger.info(
                         f"Tool '{name}' invoked successfully",  # noqa: G004
                         user_id=app_user_email,
