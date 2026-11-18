@@ -155,3 +155,170 @@ async def test_untrusted_header_grants_no_scope(monkeypatch: pytest.MonkeyPatch)
     request.scope["headers"] = [(settings.proxy_user_header.lower().encode(), b"owner@example.com")]
     with pytest.raises(HTTPException):
         await rbac.require_team_scope(request, {"email": "owner@example.com", "auth_method": "proxy"}, "b", MagicMock())
+
+
+_UI_TEAM_ID = "b" * 32
+
+_UI_MANAGEMENT_HANDLERS = (
+    "admin_add_team_members_view",
+    "admin_get_team_edit",
+    "admin_update_team",
+    "admin_delete_team",
+    "admin_update_team_member_role",
+    "admin_remove_team_member",
+    "admin_leave_team",
+    "admin_list_join_requests",
+    "admin_approve_join_request",
+    "admin_reject_join_request",
+    "admin_team_members_partial_html",
+    "admin_team_non_members_partial_html",
+)
+
+
+async def _call_ui_handler(name: str, request: Request, user: dict[str, Any], db: Any) -> Any:
+    """Call a team UI handler with its production scope guard.
+
+    Args:
+        name: Handler name in the Admin UI module.
+        request: Request carrying canonical authentication scope.
+        user: Authenticated principal.
+        db: Mocked database session.
+
+    Returns:
+        The handler response when authorization permits access.
+    """
+    import inspect
+    from mcpgateway import admin
+
+    handler = getattr(admin, name)
+    handler = getattr(handler, "__wrapped__", handler)
+    parameters = inspect.signature(handler).parameters
+    kwargs: dict[str, Any] = {"team_id": _UI_TEAM_ID, "db": db}
+    kwargs["_request" if "_request" in parameters else "request"] = request
+    kwargs["_user" if "_user" in parameters else "user"] = user
+    if "request_id" in parameters:
+        kwargs["request_id"] = "request-b"
+    return await handler(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", _UI_MANAGEMENT_HANDLERS)
+@pytest.mark.parametrize("scope", [["a"], []])
+async def test_remaining_ui_handlers_deny_scope(name: str, scope: list[str]) -> None:
+    """Each remaining handler rejects excluded teams before service access."""
+    from mcpgateway import admin
+
+    db = MagicMock()
+    with patch.object(admin, "TeamManagementService") as service, pytest.raises(HTTPException) as error:
+        await _call_ui_handler(name, make_test_scope_request(scope), {"email": "owner@example.com"}, db)
+    assert error.value.status_code == 403
+    service.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", _UI_MANAGEMENT_HANDLERS)
+async def test_remaining_ui_handlers_preserve_disabled_feature(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disabled email authentication prevents team data access and mutation."""
+    from mcpgateway import admin
+
+    monkeypatch.setattr(settings, "email_auth_enabled", False)
+    with patch.object(admin, "TeamManagementService") as service:
+        response = await _call_ui_handler(name, make_test_scope_request([_UI_TEAM_ID]), {"email": "owner@example.com"}, MagicMock())
+    assert response.status_code == (200 if name.endswith("partial_html") else 403)
+    assert b"disabled" in response.body.lower()
+    service.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["admin_get_team_edit", "admin_update_team", "admin_delete_team"])
+async def test_ui_nonowner_denial_survives_error_boundaries(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-scope non-owners retain 403 independently of action permissions."""
+    from mcpgateway import admin
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    service = MagicMock()
+    service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(is_personal=False))
+    service.get_user_role_in_team = AsyncMock(return_value="member")
+    permission = MagicMock()
+    permission.check_platform_admin_permission = AsyncMock(return_value=False)
+    with patch.object(admin, "TeamManagementService", return_value=service), patch.object(admin, "PermissionService", return_value=permission):
+        with pytest.raises(HTTPException) as error:
+            await _call_ui_handler(name, make_test_scope_request([_UI_TEAM_ID]), {"email": "member@example.com", "token_teams": ["b"]}, MagicMock())
+    assert error.value.status_code == 403
+    service.update_team.assert_not_called()
+    service.delete_team.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role,is_admin,allowed", [("owner", False, True), ("member", False, False), (None, False, False), (None, True, True)])
+async def test_ui_owner_or_admin_contract(role: str | None, is_admin: bool, allowed: bool) -> None:
+    """Owner and platform-administrator authority remain distinct from ordinary membership."""
+    from mcpgateway import admin
+
+    service = MagicMock()
+    service.get_user_role_in_team = AsyncMock(return_value=role)
+    permission = MagicMock()
+    permission.check_platform_admin_permission = AsyncMock(return_value=is_admin)
+    with patch.object(admin, "TeamManagementService", return_value=service), patch.object(admin, "PermissionService", return_value=permission):
+        if allowed:
+            assert await admin._require_team_owner_or_admin("b", {"email": "actor@example.com", "token_teams": ["b"]}, MagicMock()) is is_admin
+        else:
+            with pytest.raises(HTTPException) as error:
+                await admin._require_team_owner_or_admin("b", {"email": "actor@example.com", "token_teams": ["b"]}, MagicMock())
+            assert error.value.status_code == 403
+    permission.check_platform_admin_permission.assert_awaited_once_with("actor@example.com", token_teams=["b"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_admin", [False, True])
+@pytest.mark.parametrize("scope", [["a"], [], None])
+async def test_ui_id_collection_applies_canonical_scope(is_admin: bool, scope: list[str] | None) -> None:
+    """Administrator and ordinary branches filter IDs and counts by canonical scope."""
+    from mcpgateway import admin
+
+    service = MagicMock()
+    all_ids = ["a", "b"]
+    expected = all_ids if scope is None else [value for value in all_ids if value in scope]
+    service.get_all_team_ids = AsyncMock(return_value=expected)
+    service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id=value, name=value, slug=value, is_active=True, visibility="private") for value in all_ids])
+    auth = MagicMock()
+    auth.get_user_by_email = AsyncMock(return_value=SimpleNamespace(is_admin=is_admin))
+    handler = getattr(admin.admin_get_all_team_ids, "__wrapped__", admin.admin_get_all_team_ids)
+    with patch.object(admin, "TeamManagementService", return_value=service), patch.object(admin, "EmailAuthService", return_value=auth):
+        result = await handler(request=make_test_scope_request(scope), include_inactive=False, visibility=None, q=None, db=MagicMock(), user={"email": "actor@example.com"})
+    assert result == {"team_ids": expected, "count": len(expected)}
+    if is_admin:
+        recorded_call = service.get_all_team_ids.await_args
+        assert recorded_call is not None
+        assert recorded_call.kwargs["team_ids"] == scope
+
+
+@pytest.mark.asyncio
+async def test_user_selector_denies_before_directory_or_roster_access() -> None:
+    """A narrowed administrator cannot render foreign team membership annotations."""
+    from mcpgateway import admin
+
+    handler = getattr(admin.admin_users_partial_html, "__wrapped__", admin.admin_users_partial_html)
+    with patch.object(admin, "EmailAuthService") as auth, patch.object(admin, "TeamManagementService") as service:
+        with pytest.raises(HTTPException) as error:
+            await handler(request=make_test_scope_request(["a"]), render="selector", team_id="b", db=MagicMock(), user={"email": "admin@example.com", "is_admin": True})
+    assert error.value.status_code == 403
+    auth.assert_not_called()
+    service.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_requester_cancellation_forwards_authoritative_team(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requester cancellation binds the URL team without requiring team membership."""
+    from mcpgateway import admin
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    service = MagicMock()
+    service.cancel_join_request = AsyncMock(return_value=False)
+    handler = getattr(admin.admin_cancel_join_request, "__wrapped__", admin.admin_cancel_join_request)
+    with patch.object(admin, "TeamManagementService", return_value=service):
+        response = await handler("a", "request-b", db=MagicMock(), user={"email": "requester@example.com", "sub": "ignored@example.com"})
+    assert response.status_code == 404
+    service.cancel_join_request.assert_awaited_once_with("request-b", "requester@example.com", "a")
+    service.get_user_role_in_team.assert_not_called()

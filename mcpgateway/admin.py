@@ -114,7 +114,15 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission, require_team_scope
+from mcpgateway.middleware.rbac import (
+    _ACCESS_DENIED_MSG,
+    get_current_user_with_permissions,
+    get_team_management_scope,
+    require_admin_permission,
+    require_any_permission,
+    require_permission,
+    require_team_scope,
+)
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -5977,10 +5985,13 @@ async def admin_get_all_team_ids(
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    *,
+    request: Request,
 ):
     """Return all team IDs accessible to the current user.
 
     Args:
+        request: Incoming request context.
         include_inactive (bool): Whether to include inactive teams.
         visibility (Optional[str]): Filter by team visibility.
         q (Optional[str]): Search query string.
@@ -5990,6 +6001,7 @@ async def admin_get_all_team_ids(
     Returns:
         JSONResponse: Dictionary with list of team IDs and count.
     """
+    token_teams = await get_team_management_scope(request, user, db)
     team_service = TeamManagementService(db)
     user_email = get_user_email(user)
 
@@ -6008,7 +6020,9 @@ async def admin_get_all_team_ids(
     # Check admin
     if current_user.is_admin:
         # Admin sees all non-personal teams plus their own personal team (single query)
-        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email)
+        team_ids = await team_service.get_all_team_ids(
+            include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email, team_ids=token_teams
+        )
     else:
         # For non-admins, get user's teams + public teams logic?
         # get_user_teams gets all teams user is in.
@@ -6022,8 +6036,11 @@ async def admin_get_all_team_ids(
         # But we might need public teams too?
         # Let's align with list_teams logic.
 
+        allowed_team_ids = set(token_teams) if token_teams is not None else None
         filtered = []
         for t in all_teams:
+            if allowed_team_ids is not None and str(t.id) not in allowed_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:
@@ -6793,6 +6810,8 @@ async def admin_add_team_members_view(
     Returns:
         HTMLResponse: Rendered add members interface
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -6910,6 +6929,27 @@ async def admin_add_team_members_view(
         return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
+async def _require_team_owner_or_admin(team_id: str, user: dict, db: Session) -> bool:
+    """Require team ownership or platform-administrator permission.
+
+    Args:
+        team_id: Authoritative target team ID.
+        user: Authenticated principal with resolved team scope.
+        db: Database session for role and permission checks.
+
+    Returns:
+        Whether the caller has platform-administrator permission.
+
+    Raises:
+        HTTPException: If the caller has neither authority.
+    """
+    user_email = get_user_email(user)
+    is_admin = await PermissionService(db).check_platform_admin_permission(user_email, token_teams=user.get("token_teams"))
+    if not is_admin and await TeamManagementService(db).get_user_role_in_team(user_email, team_id) != "owner":
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+    return is_admin
+
+
 @admin_router.get("/teams/{team_id}/edit")
 @require_permission("teams.update", allow_admin_bypass=False)
 async def admin_get_team_edit(
@@ -6927,6 +6967,8 @@ async def admin_get_team_edit(
     Returns:
         HTMLResponse: Rendered team edit form
     """
+    await require_team_scope(_request, _user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -6943,9 +6985,10 @@ async def admin_get_team_edit(
         if team.is_personal:
             return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
 
+        is_admin_edit = await _require_team_owner_or_admin(team_id, _user, db)
+
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
-        is_admin_edit = isinstance(_user, dict) and _user.get("is_admin")
         max_members_limit = settings.max_members_per_team
         current_exceeds_limit = bool(team.max_members is not None and team.max_members > max_members_limit)
         max_attr = "" if is_admin_edit else f'max="{max_members_limit}"'
@@ -7024,6 +7067,8 @@ async def admin_get_team_edit(
         """
         return HTMLResponse(content=edit_form)
 
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
@@ -7048,13 +7093,15 @@ async def admin_update_team(
     Returns:
         Response: Result of team update operation
     """
-    # Ensure root_path is available for URL construction in all branches
+    await require_team_scope(request, user, team_id, db)
+
     root_path = _resolve_root_path(request) if request else ""
 
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
+        is_admin = await _require_team_owner_or_admin(team_id, user, db)
         team_service = TeamManagementService(db)
 
         form = await request.form()
@@ -7114,8 +7161,7 @@ async def admin_update_team(
             return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
 
         # Update team
-        user_email = getattr(user, "email", None) or str(user)
-        is_admin = isinstance(user, dict) and user.get("is_admin")
+        user_email = get_user_email(user)
         # Three-way max_members resolution:
         #   checkbox checked  → None  (clear per-team override, revert to global default)
         #   number provided   → int   (set explicit per-team limit)
@@ -7156,6 +7202,8 @@ async def admin_update_team(
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
+    except HTTPException:
+        raise
     except ValueError as e:
         # Rollback to discard any partial mutations (e.g. name/description set before max_members check failed)
         db.rollback()
@@ -7198,10 +7246,13 @@ async def admin_delete_team(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(_request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
+        await _require_team_owner_or_admin(team_id, user, db)
         team_service = TeamManagementService(db)
 
         # Get team name for success message
@@ -7230,6 +7281,8 @@ async def admin_delete_team(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Error deleting team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
@@ -7476,6 +7529,8 @@ async def admin_update_team_member_role(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7552,6 +7607,8 @@ async def admin_remove_team_member(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7629,6 +7686,8 @@ async def admin_leave_team(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7799,9 +7858,9 @@ async def admin_cancel_join_request(
         user_email = get_user_email(user)
 
         # Cancel the join request
-        success = await team_service.cancel_join_request(request_id, user_email)
+        success = await team_service.cancel_join_request(request_id, user_email, team_id)
         if not success:
-            return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Join request not found or unavailable</div>', status_code=404)
 
         # Return the "Request to Join" button with HX-Trigger for list refresh
         # Check if join requests are currently enabled
@@ -7851,6 +7910,8 @@ async def admin_list_join_requests(
     Returns:
         HTML response with join requests list
     """
+    await require_team_scope(_request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7923,15 +7984,11 @@ async def admin_list_join_requests(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
 @require_permission("teams.manage_members", allow_admin_bypass=False)
-async def admin_approve_join_request(
-    team_id: str,
-    request_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
+async def admin_approve_join_request(team_id: str, request_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions), *, request: Request) -> HTMLResponse:
     """Approve a join request via admin UI.
 
     Args:
+        request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request to approve
         db: Database session
@@ -7940,6 +7997,8 @@ async def admin_approve_join_request(
     Returns:
         HTML response with success message
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7977,15 +8036,11 @@ async def admin_approve_join_request(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
 @require_permission("teams.manage_members", allow_admin_bypass=False)
-async def admin_reject_join_request(
-    team_id: str,
-    request_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
+async def admin_reject_join_request(team_id: str, request_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions), *, request: Request) -> HTMLResponse:
     """Reject a join request via admin UI.
 
     Args:
+        request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request to reject
         db: Database session
@@ -7994,6 +8049,8 @@ async def admin_reject_join_request(
     Returns:
         HTML response with success message
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -8252,6 +8309,9 @@ async def admin_users_partial_html(
     Returns:
         Response: HTML response with users list and pagination controls
     """
+    if team_id and render == "selector":
+        await require_team_scope(request, user, team_id, db)
+
     try:
         if not settings.email_auth_enabled:
             return HTMLResponse(
@@ -8408,20 +8468,22 @@ async def admin_team_members_partial_html(
     Returns:
         Response: HTML response with team members and pagination data.
     """
-    try:
-        if not settings.email_auth_enabled:
-            return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
-                status_code=200,
-            )
+    if not settings.email_auth_enabled:
+        return HTMLResponse(
+            content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+            status_code=200,
+        )
 
+    try:
+        team_id = _normalize_team_id(team_id)
+    except ValueError:
+        return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+    await require_team_scope(request, user, team_id, db)
+
+    try:
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
-
-        try:
-            team_id = _normalize_team_id(team_id)
-        except ValueError:
-            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -8503,21 +8565,23 @@ async def admin_team_non_members_partial_html(
     Returns:
         Response: HTML response with non-members and pagination data.
     """
-    try:
-        if not settings.email_auth_enabled:
-            return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
-                status_code=200,
-            )
+    if not settings.email_auth_enabled:
+        return HTMLResponse(
+            content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+            status_code=200,
+        )
 
+    try:
+        team_id = _normalize_team_id(team_id)
+    except ValueError:
+        return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+    await require_team_scope(request, user, team_id, db)
+
+    try:
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
-
-        try:
-            team_id = _normalize_team_id(team_id)
-        except ValueError:
-            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:

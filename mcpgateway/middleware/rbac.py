@@ -53,17 +53,19 @@ _ACCESS_DENIED_MSG = "Access denied"
 _ALL_PERMISSIONS_SCOPE = "*"
 
 
-async def require_team_scope(request: Request, user: dict, team_id: str, db: Session) -> None:
-    """Enforce the authenticated scope before team management operations.
+async def get_team_management_scope(request: Request, user: dict, db: Session) -> Optional[List[str]]:
+    """Resolve canonical scope for team management and collection filtering.
 
     Args:
         request: Incoming request context.
         user: Principal selected by the authentication dependency.
-        team_id: Authoritative target team ID.
         db: Database session for trusted proxy membership resolution.
 
+    Returns:
+        Allowed team IDs, or ``None`` for canonical administrator bypass.
+
     Raises:
-        HTTPException: If the resolved scope excludes the target team.
+        HTTPException: If the authenticated identity is unknown.
     """
     # First-Party
     from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
@@ -80,6 +82,22 @@ async def require_team_scope(request: Request, user: dict, team_id: str, db: Ses
         user["token_teams"] = teams
 
     _, token_teams = get_scoped_resource_access_context(scope_request, user)
+    return token_teams
+
+
+async def require_team_scope(request: Request, user: dict, team_id: str, db: Session) -> None:
+    """Enforce the authenticated scope before team management operations.
+
+    Args:
+        request: Incoming request context.
+        user: Principal selected by the authentication dependency.
+        team_id: Authoritative target team ID.
+        db: Database session for trusted proxy membership resolution.
+
+    Raises:
+        HTTPException: If the resolved scope excludes the target team.
+    """
+    token_teams = await get_team_management_scope(request, user, db)
     if token_teams is not None and team_id not in token_teams:
         raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
