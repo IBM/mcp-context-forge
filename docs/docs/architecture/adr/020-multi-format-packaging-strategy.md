@@ -1,8 +1,13 @@
 # ADR-0020: Multi-Format Packaging Strategy
 
-- *Status:* Accepted
+- *Status:* Accepted. The Helm chart decision is superseded by [ADR-0059](059-helm-chart-as-code-example.md)
 - *Date:* 2025-10-27
 - *Deciders:* Core Engineering Team
+
+!!! warning
+    [ADR-0059](059-helm-chart-as-code-example.md) supersedes the Helm
+    Charts decision in this ADR. The project does not publish Helm
+    charts as release artifacts.
 
 ## Context
 

@@ -56,3 +56,4 @@ nav:
   - 56 CSP Hardening — No eval, No Inline Handlers: 056-csp-hardening-no-eval-no-inline-handlers.md
   - 57 Trust A2A Plugin Header Output: 057-trust-a2a-plugin-header-output.md
   - 58 Remove Rust Runtime Sidecars and Workspace: 058-remove-rust-runtime-and-workspace.md
+  - 59 Helm Chart as Code Example: 059-helm-chart-as-code-example.md
