@@ -11,7 +11,7 @@ Tests cover:
 - build_identity_meta() merging behavior with all optional fields
 - filter_sensitive_attributes() including settings fallback
 - _resolve_config() per-gateway overrides for all keys
-- _sign_claims() JWT secret fallback
+- Claims JWS signing: claim coverage, expiry, audience, key separation
 - Per-gateway configuration override
 - Plugin convenience helpers (PluginContext.user_context, user_email, user_groups)
 - _set_user_identity_from_dict() transport helper
@@ -23,10 +23,13 @@ Tests cover:
 # Standard
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import jwt
 from pydantic import SecretStr
 import pytest
 
@@ -35,11 +38,14 @@ from cpex.framework import GlobalContext, PluginContext
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.identity_propagation import (
     _resolve_config,
-    _sign_claims,
     build_identity_headers,
     build_identity_meta,
     filter_sensitive_attributes,
 )
+
+
+JWT_SECRET = "jwt-secret-for-tests-only-0123456789abcdef"  # pragma: allowlist secret
+CLAIMS_SECRET = "identity-claims-secret-for-tests-0123456789"  # pragma: allowlist secret
 
 
 def _isolated_client(mock_client, captured_kwargs=None):
@@ -177,12 +183,13 @@ class TestBuildIdentityHeaders:
         mock_settings.identity_propagation_mode = "both"
         mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
         mock_settings.identity_sign_claims = True
-        mock_settings.identity_claims_secret = SecretStr("test-secret")  # pragma: allowlist secret
+        mock_settings.identity_claims_secret = SecretStr(CLAIMS_SECRET)
+        mock_settings.jwt_secret_key = SecretStr(JWT_SECRET)
         mock_settings.identity_sensitive_attributes = []
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
-        headers = build_identity_headers(uc)
-        assert "X-Forwarded-User-Claims-Signature" in headers
-        assert len(headers["X-Forwarded-User-Claims-Signature"]) == 64  # SHA-256 hex
+        headers = build_identity_headers(uc, audience="gw-1")
+        claims = jwt.decode(headers["X-Forwarded-User-Claims-Signature"], CLAIMS_SECRET, algorithms=["HS256"], audience="gw-1")
+        assert claims["email"] == "alice@co.com"
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_delegation_chain_header(self, mock_settings):
@@ -519,44 +526,164 @@ class TestResolveConfig:
         assert cfg["enabled"] is False  # Falls back to global
 
 # ---------------------------------------------------------------------------
-# _sign_claims tests
+# Claims JWS signing tests
 # ---------------------------------------------------------------------------
-class TestSignClaims:
-    """Tests for _sign_claims() HMAC signing."""
+@pytest.fixture
+def signing_settings():
+    """Patch settings with propagation and claim signing on, using a dedicated secret."""
+    with patch("mcpgateway.utils.identity_propagation.settings") as mock_settings:
+        mock_settings.identity_propagation_enabled = True
+        mock_settings.identity_propagation_mode = "both"
+        mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
+        mock_settings.identity_sign_claims = True
+        mock_settings.identity_claims_secret = SecretStr(CLAIMS_SECRET)
+        mock_settings.jwt_secret_key = SecretStr(JWT_SECRET)
+        mock_settings.identity_sensitive_attributes = []
+        yield mock_settings
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64  # SHA-256 hex
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_identity_claims_secret_actually_changes_the_signature(self, mock_settings):
-        """The configured secret must actually be used as the HMAC key, not merely present.
+def _full_user(**overrides) -> UserContext:
+    fields = dict(
+        user_id="alice@co.com",
+        email="alice@co.com",
+        full_name="Alice",
+        is_admin=False,
+        groups=["eng"],
+        teams=["team-a"],
+        roles=["viewer"],
+        auth_method="bearer",
+        service_account="ci-bot",
+        delegation_chain=["ci-bot", "alice@co.com"],
+    )
+    fields.update(overrides)
+    return UserContext(**fields)
 
-        test_uses_identity_claims_secret and test_falls_back_to_empty_when_no_secrets only
-        assert len(sig) == 64, which would still pass even if identity_claims_secret were
-        silently ignored (HMAC-SHA256 always produces a 64-char hex digest, regardless of
-        key). Signing the same payload with a real secret and with no secret at all and
-        asserting the two signatures differ is what actually proves the secret is honored.
-        """
-        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
-        mock_settings.jwt_secret_key = SecretStr("jwt-fallback-secret")  # pragma: allowlist secret
-        sig_with_secret = _sign_claims("test-payload")
 
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = None
-        sig_without_secret = _sign_claims("test-payload")
+def _decode(token: str, secret: str = CLAIMS_SECRET, audience: str = "gw-1") -> dict:
+    return jwt.decode(token, secret, algorithms=["HS256"], audience=audience)
 
-        assert sig_with_secret != sig_without_secret
+
+SIG = "X-Forwarded-User-Claims-Signature"
+
+
+class TestClaimsToken:
+    """The claims signature is a short-lived, audience-bound JWS over every identity claim."""
+
+    def test_token_covers_every_claim(self, signing_settings):
+        uc = _full_user(is_admin=True)
+        claims = _decode(build_identity_headers(uc, audience="gw-1")[SIG])
+        assert claims["id"] == "alice@co.com"
+        assert claims["email"] == "alice@co.com"
+        assert claims["full_name"] == "Alice"
+        assert claims["is_admin"] is True
+        assert claims["groups"] == ["eng"]
+        assert claims["teams"] == ["team-a"]
+        assert claims["roles"] == ["viewer"]
+        assert claims["auth_method"] == "bearer"
+        assert claims["service_account"] == "ci-bot"
+        assert claims["delegation_chain"] == ["ci-bot", "alice@co.com"]
+        assert claims["iss"] == "mcpgateway-identity-propagation"
+
+    def test_token_claims_match_headers(self, signing_settings):
+        headers = build_identity_headers(_full_user(), audience="gw-1")
+        claims = _decode(headers[SIG])
+        assert headers["X-Forwarded-User-Admin"] == str(claims["is_admin"]).lower()
+        assert headers["X-Forwarded-User-Teams"] == ",".join(claims["teams"])
+        assert headers["X-Forwarded-User-Roles"] == ",".join(claims["roles"])
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("is_admin", True),
+            ("teams", ["team-a", "team-evil"]),
+            ("roles", ["platform_admin"]),
+            ("groups", ["eng", "root"]),
+            ("delegation_chain", ["mallory", "alice@co.com"]),
+            ("service_account", "other-bot"),
+            ("auth_method", "api_key"),
+        ],
+    )
+    def test_changing_a_claim_changes_the_signed_payload(self, signing_settings, field, value):
+        base = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        changed = _decode(build_identity_headers(_full_user(**{field: value}), audience="gw-1")[SIG])
+        assert changed[field] == value
+        assert base[field] != changed[field]
+
+    def test_tampered_token_fails_verification(self, signing_settings):
+        token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        header, payload, signature = token.split(".")
+        forged = jwt.encode({**_decode(token), "is_admin": True}, "attacker-key-0123456789abcdef0123456789", algorithm="HS256").split(".")[1]
+        with pytest.raises(jwt.InvalidSignatureError):
+            _decode(f"{header}.{forged}.{signature}")
+
+    def test_token_is_short_lived(self, signing_settings):
+        claims = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        assert claims["exp"] - claims["iat"] == 60
+
+    def test_expired_token_is_rejected(self, signing_settings):
+        past = time.time() - 120
+        with patch("mcpgateway.utils.identity_propagation.time.time", return_value=past):
+            token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        with pytest.raises(jwt.ExpiredSignatureError):
+            _decode(token)
+
+    def test_token_has_unique_jti(self, signing_settings):
+        first = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        second = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        assert first["jti"] != second["jti"]
+
+    def test_audience_defaults_to_gateway_id(self, signing_settings):
+        gateway = SimpleNamespace(id="gw-1", identity_propagation=None)
+        assert _decode(build_identity_headers(_full_user(), gateway)[SIG])["aud"] == "gw-1"
+
+    def test_explicit_audience_wins_and_binds(self, signing_settings):
+        gateway = SimpleNamespace(id="gw-1", identity_propagation=None)
+        token = build_identity_headers(_full_user(), gateway, audience="gw-2")[SIG]
+        assert _decode(token, audience="gw-2")["aud"] == "gw-2"
+        with pytest.raises(jwt.InvalidAudienceError):
+            _decode(token, audience="gw-1")
+
+    def test_refuses_without_audience(self, signing_settings):
+        with pytest.raises(ValueError):
+            build_identity_headers(_full_user())
+
+    def test_token_not_verifiable_with_jwt_secret(self, signing_settings):
+        token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        with pytest.raises(jwt.InvalidSignatureError):
+            _decode(token, secret=JWT_SECRET)
+
+    @pytest.mark.parametrize("secret", [None, SecretStr(""), SecretStr(JWT_SECRET)])
+    def test_runtime_refuses_without_dedicated_secret(self, signing_settings, secret):
+        signing_settings.identity_claims_secret = secret
+        with pytest.raises(ValueError, match="IDENTITY_CLAIMS_SECRET") as exc_info:
+            build_identity_headers(_full_user(), audience="gw-1")
+        assert JWT_SECRET not in str(exc_info.value)
+        with pytest.raises(ValueError):
+            build_identity_meta(_full_user(), audience="gw-1")
+
+    def test_per_gateway_sign_claims_override_refuses_without_secret(self, signing_settings):
+        signing_settings.identity_sign_claims = False
+        signing_settings.identity_claims_secret = None
+        with pytest.raises(ValueError):
+            build_identity_headers(_full_user(), identity_propagation={"enabled": True, "sign_claims": True}, audience="gw-1")
+
+    def test_meta_carries_claims_signature(self, signing_settings):
+        user = build_identity_meta(_full_user(), audience="gw-1")["user"]
+        claims = _decode(user["claims_signature"])
+        assert "claims_signature" not in claims
+        assert claims["teams"] == user["teams"]
+        assert claims["is_admin"] == user["is_admin"]
+
+    def test_no_signature_when_sign_claims_false(self, signing_settings):
+        signing_settings.identity_sign_claims = False
+        signing_settings.identity_claims_secret = None
+        assert SIG not in build_identity_headers(_full_user())
+        assert "claims_signature" not in build_identity_meta(_full_user())["user"]
 
     def test_identity_claims_secret_is_a_secret_type(self):
         """The identity-claims signing key must not be a bare string."""
         # Standard
         from typing import get_args
-
-        # Third-Party
-        from pydantic import SecretStr
 
         # First-Party
         from mcpgateway.config import Settings
@@ -564,19 +691,6 @@ class TestSignClaims:
         annotation = Settings.model_fields["identity_claims_secret"].annotation
         assert SecretStr in get_args(annotation), "identity_claims_secret must be Optional[SecretStr]"
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_falls_back_to_jwt_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = SecretStr("jwt-fallback-secret")
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64
-
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_falls_back_to_empty_when_no_secrets(self, mock_settings):
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = None
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64  # Still produces a valid HMAC (with empty key)
 
 # ---------------------------------------------------------------------------
 # build_identity_headers — additional branch coverage
@@ -1883,7 +1997,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             )
 
         assert result == "hello"
-        mock_build_headers.assert_called_once_with(user_context, gateway)
+        mock_build_headers.assert_called_once_with(user_context, gateway, audience="gw-1")
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_updates_headers_from_plugin_context(self):
@@ -2059,7 +2173,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 plugin_global_context=plugin_global_context,
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=None)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=None, audience="tool-1")
         assert pinned_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
         pinned_client.aclose.assert_awaited_once()
 
@@ -2143,8 +2257,8 @@ class TestToolServiceIdentityPropagationCoverage:
             )
 
         expected = None if cached_setting == "missing" else cached_setting
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=expected)
-        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, identity_propagation=expected)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=expected, audience="gw-1")
+        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, identity_propagation=expected, audience="gw-1")
 
 class TestStreamableHttpTransportIdentityPropagationCoverage:
     """Cover transport identity forwarding branches."""

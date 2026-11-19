@@ -6132,7 +6132,7 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str or tool_id))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -6606,8 +6606,8 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
+                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation, audience=gateway_id_str)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None

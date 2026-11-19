@@ -2160,6 +2160,7 @@ class ResourceService(BaseService):
                         gateway_auth_value = gateway.auth_value
                         gateway_oauth_config = gateway.oauth_config
                         gateway_name = gateway.name
+                        gateway_audience = str(gateway.id)
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
                         try:
                             gateway_sigv4_auth = build_gateway_sigv4_auth(gateway_auth_type, getattr(gateway, "sigv4_config", None))
@@ -2303,7 +2304,7 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity, gateway))
+                                headers.update(build_identity_headers(user_identity, gateway, audience=gateway_audience))
 
                         async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
