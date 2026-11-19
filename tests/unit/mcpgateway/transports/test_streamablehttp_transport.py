@@ -14550,7 +14550,7 @@ async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch)
 
     assert first["is_admin"] is True
     assert second["is_admin"] is True
-    batch_lookup.assert_called_once_with("batched@example.com", "jti-2")
+    batch_lookup.assert_called_once_with("batched@example.com", "jti-2", {"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
     auth_cache.set_auth_context.assert_awaited_once()
     assert isinstance(cached[("batched@example.com", "jti-2")], CachedAuthContext)
 
@@ -14736,7 +14736,7 @@ async def test_auth_jwt_session_token_keys_cache_and_lookups_by_email(monkeypatc
 
     monkeypatch.setattr(
         "mcpgateway.auth._get_auth_context_batched_sync",
-        lambda email, jti: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
+        lambda email, jti, payload=None: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
     )
     monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-x"]))
     monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))

@@ -2906,7 +2906,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     # First-Party
                     from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
 
-                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti, payload)
                     if batched_ctx.get("is_token_revoked", False):
                         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
                     batched_user = batched_ctx.get("user")
@@ -6674,7 +6674,7 @@ class _StreamableHttpAuthHandler:
 
             if user_email and cached_ctx is None and settings.auth_cache_batch_queries:
                 try:
-                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti)
+                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti, user_payload)
                     _record_mcp_auth_cache_event("auth_context_batch_hit")
                     if batched_auth_ctx.get("is_token_revoked", False):
                         _record_mcp_auth_cache_event("auth_context_batch_revoked")
@@ -6714,7 +6714,7 @@ class _StreamableHttpAuthHandler:
             if user_email and cached_ctx is None and batched_auth_ctx is None:
                 _record_mcp_auth_cache_event("auth_context_fallback")
                 # First-Party
-                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync, session_predates_password_change  # pylint: disable=import-outside-toplevel
 
                 is_revoked = False
                 if jti:
@@ -6737,6 +6737,8 @@ class _StreamableHttpAuthHandler:
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+                    if user_record and session_predates_password_change(user_payload, getattr(user_record, "password_changed_at", None)):
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
                     if user_record:
                         db_user_is_admin = bool(getattr(user_record, "is_admin", False))
                     if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
