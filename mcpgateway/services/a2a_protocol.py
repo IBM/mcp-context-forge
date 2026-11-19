@@ -52,6 +52,7 @@ _V1_TO_LEGACY_METHODS = {value: key for key, value in _LEGACY_TO_V1_METHODS.item
 _V1_TO_LEGACY_METHODS["GetExtendedAgentCard"] = "agent/getAuthenticatedExtendedCard"
 _LEGACY_ROLE_TO_V1 = {"user": "ROLE_USER", "agent": "ROLE_AGENT", "system": "ROLE_SYSTEM"}
 _V1_ROLE_TO_LEGACY = {value: key for key, value in _LEGACY_ROLE_TO_V1.items()}
+# v0.3 spells these states with hyphens; underscore forms are also accepted on input for peers that send them.
 _LEGACY_TASK_STATE_TO_V1 = {
     "submitted": "TASK_STATE_SUBMITTED",
     "working": "TASK_STATE_WORKING",
