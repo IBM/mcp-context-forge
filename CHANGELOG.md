@@ -11,6 +11,8 @@
 
 ### Added
 
+- **Per-gateway auto-refresh mode** ([#7017](https://github.com/IBM/mcp-context-forge/issues/7017)) - A gateway can set refresh_mode to off, auto, or quarantine on create and update. When the field is unset, the gateway follows AUTO_REFRESH_SERVERS. auto and quarantine refresh that gateway even when the global setting is off, so a deployment can auto-refresh servers it maintains and leave others manual. off skips auto-refresh even when the global setting is on. quarantine uses the same refresh schedule as auto; holding material catalog changes for approval is tracked in [#7021](https://github.com/IBM/mcp-context-forge/issues/7021). Adds migration b8d4e1f0c2a3. This change covers the API and backend. The new UI control is not in this repository.
+
 - **AWS Signature V4 gateway authentication** ([#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#6408](https://github.com/IBM/mcp-context-forge/issues/6408)) - A gateway accepts `auth_type: "sigv4"` with a `sigv4_config` object (`access_key_id`, `secret_access_key`, optional `session_token`, `region`, `service`). ContextForge signs each upstream request for SSE and StreamableHTTP gateways, including session traffic, tool discovery, and health checks. The `secret_access_key` and `session_token` fields are encrypted at rest and masked in API responses. An update that changes `sigv4_config` evicts pooled upstream sessions. An inbound `Authorization` header never overrides the signature. Adds migration `e5a7c2d9b4f1`.
     - Register a SigV4 gateway with `POST /gateways`. Set `auth_type` to `sigv4` and add a `sigv4_config` object. Use the API, not the Admin UI. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md).
 

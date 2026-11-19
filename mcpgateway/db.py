@@ -4863,6 +4863,11 @@ class Gateway(Base):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
+    refresh_mode: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+        comment="Per-gateway auto-refresh mode: off, auto, or quarantine; NULL uses AUTO_REFRESH_SERVERS",
+    )
 
     # Gateway mode: 'cache' (default) or 'direct_proxy'
     # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)

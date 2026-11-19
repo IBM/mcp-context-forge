@@ -32,6 +32,7 @@ from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import (
     AfterValidator,
+    BeforeValidator,
     AliasChoices,
     AnyHttpUrl,
     BaseModel,
@@ -74,6 +75,38 @@ from mcpgateway.utils.sigv4 import SIGV4_SENSITIVE_KEYS, SigV4ConfigError, valid
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
+
+# Per-gateway scheduled refresh mode (#7017). NULL falls back to AUTO_REFRESH_SERVERS.
+# "quarantine" still refreshes; holding material catalog changes is issue #7021.
+GATEWAY_REFRESH_MODES = ("off", "auto", "quarantine")
+
+
+def _normalize_gateway_refresh_mode(value: Optional[str]) -> Optional[str]:
+    """Normalize a per-gateway refresh mode, or reject an unknown value.
+
+    Args:
+        value: Raw refresh_mode from a request or stored record.
+
+    Returns:
+        None when unset or blank, otherwise one of GATEWAY_REFRESH_MODES.
+
+    Raises:
+        ValueError: If the value is not a supported mode.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("refresh_mode must be one of: off, auto, quarantine")
+    stripped = value.strip()
+    if not stripped:
+        return None
+    lowered = stripped.lower()
+    if lowered not in GATEWAY_REFRESH_MODES:
+        raise ValueError("refresh_mode must be one of: off, auto, quarantine")
+    return lowered
+
+
+GatewayRefreshMode = Annotated[Optional[str], BeforeValidator(_normalize_gateway_refresh_mode)]
 
 _POLICY_SAMPLE_VARIABLES = {"description": "", "tool_name": ""}
 
@@ -3837,6 +3870,10 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+    refresh_mode: GatewayRefreshMode = Field(
+        None,
+        description="Per-gateway auto-refresh mode: off, auto, or quarantine. Unset uses AUTO_REFRESH_SERVERS. quarantine still refreshes; material-change approval is issue #7021.",
+    )
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
@@ -4294,6 +4331,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+    refresh_mode: GatewayRefreshMode = Field(
+        None,
+        description="Per-gateway auto-refresh mode: off, auto, or quarantine. Unset uses AUTO_REFRESH_SERVERS. quarantine still refreshes; material-change approval is issue #7021.",
+    )
 
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
@@ -4695,6 +4736,10 @@ class GatewayRead(BaseModelWithConfigDict):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
     last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
+    refresh_mode: GatewayRefreshMode = Field(
+        None,
+        description="Per-gateway auto-refresh mode: off, auto, or quarantine. Unset uses AUTO_REFRESH_SERVERS. quarantine still refreshes; material-change approval is issue #7021.",
+    )
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")

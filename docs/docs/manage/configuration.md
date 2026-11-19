@@ -1299,6 +1299,9 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` | Redis down: `fail_closed` or `filelock_fallback` | `fail_closed` | enum |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
+!!! note "Per-gateway refresh mode"
+    Each gateway may set refresh_mode to off, auto, or quarantine. When it is unset, the gateway follows AUTO_REFRESH_SERVERS. auto and quarantine refresh that gateway even when the global setting is off; off skips it even when the global setting is on. quarantine uses the same refresh schedule as auto. Holding material catalog changes for approval is tracked in issue [#7021](https://github.com/IBM/mcp-context-forge/issues/7021).
+
 !!! note "Primary-worker election notes (redis backend)"
     - **Namespace the key when sharing Redis.** `PRIMARY_WORKER_REDIS_KEY` defaults to `mcpgw:primary_worker`. Two independent gateway deployments pointed at the same Redis instance/DB will collide on this key (electing one primary *across both*). Give each deployment its own key (e.g. suffix the environment name) when sharing Redis.
     - **Keep `HEARTBEAT_INTERVAL < LEASE_TTL / 2`.** Otherwise the lease can expire before renewal and cause re-election.

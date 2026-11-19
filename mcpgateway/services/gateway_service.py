@@ -1044,6 +1044,32 @@ class GatewayRegistrationPreparation:
     gateway_mode: str
 
 
+def auto_refresh_enabled_for_gateway(refresh_mode: Optional[str], global_auto_refresh: bool) -> bool:
+    """Return whether scheduled auto-refresh should run for a gateway.
+
+    A null, blank, or unrecognized mode falls back to AUTO_REFRESH_SERVERS.
+    off disables refresh even when the global setting is on. auto and
+    quarantine enable refresh even when the global setting is off.
+    quarantine uses the same refresh schedule as auto; holding material
+    catalog changes for approval is tracked in issue #7021.
+
+    Args:
+        refresh_mode: Per-gateway mode (off, auto, quarantine) or None.
+        global_auto_refresh: Value of settings.auto_refresh_servers.
+
+    Returns:
+        True if the health-check auto-refresh path should run for this gateway.
+    """
+    if not isinstance(refresh_mode, str) or not refresh_mode.strip():
+        return bool(global_auto_refresh)
+    mode = refresh_mode.strip().lower()
+    if mode == "off":
+        return False
+    if mode in {"auto", "quarantine"}:
+        return True
+    return bool(global_auto_refresh)
+
+
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
@@ -2549,6 +2575,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
             gateway_mode=preparation.gateway_mode,
             refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
+            refresh_mode=getattr(gateway, "refresh_mode", None),
             status="pending",
             status_message="Gateway registration accepted and pending initialization",
             registration_attempts=0,
@@ -2991,6 +3018,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Gateway mode configuration
                 gateway_mode=preparation.gateway_mode,
                 refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
+                refresh_mode=getattr(gateway, "refresh_mode", None),
             )
 
             # Add to DB and commit immediately so tools/resources/prompts are visible
@@ -3973,6 +4001,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if "refresh_interval_seconds" in getattr(gateway_update, "model_fields_set", ()):
                     gateway.refresh_interval_seconds = gateway_update.refresh_interval_seconds
+                if "refresh_mode" in getattr(gateway_update, "model_fields_set", ()):
+                    gateway.refresh_mode = gateway_update.refresh_mode
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
                     # Validate visibility transitions
@@ -6274,7 +6304,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     # Auto-refresh tools/resources/prompts if enabled
                     should_auto_refresh = False
-                    if settings.auto_refresh_servers:
+                    if auto_refresh_enabled_for_gateway(getattr(gateway, "refresh_mode", None), settings.auto_refresh_servers):
                         # Hot/cold classification: Check if this server should have tools refreshed now
                         if self._classification_service:
                             try:
