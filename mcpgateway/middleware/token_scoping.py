@@ -209,6 +209,14 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
     ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
+    # Export/import routes on export_import_router. The handlers require
+    # admin.export / admin.import (the import routes are global_only); without
+    # these entries the default-deny below rejects correctly scoped tokens.
+    ("GET", re.compile(r"^/export(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/export/selective(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/import(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("GET", re.compile(r"^/import/status(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("POST", re.compile(r"^/import/cleanup(?:$|/)"), Permissions.ADMIN_IMPORT),
     # A2A agent plugin bindings live under /a2a-agents/... (hyphen), which does not
     # match ^/a2a(?:$|/) above. Decorators on a2a_agent_plugin_bindings require
     # tools.read / tools.manage_plugins — same contract as tool plugin bindings (#6701).
