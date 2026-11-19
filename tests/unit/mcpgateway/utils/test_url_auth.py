@@ -317,3 +317,76 @@ class TestSigV4AuthorizationHeaderValue:
 
     def test_text_without_a_sigv4_value_is_unchanged(self):
         assert sanitize_exception_message("AWS4-HMAC-SHA256 is the algorithm name") == "AWS4-HMAC-SHA256 is the algorithm name"
+
+    @pytest.mark.parametrize(
+        "parameters",
+        [
+            "Signature={sig}, Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request, SignedHeaders=host",  # pragma: allowlist secret
+            "SignedHeaders=host, Signature={sig}, Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request",  # pragma: allowlist secret
+            "Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request,Signature={sig}",  # pragma: allowlist secret
+        ],
+    )
+    def test_any_parameter_order_is_redacted(self, parameters):
+        result = sanitize_exception_message(f"failed: AWS4-HMAC-SHA256 {parameters.format(sig=self.SIGNATURE)} end")
+
+        assert result == "failed: AWS4-HMAC-SHA256 REDACTED end"
+
+    def test_uppercase_algorithm_name_is_redacted(self):
+        value = self.VALUE.replace("AWS4-HMAC-SHA256", "aws4-hmac-sha256")
+
+        assert self.SIGNATURE not in sanitize_exception_message(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            'AWS4-HMAC-SHA256 Signature="{sig}", Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request',  # pragma: allowlist secret
+            "AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request SignedHeaders=host Signature={sig}",  # pragma: allowlist secret
+            "AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request,\n SignedHeaders=host,\n Signature={sig}",  # pragma: allowlist secret
+        ],
+    )
+    def test_quoted_and_whitespace_separated_parameters_are_redacted(self, value):
+        result = sanitize_exception_message(value.format(sig=self.SIGNATURE))
+
+        assert result == "AWS4-HMAC-SHA256 REDACTED"
+
+    def test_neighbouring_dict_entries_are_kept(self):
+        result = sanitize_exception_message(f"{{'authorization': '{self.VALUE}', 'host': 'example.com'}}")
+
+        assert result == "{'authorization': 'AWS4-HMAC-SHA256 REDACTED', 'host': 'example.com'}"
+
+
+class TestSigV4KeyValueOutsideUrl:
+    """A SigV4 signature, credential or security token never survives outside a URL."""
+
+    SIGNATURE = "c" * 64
+    CREDENTIAL = "AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request"  # pragma: allowlist secret
+    TOKEN = "SESSIONTOKENVALUE"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("x-amz-signature", SIGNATURE),
+            ("X-Amz-Signature", SIGNATURE),
+            ("x-amz-credential", CREDENTIAL),
+            ("X-Amz-Credential", CREDENTIAL),
+            ("x-amz-security-token", TOKEN),
+            ("x_amz_security_token", TOKEN),
+        ],
+    )
+    @pytest.mark.parametrize("template", ["{n}={v}", "{n}: {v}", "{{'{n}': '{v}', 'host': 'example.com'}}", '{{"{n}": "{v}"}}', "query {n}={v}&X-Amz-Date=20260101T000000Z"])
+    def test_value_is_redacted_in_any_shape(self, template, name, value):
+        result = sanitize_exception_message(template.format(n=name, v=value))
+
+        assert value not in result
+        assert "REDACTED" in result
+
+    def test_neighbouring_pairs_are_kept(self):
+        result = sanitize_exception_message("{'x-amz-signature': 'abc123', 'host': 'example.com'}")
+
+        assert result == "{'x-amz-signature': 'REDACTED', 'host': 'example.com'}"
+
+    def test_non_secret_amz_names_are_kept(self):
+        assert sanitize_exception_message("x-amz-date: 20260101T000000Z") == "x-amz-date: 20260101T000000Z"
+
+    def test_text_without_a_sigv4_key_is_unchanged(self):
+        assert sanitize_exception_message("signature mismatch for the request") == "signature mismatch for the request"

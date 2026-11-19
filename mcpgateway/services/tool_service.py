@@ -3041,6 +3041,7 @@ class ToolService(BaseService):
 
             tools_to_add = []
             tools_to_update = []
+            previous_sigv4_configs: dict[int, Any] = {}
             gateway_policies = self._gateway_tool_validation_policies(db, (tool.gateway_id for tool in chunk))
 
             for tool in chunk:
@@ -3067,6 +3068,7 @@ class ToolService(BaseService):
                     stats["created"] += 1
                 elif result["status"] == "update":
                     tools_to_update.append(result["tool"])
+                    previous_sigv4_configs[id(result["tool"])] = result.get("previous_sigv4_config")
                     stats["updated"] += 1
                 elif result["status"] == "skip":
                     stats["skipped"] += 1
@@ -3091,13 +3093,21 @@ class ToolService(BaseService):
 
             audit_counts: dict[str | None, dict[str, int]] = {}
             audit_sigv4_fingerprints: dict[str | None, set[str]] = {}
+            audit_sigv4_changes: list[tuple[Any, dict[str, Any]]] = []
             for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
                 for db_tool in tools:
                     counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
                     counts[operation] += 1
-                    fingerprint = sigv4_audit_values(getattr(db_tool, "sigv4_config", None), registration=True).get("sigv4_key_fingerprint")
+                    current_sigv4_config = getattr(db_tool, "sigv4_config", None)
+                    fingerprint = sigv4_audit_values(current_sigv4_config, registration=True).get("sigv4_key_fingerprint")
                     if fingerprint:
                         audit_sigv4_fingerprints.setdefault(db_tool.team_id, set()).add(fingerprint)
+                    if operation == "created":
+                        change = sigv4_audit_values(current_sigv4_config, registration=True)
+                    else:
+                        change = sigv4_audit_values(current_sigv4_config, previous_sigv4_configs.get(id(db_tool)))
+                    if change:
+                        audit_sigv4_changes.append((db_tool, change))
 
             # Commit the chunk
             db.commit()
@@ -3107,6 +3117,10 @@ class ToolService(BaseService):
             for db_tool in tools_to_add:
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
+
+            audit_sigv4_tools: dict[str | None, list[dict[str, Any]]] = {}
+            for db_tool, change in audit_sigv4_changes:
+                audit_sigv4_tools.setdefault(db_tool.team_id, []).append({"tool_id": getattr(db_tool, "id", None), "name": getattr(db_tool, "name", None), **change})
 
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
@@ -3119,6 +3133,7 @@ class ToolService(BaseService):
                         "count": sum(counts.values()),
                         "import_batch_id": import_batch_id,
                         **({"sigv4_key_fingerprints": sorted(audit_sigv4_fingerprints[audit_team_id])} if audit_team_id in audit_sigv4_fingerprints else {}),
+                        **({"sigv4_tools": audit_sigv4_tools[audit_team_id]} if audit_team_id in audit_sigv4_tools else {}),
                     },
                 )
 
@@ -3169,7 +3184,8 @@ class ToolService(BaseService):
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
-                and either "tool" (DbTool object) or "error" (error message).
+                and either "tool" (DbTool object) or "error" (error message). An "update" result also carries
+                "previous_sigv4_config", the stored SigV4 configuration before the overwrite.
         """
         try:
             # Same three US-3 malicious-pattern scans that register_tool() runs.
@@ -3236,6 +3252,7 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     if tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
+                    previous_sigv4_config = getattr(existing_tool, "sigv4_config", None)
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title
@@ -3273,7 +3290,7 @@ class ToolService(BaseService):
                         existing_tool.plugin_chain_pre = tool.plugin_chain_pre
                         existing_tool.plugin_chain_post = tool.plugin_chain_post
 
-                    return {"status": "update", "tool": existing_tool}
+                    return {"status": "update", "tool": existing_tool, "previous_sigv4_config": previous_sigv4_config}
 
                 if conflict_strategy == "rename":
                     # Create with renamed tool

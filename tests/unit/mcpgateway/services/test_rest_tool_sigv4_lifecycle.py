@@ -1015,8 +1015,8 @@ class TestSigV4ToolAuditAttribution:
     @pytest.mark.asyncio
     async def test_bulk_registration_records_fingerprints_without_credentials(self, service):
         db = MagicMock()
-        sigv4_tool = SimpleNamespace(team_id="team-a", sigv4_config=protect_sigv4_config_sync(dict(CONFIG)))
-        plain_tool = SimpleNamespace(team_id="team-b", sigv4_config=None)
+        sigv4_tool = SimpleNamespace(id="tool-a", name="a", team_id="team-a", sigv4_config=protect_sigv4_config_sync(dict(CONFIG)))
+        plain_tool = SimpleNamespace(id="tool-b", name="b", team_id="team-b", sigv4_config=None)
         results = iter([{"status": "add", "tool": sigv4_tool}, {"status": "add", "tool": plain_tool}])
 
         with (
@@ -1045,5 +1045,69 @@ class TestSigV4ToolAuditAttribution:
         details_by_team = {call.kwargs["team_id"]: call.kwargs["details"] for call in audit.log_action.call_args_list}
         assert details_by_team["team-a"]["sigv4_key_fingerprints"] == [self.FINGERPRINT]
         assert "sigv4_key_fingerprints" not in details_by_team["team-b"]
+        (entry,) = details_by_team["team-a"]["sigv4_tools"]
+        assert (entry["tool_id"], entry["name"], entry["sigv4_key_fingerprint"]) == ("tool-a", "a", self.FINGERPRINT)
+        assert "sigv4_tools" not in details_by_team["team-b"]
         for call in audit.log_action.call_args_list:
             self._assert_no_credential_in(call.kwargs)
+
+    def _bulk_update(self, service, stored, incoming):
+        db = MagicMock()
+        stored.headers = None
+        stored.id = "tool-1"
+        with (
+            patch("mcpgateway.services.tool_service.audit_trail") as audit,
+            patch.object(service, "_gateway_tool_validation_policies", return_value={}),
+            patch("mcpgateway.services.tool_service.notify_dataplane"),
+        ):
+            stats = service._process_tool_chunk(
+                db,
+                chunk=[incoming],
+                conflict_strategy="update",
+                visibility="public",
+                team_id=None,
+                owner_email="dev@example.com",
+                created_by="dev@example.com",
+                created_from_ip=None,
+                created_via="api",
+                created_user_agent=None,
+                import_batch_id="batch-1",
+                federation_source=None,
+                existing_tools_map={incoming.name: stored},
+            )
+        assert stats["updated"] == 1, stats
+        audit.log_action.assert_called_once()
+        return audit.log_action.call_args.kwargs
+
+    def test_bulk_update_rotation_records_tool_identity_and_both_fingerprints(self, service):
+        incoming = _create(sigv4_config={**CONFIG, "access_key_id": self.OTHER_ACCESS_KEY_ID, "secret_access_key": "N" * 40})
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        assert call["action"] == "bulk_update_tools"
+        (entry,) = call["details"]["sigv4_tools"]
+        assert entry["tool_id"] == "tool-1"
+        assert entry["name"] == "aws-tool"
+        assert entry["sigv4_credential_rotated"] is True
+        assert entry["sigv4_key_fingerprint"] == access_key_fingerprint(self.OTHER_ACCESS_KEY_ID)
+        assert entry["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        self._assert_no_credential_in(call)
+
+    def test_bulk_update_with_the_same_credential_is_not_a_rotation(self, service):
+        incoming = _create(sigv4_config={**CONFIG, "session_token": TOKEN})
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        assert "sigv4_tools" not in call["details"]
+        assert call["details"]["sigv4_key_fingerprints"] == [self.FINGERPRINT]
+
+    def test_bulk_update_switching_away_from_sigv4_records_the_removal(self, service):
+        incoming = ToolCreate(name="aws-tool", url="https://api.example.com/x", integration_type="REST", request_type="POST")
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        (entry,) = call["details"]["sigv4_tools"]
+        assert entry["sigv4_credential_removed"] is True
+        assert entry["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprints" not in call["details"]
+        self._assert_no_credential_in(call)

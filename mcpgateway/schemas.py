@@ -1229,6 +1229,7 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4' on a REST tool: access_key_id, secret_access_key, region, service, optional session_token and optional unsigned_payload. "
         "Secrets are stored encrypted. A SigV4 tool without this field uses the SigV4 configuration of its gateway.",
     )
@@ -1895,6 +1896,7 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for a REST tool with auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
     )
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
@@ -3854,6 +3856,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     # AWS Signature V4 configuration
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4': access_key_id, secret_access_key, region, service and optional session_token. Secrets are stored encrypted.",
     )
 
@@ -4292,6 +4295,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # AWS Signature V4 configuration
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
     )
 
