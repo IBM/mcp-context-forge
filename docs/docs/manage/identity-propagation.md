@@ -163,7 +163,7 @@ if claims["is_admin"]: ...
 To reject replays inside the 60-second window, cache seen `jti` values until their `exp`.
 
 !!! warning "Shared-secret trust"
-    The secret is symmetric: any upstream that can verify tokens can also mint them. Give each trust domain its own gateway deployment or secret, and never reuse `JWT_SECRET_KEY`.
+    The secret is symmetric: any upstream that can verify tokens can also mint them. Give each trust domain its own gateway deployment, and never reuse `JWT_SECRET_KEY`.
 
 !!! note "Format change"
     Earlier releases sent a hex HMAC over `user_id:email` only, and fell back to `JWT_SECRET_KEY`. Verifiers built for that format reject the new token. If an earlier deployment ran with signing on and no `IDENTITY_CLAIMS_SECRET`, rotate `JWT_SECRET_KEY`.

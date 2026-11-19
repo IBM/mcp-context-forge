@@ -95,7 +95,7 @@ def recording_upstream():
 
 
 @pytest.fixture
-def isolated_gateway(tmp_path):
+def isolated_gateway(request, tmp_path):
     """Start a private gateway subprocess with identity propagation enabled globally.
 
     Yields:
@@ -129,6 +129,7 @@ def isolated_gateway(tmp_path):
         "IDENTITY_PROPAGATION_ENABLED": "true",
         "IDENTITY_PROPAGATION_MODE": "both",
         "IDENTITY_CLAIMS_SECRET": claims_secret,
+        **getattr(request, "param", {}),
         "LOG_LEVEL": "ERROR",
         "PYTHONUNBUFFERED": "1",
     }
@@ -178,7 +179,7 @@ def _set_gateway_override(db_path, gateway_id, identity_propagation):
     assert updated == 1, f"Gateway {gateway_id} not found in {db_path}"
 
 
-def _call_whoami(client, token, db_path, upstream_url, gateway_name, identity_propagation):
+def _call_whoami(client, token, db_path, upstream_url, gateway_name, identity_propagation, expect_success=True):
     """Register the upstream, apply the override, and call its tool via MCP.
 
     Args:
@@ -188,6 +189,7 @@ def _call_whoami(client, token, db_path, upstream_url, gateway_name, identity_pr
         upstream_url: URL of the recording upstream.
         gateway_name: Unique gateway name.
         identity_propagation: Per-gateway override dict.
+        expect_success: Assert a successful tool result when true, a tool error when false.
 
     Returns:
         The id of the registered gateway.
@@ -208,7 +210,11 @@ def _call_whoami(client, token, db_path, upstream_url, gateway_name, identity_pr
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tools[0]["name"], "arguments": {}}},
         )
         assert call.status_code == 200, call.text
-        assert "result" in call.json(), call.text
+        body = call.json()
+        if expect_success:
+            assert "result" in body and not body["result"].get("isError"), call.text
+        else:
+            assert "error" in body or body.get("result", {}).get("isError") is True, call.text
     finally:
         if server_id:
             client.delete(f"/servers/{server_id}")
@@ -264,3 +270,15 @@ def test_gateway_override_signed_claims_verify_with_claims_secret(isolated_gatew
     assert signed[-1][f"{_IDENTITY_PREFIX}-admin"] == "true"
     with pytest.raises(jwt.InvalidSignatureError):
         jwt.decode(claims_token, jwt_secret, algorithms=["HS256"], audience=gateway_id)
+
+
+@pytest.mark.parametrize("isolated_gateway", [{"IDENTITY_CLAIMS_SECRET": ""}], indirect=True)
+def test_gateway_override_sign_claims_without_secret_fails_closed(isolated_gateway, recording_upstream):
+    """A gateway with ``sign_claims: true`` and no claims secret gets no identity and the caller gets a tool error."""
+    client, token, db_path, _, _ = isolated_gateway
+    upstream_url, recorded = recording_upstream
+
+    _call_whoami(client, token, db_path, upstream_url, f"idp_nosecret_{secrets.token_hex(4)}", {"enabled": True, "sign_claims": True}, expect_success=False)
+
+    assert _tool_call_headers(recorded) == set(), recorded
+    assert "admin@example.com" not in str(recorded)
