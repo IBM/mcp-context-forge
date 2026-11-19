@@ -7,7 +7,7 @@ Shared OAuth helpers and sensitive-key definitions.
 """
 
 # Standard
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 # Third-Party
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -27,6 +27,24 @@ OAUTH_SENSITIVE_KEYS: frozenset[str] = frozenset(
         "private_key",
     }
 )
+
+# Nested oauth_config clients that can carry their own client secret and token
+# endpoint: the token-exchange discovery client and the RFC 8693 actor client.
+OAUTH_NESTED_CLIENTS: tuple[str, ...] = ("discovery", "actor")
+
+# Message for an update that keeps a masked secret while moving its endpoint.
+OAUTH_SECRET_REENTRY_MESSAGE: str = "Send the OAuth client secret again when you change the token URL."
+
+
+class OAuthSecretReentryRequired(ValueError):
+    """An update keeps a masked client secret while it moves the token endpoint.
+
+    The message is written here, so it is safe for an HTTP response. It is a
+    separate type from ``PublicValidationError`` because the gateway update path
+    wraps that marker class in ``GatewayError``, and the existing update
+    validators depend on that mapping. The gateway endpoint maps this type to 400.
+    """
+
 
 # Token endpoint client authentication methods honored at runtime (RFC 6749
 # Section 2.3.1, RFC 7591 Section 2.3, RFC 7523 Section 2.2). The schema and
@@ -135,6 +153,104 @@ def is_sensitive_oauth_key(key: Any) -> bool:
         bool: True when key maps to sensitive OAuth material.
     """
     return isinstance(key, str) and key.lower() in OAUTH_SENSITIVE_KEYS
+
+
+def oauth_token_urls(oauth_config: Any) -> Dict[str, Optional[str]]:
+    """Map each token endpoint in an oauth_config to the URL it resolves to.
+
+    The discovery client and the RFC 8693 actor client inherit the top-level
+    ``token_url`` unless they override it. A change to an inherited endpoint
+    moves every secret that the parent config supplies, so the update guard
+    compares all three endpoints, not only ``token_url``.
+
+    Args:
+        oauth_config: Gateway or agent ``oauth_config``, or ``None``.
+
+    Returns:
+        Dict[str, Optional[str]]: One entry per endpoint, in the order
+        ``token_url``, ``discovery.token_url``, ``actor.token_url``. The value
+        is ``None`` when neither the client nor its parent sets an endpoint.
+
+    Examples:
+        >>> oauth_token_urls({"token_url": "https://as/token"})
+        {'token_url': 'https://as/token', 'discovery.token_url': 'https://as/token', 'actor.token_url': 'https://as/token'}
+        >>> oauth_token_urls({"token_url": "https://as/token", "actor": {"token_url": "https://actor/token"}})["actor.token_url"]
+        'https://actor/token'
+        >>> oauth_token_urls(None)
+        {}
+    """
+    if not isinstance(oauth_config, dict):
+        return {}
+    parent_url = oauth_config.get("token_url")
+    urls: Dict[str, Optional[str]] = {"token_url": parent_url if isinstance(parent_url, str) else None}
+    for client_name in OAUTH_NESTED_CLIENTS:
+        client = oauth_config.get(client_name)
+        override = client.get("token_url") if isinstance(client, dict) else None
+        urls[f"{client_name}.token_url"] = override if isinstance(override, str) else urls["token_url"]
+    return urls
+
+
+def _has_masked_oauth_secret(oauth_config: Any, masked_value: str) -> bool:
+    """Report whether an oauth_config keeps a secret as a masked placeholder.
+
+    Checks the top-level config and the nested discovery and actor clients,
+    because each can hold a client secret of its own.
+
+    Args:
+        oauth_config: Incoming ``oauth_config`` of an update.
+        masked_value: Placeholder the form sends for an unchanged secret.
+
+    Returns:
+        bool: True when any sensitive key carries the mask placeholder.
+    """
+    if not isinstance(oauth_config, dict):
+        return False
+    layers = [oauth_config]
+    for client_name in OAUTH_NESTED_CLIENTS:
+        client = oauth_config.get(client_name)
+        if isinstance(client, dict):
+            layers.append(client)
+    return any(is_sensitive_oauth_key(key) and value == masked_value for layer in layers for key, value in layer.items())
+
+
+def oauth_secret_reentry_required(new_config: Any, stored_config: Any, masked_value: str) -> bool:
+    """Report whether an update would send a stored secret to a new token URL.
+
+    A masked placeholder keeps the stored secret. If a token URL also changes,
+    the gateway would send that secret to the new host, so the caller must make
+    the operator send the secret again. The check covers the nested discovery
+    and actor clients, because each can carry a client secret of its own.
+
+    The caller raises ``OAuthSecretReentryRequired`` with
+    ``OAUTH_SECRET_REENTRY_MESSAGE``. This function stays pure because
+    ``mcpgateway.utils.error_formatter`` imports the services package, which
+    imports this module.
+
+    Args:
+        new_config: Incoming ``oauth_config`` of an update.
+        stored_config: ``oauth_config`` stored for the gateway or agent.
+        masked_value: Placeholder the form sends for an unchanged secret.
+
+    Returns:
+        bool: True when a masked secret is kept while a ``token_url`` changes.
+
+    Examples:
+        >>> oauth_secret_reentry_required({"token_url": "https://b/t", "client_secret": "new"}, {"token_url": "https://a/t"}, "*****")  # pragma: allowlist secret
+        False
+        >>> oauth_secret_reentry_required({"token_url": "https://a/t", "client_secret": "*****"}, {"token_url": "https://a/t"}, "*****")  # pragma: allowlist secret
+        False
+        >>> oauth_secret_reentry_required({"token_url": "https://b/t", "client_secret": "*****"}, {"token_url": "https://a/t"}, "*****")  # pragma: allowlist secret
+        True
+        >>> oauth_secret_reentry_required({"token_url": "https://a/t", "actor": {"token_url": "https://c/t", "client_secret": "*****"}}, {"token_url": "https://a/t", "actor": {"token_url": "https://d/t"}}, "*****")  # pragma: allowlist secret
+        True
+        >>> oauth_secret_reentry_required(None, {"token_url": "https://a/t"}, "*****")
+        False
+    """
+    if not isinstance(new_config, dict) or not isinstance(stored_config, dict):
+        return False
+    if oauth_token_urls(new_config) == oauth_token_urls(stored_config):
+        return False
+    return _has_masked_oauth_secret(new_config, masked_value)
 
 
 def normalize_token_endpoint_auth_method(raw_method: Any) -> Optional[str]:

@@ -18,8 +18,17 @@ import pytest
 from sqlalchemy.exc import IntegrityError, StatementError
 
 # First-Party
+from mcpgateway.common.oauth import OAUTH_SECRET_REENTRY_MESSAGE, OAuthSecretReentryRequired
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayToolNameConflictError
+from mcpgateway.services.gateway_service import (
+    GatewayConnectionError,
+    GatewayCredentialError,
+    GatewayDuplicateConflictError,
+    GatewayNameConflictError,
+    GatewayNotFoundError,
+    GatewayService,
+    GatewayToolNameConflictError,
+)
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
@@ -319,6 +328,16 @@ class TestGatewayUpdateErrorHandlers:
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 400
             assert response.json()["message"] == "target_audience is required for token-exchange grant type"
+
+    def test_update_gateway_oauth_secret_reentry_returns_400(self, test_client, auth_headers):
+        """A moved endpoint that keeps the masked secret returns 400 with its guidance message."""
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = OAuthSecretReentryRequired(OAUTH_SECRET_REENTRY_MESSAGE)
+
+            gateway_data = {"name": "updated-gateway", "url": "http://localhost:9000"}
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == OAUTH_SECRET_REENTRY_MESSAGE
 
     def test_update_gateway_not_found_error(self, test_client, auth_headers):
         """Test GatewayNotFoundError handling in update_gateway."""
