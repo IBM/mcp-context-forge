@@ -1033,7 +1033,7 @@ Set `REDIS_CLUSTER_MODE=true` to use `redis.asyncio.RedisCluster` and stop `MOVE
 
 Cluster mode has these limitations:
 
-- **Cross-slot operations.** Multi-key pipelines (`server_classification_service.py`) and multi-key Lua scripts (`redis_event_store.py`) can fail with cross-slot errors.
+- **Cross-slot `MGET`.** `RedisCluster` rejects an `MGET` whose keys map to different slots. Two callers batch untagged keys: `plugins/gateway_plugin_manager.py` (plugin mode overrides) and `services/team_management_service.py` (team member counts). Both catch the error and fall back to non-Redis data.
 
 ### Hiredis High-Performance Parser
 

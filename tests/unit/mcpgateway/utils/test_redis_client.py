@@ -989,6 +989,41 @@ class TestStripDbFromUrl:
         with pytest.raises(ValueError, match="Redis Cluster only supports database 0"):
             _strip_db_from_url("redis://:pass@host:6379/2")
 
+    @pytest.mark.parametrize("path", ["/00", "/0/", "/01", "/abc"])
+    def test_malformed_db_path_raises_error(self, path):
+        """Paths other than exactly /0 report the offending path."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        with pytest.raises(ValueError, match=f"REDIS_URL path is '{path}'"):
+            _strip_db_from_url(f"redis://host:6379{path}")
+
+    def test_query_db_non_zero_raises_error(self):
+        """A non-zero db query parameter raises ValueError."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        with pytest.raises(ValueError, match="query specifies db='3'"):
+            _strip_db_from_url("redis://host:6379?db=3")
+
+    def test_query_db_non_zero_with_path_zero_raises_error(self):
+        """A non-zero db query parameter raises even when the path is /0."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        with pytest.raises(ValueError, match="query specifies db='3'"):
+            _strip_db_from_url("redis://host:6379/0?db=3")
+
+    def test_query_db_zero_stripped_and_other_params_kept(self):
+        """db=0 is stripped; other query parameters are preserved."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        assert _strip_db_from_url("redis://host:6379?db=0") == "redis://host:6379"
+        assert _strip_db_from_url("redis://host:6379/0?db=0&socket_timeout=1") == "redis://host:6379?socket_timeout=1"
+
+    def test_other_query_params_unchanged(self):
+        """URL with unrelated query parameters is returned unchanged."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        assert _strip_db_from_url("redis://host:6379?socket_timeout=1") == "redis://host:6379?socket_timeout=1"
+
 
 class TestMaskRedisUrl:
     """Tests for _mask_redis_url helper."""

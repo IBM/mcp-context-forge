@@ -33,7 +33,7 @@ import logging
 import os
 import ssl as _ssl
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 # First-Party
 from mcpgateway.utils.db_isready import _sanitize
@@ -253,40 +253,57 @@ def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
 
 
 def _strip_db_from_url(url: str) -> str:
-    """Remove the database number from a Redis URL for cluster mode.
+    """Remove the database selector from a Redis URL for cluster mode.
 
-    Redis Cluster only supports database 0.  If the URL contains ``/0`` it is
-    silently stripped.  If it contains a non-zero database (``/1``, ``/2``, …)
-    a ``ValueError`` is raised so that misconfigurations fail fast instead of
-    being silently ignored.
+    Redis Cluster only supports database 0.  The URL path must be empty, ``/``
+    or exactly ``/0``; ``/0`` is stripped.  A ``db`` query parameter is accepted
+    only as ``db=0`` and is stripped.  Any other value raises a ``ValueError``
+    so that misconfigurations fail fast instead of being swallowed later by
+    the connection error handling.
 
     Args:
         url: Redis connection URL, e.g. ``redis://:pass@host:6379/0``
 
     Returns:
-        str: URL without the trailing database path.
+        str: URL without the database selector.
 
     Raises:
-        ValueError: If the URL specifies a non-zero database number.
+        ValueError: If the path or the ``db`` query parameter selects anything other than database 0.
 
     Examples:
         >>> _strip_db_from_url("redis://:pass@host:6379/0")
         'redis://:pass@host:6379'
         >>> _strip_db_from_url("redis://:pass@host:6379")
         'redis://:pass@host:6379'
+        >>> _strip_db_from_url("redis://host:6379?db=0&socket_timeout=1")
+        'redis://host:6379?socket_timeout=1'
         >>> _strip_db_from_url("redis://:pass@host:6379/1")
         Traceback (most recent call last):
             ...
-        ValueError: Redis Cluster only supports database 0, but REDIS_URL specifies /1. Remove the database selector or use /0.
+        ValueError: Redis Cluster only supports database 0, but REDIS_URL path is '/1'. Remove the database selector or use /0.
+        >>> _strip_db_from_url("redis://host:6379/00")
+        Traceback (most recent call last):
+            ...
+        ValueError: Redis Cluster only supports database 0, but REDIS_URL path is '/00'. Remove the database selector or use /0.
+        >>> _strip_db_from_url("redis://host:6379?db=3")
+        Traceback (most recent call last):
+            ...
+        ValueError: Redis Cluster only supports database 0, but REDIS_URL query specifies db='3'. Remove the database selector or use db=0.
     """
     parsed = urlparse(url)
-    if parsed.path and parsed.path not in ("", "/"):
-        db_str = parsed.path.lstrip("/")
-        if db_str and db_str != "0":
-            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL specifies /{db_str}. Remove the database selector or use /0.")
-        cleaned = parsed._replace(path="")
-        return cleaned.geturl()
-    return url
+    if parsed.path not in ("", "/", "/0"):
+        raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL path is {parsed.path!r}. Remove the database selector or use /0.")
+
+    params = parse_qsl(parsed.query, keep_blank_values=True)
+    for name, value in params:
+        if name == "db" and value != "0":
+            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL query specifies db={value!r}. Remove the database selector or use db=0.")
+
+    if parsed.path == "/0":
+        parsed = parsed._replace(path="")
+    if any(name == "db" for name, _ in params):
+        parsed = parsed._replace(query=urlencode([(name, value) for name, value in params if name != "db"]))
+    return parsed.geturl()
 
 
 def _mask_redis_url(url: str) -> str:
