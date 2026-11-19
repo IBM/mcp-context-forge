@@ -35,7 +35,7 @@ services:
       REDIS_NODES: "redis-node-0 redis-node-1 redis-node-2"
     networks: [mcpnet]
     healthcheck: &redis-cluster-ping
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]  # pragma: allowlist secret
       interval: 5s
       timeout: 3s
       retries: 10
@@ -58,7 +58,7 @@ services:
       - redis-node-1
     networks: [mcpnet]
     healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli cluster info | grep -q cluster_state:ok"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli cluster info | grep -q cluster_state:ok"]  # pragma: allowlist secret
       interval: 5s
       timeout: 3s
       retries: 20
