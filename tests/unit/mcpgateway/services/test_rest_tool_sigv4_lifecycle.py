@@ -1002,6 +1002,17 @@ class TestSigV4ToolAuditAttribution:
         assert set(call["new_values"]) == {"name", "display_name", "version"}
 
     @pytest.mark.asyncio
+    async def test_switching_away_from_sigv4_records_the_removal(self, service):
+        update = _update(auth=SimpleNamespace(auth_type="bearer", auth_value="encoded"))
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert call["new_values"]["sigv4_credential_removed"] is True
+        assert call["new_values"]["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprint" not in call["new_values"]
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
     async def test_bulk_registration_records_fingerprints_without_credentials(self, service):
         db = MagicMock()
         sigv4_tool = SimpleNamespace(team_id="team-a", sigv4_config=protect_sigv4_config_sync(dict(CONFIG)))

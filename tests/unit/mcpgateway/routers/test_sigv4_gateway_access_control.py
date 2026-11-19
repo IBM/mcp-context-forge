@@ -32,7 +32,7 @@ pytest_plugins = ["tests.unit.mcpgateway.routers.test_mcp_servers_test_endpoint_
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
 ROTATED_SECRET = "rotatedSecretAccessKeyValue0123456789ABCD"  # pragma: allowlist secret
-ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
+ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"  # pragma: allowlist secret
 CONFIG = {"access_key_id": ACCESS_KEY_ID, "secret_access_key": SECRET, "region": "us-east-1", "service": "execute-api"}  # pragma: allowlist secret
 GATEWAYS = "/gateways"
 

@@ -133,3 +133,43 @@ async def test_webhook_send_uses_template(monkeypatch):
     await service._send_webhook(destination=destination, event=event)  # pylint: disable=protected-access
 
     mock_client.request.assert_awaited_once()
+
+
+class TestApplyRedaction:
+    """``_apply_redaction`` masks configured field names in any letter case, at any depth."""
+
+    @pytest.fixture
+    def service(self):
+        return svc.SIEMExportService()
+
+    @pytest.mark.parametrize(
+        "name",
+        ["x-amz-security-token", "X-Amz-Security-Token", "x-amz-signature", "X-Amz-Signature", "x-amz-credential", "X-AMZ-CREDENTIAL", "secret_access_key", "Secret_Access_Key", "Session_Token"],
+    )
+    def test_default_fields_redact_sigv4_credentials_in_any_case(self, service, name):
+        event = {"details": {"headers": {name: "credential-value", "x-amz-date": "20260101T000000Z"}}}
+
+        redacted = service._apply_redaction({}, event)  # pylint: disable=protected-access
+
+        assert redacted["details"]["headers"][name] == "***REDACTED***"
+        assert redacted["details"]["headers"]["x-amz-date"] == "20260101T000000Z"
+
+    def test_redacts_inside_lists_and_leaves_the_input_event_unchanged(self, service):
+        event = {"items": [{"Session_Token": "token-value"}, {"region": "us-east-1"}]}
+
+        redacted = service._apply_redaction({}, event)  # pylint: disable=protected-access
+
+        assert redacted["items"] == [{"Session_Token": "***REDACTED***"}, {"region": "us-east-1"}]
+        assert event["items"][0]["Session_Token"] == "token-value"
+
+    def test_configured_fields_match_case_insensitively(self, monkeypatch):
+        monkeypatch.setattr(svc.settings, "siem_export_redact_fields", ["Custom_Field"])
+
+        redacted = svc.SIEMExportService()._apply_redaction({}, {"custom_field": "a", "CUSTOM_FIELD": "b", "other": "c"})  # pylint: disable=protected-access
+
+        assert redacted == {"custom_field": "***REDACTED***", "CUSTOM_FIELD": "***REDACTED***", "other": "c"}
+
+    def test_destination_fields_match_case_insensitively(self, service):
+        redacted = service._apply_redaction({"redact_fields": ["Tenant_Key"]}, {"tenant_key": "a", "other": "b"})  # pylint: disable=protected-access
+
+        assert redacted == {"tenant_key": "***REDACTED***", "other": "b"}

@@ -2489,7 +2489,19 @@ class Settings(  # pylint: disable=too-many-ancestors
     siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
     siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
     siem_export_redact_fields: List[str] = Field(
-        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key", "secret_access_key", "session_token", "x-amz-security-token"],
+        default_factory=lambda: [
+            "user_email",
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "secret_access_key",
+            "session_token",
+            "x-amz-security-token",
+            "x-amz-signature",
+            "x-amz-credential",
+        ],
         description="Fields to redact before exporting events",
     )
     siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")

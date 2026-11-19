@@ -29,6 +29,8 @@ from mcpgateway.utils.sigv4 import (
     decrypt_sigv4_secret,
     derive_signing_key,
     encrypt_sigv4_secret,
+    access_key_fingerprint,
+    sigv4_audit_values,
     SigV4Auth,
     SigV4ConfigError,
     SigV4Credentials,
@@ -411,3 +413,43 @@ class TestGatewayHelpers:
             assert client.headers["X-Test"] == "1"
         finally:
             await client.aclose()
+
+
+class TestAuditValues:
+    """``sigv4_audit_values`` reports registration, rotation and removal with fingerprints only."""
+
+    FINGERPRINT = access_key_fingerprint(VALID_CONFIG["access_key_id"])
+
+    @pytest.fixture(autouse=True)
+    def _encryption_secret(self, monkeypatch):
+        # First-Party
+        from mcpgateway.utils import services_auth
+
+        monkeypatch.setattr(services_auth.settings, "auth_encryption_secret", "audit-values-secret")  # pragma: allowlist secret
+
+    @staticmethod
+    def _stored(**overrides):
+        config = {**VALID_CONFIG, **overrides}
+        config["secret_access_key"] = encrypt_sigv4_secret("secret_access_key", config["secret_access_key"])
+        return config
+
+    def test_removal_reports_the_previous_fingerprint_only(self):
+        values = sigv4_audit_values(None, self._stored())
+
+        assert values == {"sigv4_credential_removed": True, "sigv4_previous_key_fingerprint": self.FINGERPRINT}
+
+    def test_removal_with_an_empty_config_reports_the_previous_fingerprint(self):
+        assert sigv4_audit_values({}, self._stored())["sigv4_credential_removed"] is True
+
+    def test_nothing_before_and_nothing_after_is_not_a_removal(self):
+        assert sigv4_audit_values(None, None) == {}
+        assert sigv4_audit_values(None, {}) == {}
+
+    def test_registration_never_reports_a_removal(self):
+        assert sigv4_audit_values(None, self._stored(), registration=True) == {}
+
+    def test_removal_holds_no_credential(self):
+        rendered = repr(sigv4_audit_values(None, self._stored(session_token="SESSIONTOKENVALUE")))  # pragma: allowlist secret
+
+        for forbidden in (VALID_CONFIG["access_key_id"], VALID_CONFIG["secret_access_key"], "SESSIONTOKENVALUE"):
+            assert forbidden not in rendered

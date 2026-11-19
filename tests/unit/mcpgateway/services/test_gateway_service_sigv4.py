@@ -469,6 +469,16 @@ class TestSigV4AuditAttribution:
         assert set(call["new_values"]) == {"name", "url", "version"}
 
     @pytest.mark.asyncio
+    async def test_switching_away_from_sigv4_records_the_removal(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(auth_type="bearer", auth_token="new-token"))  # pragma: allowlist secret
+
+        new_values = call["new_values"]
+        assert new_values["sigv4_credential_removed"] is True
+        assert new_values["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprint" not in new_values
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
     async def test_switching_to_sigv4_records_the_new_fingerprint_only(self, helper):
         gateway = helper._gateway(auth_type="bearer", sigv4_config=None)
 

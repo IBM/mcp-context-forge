@@ -287,3 +287,33 @@ class TestAwsSigV4PresignedParams:
         result = sanitize_exception_message(f"Client error '403 Forbidden' for url '{self.PRESIGNED}'")
         for leaked in ("deadbeefcafe", "SESSIONTOKENVALUE", "AKIAEXAMPLE"):
             assert leaked not in result
+
+
+class TestSigV4AuthorizationHeaderValue:
+    """The SigV4 ``Authorization`` value never survives in exception text or logs."""
+
+    SIGNATURE = "b" * 64
+    VALUE = f"AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature={SIGNATURE}"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize(
+        "template",
+        ["Authorization: {v}", "headers={{'authorization': '{v}'}}", '{{"Authorization": "{v}"}}', "request failed with {v} for host"],
+    )
+    def test_signature_is_redacted_in_any_embedding(self, template):
+        result = sanitize_exception_message(template.format(v=self.VALUE))
+
+        assert self.SIGNATURE not in result
+        assert "AWS4-HMAC-SHA256 REDACTED" in result
+
+    def test_compact_value_without_spaces_is_redacted(self):
+        compact = f"AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request,SignedHeaders=host,Signature={self.SIGNATURE}"  # pragma: allowlist secret
+
+        assert self.SIGNATURE not in sanitize_exception_message(compact)
+
+    def test_surrounding_text_is_kept(self):
+        result = sanitize_exception_message(f"before {self.VALUE} after")
+
+        assert result == "before AWS4-HMAC-SHA256 REDACTED after"
+
+    def test_text_without_a_sigv4_value_is_unchanged(self):
+        assert sanitize_exception_message("AWS4-HMAC-SHA256 is the algorithm name") == "AWS4-HMAC-SHA256 is the algorithm name"

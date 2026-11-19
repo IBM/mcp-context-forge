@@ -156,6 +156,9 @@ def sanitize_url_for_logging(
 # Regex to match URLs in text (http:// or https://)
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
 
+# Regex to match the value of a SigV4 Authorization header: Credential, SignedHeaders and Signature
+_SIGV4_AUTHORIZATION_PATTERN = re.compile(r"AWS4-HMAC-SHA256\s+Credential=[^\s,]+,\s*SignedHeaders=[^\s,]+,\s*Signature=[0-9A-Fa-f]+")
+
 
 def sanitize_exception_message(
     message: str,
@@ -185,9 +188,16 @@ def sanitize_exception_message(
         ...     "Error connecting to https://api.example.com?api_key=abc&q=test"
         ... )
         'Error connecting to https://api.example.com?api_key=REDACTED&q=test'
+
+        >>> sanitize_exception_message(
+        ...     "Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE0000000/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=" + "a" * 64
+        ... )
+        'Authorization: AWS4-HMAC-SHA256 REDACTED'
     """
     if not message:
         return message
+
+    message = _SIGV4_AUTHORIZATION_PATTERN.sub("AWS4-HMAC-SHA256 REDACTED", message)
 
     def replace_url(match: re.Match) -> str:
         """Replace a matched URL with its sanitized version.

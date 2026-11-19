@@ -621,7 +621,7 @@ def sigv4_credential_changed(previous: Optional[Mapping[str, Any]], current: Opt
 
 
 def sigv4_audit_values(current: Any, previous: Any = None, *, registration: bool = False) -> Dict[str, Any]:
-    """Build the non-secret audit fields for a SigV4 registration or credential rotation.
+    """Build the non-secret audit fields for a SigV4 registration, rotation or removal.
 
     The result holds key fingerprints only. It never holds the access key ID, a secret or a session token.
 
@@ -631,8 +631,8 @@ def sigv4_audit_values(current: Any, previous: Any = None, *, registration: bool
         registration: True for a create operation, which always reports the fingerprint.
 
     Returns:
-        Dict[str, Any]: Fields to merge into ``new_values``. Empty when the operation involves no SigV4 credential
-        change, so audit entries of other operations stay unchanged.
+        Dict[str, Any]: Fields to merge into ``new_values``. A removal reports ``sigv4_credential_removed`` and the
+        previous fingerprint. Empty when the operation involves no SigV4 credential change, so audit entries of other operations stay unchanged.
 
     Examples:
         >>> cfg = {"access_key_id": "AKIDEXAMPLE0000000", "region": "us-east-1", "service": "s3"}
@@ -643,17 +643,22 @@ def sigv4_audit_values(current: Any, previous: Any = None, *, registration: bool
         {}
         >>> sigv4_audit_values(None, registration=True)
         {}
+        >>> removed = sigv4_audit_values(None, cfg)
+        >>> removed["sigv4_credential_removed"], len(removed["sigv4_previous_key_fingerprint"])
+        (True, 12)
     """
+    previous_config = previous if isinstance(previous, Mapping) and previous.get("access_key_id") else None
     if not isinstance(current, Mapping) or not current.get("access_key_id"):
-        return {}
+        if registration or previous_config is None:
+            return {}
+        return {"sigv4_credential_removed": True, "sigv4_previous_key_fingerprint": access_key_fingerprint(str(previous_config["access_key_id"]))}
     values: Dict[str, Any] = {"auth_type": "sigv4", "sigv4_key_fingerprint": access_key_fingerprint(str(current["access_key_id"]))}
     if registration:
         return values
-    previous_config = previous if isinstance(previous, Mapping) else None
     if not sigv4_credential_changed(previous_config, current):
         return {}
     values["sigv4_credential_rotated"] = True
-    if previous_config and previous_config.get("access_key_id"):
+    if previous_config:
         values["sigv4_previous_key_fingerprint"] = access_key_fingerprint(str(previous_config["access_key_id"]))
     return values
 
