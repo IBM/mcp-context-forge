@@ -66,6 +66,11 @@ def mock_db():
     return MagicMock()
 
 
+def executed_sql(db):
+    """Return the last statement passed to ``db.execute`` as SQL text with values inlined."""
+    return str(db.execute.call_args[0][0].compile(compile_kwargs={"literal_binds": True}))
+
+
 @pytest.fixture
 def sample_tool():
     """Create a sample tool for testing."""
@@ -1478,6 +1483,9 @@ async def test_export_selected_prompts_success_and_empty_list(export_service, mo
     exported = await export_service._export_selected_prompts(mock_db, ["p1"])
     assert exported[0]["input_schema"]["properties"]["a"]["type"] == "string"
     assert exported[0]["is_active"] is True
+    sql = executed_sql(mock_db)
+    assert "prompts.id IN ('p1')" in sql
+    assert "prompts.name IN ('p1')" in sql
 
 
 @pytest.mark.asyncio
@@ -1502,6 +1510,7 @@ async def test_export_selected_resources_success_and_empty_list(export_service, 
     exported = await export_service._export_selected_resources(mock_db, ["file:///x"])
     assert exported[0]["uri"] == "file:///x"
     assert exported[0]["last_modified"] == now.isoformat()
+    assert "resources.uri IN ('file:///x')" in executed_sql(mock_db)
 
 
 @pytest.mark.asyncio
@@ -1704,7 +1713,9 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     )
     assert len(exported) == 1
     assert exported[0]["name"] == "visible-prompt"
-    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["p1"]]
+    sql = executed_sql(mock_db)
+    assert "IN ('p1')" in sql
+    assert "p2" not in sql and "hidden-prompt" not in sql
 
 
 @pytest.mark.asyncio
@@ -1715,7 +1726,9 @@ async def test_export_selected_prompts_scoped_name_collision_queries_visible_ids
 
     await export_service._export_selected_prompts(mock_db, ["shared-name"], user_email="reader@example.com", token_teams=[])
 
-    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["reader-p"]]
+    sql = executed_sql(mock_db)
+    assert "IN ('reader-p')" in sql
+    assert "shared-name" not in sql
 
 
 @pytest.mark.asyncio
@@ -1768,7 +1781,9 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     )
     assert len(exported) == 1
     assert exported[0]["uri"] == "file:///visible.txt"
-    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["r1"]]
+    sql = executed_sql(mock_db)
+    assert "IN ('r1')" in sql
+    assert "hidden.txt" not in sql
 
 
 @pytest.mark.asyncio
@@ -1779,7 +1794,9 @@ async def test_export_selected_resources_scoped_uri_collision_queries_visible_id
 
     await export_service._export_selected_resources(mock_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=[])
 
-    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["reader-r"]]
+    sql = executed_sql(mock_db)
+    assert "IN ('reader-r')" in sql
+    assert "shared.txt" not in sql
 
 
 @pytest.mark.asyncio
