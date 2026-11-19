@@ -42,5 +42,3 @@ def test_ssl_cache_ttl_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", value)
     with pytest.raises(ValidationError, match="SSL_CONTEXT_CACHE_TTL"):
         Settings(_env_file=None)
-
-
