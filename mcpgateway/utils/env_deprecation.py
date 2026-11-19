@@ -22,7 +22,11 @@ DEPRECATED_ENVS = [
     ("EXPOSE_ERROR_DETAILS", "Ignored: error responses are always sanitized. Remove it from your configuration."),
 ]
 REMOVED_ENVS = [
-    ("MCP_SESSION_POOL_*", "The upstream MCP session pool was removed in #4205. Remove these variables from your environment, Helm values, or compose files."),
+    (
+        "MCP_SESSION_POOL_*",
+        "UpstreamSessionRegistry (mcpgateway/services/upstream_session_registry.py) replaced the upstream MCP session pool in #4205. "
+        "Remove these variables from your environment, Helm values, or compose files.",
+    ),
 ]
 
 

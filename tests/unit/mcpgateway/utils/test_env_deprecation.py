@@ -20,6 +20,8 @@ def test_removed_variables_warn_for_case_insensitive_glob_matches(caplog):
     assert "MCP_SESSION_POOL_TTL" in caplog.text
     assert "OTHER" not in caplog.text
     assert "removed" in caplog.text
+    assert "UpstreamSessionRegistry" in caplog.text
+    assert "mcpgateway/services/upstream_session_registry.py" in caplog.text
 
 
 def test_deprecated_variable_warns_from_custom_mapping(monkeypatch, caplog):
