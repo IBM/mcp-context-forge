@@ -7217,6 +7217,7 @@ class ToolService(BaseService):
                                     tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
                                 except Exception:
                                     tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+                            success = not tool_result.is_error
 
                     # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling.
                     # retry_attempt is 0-based (0 = original call).  The condition allows retry_attempt
