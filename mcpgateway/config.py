@@ -1612,6 +1612,12 @@ class Settings(  # pylint: disable=too-many-ancestors
     # Forge Content-Type
     forge_content_type: str = Field(default="application/json", description="Content-Type for outgoing requests to Forge")
 
+    @field_validator("sqlalchemy_echo", mode="before")
+    @classmethod
+    def parse_empty_sqlalchemy_echo(cls, value: Any) -> Any:
+        """Treat an empty SQLALCHEMY_ECHO value as disabled."""
+        return False if value == "" else value
+
     @field_validator("ssl_context_cache_ttl", mode="before")
     @classmethod
     def parse_ssl_context_cache_ttl(cls, v: Any) -> Optional[int]:
