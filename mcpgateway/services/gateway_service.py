@@ -94,6 +94,9 @@ from mcpgateway.common.oauth import (
     ACTOR_TOKEN_SOURCES,
     DEFAULT_ACTOR_TOKEN_TYPES,
     normalize_token_endpoint_auth_method,
+    OAUTH_SECRET_REENTRY_MESSAGE,
+    OAuthSecretReentryRequired,
+    oauth_secret_reentry_required,
     SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
     validate_private_key_material,
 )
@@ -4075,6 +4078,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     self._validate_private_key_jwt_config(raw_oauth_update, existing_oauth_config=original_oauth_config)
+                    if oauth_secret_reentry_required(raw_oauth_update, original_oauth_config, settings.masked_auth_value):
+                        raise OAuthSecretReentryRequired(OAUTH_SECRET_REENTRY_MESSAGE)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
                     self._flag_credentials_kept_across_issuer_change(gateway, original_oauth_config, user_email)
                     if gateway.oauth_config != original_oauth_config:
@@ -4576,6 +4581,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=pe,
             )
+            raise
+        except OAuthSecretReentryRequired:
+            # The endpoint maps this type to 400; relabeling it as a generic
+            # gateway failure would return an unexpected-error response.
+            db.rollback()
             raise
         except Exception as e:
             db.rollback()

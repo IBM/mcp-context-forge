@@ -93,6 +93,7 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.common.oauth import OAuthSecretReentryRequired
 from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, QueryPaginationCursor, QueryTeamId, QueryVisibility, resolve_gateway_id_filter
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
@@ -8139,6 +8140,8 @@ async def update_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway update rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, OAuthSecretReentryRequired):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, PublicValidationError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
