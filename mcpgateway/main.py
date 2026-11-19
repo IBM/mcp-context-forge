@@ -6292,6 +6292,7 @@ async def create_tool(
             return ORJSONResponse(content={"message": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new tool for team {team_id}")
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await tool_service.register_tool(
             db,
             tool,
@@ -6305,6 +6306,7 @@ async def create_tool(
             owner_email=user_email,
             visibility=visibility,
             user_id=get_user_id(user),
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
@@ -6521,6 +6523,7 @@ async def update_tool(
 
         logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
         user_email = get_user_email(user)
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await tool_service.update_tool(
             db,
             tool_id,
@@ -6531,6 +6534,7 @@ async def update_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
             user_id=get_user_id(user),
+            token_teams=token_teams,
         )
         db.commit()
         db.close()

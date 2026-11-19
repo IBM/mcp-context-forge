@@ -34,7 +34,7 @@ import httpx2
 ALGORITHM = "AWS4-HMAC-SHA256"
 UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
 SIGV4_SENSITIVE_KEYS = frozenset({"secret_access_key", "session_token"})
-SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service"})
+SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service", "unsigned_payload"})
 _SCOPE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")
 _WHITESPACE = re.compile(r"\s+")
@@ -111,11 +111,13 @@ def validate_sigv4_config(config: Any) -> Dict[str, Any]:
 
     Raises:
         SigV4ConfigError: If ``config`` is not a mapping, has unknown keys, lacks a required
-            field, or holds a malformed region, service or access key ID.
+            field, or holds a malformed region, service, access key ID or ``unsigned_payload`` flag.
 
     Examples:
         >>> validate_sigv4_config({"access_key_id": "AKIDEXAMPLE0000000", "secret_access_key": "x", "region": "us-east-1", "service": "s3"})["service"]
         's3'
+        >>> validate_sigv4_config({"access_key_id": "AKIDEXAMPLE0000000", "secret_access_key": "x", "region": "us-east-1", "service": "s3", "unsigned_payload": True})["unsigned_payload"]
+        True
         >>> validate_sigv4_config({"region": "us-east-1"})  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
@@ -144,7 +146,34 @@ def validate_sigv4_config(config: Any) -> Dict[str, Any]:
             raise SigV4ConfigError("sigv4_config.session_token must be a string")
         if session_token.strip():
             cleaned["session_token"] = session_token.strip()
+    unsigned_payload = config.get("unsigned_payload")
+    if unsigned_payload is not None:
+        if not isinstance(unsigned_payload, bool):
+            raise SigV4ConfigError("sigv4_config.unsigned_payload must be a boolean")
+        cleaned["unsigned_payload"] = unsigned_payload
     return cleaned
+
+
+def has_query_signature(url: Any) -> bool:
+    """Report whether a URL already carries an AWS query-string signature.
+
+    Args:
+        url: Candidate URL.
+
+    Returns:
+        bool: True when the query holds ``X-Amz-Signature``.
+
+    Examples:
+        >>> has_query_signature("https://b.s3.amazonaws.com/k?X-Amz-Signature=abc&X-Amz-Date=1")
+        True
+        >>> has_query_signature("https://api.example.com/x?a=1")
+        False
+        >>> has_query_signature(None)
+        False
+    """
+    if not isinstance(url, str):
+        return False
+    return any(key.lower() == "x-amz-signature" for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
 
 def _hmac(key: bytes, message: str) -> bytes:
@@ -545,18 +574,24 @@ def build_stored_sigv4_auth(stored: Optional[Mapping[str, Any]]) -> Optional[Sig
     return SigV4Auth(build_sigv4_signer(decrypt_stored_sigv4_config(stored)))
 
 
-def build_stored_sigv4_httpx_auth(stored: Optional[Mapping[str, Any]]) -> Optional[SigV4HttpxAuth]:
+def build_stored_sigv4_httpx_auth(stored: Optional[Mapping[str, Any]], *, clock: Optional[Callable[[], datetime]] = None) -> Optional[SigV4HttpxAuth]:
     """Build an httpx auth object from a persisted ``sigv4_config``.
+
+    The ``unsigned_payload`` flag of the configuration selects ``UNSIGNED-PAYLOAD``. The
+    httpx2 builders ignore the flag, so MCP transport signing keeps hashing the body.
 
     Args:
         stored: Persisted configuration, or None for a gateway without SigV4.
+        clock: Optional time source for the signer. Defaults to the system clock.
 
     Returns:
         Optional[SigV4HttpxAuth]: The auth object, or None when ``stored`` is empty.
     """
     if not stored:
         return None
-    return SigV4HttpxAuth(build_sigv4_signer(decrypt_stored_sigv4_config(stored)))
+    plain = decrypt_stored_sigv4_config(stored)
+    signer = SigV4Signer(SigV4Credentials.from_config(plain), unsigned_payload=plain.get("unsigned_payload") is True, clock=clock)
+    return SigV4HttpxAuth(signer)
 
 
 def with_sigv4_auth(client_factory: Callable[..., Any], signing_auth: Optional[httpx2.Auth]) -> Callable[..., Any]:

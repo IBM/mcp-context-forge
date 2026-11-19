@@ -3371,6 +3371,9 @@ class Tool(Base):
     # Request type and authentication fields
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    sigv4_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, comment="AWS SigV4 configuration: access_key_id, region, service, unsigned_payload, encrypted secret_access_key and session_token"
+    )
 
     # custom_name,custom_name_slug, display_name
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)

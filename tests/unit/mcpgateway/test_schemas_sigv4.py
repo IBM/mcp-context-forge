@@ -13,7 +13,7 @@ import pytest
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate
-from mcpgateway.services.encryption_service import protect_sigv4_config_for_storage
+from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
@@ -63,6 +63,11 @@ class TestGatewayCreate:
         assert gateway.auth_value is not None
         assert gateway.sigv4_config is None
 
+    def test_rejects_unsigned_payload(self):
+        """MCP transport signing ignores unsigned_payload, so a gateway must not accept it."""
+        with pytest.raises(ValidationError, match="unsigned_payload is only supported on a REST tool"):
+            _create(sigv4_config={**CONFIG, "unsigned_payload": True})
+
 
 class TestGatewayUpdate:
     def test_accepts_sigv4_update(self):
@@ -72,6 +77,10 @@ class TestGatewayUpdate:
     def test_masked_secret_allowed_on_update(self):
         update = GatewayUpdate(sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value})
         assert update.sigv4_config["secret_access_key"] == settings.masked_auth_value
+
+    def test_rejects_unsigned_payload(self):
+        with pytest.raises(ValidationError, match="unsigned_payload is only supported on a REST tool"):
+            GatewayUpdate(sigv4_config={**CONFIG, "unsigned_payload": False})
 
     def test_malformed_region_rejected(self):
         with pytest.raises(ValidationError, match="region"):
@@ -109,9 +118,8 @@ class TestGatewayReadMasking:
 
 
 class TestStorageEncryption:
-    @pytest.mark.asyncio
-    async def test_secrets_encrypted_other_fields_plain(self):
-        stored = await protect_sigv4_config_for_storage({**CONFIG, "session_token": "tok"})
+    def test_secrets_encrypted_other_fields_plain(self):
+        stored = protect_sigv4_config_sync({**CONFIG, "session_token": "tok"})
         assert stored["secret_access_key"] != SECRET
         assert stored["session_token"] != "tok"
         assert is_encrypted_sigv4_secret("secret_access_key", stored["secret_access_key"])
@@ -120,19 +128,16 @@ class TestStorageEncryption:
         assert stored["access_key_id"] == CONFIG["access_key_id"]
         assert SECRET not in str(stored)
 
-    @pytest.mark.asyncio
-    async def test_masked_placeholder_keeps_existing_ciphertext(self):
-        existing = await protect_sigv4_config_for_storage(dict(CONFIG))
-        updated = await protect_sigv4_config_for_storage({**CONFIG, "secret_access_key": settings.masked_auth_value, "region": "eu-west-1"}, existing)
+    def test_masked_placeholder_keeps_existing_ciphertext(self):
+        existing = protect_sigv4_config_sync(dict(CONFIG))
+        updated = protect_sigv4_config_sync({**CONFIG, "secret_access_key": settings.masked_auth_value, "region": "eu-west-1"}, existing)
         assert updated["secret_access_key"] == existing["secret_access_key"]
         assert updated["region"] == "eu-west-1"
 
-    @pytest.mark.asyncio
-    async def test_already_encrypted_not_double_encrypted(self):
-        first = await protect_sigv4_config_for_storage(dict(CONFIG))
-        second = await protect_sigv4_config_for_storage(first)
+    def test_already_encrypted_not_double_encrypted(self):
+        first = protect_sigv4_config_sync(dict(CONFIG))
+        second = protect_sigv4_config_sync(first)
         assert second["secret_access_key"] == first["secret_access_key"]
 
-    @pytest.mark.asyncio
-    async def test_none(self):
-        assert await protect_sigv4_config_for_storage(None) is None
+    def test_none(self):
+        assert protect_sigv4_config_sync(None) is None

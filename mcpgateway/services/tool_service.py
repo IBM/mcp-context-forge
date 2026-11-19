@@ -79,13 +79,14 @@ from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, set_span_ok, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import mask_sigv4_config, AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_oauth import resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
+from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -122,7 +123,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -275,16 +276,26 @@ def _upstream_call_meta(meta_data: Optional[Dict[str, Any]], carrier: Mapping[st
     return metadata or None
 
 
-def _build_pinned_rest_http_client() -> ResilientHttpClient:
-    """Build an isolated client for IP-pinned REST requests."""
-    return ResilientHttpClient(
-        client_args={
-            "timeout": settings.federation_timeout,
-            "verify": not settings.skip_ssl_verify,
-            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
-            "cookies": {},
-        }
-    )
+def _build_pinned_rest_http_client(auth: Optional[httpx.Auth] = None) -> ResilientHttpClient:
+    """Build an isolated client for one REST invocation.
+
+    The client reuses the cached default SSL context, so a call does not reload the trust store.
+
+    Args:
+        auth: Optional httpx auth attached to the client, such as the SigV4 signer.
+
+    Returns:
+        ResilientHttpClient: A single-connection client the caller must close.
+    """
+    client_args: Dict[str, Any] = {
+        "timeout": settings.federation_timeout,
+        "verify": False if settings.skip_ssl_verify else get_cached_ssl_context(None),
+        "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        "cookies": {},
+    }
+    if auth is not None:
+        client_args["auth"] = auth
+    return ResilientHttpClient(client_args=client_args)
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -1779,6 +1790,7 @@ class ToolService(BaseService):
         #   1. It determines whether to decode auth (used later)
         #   2. It forces the tool object to lazily evaluate (required before copy)
         has_encrypted_auth = tool.auth_type and tool.auth_value
+        has_sigv4_auth = tool.auth_type == "sigv4"
 
         # Copy the dict from the tool
         tool_dict = tool.__dict__.copy()
@@ -1797,8 +1809,13 @@ class ToolService(BaseService):
         tool_dict["annotations"] = tool.annotations or {}
         tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
+        # SigV4 credentials live in sigv4_config, never in auth_value; reads always mask the secrets.
+        tool_dict["sigv4_config"] = mask_sigv4_config(tool_dict.get("sigv4_config")) if has_sigv4_auth else None
+
         # Only decode auth if include_auth=True AND we have encrypted credentials
-        if include_auth and has_encrypted_auth:
+        if has_sigv4_auth:
+            tool_dict["auth"] = {"auth_type": "sigv4"}
+        elif include_auth and has_encrypted_auth:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
                 decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
@@ -2374,6 +2391,45 @@ class ToolService(BaseService):
         policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return policy if isinstance(policy, str) else None
 
+    async def _require_inherited_gateway_access(
+        self,
+        db: Session,
+        gateway_id: Optional[str],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot use.
+
+        The gateway credential signs requests to any URL the tool names. Visibility of the
+        gateway is not enough: the requester must also own the gateway, hold the team owner
+        role for it, or be a platform admin. The token narrowing of the requester applies as well.
+        An unknown gateway and a hidden gateway return the same error.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway the tool belongs to. Without one, the tool inherits nothing and the check passes.
+            requester_email: Identity that creates or changes the tool. Without one, the check fails closed.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
+
+        Raises:
+            ToolError: If the gateway does not use SigV4.
+            PermissionError: If the requester is unknown, cannot access the gateway, or does not own it.
+        """
+        if not gateway_id:
+            return
+        if not requester_email:
+            raise PermissionError("A requester identity is required to use the SigV4 credential of a gateway")
+        gateway = db.get(DbGateway, gateway_id)
+        if gateway is None or not await check_gateway_access(db, gateway, requester_email, token_teams):
+            raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
+        if gateway.auth_type != "sigv4":
+            raise ToolError("The gateway does not use SigV4 authentication")
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        if not await PermissionService(db).check_resource_ownership(requester_email, gateway):
+            raise PermissionError("Only the owner of the gateway can use its SigV4 credential")
+
     async def register_tool(
         self,
         db: Session,
@@ -2388,6 +2444,7 @@ class ToolService(BaseService):
         owner_email: Optional[str] = None,
         visibility: str = None,
         user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2404,6 +2461,7 @@ class ToolService(BaseService):
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams: Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             Created tool information.
@@ -2444,6 +2502,9 @@ class ToolService(BaseService):
             else:
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
+            tool_sigv4_config = protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" and tool.sigv4_config else None
+            if auth_type == "sigv4" and not tool_sigv4_config:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by, token_teams)
 
             if visibility is None:
                 visibility = tool.visibility or "public"
@@ -2529,6 +2590,7 @@ class ToolService(BaseService):
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
+                sigv4_config=tool_sigv4_config,
                 gateway_id=tool.gateway_id,
                 tags=tool.tags or [],
                 # Metadata fields
@@ -2700,6 +2762,7 @@ class ToolService(BaseService):
         conflict_strategy: str = "skip",
         user_email: Optional[str] = None,
         user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2727,6 +2790,7 @@ class ToolService(BaseService):
                 an existing tool only when this caller owns it. Without it, no existing
                 tool is modified.
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams: Token team scope of the requester, used when a tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             Dict with statistics:
@@ -2768,7 +2832,11 @@ class ToolService(BaseService):
         chunk_size = 500
 
         for chunk_start in range(0, len(tools), chunk_size):
-            chunk = tools[chunk_start : chunk_start + chunk_size]
+            chunk, denied_errors = await self._drop_unauthorized_sigv4_inheritance(db, tools[chunk_start : chunk_start + chunk_size], user_email or owner_email or created_by, token_teams)
+            stats["failed"] += len(denied_errors)
+            stats["errors"].extend(denied_errors)
+            if not chunk:
+                continue
             existing_tools_map, unowned_names = await self._load_authorized_tool_conflicts(db, chunk, conflict_strategy, visibility, team_id, owner_email, created_by, user_email)
             chunk_stats = self._process_tool_chunk(
                 db,
@@ -2817,6 +2885,40 @@ class ToolService(BaseService):
                 await admin_stats_cache.invalidate_tags()
 
         return stats
+
+    async def _drop_unauthorized_sigv4_inheritance(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> tuple:
+        """Split a bulk chunk into tools the requester may register and error messages for the rest.
+
+        A tool with ``auth_type`` sigv4, a ``gateway_id`` and no ``sigv4_config`` inherits the gateway credential.
+
+        Args:
+            db: Database session.
+            chunk: Tools to register.
+            requester_email: Identity of the requester. Without one, every inheriting tool is dropped.
+            token_teams: Token team scope of the requester.
+
+        Returns:
+            Tuple of the tools that may be registered and the error messages of the dropped tools.
+        """
+        allowed: List[ToolCreate] = []
+        errors: List[str] = []
+        for tool in chunk:
+            inherits = tool.auth is not None and tool.auth.auth_type == "sigv4" and not tool.sigv4_config and bool(tool.gateway_id)
+            if not inherits:
+                allowed.append(tool)
+                continue
+            try:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, requester_email, token_teams)
+                allowed.append(tool)
+            except (PermissionError, ToolError) as exc:
+                errors.append(f"Tool {tool.name!r}: {exc}")
+        return allowed, errors
 
     @staticmethod
     def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
@@ -3141,6 +3243,7 @@ class ToolService(BaseService):
                     existing_tool.jsonpath_filter = tool.jsonpath_filter
                     existing_tool.auth_type = auth_type
                     existing_tool.auth_value = auth_value
+                    existing_tool.sigv4_config = protect_sigv4_config_sync(tool.sigv4_config, existing_tool.sigv4_config) if auth_type == "sigv4" else None
                     existing_tool.tags = tool.tags or []
                     existing_tool.modified_by = created_by
                     existing_tool.modified_from_ip = created_from_ip
@@ -3265,6 +3368,7 @@ class ToolService(BaseService):
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
+            sigv4_config=protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" else None,
             gateway_id=tool.gateway_id,
             tags=tool.tags or [],
             created_by=created_by,
@@ -4830,6 +4934,28 @@ class ToolService(BaseService):
         )
         return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
 
+    @staticmethod
+    async def _send_with_resign_retry(send: Callable[[dict], Awaitable[Any]], headers: dict, tool_id: Optional[str] = None) -> Any:
+        """Send a SigV4 request, retrying exactly once on a 401.
+
+        The signing auth object runs on every send and replaces the earlier signature
+        headers, so the retry carries a fresh ``x-amz-date`` and a new signature. A 403 is
+        not retried. The caller bounds the total time of both sends.
+
+        Args:
+            send: Async callable taking a headers dict and returning a response with ``.status_code``.
+            headers: The headers to send. They never carry a signature.
+            tool_id: Tool ID for the debug log of a re-sign.
+
+        Returns:
+            The response of the first attempt, or of the single retry after a 401.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        logger.debug("SigV4 request of tool %s returned 401; signing again once", tool_id)
+        return await send(headers)
+
     # pylint: enable=duplicate-code
 
     async def _resolve_vault_auth_headers(
@@ -5602,6 +5728,11 @@ class ToolService(BaseService):
             runtime_tool_oauth_config = getattr(tool, "oauth_config", None)
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
+        tool_sigv4_config = None
+        if tool is not None:
+            runtime_tool_sigv4_config = getattr(tool, "sigv4_config", None)
+            if isinstance(runtime_tool_sigv4_config, dict):
+                tool_sigv4_config = runtime_tool_sigv4_config
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
@@ -5654,7 +5785,7 @@ class ToolService(BaseService):
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
         if tool is None:
-            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
+            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth", "sigv4"}
             requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param", "sigv4"}
             if requires_tool_auth_hydration or requires_gateway_auth_hydration:
                 tool_id_for_hydration = tool_payload.get("id")
@@ -5667,6 +5798,9 @@ class ToolService(BaseService):
                         hydrated_tool_oauth_config = getattr(tool_auth_row, "oauth_config", None)
                         if isinstance(hydrated_tool_oauth_config, dict):
                             tool_oauth_config = hydrated_tool_oauth_config
+                        hydrated_tool_sigv4_config = getattr(tool_auth_row, "sigv4_config", None)
+                        if isinstance(hydrated_tool_sigv4_config, dict):
+                            tool_sigv4_config = hydrated_tool_sigv4_config
                         if has_gateway and tool_auth_row.gateway:
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
                             if isinstance(hydrated_gateway_auth_value, dict):
@@ -5702,13 +5836,26 @@ class ToolService(BaseService):
 
         # SigV4 gateways sign each upstream request; the signer lives for this invocation only.
         gateway_sigv4_auth = None
-        if has_gateway and gateway_auth_type == "sigv4":
+        if has_gateway and gateway_auth_type == "sigv4" and tool_integration_type != "REST":
             try:
                 gateway_sigv4_auth = build_stored_sigv4_auth(gateway_sigv4_config)
             except SigV4ConfigError as sigv4_exc:
                 raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
             if gateway_sigv4_auth is None:
                 raise ToolInvocationError("SigV4 gateway has no stored credentials")
+
+        # Only a REST tool with auth_type "sigv4" signs. It uses its own sigv4_config first, then the gateway sigv4_config.
+        rest_sigv4_auth = None
+        if tool_integration_type == "REST" and tool_auth_type == "sigv4":
+            rest_sigv4_config = tool_sigv4_config or (gateway_sigv4_config if has_gateway and gateway_auth_type == "sigv4" else None)
+            if not rest_sigv4_config:
+                logger.warning("SigV4 REST tool %s has no stored credentials", SecurityValidator.sanitize_log_message(tool_id))
+                raise ToolInvocationError("SigV4 tool has no stored credentials")
+            try:
+                rest_sigv4_auth = build_stored_sigv4_httpx_auth(rest_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                logger.warning("SigV4 REST tool %s credentials could not be loaded: %s", SecurityValidator.sanitize_log_message(tool_id), type(sigv4_exc).__name__)
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -5923,7 +6070,7 @@ class ToolService(BaseService):
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
-                    else:
+                    elif rest_sigv4_auth is None:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Strip invisible Unicode format characters left over in a credential
                         # stored before this validation existed, so tool invocation self-heals
@@ -5941,7 +6088,7 @@ class ToolService(BaseService):
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=tool_auth_type,
+                            gateway_auth_type="sigv4" if rest_sigv4_auth is not None else tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -6083,7 +6230,9 @@ class ToolService(BaseService):
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
-                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                    if (resolved_ip and original_hostname and original_authority) or rest_sigv4_auth is not None:
+                        # Pinned and SigV4 calls never use the shared client; the signer belongs to this invocation.
+                        pinned_rest_http_client = _build_pinned_rest_http_client(auth=rest_sigv4_auth) if rest_sigv4_auth is not None else _build_pinned_rest_http_client()
                         rest_http_client = pinned_rest_http_client
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
@@ -6166,18 +6315,21 @@ class ToolService(BaseService):
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
                             try:
-                                response = await self._send_with_token_exchange_retry(
-                                    _send,
-                                    headers,
-                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                    gateway_id_str,
-                                    gateway_name,
-                                    app_user_email,
-                                    request_headers or {},
-                                    ca_certificate=gateway_ca_cert,
-                                    client_cert=gateway_client_cert,
-                                    client_key=gateway_client_key,
-                                )
+                                if rest_sigv4_auth is not None:
+                                    response = await asyncio.wait_for(self._send_with_resign_retry(_send, headers, tool_id), timeout=effective_timeout)
+                                else:
+                                    response = await self._send_with_token_exchange_retry(
+                                        _send,
+                                        headers,
+                                        gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                        gateway_id_str,
+                                        gateway_name,
+                                        app_user_email,
+                                        request_headers or {},
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    )
                             finally:
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
@@ -7806,6 +7958,7 @@ class ToolService(BaseService):
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
         user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7820,6 +7973,7 @@ class ToolService(BaseService):
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
             user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             The updated ToolRead object.
@@ -7946,6 +8100,7 @@ class ToolService(BaseService):
                 tool.custom_name = tool_update.custom_name
             if tool_update.displayName is not None:
                 tool.display_name = tool_update.displayName
+            url_is_changing = tool_update.url is not None and str(tool_update.url) != tool.url
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -7983,9 +8138,24 @@ class ToolService(BaseService):
 
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
+                    if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
+                        tool.sigv4_config = None
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
+                if tool.auth_type == "sigv4":
+                    tool.auth_value = None
+            update_sigv4_config = getattr(tool_update, "sigv4_config", None)
+            if isinstance(update_sigv4_config, dict):
+                if tool.auth_type != "sigv4":
+                    raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
+                tool.sigv4_config = protect_sigv4_config_sync(dict(update_sigv4_config), tool.sigv4_config)
+            elif tool.auth_type == "sigv4" and not tool.sigv4_config and not tool.gateway_id:
+                raise PublicValidationError("auth_type 'sigv4' requires sigv4_config when the tool has no gateway")
+            if tool.auth_type == "sigv4" and has_query_signature(tool.url):
+                raise PublicValidationError("A presigned URL cannot be combined with auth_type 'sigv4'")
+            if tool.auth_type == "sigv4" and not tool.sigv4_config and (tool_update.auth is not None or url_is_changing):
+                await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by, token_teams)
 
             # Update tags if provided
             if tool_update.tags is not None:
