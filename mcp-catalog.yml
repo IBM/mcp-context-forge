@@ -1651,6 +1651,26 @@ catalog_servers:
     requires_api_key: false
     tags: ["documentation", "knowledge", "ai", "search"]
 
+  - id: docstar
+    name: "DocStar"
+    category: "Documentation"
+    url: "https://mcp.docstar.io/mcp"
+    logo_url: "/static/catalog-icons/docstar.png"
+    auth_type: "OAuth2.1"
+    provider: "Walkover"
+    transport: "STREAMABLEHTTP"
+    description: "Turns your product's API into published docs that your users' AI assistants can read and call. Reading docs needs no account; changes need sign-in"
+    requires_api_key: false
+    repo: "https://github.com/swayammaheshwari/docstar-mcp"
+    tags: ["documentation", "api-docs", "developer-tools", "openapi"]
+    oauth:
+      issuer: "https://mcp.docstar.io/oauth/6acf5414c1ffedf9ff0dd936"
+      authorization_url: "https://mcp.docstar.io/oauth/6acf5414c1ffedf9ff0dd936/authorize"
+      token_url: "https://mcp.docstar.io/oauth/6acf5414c1ffedf9ff0dd936/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.docstar.io/mcp"
+
   # Microsoft Cloud Services
   - id: microsoft-foundry
     name: "Microsoft Foundry"
