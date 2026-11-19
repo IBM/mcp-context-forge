@@ -1667,9 +1667,6 @@ class Settings(  # pylint: disable=too-many-ancestors
     # Gateway replicas
     gateway_replicas: PositiveInt = Field(default=1, description="Number of gateway replicas in deployment (used for multi-replica warnings with SQLite)")
 
-    # SSL / HTTPS flag
-    ssl: bool = Field(default=False, description="Enable SSL for the server and loopback calls")
-
     # Forge Content-Type
     forge_content_type: str = Field(default="application/json", description="Content-Type for outgoing requests to Forge")
 
