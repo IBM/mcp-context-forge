@@ -3406,7 +3406,7 @@ requires-dist = [
     { name = "cpex-sql-sanitizer", marker = "extra == 'plugins'", specifier = ">=0.1.5" },
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.10" },
     { name = "cryptography", specifier = ">=50.0.0" },
-    { name = "fastapi", specifier = ">=0.140.0" },
+    { name = "fastapi", specifier = ">=0.142.0" },
     { name = "filelock", specifier = ">=4.2.1" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.83.0" },

@@ -2004,6 +2004,8 @@ app = FastAPI(
     root_path=settings.app_root_path,
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
+    # OpenTelemetryRequestMiddleware owns the HTTP server span. FastAPI native tracing emits a duplicate sibling span.
+    telemetry={"tracing": False},
 )
 
 # Setup metrics instrumentation

@@ -348,6 +348,37 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     assert main_module.OpenTelemetryRequestMiddleware in middleware_classes
 
 
+def test_main_app_emits_single_server_span_per_request(monkeypatch):
+    """FastAPI native tracing stays off, so the OTEL request middleware emits the only server span."""
+    # Third-Party
+    from opentelemetry.sdk import trace as trace_sdk
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    import opentelemetry.trace as otel_trace
+    from opentelemetry.trace import SpanKind
+
+    # First-Party
+    from mcpgateway import observability
+    import mcpgateway.main as main_module
+
+    exporter = InMemorySpanExporter()
+    provider = trace_sdk.TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # FastAPI native telemetry turns itself on when the global tracer provider is configured.
+    monkeypatch.setattr(otel_trace, "get_tracer_provider", lambda: provider)
+    monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("mcp-gateway"))
+
+    traced_app = observability.OpenTelemetryRequestMiddleware(main_module.app, should_trace_request_path=lambda _path: True)
+    response = TestClient(traced_app).get("/health")
+    provider.force_flush()
+
+    assert response.status_code == 200
+    spans = exporter.get_finished_spans()
+    assert [span for span in spans if span.instrumentation_scope.name == "fastapi"] == []
+    server_spans = [span for span in spans if span.kind == SpanKind.SERVER]
+    assert [(span.name, span.instrumentation_scope.name) for span in server_spans] == [("GET /health", "mcp-gateway")]
+
+
 def test_get_csp_nonce_from_request_with_none():
     """Test get_csp_nonce_from_request returns empty string when request is None."""
     # First-Party
