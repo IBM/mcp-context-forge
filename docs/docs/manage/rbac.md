@@ -576,6 +576,13 @@ See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for conf
     role granted on a specific team does **not** satisfy the permission on any of these routes,
     even for a gateway owned by that team.
 
+!!! warning "Global-only administration permissions"
+    `admin.user_management`, `admin.security_audit` and `admin.sso_providers:*` administer users,
+    roles and identity providers across every team. `PermissionService.check_permission()` evaluates
+    them against global and personal roles only (`GLOBAL_ONLY_PERMISSIONS` in
+    `mcpgateway/services/permission_service.py`), on every route. Grant them through a
+    **global**-scope role. A team-scoped grant of these permissions has no effect.
+
 ### Token Scope Semantics
 
 An API token carries its own permission list (Layer 1), evaluated *before* the RBAC role
