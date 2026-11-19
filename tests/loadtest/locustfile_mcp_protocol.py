@@ -120,7 +120,7 @@ try:
 except ValueError:
     MCP_TOOL_POOL_SIZE = 0
 # Legacy gateways require the initialize handshake before tools/call and accept
-# bare JSON-RPC. The modern dataplane is stateless and speaks MCP 2026-07-28:
+# bare JSON-RPC. The modern gateway is stateless and speaks MCP 2026-07-28:
 # per-request _meta, routing headers, and SSE replies.
 TOOL_BENCH_MODE = _cfg("TOOL_BENCH_MODE", "legacy").strip().lower()
 TOOL_BENCH_MODERN = TOOL_BENCH_MODE == "modern"
@@ -131,9 +131,8 @@ TOOL_BENCH_META = {
     "io.modelcontextprotocol/clientCapabilities": {},
 }
 # Fixed tool pool for ToolUser. The fast-time-server inventory is stable, so
-# names and arguments are pinned here instead of discovered per run. The legacy
-# gateway federates them under a `fast-time-` prefix; the dataplane virtual
-# server routes on the upstream tool names directly.
+# names and arguments are pinned here instead of discovered per run. Both modes
+# call the federated fast-time-prefixed names so both runs resolve tools the same way.
 _TOOL_BENCH_ARGS: dict[str, dict] = {
     "get_system_time": {"timezone": "America/New_York"},
     "convert_time": {"time": "09:00", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"},
@@ -141,7 +140,7 @@ _TOOL_BENCH_ARGS: dict[str, dict] = {
     "get_stats": {},
 }
 TOOL_BENCH_TOOLS: list[tuple[str, dict]] = [
-    (tool if TOOL_BENCH_MODERN else "fast-time-" + tool.replace("_", "-"), args) for tool, args in _TOOL_BENCH_ARGS.items()
+    ("fast-time-" + tool.replace("_", "-"), args) for tool, args in _TOOL_BENCH_ARGS.items()
 ]
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
@@ -579,7 +578,7 @@ def _jsonrpc(method: str, params: dict | None = None) -> dict:
 def _decode_mcp_body(response) -> Any:
     """Parse a Streamable HTTP reply: plain JSON, or a single SSE `data:` frame.
 
-    The dataplane answers `tools/call` with `text/event-stream` even for a
+    The modern gateway answers `tools/call` with `text/event-stream` even for a
     one-shot response, so `response.json()` alone is not enough.
     """
     text = response.text or ""
@@ -766,7 +765,7 @@ class BaseMCPUser(FastHttpUser):
         if self._mcp_session_id:
             headers["Mcp-Session-Id"] = self._mcp_session_id
         if TOOL_BENCH_MODERN:
-            # MCP 2026-07-28 stateless routing: the dataplane requires both content
+            # MCP 2026-07-28 stateless routing: requires both content
             # types, the negotiated version, and the target method/name up front.
             headers["Accept"] = "application/json, text/event-stream"
             headers["MCP-Protocol-Version"] = TOOL_BENCH_PROTOCOL_VERSION
