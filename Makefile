@@ -5604,7 +5604,7 @@ docker-shell:
 # 🛠️  COMPOSE STACK (Docker Compose v2, podman compose or podman-compose)
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
-# help: compose-up            - Bring the whole stack up (detached)
+# help: compose-up            - Bring the whole stack up (detached); REDIS=cluster uses a 3-master Redis Cluster
 # help: perf-up               - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
 # help: perf-down             - Stop the pinned benchmark stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
@@ -5682,8 +5682,15 @@ ifeq ($(PLATFORM),linux/amd64)
     PROFILE = --profile with-fast-time
 endif
 
+# Redis backend: single `redis` (default) or `REDIS=cluster` for a 3-master Redis Cluster.
+# Pass the same value to compose-down.
+REDIS ?= $(redis)
+ifeq ($(REDIS),cluster)
+  REDIS_COMPOSE_FILES := -f docker-compose.redis-cluster.yml
+endif
+
 define COMPOSE
-$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
+$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(REDIS_COMPOSE_FILES) $(PROFILE)
 endef
 
 .PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login compose-sso-seed-audience \
@@ -5749,7 +5756,7 @@ compose-up: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
 PERF_COMPOSE_FILE := docker-compose.perf.yml
-PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(PROFILE)
+PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(REDIS_COMPOSE_FILES) $(PROFILE)
 REPLICA ?= 3
 
 perf-up: compose-validate                  ## Start stack with pinned benchmark resource overrides (REPLICA=3)

@@ -243,6 +243,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.REDIS_RETRY_ON_TIMEOUT | string | `"true"` |  |
 | mcpContextForge.config.REDIS_HEALTH_CHECK_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.REDIS_DECODE_RESPONSES | string | `"true"` |  |
+| mcpContextForge.config.REDIS_CLUSTER_MODE | string | `"false"` |  |
 | mcpContextForge.config.REDIS_LEADER_TTL | string | `"15"` |  |
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
 | mcpContextForge.config.REDIS_LEADER_HEARTBEAT_INTERVAL | string | `"5"` |  |
@@ -396,6 +397,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.PROMPT_RENDER_TIMEOUT | string | `"10"` |  |
 | mcpContextForge.config.PROTOCOL_VERSION | string | `"2025-06-18"` |  |
 | mcpContextForge.config.REDIS_DECODE_RESPONSES | string | `"true"` |  |
+| mcpContextForge.config.REDIS_CLUSTER_MODE | string | `"false"` |  |
 | mcpContextForge.config.REDIS_HEALTH_CHECK_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.REDIS_LEADER_HEARTBEAT_INTERVAL | string | `"5"` |  |
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |

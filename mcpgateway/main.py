@@ -1518,7 +1518,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # First-Party
             from mcpgateway.services.leader_election import start_primary_worker_elector  # pylint: disable=import-outside-toplevel
 
-            await start_primary_worker_elector()
+            await start_primary_worker_elector(await get_redis_client())
             logger.info("Primary-worker elector started (backend=redis)")
 
         # Standing subscriptions/listen streams to modern (2026-07-28) servers
