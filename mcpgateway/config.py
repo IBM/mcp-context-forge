@@ -1215,7 +1215,7 @@ class Settings(  # pylint: disable=too-many-ancestors
     password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
     password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
     password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
-    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
+    password_reset_invalidate_sessions: bool = Field(default=True, description="After a password reset, change, or admin reset, reject sessions issued earlier and revoke the user API tokens")
     password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
 
     # Email delivery for auth notifications
