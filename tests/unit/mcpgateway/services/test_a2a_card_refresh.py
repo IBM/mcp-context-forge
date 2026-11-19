@@ -28,6 +28,7 @@ from mcpgateway.utils.services_auth import encode_auth
 
 SOURCE_URL = "https://agent.example.com/.well-known/agent-card.json"
 ENDPOINT = "https://agent.example.com/rpc"
+ORIGIN = "https://agent.example.com"
 V1_CARD = {
     "name": "weather",
     "version": "2.1.0",
@@ -96,8 +97,15 @@ class TestRefreshCard:
         before = _agent_snapshot(db)
         result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
         assert (result.status, result.version) == ("created", 1)
-        assert fetch.await_args.args[0] == ENDPOINT
+        assert fetch.await_args.args[0] == ORIGIN
         assert _agent_snapshot(db) == before
+
+    async def test_derived_url_uses_the_origin_not_the_endpoint_path(self, db, service, fetch):
+        """The well-known path hangs off the origin, never off the stored endpoint path."""
+        db.get(A2AAgent, "agent-1").endpoint_url = "https://agent.example.com:8443/rpc/v1"
+        db.commit()
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert fetch.await_args.args[0] == "https://agent.example.com:8443"
 
     async def test_unchanged_card_adds_no_version_and_records_check(self, db, service, fetch):
         """Same document: no new row, checked_at set."""
@@ -141,7 +149,7 @@ class TestRefreshCard:
         _store(db)
         fetch.side_effect = [_found().model_copy(update={"found": False, "outcome": "no_card"}), _found()]
         await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
-        assert [call.args[0] for call in fetch.await_args_list] == [SOURCE_URL, ENDPOINT]
+        assert [call.args[0] for call in fetch.await_args_list] == [SOURCE_URL, ORIGIN]
 
     async def test_caller_base_url_and_headers_apply_to_this_request_only(self, db, service, fetch):
         """Caller URL wins, carries caller headers, sends no ETag, and stores no headers."""
