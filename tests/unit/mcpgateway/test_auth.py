@@ -310,6 +310,47 @@ class TestGetCurrentUser:
         assert user.email == "resolved@example.com"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("iat_offset, rejected", [(-60, True), (60, False)])
+    async def test_session_token_issued_before_password_change_is_rejected_without_batch(self, monkeypatch, iat_offset, rejected):
+        """The individual-query path rejects a session token older than password_changed_at."""
+        changed_at = datetime.now(timezone.utc)
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="stale_session_token")  # pragma: allowlist secret
+        jwt_payload = {
+            "sub": "stale@example.com",
+            "token_use": "session",
+            "iat": int(changed_at.timestamp()) + iat_offset,
+            "exp": (changed_at + timedelta(hours=1)).timestamp(),
+        }
+        mock_user = EmailUser(
+            email="stale@example.com",
+            password_hash="hash",
+            full_name="Stale User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=changed_at,
+            created_at=changed_at,
+            updated_at=changed_at,
+            password_changed_at=changed_at,
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        monkeypatch.setattr(settings, "password_reset_invalidate_sessions", True)
+
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[])):
+                            if rejected:
+                                with pytest.raises(HTTPException) as exc_info:
+                                    await get_current_user(credentials=credentials)
+                                assert exc_info.value.status_code == 401
+                                assert exc_info.value.detail == "Token has been revoked"
+                            else:
+                                user = await get_current_user(credentials=credentials)
+                                assert user.email == "stale@example.com"
+
+    @pytest.mark.asyncio
     async def test_jwt_uuid_sub_with_signed_email_uses_email_metadata(self, monkeypatch):
         """UUID sub with signed user.email should not need UUID-to-email DB resolution."""
         import uuid as _uuid

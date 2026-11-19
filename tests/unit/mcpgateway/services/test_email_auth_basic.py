@@ -1790,18 +1790,35 @@ class TestEmailAuthServiceUserManagement:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("invalidate_sessions, expected_revocations", [(True, 2), (False, 0)])
     async def test_invalidate_user_sessions_revokes_api_tokens(self, service, mock_db, invalidate_sessions, expected_revocations):
-        """API tokens are revoked after a password change only when session invalidation is enabled."""
-        mock_db.execute.return_value.scalars.return_value.all.return_value = ["token-1", "token-2"]
+        """API tokens are revoked in one commit, and only when session invalidation is enabled."""
+        tokens = [SimpleNamespace(jti="jti-1", is_active=True), SimpleNamespace(jti="jti-2", is_active=True)]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = tokens
 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_reset_invalidate_sessions = invalidate_sessions
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService.revoke_token", new=AsyncMock(return_value=True)) as revoke_token:
-                with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+            with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+                await service._invalidate_user_sessions("test@example.com", "password_change")
+
+        revocations = [call.args[0] for call in mock_db.add.call_args_list]
+        assert len(revocations) == expected_revocations
+        assert [token.is_active for token in tokens] == [expected_revocations == 0] * 2
+        assert all(r.revoked_by == "test@example.com" and r.reason == "password_change" for r in revocations)
+        assert mock_db.commit.call_count == (1 if expected_revocations else 0)
+        invalidate_cache.assert_awaited_once_with("test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_sessions_rolls_back_when_commit_fails(self, service, mock_db):
+        """A failed commit leaves no token half-revoked and still clears the auth cache."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [SimpleNamespace(jti="jti-1", is_active=True)]
+        mock_db.commit.side_effect = RuntimeError("db down")
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_invalidate_sessions = True
+            with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+                with pytest.raises(RuntimeError, match="db down"):
                     await service._invalidate_user_sessions("test@example.com", "password_change")
 
-        assert revoke_token.await_count == expected_revocations
-        if expected_revocations:
-            revoke_token.assert_any_await("token-1", "test@example.com", revoked_by="test@example.com", reason="password_change")
+        mock_db.rollback.assert_called_once()
         invalidate_cache.assert_awaited_once_with("test@example.com")
 
     @pytest.mark.asyncio

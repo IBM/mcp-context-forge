@@ -487,23 +487,32 @@ class EmailAuthService:
 
         Session tokens need no revocation row: ``session_predates_password_change`` rejects
         them against ``password_changed_at``. API tokens do not depend on a session, so they
-        are revoked here. Both steps follow ``PASSWORD_RESET_INVALIDATE_SESSIONS``.
+        are revoked here in one transaction: all tokens are revoked or none are.
+        Both steps follow ``PASSWORD_RESET_INVALIDATE_SESSIONS``.
 
         Args:
             email: Email of the user whose password changed.
             reason: Revocation reason recorded for each API token.
         """
+        revoked_jtis: list[str] = []
         try:
             if getattr(settings, "password_reset_invalidate_sessions", True):
-                # First-Party
-                from mcpgateway.services.token_catalog_service import TokenCatalogService  # pylint: disable=import-outside-toplevel
-
-                token_ids = self.db.execute(select(EmailApiToken.id).where(EmailApiToken.user_email == email, EmailApiToken.is_active.is_(True))).scalars().all()
-                catalog = TokenCatalogService(self.db)
-                for token_id in token_ids:
-                    await catalog.revoke_token(token_id, email, revoked_by=email, reason=reason)
+                tokens = self.db.execute(select(EmailApiToken).where(EmailApiToken.user_email == email, EmailApiToken.is_active.is_(True))).scalars().all()
+                for token in tokens:
+                    token.is_active = False
+                    self.db.add(TokenRevocation(jti=token.jti, revoked_by=email, reason=reason))
+                    revoked_jtis.append(token.jti)
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         finally:
             try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                for jti in revoked_jtis:
+                    await auth_cache.invalidate_revocation(jti)
                 await self._invalidate_user_auth_cache(email)
             except Exception as cache_error:  # nosec B110 - best effort cache invalidation
                 logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)

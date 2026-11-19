@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import collections
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
 import time
 from types import SimpleNamespace
@@ -11905,6 +11906,43 @@ async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
 
     assert result is False
     assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_session_issued_before_password_change(monkeypatch):
+    """Session tokens older than password_changed_at are rejected on the fallback lookup path."""
+    changed_at = datetime.now(timezone.utc)
+
+    async def fake_verify(_token):
+        return {
+            "sub": "stale@example.com",
+            "jti": "stale-jti",
+            "token_use": "session",
+            "iat": int(changed_at.timestamp()) - 60,
+            "teams": [],
+        }
+
+    stale_user = MagicMock()
+    stale_user.is_active = True
+    stale_user.password_changed_at = changed_at
+
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=stale_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+    assert any(b"Token has been revoked" in m.get("body", b"") for m in sent)
 
 
 @pytest.mark.asyncio
