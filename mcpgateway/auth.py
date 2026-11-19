@@ -83,7 +83,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
-from mcpgateway.auth_context import get_user_id, normalize_token_teams
+from mcpgateway.auth_context import get_cache_identity, get_user_id, identity_or_email, normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
@@ -701,15 +701,8 @@ async def resolve_session_teams(
         return []  # No identity — public-only; never admin bypass
 
     # Canonical identity for team resolution (phase-1 value = e-mail).
-    identity = get_user_id(payload)
-    try:
-        uuid.UUID(identity)
-        identity = "unknown"  # UUID session subject — take the identity from the email argument
-    except ValueError:
-        pass  # Non-UUID identity
-    identity_from_email = identity == "unknown"
-    if identity_from_email:
-        identity = email
+    identity = identity_or_email(get_user_id(payload), email)
+    identity_from_email = identity == email
 
     # If sub is a UUID (new token format), resolve to email for DB lookups
     try:
@@ -1739,6 +1732,7 @@ async def get_current_user(
 
         # Extract user identifier (support new UUID-sub and legacy email-sub formats).
         # Signed email metadata wins; only UUID-only tokens need DB resolution.
+        # First-Party
         from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
 
         async def resolve_uuid_subject(user_id: str) -> str | None:
@@ -1760,19 +1754,7 @@ async def get_current_user(
         # Extract JTI for revocation check
         jti = payload.get("jti")
 
-        # Canonical identity for auth cache keys (phase-1 value = e-mail).
-        # The JWT "user" metadata may carry no identity keys, and a UUID
-        # session subject is an opaque reference, not an identity: both
-        # cases fall back to the resolved e-mail so phase-1 keys keep
-        # today's value.
-        user_id = get_user_id(payload.get("user") or {"email": email})
-        try:
-            uuid.UUID(user_id)
-            user_id = "unknown"  # UUID subject — take the identity from the resolved e-mail
-        except ValueError:
-            pass  # Non-UUID identity
-        if user_id == "unknown":
-            user_id = email
+        user_id = get_cache_identity(payload, email)
 
         # === AUTH CACHING: Check cache before DB queries ===
         if settings.auth_cache_enabled:
@@ -2335,6 +2317,7 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
         >>> email is None  # doctest: +SKIP
         True
     """
+    # First-Party
     from mcpgateway.auth_context import get_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
 
     user_email = get_jwt_user_email_from_payload(payload)

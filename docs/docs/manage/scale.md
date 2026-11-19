@@ -1337,6 +1337,7 @@ AUTH_CACHE_ROLE_TTL=60        # Role assignment cache
 AUTH_CACHE_TEAMS_ENABLED=true # User teams list cache (get_user_teams, called 20+ times per request)
 AUTH_CACHE_TEAMS_TTL=60       # Teams list cache TTL
 AUTH_CACHE_BATCH_QUERIES=true # Batch related queries together
+AUTH_CACHE_KEY_VERSION=v1     # Redis key namespace; bump to cold-start auth cache keys without flushing Redis
 ```
 
 **Impact:**

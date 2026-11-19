@@ -254,6 +254,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.AUTH_CACHE_TEAMS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.AUTH_CACHE_TEAMS_TTL | string | `"60"` |  |
 | mcpContextForge.config.AUTH_CACHE_BATCH_QUERIES | string | `"true"` |  |
+| mcpContextForge.config.AUTH_CACHE_KEY_VERSION | string | `"v1"` |  |
 | mcpContextForge.config.REGISTRY_CACHE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.REGISTRY_CACHE_TOOLS_TTL | string | `"20"` |  |
 | mcpContextForge.config.REGISTRY_CACHE_PROMPTS_TTL | string | `"15"` |  |

@@ -764,6 +764,7 @@ The auth cache prevents repeated database lookups for the same JWT token. Higher
 | `AUTH_CACHE_ROLE_TTL` | 300s | 300s (max) for performance |
 | `AUTH_CACHE_REVOCATION_TTL` | 120s | 120s (max) — security-sensitive |
 | `AUTH_CACHE_BATCH_QUERIES` | — | `true` — batches three queries into one |
+| `AUTH_CACHE_KEY_VERSION` | — | `v1` — bump to discard all cached auth entries after an identity change, without flushing Redis |
 
 ---
 
