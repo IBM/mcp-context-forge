@@ -350,20 +350,18 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
 
 def test_main_app_emits_single_server_span_per_request(monkeypatch):
     """FastAPI native tracing stays off, so the OTEL request middleware emits the only server span."""
-    # Third-Party
-    from opentelemetry.sdk import trace as trace_sdk
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-    import opentelemetry.trace as otel_trace
-    from opentelemetry.trace import SpanKind
+    otel_trace = pytest.importorskip("opentelemetry.trace")
+    trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+    export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+    memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
 
     # First-Party
     from mcpgateway import observability
     import mcpgateway.main as main_module
 
-    exporter = InMemorySpanExporter()
+    exporter = memory_export_sdk.InMemorySpanExporter()
     provider = trace_sdk.TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
     # FastAPI native telemetry turns itself on when the global tracer provider is configured.
     monkeypatch.setattr(otel_trace, "get_tracer_provider", lambda: provider)
     monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("mcp-gateway"))
@@ -375,7 +373,7 @@ def test_main_app_emits_single_server_span_per_request(monkeypatch):
     assert response.status_code == 200
     spans = exporter.get_finished_spans()
     assert [span for span in spans if span.instrumentation_scope.name == "fastapi"] == []
-    server_spans = [span for span in spans if span.kind == SpanKind.SERVER]
+    server_spans = [span for span in spans if span.kind == otel_trace.SpanKind.SERVER]
     assert [(span.name, span.instrumentation_scope.name) for span in server_spans] == [("GET /health", "mcp-gateway")]
 
 
