@@ -5044,6 +5044,44 @@ async def get_a2a_agent_stored_card(
     return card
 
 
+@a2a_router.get("/{agent_id}/stored-card/extended", response_model=A2AStoredCardRead)
+@require_permission("a2a.update")
+async def get_a2a_agent_stored_extended_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the authenticated extended Agent Card stored for a registered agent.
+
+    The extended card is content the agent shows only to credentialed callers, so the route
+    needs ``a2a.update`` and agent ownership, not only ``a2a.read`` and visibility.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored extended card.
+
+    Raises:
+        HTTPException: If the agent is not visible, the caller does not own it, or it has no stored extended card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams, kind="extended")
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored extended Agent Card for this agent")
+    _audit_a2a_extended_card_read(request, user, agent_id)
+    return card
+
+
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
 @require_permission("a2a.create")
@@ -5478,6 +5516,22 @@ def _audit_a2a_task_action(request: Request, user: Any, action: str, agent_id: s
         request_path=request.url.path,
         request_method=request.method,
         details={"agent_id": agent_id, **(details or {})},
+    )
+
+
+def _audit_a2a_extended_card_read(request: Request, user: Any, agent_id: str) -> None:
+    """Record an audit entry for a read of the stored extended Agent Card."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="read_a2a_extended_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
     )
 
 
