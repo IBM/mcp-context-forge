@@ -85,6 +85,36 @@ def is_terminal_task_state(state: Any) -> bool:
     return normalized.replace("cancelled", "canceled") in _TERMINAL_TASK_STATES
 
 
+def _jsonrpc_error_message(response: Any) -> Optional[str]:
+    """Describe a JSON-RPC error carried in an A2A response.
+
+    A2A runs JSON-RPC over HTTP, so an agent can reject a call while the
+    transport still answers 200. Returns None for a response without an error.
+
+    Args:
+        response: The decoded A2A response body.
+
+    Returns:
+        A human-readable error message, or None when the response is not a
+        JSON-RPC error.
+    """
+    if not isinstance(response, dict):
+        return None
+    if response.get("jsonrpc") != "2.0":
+        return None
+    error = response.get("error")
+    if not error:
+        return None
+    detail = None
+    if isinstance(error, dict):
+        detail = error.get("message")
+        if not detail and "code" in error:
+            detail = f"code {error['code']}"
+    elif isinstance(error, str):
+        detail = error
+    return f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}"
+
+
 @dataclass(frozen=True)
 class PreparedA2AInvocation:
     """Prepared outbound A2A invocation payload.

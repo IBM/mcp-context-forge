@@ -914,7 +914,7 @@ class TestA2AAgentService:
     def test_jsonrpc_error_message_shapes(self, response, expected):
         """Only a valid JSON-RPC 2.0 error member produces a message."""
         # First-Party
-        from mcpgateway.services.a2a_service import _jsonrpc_error_message
+        from mcpgateway.services.a2a_protocol import _jsonrpc_error_message
 
         message = _jsonrpc_error_message(response)
         assert message == expected
