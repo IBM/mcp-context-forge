@@ -22,7 +22,7 @@ Examples:
 from typing import Any, cast, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -31,7 +31,7 @@ from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginatio
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, get_team_management_scope, require_permission, require_team_scope
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
     PaginatedTeamMembersResponse,
@@ -384,10 +384,11 @@ async def discover_public_teams(
 
 @teams_router.get("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.read")
-async def get_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
+async def get_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request) -> TeamResponse:
     """Get a specific team by ID.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         current_user: Authenticated user context dict with email and permissions
         db: Database session
@@ -398,6 +399,7 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
     Raises:
         HTTPException: If team not found or access denied
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
         team = await service.get_team_by_id(team_id)
@@ -443,10 +445,13 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
 
 @teams_router.put("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.update")
-async def update_team(team_id: str, request: TeamUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
+async def update_team(
+    team_id: str, request: TeamUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
+) -> TeamResponse:
     """Update a team.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         request: Team update request data
         current_user: Authenticated user context dict with email and permissions
@@ -458,6 +463,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
     Raises:
         HTTPException: If team not found, access denied, or update fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
@@ -520,10 +526,11 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
 
 @teams_router.delete("/{team_id}", response_model=SuccessResponse)
 @require_permission("teams.delete")
-async def delete_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
+async def delete_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request) -> SuccessResponse:
     """Delete a team.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         current_user: Authenticated user context dict with email and permissions
         db: Database session
@@ -534,6 +541,7 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
     Raises:
         HTTPException: If team not found, access denied, or deletion fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
 
@@ -575,10 +583,13 @@ async def list_team_members(
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    *,
+    http_request: Request,
 ) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
     """List team members with cursor-based pagination.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of members to return (default: 50)
@@ -593,6 +604,7 @@ async def list_team_members(
     Raises:
         HTTPException: If team not found or access denied
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
 
@@ -646,10 +658,13 @@ async def list_team_members(
 
 @teams_router.post("/{team_id}/members", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamMemberResponse:
+async def add_team_member(
+    team_id: str, request: TeamMemberAddRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
+) -> TeamMemberResponse:
     """Add a new member to a team.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         request: Member add request data with email and role
         current_user: Authenticated user context dict with email and permissions
@@ -661,6 +676,7 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
     Raises:
         HTTPException: If team not found, access denied, or add fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
 
@@ -699,11 +715,12 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
 @teams_router.put("/{team_id}/members/{user_email}", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
 async def update_team_member(
-    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
 ) -> TeamMemberResponse:
     """Update a team member's role.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         user_email: Email of the member to update
         request: Member update request data
@@ -716,6 +733,7 @@ async def update_team_member(
     Raises:
         HTTPException: If member not found, access denied, or update fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
 
@@ -748,10 +766,13 @@ async def update_team_member(
 
 @teams_router.delete("/{team_id}/members/{user_email}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def remove_team_member(team_id: str, user_email: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
+async def remove_team_member(
+    team_id: str, user_email: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
+) -> SuccessResponse:
     """Remove a team member.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         user_email: Email of the member to remove
         current_user: Authenticated user context dict with email and permissions
@@ -763,6 +784,7 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
     Raises:
         HTTPException: If member not found, access denied, or removal fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         service = TeamManagementService(db)
 
@@ -792,10 +814,13 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
 
 @teams_router.post("/{team_id}/invitations", response_model=TeamInvitationCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationCreateResponse:
+async def invite_team_member(
+    team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
+) -> TeamInvitationCreateResponse:
     """Invite a user to join a team.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         request: Invitation request data
         current_user: Authenticated user context dict with email and permissions
@@ -807,6 +832,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
     Raises:
         HTTPException: If team not found, access denied, or invitation fails
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         if not settings.allow_team_invitations:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team invitations are currently disabled")
@@ -867,10 +893,11 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
 
 @teams_router.get("/{team_id}/invitations", response_model=List[TeamInvitationResponse])
 @require_permission("teams.read")
-async def list_team_invitations(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> List[TeamInvitationResponse]:
+async def list_team_invitations(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request) -> List[TeamInvitationResponse]:
     """List team invitations.
 
     Args:
+        http_request: Incoming request context.
         team_id: Team UUID
         current_user: Authenticated user context dict with email and permissions
         db: Database session
@@ -881,6 +908,7 @@ async def list_team_invitations(team_id: str, current_user: dict = Depends(get_c
     Raises:
         HTTPException: If team not found or access denied
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         team_service = TeamManagementService(db)
         invitation_service = TeamInvitationService(db)
@@ -993,10 +1021,11 @@ async def decline_team_invitation(token: str, current_user: dict = Depends(get_c
 
 @teams_router.delete("/invitations/{invitation_id}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def cancel_team_invitation(invitation_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
+async def cancel_team_invitation(invitation_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request) -> SuccessResponse:
     """Cancel a team invitation.
 
     Args:
+        http_request: Incoming request context.
         invitation_id: Invitation UUID
         current_user: Authenticated user context dict with email and permissions
         db: Database session
@@ -1015,7 +1044,11 @@ async def cancel_team_invitation(invitation_id: str, current_user: dict = Depend
         # First-Party
         from mcpgateway.db import EmailTeamInvitation
 
-        invitation = db.query(EmailTeamInvitation).filter(EmailTeamInvitation.id == invitation_id).first()
+        token_teams = await get_team_management_scope(http_request, current_user, db)
+        query = db.query(EmailTeamInvitation).filter(EmailTeamInvitation.id == invitation_id)
+        if token_teams is not None:
+            query = query.filter(EmailTeamInvitation.team_id.in_(token_teams))
+        invitation = query.first()
         if not invitation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
 
@@ -1109,17 +1142,14 @@ async def request_to_join_team(
 
 @teams_router.delete("/{team_id}/leave", response_model=SuccessResponse)
 @require_permission("teams.join")
-async def leave_team(
-    team_id: str,
-    current_user: dict = Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
-) -> SuccessResponse:
+async def leave_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request) -> SuccessResponse:
     """Leave a team.
 
     Allows users to remove themselves from a team. Cannot leave personal teams
     or if they are the last owner of a team.
 
     Args:
+        http_request: Incoming request context.
         team_id: ID of the team to leave
         current_user: Currently authenticated user
         db: Database session
@@ -1130,6 +1160,7 @@ async def leave_team(
     Raises:
         HTTPException: If team not found, user not member, cannot leave personal team, or last owner
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         team_service = TeamManagementService(db)
 
@@ -1165,15 +1196,14 @@ async def leave_team(
 @teams_router.get("/{team_id}/join-requests", response_model=List[TeamJoinRequestResponse])
 @require_permission("teams.manage_members")
 async def list_team_join_requests(
-    team_id: str,
-    current_user: dict = Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
 ) -> List[TeamJoinRequestResponse]:
     """List pending join requests for a team.
 
     Only team owners can view join requests for their teams.
 
     Args:
+        http_request: Incoming request context.
         team_id: ID of the team
         current_user: Authenticated user context dict with email and permissions
         db: Database session
@@ -1184,6 +1214,7 @@ async def list_team_join_requests(
     Raises:
         HTTPException: If team not found or user not authorized
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         team_service = TeamManagementService(db)
 
@@ -1225,16 +1256,14 @@ async def list_team_join_requests(
 @teams_router.post("/{team_id}/join-requests/{request_id}/approve", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
 async def approve_join_request(
-    team_id: str,
-    request_id: str,
-    current_user: dict = Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    team_id: str, request_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
 ) -> TeamMemberResponse:
     """Approve a team join request.
 
     Only team owners can approve join requests for their teams.
 
     Args:
+        http_request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request
         current_user: Authenticated user context dict with email and permissions
@@ -1246,6 +1275,7 @@ async def approve_join_request(
     Raises:
         HTTPException: If request not found or user not authorized
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         team_service = TeamManagementService(db)
 
@@ -1289,16 +1319,14 @@ async def approve_join_request(
 @teams_router.delete("/{team_id}/join-requests/{request_id}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
 async def reject_join_request(
-    team_id: str,
-    request_id: str,
-    current_user: dict = Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    team_id: str, request_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db), *, http_request: Request
 ) -> SuccessResponse:
     """Reject a team join request.
 
     Only team owners can reject join requests for their teams.
 
     Args:
+        http_request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request
         current_user: Authenticated user context dict with email and permissions
@@ -1310,6 +1338,7 @@ async def reject_join_request(
     Raises:
         HTTPException: If request not found or user not authorized
     """
+    await require_team_scope(http_request, current_user, team_id, db)
     try:
         team_service = TeamManagementService(db)
 
