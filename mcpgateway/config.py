@@ -3235,6 +3235,13 @@ class Settings(  # pylint: disable=too-many-ancestors
         description="TTL in seconds for A2A stats in-memory cache (default: 30)",
     )
 
+    a2a_card_refresh_min_interval: int = Field(
+        default=30,
+        ge=0,
+        le=86400,
+        description="Minimum seconds between Agent Card re-fetches of one agent, per gateway worker (default: 30). 0 disables the limit",
+    )
+
     # Redis Parser Configuration (ADR-026)
     # hiredis C parser provides up to 83x faster response parsing for large responses
     redis_parser: Literal["auto", "hiredis", "python"] = Field(

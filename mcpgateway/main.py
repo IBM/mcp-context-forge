@@ -141,6 +141,8 @@ from mcpgateway.schemas import (
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigRequest,
+    A2ACardRefreshRequest,
+    A2ACardRefreshResponse,
     A2AStoredCardRead,
     A2ATaskMessageRequest,
     A2ATaskState,
@@ -190,7 +192,15 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import (
+    A2AAgentError,
+    A2AAgentNameConflictError,
+    A2AAgentNotFoundError,
+    A2AAgentService,
+    A2ACardRefreshThrottledError,
+    A2ATaskStateError,
+    raise_if_a2a_disabled,
+)
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -5116,6 +5126,55 @@ async def get_a2a_agent_stored_extended_card(
         raise HTTPException(status_code=404, detail="No stored extended Agent Card for this agent")
     _audit_a2a_extended_card_read(request, user, agent_id)
     return card
+
+
+@a2a_router.post("/{agent_id}/card", response_model=A2ACardRefreshResponse)
+@require_permission("a2a.update")
+async def refresh_a2a_agent_card(
+    agent_id: str,
+    request: Request,
+    payload: Optional[A2ACardRefreshRequest] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardRefreshResponse:
+    """Re-fetch the Agent Card of a registered agent.
+
+    The card comes from the first available URL: ``base_url`` of the request, the stored
+    ``source_url``, then the URLs derived from the agent ``endpoint_url``. A request with
+    ``base_url`` also needs ``a2a.create``, because the caller picks the URL the gateway fetches.
+    The agent credential goes only to a URL on the origin of ``endpoint_url``. The agent row is not changed.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        payload (Optional[A2ACardRefreshRequest]): Optional ``base_url`` and request-only ``headers``.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardRefreshResponse: Whether the card is unchanged, updated, or created, with the changed top-level keys.
+
+    Raises:
+        HTTPException: If the agent is not visible, the caller lacks permission, the fetch fails, or the rate limit applies.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    payload = payload or A2ACardRefreshRequest()
+    if payload.base_url is not None and not await check_permission_inline(user, "a2a.create", db=db, request=request):
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        result = await a2a_service.refresh_card(db, agent_id, payload, user_email=user_email, token_teams=token_teams)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ACardRefreshThrottledError as e:
+        raise HTTPException(status_code=429, detail=str(e), headers={"Retry-After": str(e.retry_after)})
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"User {safe_log_user(user)} re-fetched the Agent Card of A2A agent {agent_id}: {result.status}")
+    return result
 
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
