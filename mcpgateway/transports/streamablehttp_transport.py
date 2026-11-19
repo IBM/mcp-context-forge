@@ -38,11 +38,9 @@ from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
-import ipaddress
 import re
 import time
 from typing import Any, assert_never, AsyncGenerator, Callable, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -62,7 +60,7 @@ import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 import orjson
-from sqlalchemy import select, union
+from sqlalchemy import select, union, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -79,13 +77,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
+from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -122,13 +119,14 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.server_oauth import resolve_server_oauth_issuers, server_oauth_context_is_current, server_oauth_is_approved
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -568,46 +566,7 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
         A list of allowed issuer URLs, with surrounding whitespace stripped.
     """
 
-    def _is_allowed_url(value: str) -> bool:
-        """Return whether an issuer URL uses an allowed scheme and host."""
-        try:
-            parts = urlsplit(value)
-            hostname = parts.hostname
-            # Accessing port validates malformed port values.
-            _ = parts.port
-        except ValueError:
-            return False
-        if not parts.netloc or not hostname:
-            return False
-        if parts.scheme.lower() == "https":
-            return True
-        if parts.scheme.lower() != "http" or not settings.ssrf_allow_localhost:
-            return False
-        hostname = hostname.rstrip(".").lower()
-        if hostname in {"localhost", "localhost.localdomain"}:
-            return True
-        try:
-            return ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            return False
-
-    servers = oauth_config.get("authorization_servers") or []
-    if isinstance(servers, list):
-        cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
-        if cleaned:
-            rejected = [s for s in cleaned if not _is_allowed_url(s)]
-            if rejected:
-                logger.warning("Ignoring invalid authorization_servers (SSRF risk): %s", rejected)
-                cleaned = [s for s in cleaned if _is_allowed_url(s)]
-            return cleaned
-    singular = oauth_config.get("authorization_server")
-    if isinstance(singular, str) and singular.strip():
-        url = singular.strip()
-        if not _is_allowed_url(url):
-            logger.warning("Ignoring invalid authorization_server (SSRF risk): %s", url)
-            return []
-        return [url]
-    return []
+    return resolve_server_oauth_issuers(oauth_config)
 
 
 _shared_session_registry: Optional[Any] = None
@@ -1133,7 +1092,7 @@ def _is_valid_audience(value: Any) -> bool:
     return False
 
 
-def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session) -> None:
+def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session, *, generation: str | None = None) -> None:
     """Persist the ``aud`` claim from a verified OAuth token as ``resource``.
 
     Called after successful signature + issuer verification of an inbound MCP
@@ -1175,6 +1134,7 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
         server_id: Virtual-server identifier.
         verified_claims: Decoded and *signature-verified* JWT claims.
         db: Active database session.
+        generation: Approved configuration generation used during token verification.
     """
     raw_aud = verified_claims.get("aud")
     if not _is_valid_audience(raw_aud):
@@ -1188,7 +1148,7 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
 
     try:
         server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
-        if server is None or not server.oauth_config:
+        if not generation or not server_oauth_is_approved(server, generation) or not server.oauth_config:
             return
 
         # First-write-only: do not overwrite an existing usable resource.
@@ -1201,14 +1161,46 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
 
         updated_config = dict(server.oauth_config)
         updated_config["resource"] = raw_aud
-        server.oauth_config = updated_config
-        db.flush()
+        result = db.execute(
+            update(DbServer)
+            .where(
+                DbServer.id == server_id,
+                DbServer.oauth_config_approved.is_(True),
+                DbServer.oauth_config_generation == generation,
+                DbServer.version == server.version,
+            )
+            .values(oauth_config=updated_config, version=DbServer.version + 1)
+        )
+        db.commit()
+        if result.rowcount != 1:
+            return
         logger.info(
             "Learned OAuth audience from IdP token for server %s; persisted as resource",
             sanitize_for_log(server_id),
         )
     except Exception:
         logger.warning("Failed to persist learned audience for server %s", server_id, exc_info=True)
+
+
+async def _validate_server_oauth_context(server_id: str | None, context: Optional[dict[str, Any]]) -> None:
+    """Reject stale OAuth identities before cached authentication or session dispatch.
+
+    Args:
+        server_id: Current request server identifier.
+        context: Trusted identity recovered from request or session state.
+
+    Raises:
+        HTTPException: If approval expires or its database lookup fails.
+    """
+    if not isinstance(context, dict) or context.get("auth_method") != "oauth_access_token":
+        return
+    try:
+        async with get_db() as db:
+            current = server_oauth_context_is_current(db, context, server_id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Unable to verify OAuth approval") from exc
+    if not current:
+        raise HTTPException(status_code=401, detail="OAuth configuration requires administrator approval or session reauthentication")
 
 
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
@@ -1239,6 +1231,7 @@ async def _check_server_oauth_enforcement(server_id: str, user_context: Optional
             unavailable and the server's ``oauth_enabled`` flag cannot be
             verified (fail-closed).
     """
+    await _validate_server_oauth_context(server_id, user_context)
     if _oauth_checked_var.get(False):
         return  # Already checked during this request
 
@@ -2241,9 +2234,7 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 # via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
 # argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
 # so the gateway's existing tool_service.py schema validation is the only path.
-async def call_tool(
-    name: str, arguments: dict
-) -> Union[
+async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
@@ -2828,6 +2819,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         Tuple[str, dict[str, Any], dict[str, Any]]: ``(server_id, request_headers, user_context)``.
     """
     server_id, request_headers, user_context = await _resolve_request_context()
+    await _validate_server_oauth_context(server_id, user_context)
     _request_server_id_var.set(server_id if server_id and server_id != "default_server_id" else None)
     return server_id, request_headers, user_context
 
@@ -6410,6 +6402,8 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "permission_is_admin",
         "scoped_permissions",
         "scoped_server_id",
+        "oauth_server_id",
+        "oauth_config_generation",
     ):
         if key not in user_context:
             continue
@@ -7022,6 +7016,11 @@ class _StreamableHttpAuthHandler:
             )
             return OAuthAuthResult.NOT_APPLICABLE
 
+        if not server_oauth_is_approved(server):
+            await self._send_error(detail="OAuth configuration requires administrator approval", status_code=503)
+            return OAuthAuthResult.FAILED
+        oauth_generation = server.oauth_config_generation
+
         # Audience enforcement strategy:
         #
         # 1. ``resource`` configured (operator-set or previously learned)
@@ -7072,7 +7071,7 @@ class _StreamableHttpAuthHandler:
         # is a no-op when ``resource`` is already set.
         try:
             async with get_db() as db:
-                _persist_learned_server_audience(server_id, claims, db)
+                _persist_learned_server_audience(server_id, claims, db, generation=oauth_generation)
         except Exception:
             logger.warning("Failed to persist learned audience for server %s (caller guard)", server_id, exc_info=True)
 
@@ -7133,8 +7132,16 @@ class _StreamableHttpAuthHandler:
                 "exp": claims.get("exp"),
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
+                "oauth_server_id": server_id,
+                "oauth_config_generation": oauth_generation,
             }
         )
+        try:
+            await _validate_server_oauth_context(server_id, user_context_var.get())
+        except HTTPException as exc:
+            user_context_var.set({})
+            await self._send_error(detail=exc.detail, status_code=exc.status_code)
+            return OAuthAuthResult.FAILED
         _oauth_checked_var.set(True)
         return OAuthAuthResult.SUCCESS
 

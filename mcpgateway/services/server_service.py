@@ -15,13 +15,14 @@ import asyncio
 import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
+from uuid import uuid4
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import or_, select, union
+from sqlalchemy import or_, select, union, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 
@@ -39,10 +40,9 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import server_a2a_association, server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import ServerInterface as DbServerInterface
-from mcpgateway.db import ServerMetric, ServerMetricsHourly
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import ServerMetric, ServerMetricsHourly, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, interface_identity, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -53,11 +53,12 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_oauth import resolve_server_oauth_issuers, server_oauth_is_approved
 from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # ---------------------------------------------------------------------------
 # Server-associable entity registry
@@ -498,6 +499,7 @@ class ServerService(BaseService):
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            "oauth_config_approved": getattr(server, "oauth_config_approved", False) is True,
             "instructions": getattr(server, "instructions", None),
         }
 
@@ -593,6 +595,8 @@ class ServerService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        *,
+        oauth_authorized: bool = False,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -618,6 +622,7 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            oauth_authorized: Whether the route authorizes explicit OAuth configuration.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -666,6 +671,8 @@ class ServerService(BaseService):
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
+                oauth_config_approved=bool(oauth_authorized and server_in.oauth_enabled and oauth_config and resolve_server_oauth_issuers(oauth_config)),
+                oauth_config_generation=uuid4().hex,
                 instructions=getattr(server_in, "instructions", None),
                 # Metadata fields
                 created_by=created_by,
@@ -1316,6 +1323,8 @@ class ServerService(BaseService):
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        *,
+        oauth_authorized: bool = False,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1328,6 +1337,7 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            oauth_authorized: Whether the route authorizes explicit OAuth configuration.
 
         Returns:
             The updated ServerRead object.
@@ -1406,7 +1416,9 @@ class ServerService(BaseService):
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))  # pylint: disable=comparison-with-callable
+                    existing_server = get_for_update(
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id)
+                    )  # pylint: disable=comparison-with-callable
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
@@ -1414,7 +1426,9 @@ class ServerService(BaseService):
                     existing_server = get_for_update(
                         db,
                         DbServer,
-                        where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id),  # pylint: disable=comparison-with-callable
+                        where=and_(
+                            DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id
+                        ),  # pylint: disable=comparison-with-callable
                     )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
@@ -1475,6 +1489,10 @@ class ServerService(BaseService):
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
+
+            if {"oauth_enabled", "oauth_config"}.intersection(getattr(server_update, "model_fields_set", ())):
+                server.oauth_config_generation = uuid4().hex
+                server.oauth_config_approved = bool(oauth_authorized and server.oauth_enabled and server.oauth_config and resolve_server_oauth_issuers(server.oauth_config))
 
             # NULL means "not set" and "" means "send no instructions", so only a supplied field changes the value
             if "instructions" in getattr(server_update, "model_fields_set", ()):
@@ -1624,6 +1642,41 @@ class ServerService(BaseService):
                 user_email=user_email,
             )
             raise ServerError(f"Failed to update server: {unexpected_error_detail(e)}")
+
+    async def approve_oauth_config(self, db: Session, server_id: str, expected_version: int) -> dict[str, Any]:
+        """Approve the OAuth configuration reviewed by an authorized route.
+
+        Args:
+            db: Active database session.
+            server_id: Reviewed virtual-server identifier.
+            expected_version: Server version displayed during administrator review.
+
+        Returns:
+            Read-only approval status and the new server version.
+
+        Raises:
+            ServerNotFoundError: If the server does not exist.
+            ServerLockConflictError: If the reviewed version is stale.
+            ServerError: If OAuth lacks usable issuer configuration.
+        """
+        server = get_for_update(db, DbServer, server_id)
+        if server is None:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        if server.version != expected_version:
+            raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
+        if not server.oauth_enabled or not server.oauth_config or not resolve_server_oauth_issuers(server.oauth_config):
+            raise ServerError("Enabled OAuth with a valid authorization server is required for approval")
+        result = db.execute(
+            update(DbServer).where(DbServer.id == server_id, DbServer.version == expected_version).values(oauth_config_approved=True, oauth_config_generation=uuid4().hex, version=expected_version + 1)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
+        db.commit()
+        notify_dataplane()
+        await _get_registry_cache().invalidate_servers()
+        await _get_tool_lookup_cache().invalidate_server(server_id)
+        return {"oauth_config_approved": True, "version": expected_version + 1}
 
     async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Set the activation status of a server.
@@ -2275,6 +2328,9 @@ class ServerService(BaseService):
         # Check OAuth configuration
         if not getattr(server, "oauth_enabled", False):
             raise ServerError(f"OAuth not enabled for server: {server_id}")
+
+        if not server_oauth_is_approved(server):
+            raise ServerError(f"OAuth configuration requires administrator approval for server: {server_id}")
 
         oauth_config = getattr(server, "oauth_config", None)
         if not oauth_config:

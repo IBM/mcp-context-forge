@@ -3117,7 +3117,9 @@
             </div>
             {% endif %}
 
+            {% if can_manage_server_oauth %}
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
+            <input type="hidden" name="oauth_controls" value="1" />
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
               <div class="flex items-center mb-4">
                 <input
@@ -3193,6 +3195,7 @@
               </div>
             </div>
 
+            {% endif %}
             <div class="mt-6">
               <button
                 type="submit"
@@ -12027,6 +12030,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   </div>
                 </div>
 
+                {% if can_manage_server_oauth %}
+                <input type="hidden" name="oauth_controls" value="1" id="server-oauth-approval-controls" />
                 <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
                 <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
                   <div class="flex items-center mb-4">
@@ -12103,6 +12108,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   </div>
                 </div>
 
+                {% endif %}
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
                   >

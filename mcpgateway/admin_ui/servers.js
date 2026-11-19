@@ -486,6 +486,13 @@ export const viewServer = async function (serverId) {
         oauthTitle.className = "block text-gray-900 dark:text-gray-100 mb-3";
         oauthDiv.appendChild(oauthTitle);
 
+        const approved = server.oauthConfigApproved === true;
+        const approvalStatus = document.createElement("p");
+        approvalStatus.textContent = approved
+          ? "OAuth configuration approved."
+          : "OAuth authentication pending administrator approval.";
+        oauthDiv.appendChild(approvalStatus);
+
         // OAuth Config details
         const oauthConfig = server.oauthConfig || server.oauth_config;
         if (oauthConfig) {
@@ -557,6 +564,36 @@ export const viewServer = async function (serverId) {
           }
 
           oauthDiv.appendChild(oauthConfigDiv);
+          if (document.getElementById("server-oauth-approval-controls")) {
+            const reviewedConfig = document.createElement("pre");
+            reviewedConfig.className = "whitespace-pre-wrap break-all text-xs my-3";
+            reviewedConfig.textContent = JSON.stringify(oauthConfig, null, 2);
+            oauthDiv.appendChild(reviewedConfig);
+            const approveButton = document.createElement("button");
+            approveButton.type = "button";
+            approveButton.className = "px-3 py-2 bg-indigo-600 text-white rounded";
+            approveButton.textContent = "Approve reviewed OAuth configuration";
+            approveButton.addEventListener("click", async () => {
+              approveButton.disabled = true;
+              try {
+                const body = new FormData();
+                body.set("version", String(server.version));
+                const approvalResponse = await fetchWithTimeout(
+                  `${window.ROOT_PATH}/admin/servers/${encodeURIComponent(server.id)}/oauth/approve`,
+                  { method: "POST", body }
+                );
+                if (!approvalResponse.ok) {
+                  const error = await approvalResponse.json();
+                  throw new Error(error.detail || "OAuth approval failed");
+                }
+                await viewServer(serverId);
+              } catch (error) {
+                showErrorMessage(error.message);
+                approveButton.disabled = false;
+              }
+            });
+            oauthDiv.appendChild(approveButton);
+          }
         } else {
           const noConfigP = document.createElement("p");
           noConfigP.className = "mt-2 text-sm text-gray-500 dark:text-gray-400";

@@ -15467,6 +15467,8 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
     token_exp = 1_800_000_000
     mock_server = MagicMock()
     mock_server.oauth_enabled = True
+    mock_server.oauth_config_approved = True
+    mock_server.oauth_config_generation = "approved-generation"
     mock_server.oauth_config = {
         "authorization_servers": ["https://issuer.example.com"],
         "resource": "https://gateway.example.com/servers/oauth-server/mcp",

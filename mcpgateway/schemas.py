@@ -5502,6 +5502,12 @@ class ServerInterfaceRead(BaseModel):
     updated_at: datetime
 
 
+class ServerOAuthApprovalRequest(BaseModel):
+    """Identify the server version reviewed for OAuth approval."""
+
+    version: int = Field(ge=1, description="Server version reviewed by the administrator")
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -5930,6 +5936,7 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    oauth_config_approved: bool = Field(False, description="Whether an unrestricted administrator approved the current OAuth configuration")
 
     instructions: Optional[str] = Field(None, description="Operator-set instructions text. Null: not set. Empty string: send no instructions")
 
