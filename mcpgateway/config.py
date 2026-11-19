@@ -759,11 +759,11 @@ class Settings(  # pylint: disable=too-many-ancestors
     )
     identity_sign_claims: bool = Field(
         default=False,
-        description="Sign propagated user claims with HMAC for verification",
+        description="Sign propagated user claims as a short-lived HS256 JWS. Requires IDENTITY_CLAIMS_SECRET",
     )
     identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
-        description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
+        description="Dedicated secret for signing propagated identity claims. Required when IDENTITY_SIGN_CLAIMS=true; must differ from JWT_SECRET_KEY",
     )
 
     # ===================================
@@ -1826,6 +1826,8 @@ class Settings(  # pylint: disable=too-many-ancestors
         empty, placeholder, known-weak, and too-short (below
         ``password_min_length_user``, the OWASP baseline) values when their
         consuming authentication feature is enabled (feature-gated fail-closed).
+        ``identity_claims_secret`` gets the full secret checks when
+        ``identity_sign_claims`` is on, and must differ from ``jwt_secret_key``.
         No entropy floor is applied to passwords: the Shannon-entropy check used
         for random secrets is a poor signal for human-chosen passwords and the
         length + known-weak-value checks already cover the realistic risk.
@@ -1888,6 +1890,19 @@ class Settings(  # pylint: disable=too-many-ancestors
                     min_length=self.password_min_length_user,
                     check_placeholder=True,
                 )
+
+        if self.identity_sign_claims:
+            claims_secret = self.identity_claims_secret.get_secret_value() if self.identity_claims_secret else ""
+            self._enforce_secret_strength(
+                "identity_claims_secret",
+                claims_secret,
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+            )
+            if claims_secret == self.jwt_secret_key.get_secret_value():
+                raise SecurityConfigurationError("identity_claims_secret must differ from jwt_secret_key: upstream servers that verify identity claims hold this secret.")
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
