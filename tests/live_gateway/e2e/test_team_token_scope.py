@@ -10,7 +10,8 @@ Exercise team management scope through a disposable live gateway.
 
 # Standard
 from collections.abc import Iterator
-import secrets
+import hashlib
+import json
 from typing import Any
 import uuid
 
@@ -20,7 +21,7 @@ import jwt
 import pytest
 
 # Local
-from tests.helpers.auth import make_auth_headers, make_test_jwt
+from tests.helpers.auth import make_auth_headers, make_test_jwt, make_test_password
 from tests.live_gateway.e2e.test_candidate_credential_handshake import _GatewayFixture, isolated_gateway  # noqa: F401  pylint: disable=unused-import
 
 pytestmark = pytest.mark.e2e
@@ -36,8 +37,13 @@ def _json(client: httpx.Client, method: str, path: str, **kwargs: Any) -> Any:
 def _denied(response: httpx.Response, sensitive: tuple[str, ...]) -> None:
     """Check denial status and exclude sensitive fixture data."""
     assert response.status_code == 403
-    for value in sensitive:
-        assert value not in response.text
+    if any(value in response.text for value in sensitive):
+        raise AssertionError("Denied response contains fixture data")
+
+
+def _state_digest(value: Any) -> str:
+    """Compare persisted state without printing invitation material on failure."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -65,7 +71,7 @@ def test_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # noqa: F8
                 "/auth/email/admin/users",
                 json={
                     "email": email,
-                    "password": secrets.token_urlsafe(24) + "Aa1!",
+                    "password": make_test_password(),
                     "full_name": "Scope Regression",
                     "is_admin": False,
                     "is_active": True,
@@ -105,6 +111,9 @@ def test_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # noqa: F8
             invitation = _json(owner_client, "POST", f"/teams/{b}/invitations", json={"email": invitee, "role": "member"})
             invitation_id = invitation["id"]
             sensitive = (owner, invitee, invitation["token"])
+            invitation_state = _state_digest(_json(owner_client, "GET", f"/teams/{b}/invitations", headers=make_auth_headers(tokens[1])))
+            narrowed_session = make_test_jwt(owner, teams=[a], token_use="session", secret=signing_key, algorithm="HS256")
+            scoped_admin = make_test_jwt("admin@example.com", is_admin=True, teams=[a], secret=signing_key, algorithm="HS256")
             for prefix in ("/teams", "/v1/teams"):
                 for credential in (tokens[0], public):
                     headers = make_auth_headers(credential)
@@ -116,9 +125,12 @@ def test_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # noqa: F8
                 collection = _json(owner_client, "GET", f"{prefix}/", headers=make_auth_headers(tokens[0]))
                 assert [team["id"] for team in collection["teams"]] == [a]
                 assert _json(owner_client, "GET", f"{prefix}/", headers=make_auth_headers(public))["teams"] == []
-            narrowed_session = make_test_jwt(owner, teams=[a], token_use="session", secret=signing_key, algorithm="HS256")
+                for credential in (tokens[0], public, narrowed_session, scoped_admin):
+                    responses = [owner_client.delete(f"{prefix}/invitations/{identifier}", headers=make_auth_headers(credential)) for identifier in (invitation_id, uuid.uuid4().hex)]
+                    assert [response.status_code for response in responses] == [404, 404]
+                    assert responses[0].content == responses[1].content
+                    assert all(value not in response.text for response in responses for value in sensitive)
             _denied(owner_client.get(f"/teams/{b}", headers=make_auth_headers(narrowed_session)), sensitive)
-            scoped_admin = make_test_jwt("admin@example.com", is_admin=True, teams=[a], secret=signing_key, algorithm="HS256")
             _denied(owner_client.get(f"/teams/{b}", headers=make_auth_headers(scoped_admin)), sensitive)
             nonmember = make_test_jwt(outsider, teams=[b], secret=signing_key, algorithm="HS256", include_email_claim=True)
             _denied(owner_client.get(f"/teams/{b}", headers=make_auth_headers(nonmember)), sensitive)
@@ -129,7 +141,6 @@ def test_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # noqa: F8
                 ("PUT", f"/teams/{b}/members/{owner}", {"json": {"role": "member"}}),
                 ("DELETE", f"/teams/{b}/members/{owner}", {}),
                 ("POST", f"/teams/{b}/invitations", {"json": {"email": outsider, "role": "owner"}}),
-                ("DELETE", f"/teams/invitations/{invitation_id}", {}),
                 ("DELETE", f"/teams/{b}/leave", {}),
                 ("GET", f"/teams/{b}/join-requests", {}),
                 ("POST", f"/teams/{b}/join-requests/missing/approve", {}),
@@ -162,7 +173,9 @@ def test_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # noqa: F8
             assert outsider not in {member["user_email"] for member in members}
             assert next(member["role"] for member in members if member["user_email"] == owner) == "owner"
             remaining = _json(owner_client, "GET", f"/teams/{b}/invitations", headers=make_auth_headers(tokens[1]))
-            assert [item["id"] for item in remaining] == [invitation_id]
+            assert _state_digest(remaining) == invitation_state
+            assert owner_client.delete(f"/teams/invitations/{invitation_id}", headers=make_auth_headers(tokens[1])).status_code == 200
+            assert _json(owner_client, "GET", f"/teams/{b}/invitations", headers=make_auth_headers(tokens[1])) == []
             assert _json(admin, "GET", f"/teams/{b}")["name"] == f"scope-b-{suffix}"
             added = _json(owner_client, "POST", f"/teams/{b}/members", headers=make_auth_headers(tokens[1]), json={"email": outsider, "role": "member"})
             assert added["role"] == "member"
@@ -200,6 +213,7 @@ def test_proxy_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # no
     suffix = uuid.uuid4().hex[:10]
     owner = f"proxy-owner-{suffix}@example.com"
     team_ids = []
+    role_id = None
     try:
         _json(
             admin,
@@ -207,17 +221,20 @@ def test_proxy_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # no
             "/auth/email/admin/users",
             json={
                 "email": owner,
-                "password": secrets.token_urlsafe(24) + "Aa1!",
+                "password": make_test_password(),
                 "full_name": "Proxy Scope",
                 "is_admin": False,
                 "is_active": True,
                 "password_change_required": False,
             },
         )
+        role_id = _json(admin, "POST", "/rbac/roles", json={"name": f"proxy-inviter-{suffix}", "scope": "global", "permissions": ["teams.manage_members"]})["id"]
+        _json(admin, "POST", f"/rbac/users/{owner}/roles", json={"role_id": role_id, "scope": "global"})
         for label in ("a", "b"):
             team_ids.append(_json(admin, "POST", "/teams/", json={"name": f"proxy-{label}-{suffix}", "visibility": "private"})["id"])
         a, b = team_ids
         _json(admin, "POST", f"/teams/{a}/members", json={"email": owner, "role": "owner"})
+        invitations = [_json(admin, "POST", f"/teams/{team_id}/invitations", json={"email": f"proxy-invite-{team_id}@example.com", "role": "member"}) for team_id in (a, b)]
         claim_cases: list[dict[str, Any]] = [{"teams": []}, {"teams": [b]}, {"teams": None, "is_admin": True}]
         for claims in claim_cases:
             conflicting = make_test_jwt("admin@example.com", secret=signing_key, algorithm="HS256", **claims)
@@ -231,18 +248,27 @@ def test_proxy_team_scope_live(isolated_gateway: _GatewayFixture) -> None:  # no
                     ids = _json(client, "GET", "/v1/admin/teams/ids")
                     assert a in ids["team_ids"] and b not in ids["team_ids"]
                 _denied(client.get(f"/teams/{b}"), (owner,))
+                responses = [client.delete(f"/teams/invitations/{identifier}") for identifier in (invitations[1]["id"], uuid.uuid4().hex)]
+                assert [response.status_code for response in responses] == [404, 404]
+                assert responses[0].content == responses[1].content
+                assert all(invitations[1]["token"] not in response.text for response in responses)
                 _denied(client.get(f"/teams/{b}", headers={"X-Authenticated-User": f"unknown-{suffix}@example.com"}), (owner,))
+        assert [item["id"] for item in _json(admin, "GET", f"/teams/{b}/invitations")] == [invitations[1]["id"]]
         with httpx.Client(base_url=base_url, headers={"X-Authenticated-User": owner}, trust_env=False, timeout=20) as proxy_client:
             assert proxy_client.get(f"/v1/admin/teams/{a}/edit").status_code == 200
             assert proxy_client.get(f"/v1/admin/teams/{a}/members/partial").status_code == 200
             _denied(proxy_client.get(f"/v1/admin/teams/{b}/edit"), (owner,))
             ids = _json(proxy_client, "GET", "/v1/admin/teams/ids")
             assert a in ids["team_ids"] and b not in ids["team_ids"]
+            assert proxy_client.delete(f"/teams/invitations/{invitations[0]['id']}").status_code == 200
         conflicting = make_test_jwt(owner, teams=[a], secret=signing_key, algorithm="HS256")
         assert admin.get(f"/teams/{b}", headers=make_auth_headers(conflicting)).status_code == 200
+        assert admin.delete(f"/teams/invitations/{invitations[1]['id']}", headers=make_auth_headers(conflicting)).status_code == 200
     finally:
         for team_id in reversed(team_ids):
             admin.delete(f"/teams/{team_id}")
+        if role_id is not None:
+            admin.delete(f"/rbac/roles/{role_id}")
         admin.delete(f"/auth/email/admin/users/{owner}")
 
 
@@ -297,7 +323,7 @@ def ui_scope(isolated_gateway: _GatewayFixture) -> Iterator[dict[str, Any]]:  # 
                     "/auth/email/admin/users",
                     json={
                         "email": email,
-                        "password": secrets.token_urlsafe(24) + "Aa1!",
+                        "password": make_test_password(),
                         "full_name": "UI Scope Fixture",
                         "is_admin": False,
                         "is_active": True,
@@ -371,8 +397,6 @@ def ui_scope(isolated_gateway: _GatewayFixture) -> Iterator[dict[str, Any]]:  # 
 )
 def test_expanded_admin_team_authorization_live(ui_scope: dict[str, Any]) -> None:
     """All audited UI gaps reject foreign scope and preserve permitted controls."""
-    import hashlib
-    import json
     import re
 
     u = ui_scope
@@ -382,9 +406,15 @@ def test_expanded_admin_team_authorization_live(ui_scope: dict[str, Any]) -> Non
 
     def snapshot() -> str:
         responses = [_json(admin, "GET", f"/teams/{b}{tail}") for tail in ("", "/members", "/invitations", "/join-requests")]
-        return hashlib.sha256(json.dumps(responses, sort_keys=True).encode()).hexdigest()
+        return _state_digest(responses)
 
     before = snapshot()
+    invitation_id = _json(admin, "GET", f"/teams/{b}/invitations")[0]["id"]
+    for prefix in ("/teams", "/v1/teams"):
+        for credential, status in ((None, 401), (signed("target", token_use="session"), 403)):
+            response = request(credential, "DELETE", f"{prefix}/invitations/{invitation_id}")
+            assert response.status_code == status
+            assert all(value not in response.text for value in sensitive)
     for prefix in ("/admin", "/v1/admin"):
         operations = [
             ("GET", f"{prefix}/teams/{b}/members/add", {}),

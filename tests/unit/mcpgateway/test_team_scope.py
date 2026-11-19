@@ -9,6 +9,10 @@ Regression tests for team management scope boundaries.
 """
 
 # Standard
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+import logging
+import secrets
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,9 +21,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import Base, EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
 from mcpgateway.middleware import rbac
 from mcpgateway.routers import teams
 from mcpgateway.schemas import TeamInviteRequest, TeamMemberAddRequest, TeamMemberUpdateRequest, TeamUpdateRequest
@@ -85,16 +92,98 @@ async def test_management_handlers_deny_before_services(name: str, body: dict[st
 
 
 @pytest.mark.asyncio
-async def test_cancel_uses_stored_team() -> None:
-    """Cancellation checks the stored invitation team before revocation."""
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(team_id="b")
-    handler = getattr(teams.cancel_team_invitation, "__wrapped__", teams.cancel_team_invitation)
-    with patch.object(teams, "TeamInvitationService") as service, pytest.raises(HTTPException) as error:
-        await handler("invitation-b", current_user={"email": "owner@example.com"}, db=db, http_request=make_test_scope_request(["a"]))
+async def test_scope_denial_logs_sanitized_identity_without_credentials(caplog: pytest.LogCaptureFixture) -> None:
+    """Denials log canonical sanitized fields before protected service access."""
+    user_id = "caller\r\n\x1b[31midentity"
+    team_id = "foreign\n\x00team"
+    material = secrets.token_urlsafe(32)
+    request = make_test_scope_request(["a"])
+    request.scope["headers"] = [(b"authorization", f"Bearer {material}".encode())]
+    user = {"email": "owner@example.com", "user_id": user_id, "token": material}
+    handler = getattr(teams.get_team, "__wrapped__", teams.get_team)
+    with caplog.at_level(logging.WARNING, logger=rbac.__name__), patch.object(teams, "TeamManagementService") as service:
+        with pytest.raises(HTTPException) as error:
+            await handler(team_id, current_user=user, db=MagicMock(), http_request=request)
     assert error.value.status_code == 403
-    service.return_value.revoke_invitation.assert_not_called()
-    db.commit.assert_not_called()
+    service.assert_not_called()
+    records = [record for record in caplog.records if record.name == rbac.__name__]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "user_id=caller  identity" in message
+    assert "team_id=foreign team" in message
+    assert all(value not in message for value in (material, "owner@example.com", "\n", "\r", "\x1b", "\x00"))
+
+
+@pytest.fixture
+def invitation_scope_database() -> Iterator[Session]:
+    """Provide persisted invitation state for visibility and revocation checks."""
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all([EmailUser(email=email, password_hash="", full_name="Invitation Scope") for email in ("owner@example.com", "other@example.com")])
+        db.flush()
+        db.add(EmailTeam(id="b", name="Private Team", slug="private-team", created_by="owner@example.com", visibility="private"))
+        db.flush()
+        db.add(EmailTeamMember(team_id="b", user_email="owner@example.com", role="owner"))
+        db.add(
+            EmailTeamInvitation(
+                id="invitation-b",
+                team_id="b",
+                email="invitee@example.com",
+                invited_by="owner@example.com",
+                token=secrets.token_urlsafe(32),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+        )
+        db.commit()
+        yield db
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", [["a"], []])
+async def test_cancel_invitation_hides_excluded_and_missing_ids(invitation_scope_database: Session, scope: list[str], caplog: pytest.LogCaptureFixture) -> None:
+    """Scoped SQL lookup hides foreign existence and preserves invitation state."""
+    db = invitation_scope_database
+    handler = getattr(teams.cancel_team_invitation, "__wrapped__", teams.cancel_team_invitation)
+    failures = []
+    with patch.object(teams, "TeamInvitationService") as service:
+        for invitation_id in ("invitation-b", "missing"):
+            with pytest.raises(HTTPException) as error:
+                await handler(invitation_id, current_user={"email": "owner@example.com"}, db=db, http_request=make_test_scope_request(scope))
+            failures.append((error.value.status_code, error.value.detail))
+        service.return_value.revoke_invitation.assert_not_called()
+    assert failures == [(404, "Invitation not found")] * 2
+    assert "invitation-b" not in caplog.text
+    with Session(db.get_bind()) as independent:
+        stored = independent.get(EmailTeamInvitation, "invitation-b")
+        assert stored is not None and stored.is_active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", [["b"], None])
+async def test_cancel_invitation_preserves_in_scope_owner(invitation_scope_database: Session, scope: list[str] | None) -> None:
+    """In-scope owners and canonical scope bypass can revoke stored invitations."""
+    db = invitation_scope_database
+    handler = getattr(teams.cancel_team_invitation, "__wrapped__", teams.cancel_team_invitation)
+    response = await handler("invitation-b", current_user={"email": "owner@example.com"}, db=db, http_request=make_test_scope_request(scope))
+    assert response.success
+    with Session(db.get_bind()) as independent:
+        stored = independent.get(EmailTeamInvitation, "invitation-b")
+        assert stored is not None and not stored.is_active
+
+
+@pytest.mark.asyncio
+async def test_cancel_invitation_retains_owner_or_inviter_check(invitation_scope_database: Session) -> None:
+    """Scope alone cannot authorize a caller without ownership or inviter authority."""
+    db = invitation_scope_database
+    handler = getattr(teams.cancel_team_invitation, "__wrapped__", teams.cancel_team_invitation)
+    with pytest.raises(HTTPException) as error:
+        await handler("invitation-b", current_user={"email": "other@example.com"}, db=db, http_request=make_test_scope_request(["b"]))
+    assert error.value.status_code == 403
+    with Session(db.get_bind()) as independent:
+        stored = independent.get(EmailTeamInvitation, "invitation-b")
+        assert stored is not None and stored.is_active
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import secrets
+import string
 from typing import Any
 
 # Third-Party
@@ -25,6 +27,12 @@ from mcpgateway.utils import create_jwt_token as jwt_util
 
 _UNSET = object()
 _create_jwt_token: Any = jwt_util._create_jwt_token  # pylint: disable=protected-access  # type: ignore[attr-defined]
+
+
+def make_test_password() -> str:
+    """Generate random test passwords without sequential character runs."""
+    pairs = (secrets.choice(string.ascii_letters) + secrets.choice(string.digits) for _ in range(16))
+    return "".join(pairs) + "Aa1!"
 
 
 def make_test_jwt(

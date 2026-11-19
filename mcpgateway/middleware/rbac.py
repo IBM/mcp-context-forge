@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email, get_user_id
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -99,6 +100,11 @@ async def require_team_scope(request: Request, user: dict, team_id: str, db: Ses
     """
     token_teams = await get_team_management_scope(request, user, db)
     if token_teams is not None and team_id not in token_teams:
+        logger.warning(
+            "Team scope denied: user_id=%s team_id=%s",
+            SecurityValidator.sanitize_log_message(get_user_id(user)),
+            SecurityValidator.sanitize_log_message(team_id),
+        )
         raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
 

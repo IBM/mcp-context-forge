@@ -31,7 +31,7 @@ from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginatio
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission, require_team_scope
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, get_team_management_scope, require_permission, require_team_scope
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
     PaginatedTeamMembersResponse,
@@ -1044,11 +1044,13 @@ async def cancel_team_invitation(invitation_id: str, current_user: dict = Depend
         # First-Party
         from mcpgateway.db import EmailTeamInvitation
 
-        invitation = db.query(EmailTeamInvitation).filter(EmailTeamInvitation.id == invitation_id).first()
+        token_teams = await get_team_management_scope(http_request, current_user, db)
+        query = db.query(EmailTeamInvitation).filter(EmailTeamInvitation.id == invitation_id)
+        if token_teams is not None:
+            query = query.filter(EmailTeamInvitation.team_id.in_(token_teams))
+        invitation = query.first()
         if not invitation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
-
-        await require_team_scope(http_request, current_user, invitation.team_id, db)
 
         # Check if user is team owner or the inviter
         role = await team_service.get_user_role_in_team(current_user["email"], invitation.team_id)

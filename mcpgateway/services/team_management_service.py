@@ -2035,9 +2035,9 @@ class TeamManagementService:
             query = query.where(EmailTeam.id.in_(team_ids))
 
         result = self.db.execute(query)
-        team_ids = [row[0] for row in result.all()]
+        ids = [row[0] for row in result.all()]
         self.db.commit()  # Release transaction to avoid idle-in-transaction
-        return team_ids
+        return ids
 
     async def get_teams_count(
         self,
