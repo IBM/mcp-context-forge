@@ -1788,6 +1788,23 @@ class TestEmailAuthServiceUserManagement:
                     assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!") is True  # pragma: allowlist secret
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("invalidate_sessions, expected_revocations", [(True, 2), (False, 0)])
+    async def test_invalidate_user_sessions_revokes_api_tokens(self, service, mock_db, invalidate_sessions, expected_revocations):
+        """API tokens are revoked after a password change only when session invalidation is enabled."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = ["token-1", "token-2"]
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_invalidate_sessions = invalidate_sessions
+            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService.revoke_token", new=AsyncMock(return_value=True)) as revoke_token:
+                with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+                    await service._invalidate_user_sessions("test@example.com", "password_change")
+
+        assert revoke_token.await_count == expected_revocations
+        if expected_revocations:
+            revoke_token.assert_any_await("token-1", "test@example.com", revoked_by="test@example.com", reason="password_change")
+        invalidate_cache.assert_awaited_once_with("test@example.com")
+
+    @pytest.mark.asyncio
     async def test_change_password_outer_cache_invalidation_exception_is_non_fatal(self, service, mock_user, mock_password_service):
         """change_password handles exceptions raised by cache invalidation helper."""
         service.password_service = mock_password_service
