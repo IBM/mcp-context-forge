@@ -26,7 +26,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_context import get_user_id
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email, get_user_id
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -51,6 +52,60 @@ _ACCESS_DENIED_MSG = "Access denied"
 # Wildcard token scope granting every permission (mirrors Permissions.ALL_PERMISSIONS in db.py,
 # duplicated here to keep this module import-light for TokenScopingMiddleware).
 _ALL_PERMISSIONS_SCOPE = "*"
+
+
+async def get_team_management_scope(request: Request, user: dict, db: Session) -> Optional[List[str]]:
+    """Resolve canonical scope for team management and collection filtering.
+
+    Args:
+        request: Incoming request context.
+        user: Principal selected by the authentication dependency.
+        db: Database session for trusted proxy membership resolution.
+
+    Returns:
+        Allowed team IDs, or ``None`` for canonical administrator bypass.
+
+    Raises:
+        HTTPException: If the authenticated identity is unknown.
+    """
+    # First-Party
+    from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+    email = get_user_email(user)
+    if email == "unknown":
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+
+    scope_request = request
+    if user.get("auth_method") == "proxy" and is_proxy_auth_trust_active() and request.headers.get(settings.proxy_user_header) == email:
+        # The selected proxy principal takes precedence over conflicting JWT credentials.
+        teams = None if user.get("is_admin") else [team.id for team in await TeamManagementService(db).get_user_teams(email)]
+        scope_request = Request({**request.scope, "state": {"token_teams": teams}})
+        user["token_teams"] = teams
+
+    _, token_teams = get_scoped_resource_access_context(scope_request, user)
+    return token_teams
+
+
+async def require_team_scope(request: Request, user: dict, team_id: str, db: Session) -> None:
+    """Enforce the authenticated scope before team management operations.
+
+    Args:
+        request: Incoming request context.
+        user: Principal selected by the authentication dependency.
+        team_id: Authoritative target team ID.
+        db: Database session for trusted proxy membership resolution.
+
+    Raises:
+        HTTPException: If the resolved scope excludes the target team.
+    """
+    token_teams = await get_team_management_scope(request, user, db)
+    if token_teams is not None and team_id not in token_teams:
+        logger.warning(
+            "Team scope denied: user_id=%s team_id=%s",
+            SecurityValidator.sanitize_log_message(get_user_id(user)),
+            SecurityValidator.sanitize_log_message(team_id),
+        )
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
 
 def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bool:

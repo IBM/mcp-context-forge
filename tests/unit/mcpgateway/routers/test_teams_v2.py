@@ -19,6 +19,9 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 
+# Local
+from tests.helpers.auth import make_test_scope_request
+
 # First, patch RBAC decorators before any mcpgateway imports
 def mock_require_permission_decorator(permission: str, resource_type=None):
     """Mock decorator that bypasses permission checks."""
@@ -132,9 +135,7 @@ class TestTeamsRouterV2:
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
-        with mock_permission_check(is_admin=False), \
-             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
-
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
@@ -164,9 +165,7 @@ class TestTeamsRouterV2:
             max_members=50,
         )
 
-        with mock_permission_check(is_admin=False), \
-             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
-
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team_with_members = AsyncMock(side_effect=ValueError("Team name cannot be empty"))
             MockService.return_value = mock_service
@@ -188,7 +187,7 @@ class TestTeamsRouterV2:
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
             MockService.return_value = mock_service
 
-            result = await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
+            result = await teams.get_team(team_id, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -206,7 +205,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
+                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -217,16 +216,14 @@ class TestTeamsRouterV2:
         team_id = mock_team.id
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=100)
 
-        with mock_permission_check(is_admin=False), \
-             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
-
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
             mock_service.get_team_by_id = AsyncMock(return_value=mock_team)  # Fetches team after update
             MockService.return_value = mock_service
 
-            result = await teams.update_team(team_id, request, current_user=mock_user_context, db=mock_db)
+            result = await teams.update_team(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.id == mock_team.id
             mock_service.update_team.assert_called_once_with(
@@ -244,7 +241,7 @@ class TestTeamsRouterV2:
             mock_service.delete_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 
-            result = await teams.delete_team(team_id, current_user=mock_user_context, db=mock_db)
+            result = await teams.delete_team(team_id, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.message == "Team deleted successfully"
             mock_service.delete_team.assert_called_once_with(team_id, mock_user_context["email"])
@@ -272,7 +269,9 @@ class TestTeamsRouterV2:
             mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
-            result = await teams.list_team_members(team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db)
+            result = await teams.list_team_members(
+                team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request()
+            )
 
             assert isinstance(result, list)
             assert len(result) == 1
@@ -302,7 +301,7 @@ class TestTeamsRouterV2:
             mock_service.add_member_to_team = AsyncMock(return_value=new_member)
             MockService.return_value = mock_service
 
-            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.user_email == request.email
             assert result.role == request.role
@@ -322,7 +321,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Access denied" in str(exc_info.value.detail)
@@ -342,7 +341,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert exc_info.value.detail == "User not found"
@@ -360,7 +359,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to add team member" in str(exc_info.value.detail)
@@ -380,7 +379,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid role" in str(exc_info.value.detail)
@@ -400,7 +399,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -420,7 +419,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
             assert "Member already exists" in str(exc_info.value.detail)
@@ -440,7 +439,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Team member limit exceeded" in str(exc_info.value.detail)
@@ -460,7 +459,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to add member to team" in str(exc_info.value.detail)
@@ -480,7 +479,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Cannot add members to personal teams" in str(exc_info.value.detail)
@@ -508,7 +507,7 @@ class TestTeamsRouterV2:
             mock_service.add_member_to_team = AsyncMock(return_value=new_owner)
             MockService.return_value = mock_service
 
-            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.user_email == request.email
             assert result.role == "owner"
@@ -530,7 +529,7 @@ class TestTeamsRouterV2:
             mock_service.get_member = AsyncMock(return_value=mock_team_member)  # Fetches member after update
             MockService.return_value = mock_service
 
-            result = await teams.update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
+            result = await teams.update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.role == "owner"
             mock_service.update_member_role.assert_called_once_with(team_id, user_email, request.role)
@@ -547,7 +546,7 @@ class TestTeamsRouterV2:
             mock_service.remove_member_from_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 
-            result = await teams.remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
+            result = await teams.remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert result.message == "Team member removed successfully"
             mock_service.remove_member_from_team.assert_called_once_with(team_id, user_email)
@@ -567,7 +566,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
+                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db, http_request=make_test_scope_request())
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to get team" in str(exc_info.value.detail)
