@@ -1428,6 +1428,25 @@ catalog_servers:
     requires_api_key: true
     tags: ["compute", "vm", "cloud", "google"]
 
+  - id: embarko
+    name: "Embarko"
+    category: "Cloud"
+    url: "https://mcp.embarko.ai/mcp"
+    logo_url: "/static/catalog-icons/embarko.png"
+    auth_type: "OAuth2.1"
+    provider: "Walkover"
+    transport: "STREAMABLEHTTP"
+    description: "Deploy and host AI-built apps and websites, and get a live URL without any DevOps setup"
+    requires_api_key: false
+    tags: ["deployment", "hosting", "cloud", "developer-tools"]
+    oauth:
+      issuer: "https://mcp.embarko.ai/oauth/6aa6e50e3f46d251d268bd9d"
+      authorization_url: "https://mcp.embarko.ai/oauth/6aa6e50e3f46d251d268bd9d/authorize"
+      token_url: "https://mcp.embarko.ai/oauth/6aa6e50e3f46d251d268bd9d/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.embarko.ai/mcp"
+
   # Search & Data Services
   - id: searchapi
     name: "SearchAPI"
