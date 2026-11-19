@@ -191,7 +191,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
-    # Order matters: the first method+path match wins, so the concrete /a2a/invoke
+    # Order matters: the first method+path match wins. The stored extended card needs
+    # a2a.update, so it precedes the general GET /a2a rule. The concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
     ("GET", re.compile(r"^/a2a/[^/]+/stored-card/extended/?$"), Permissions.A2A_UPDATE),
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),

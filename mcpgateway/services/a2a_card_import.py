@@ -759,6 +759,7 @@ async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dic
 
     Returns:
         The response, with the extended outcome, card, and added field paths set when an attempt was made.
+        The extended request has its own deadline, so a slow extended card never discards the found public card.
     """
     if not headers or not found.card or not declares_extended_card(found.card):
         return found
@@ -790,6 +791,7 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     Returns:
         The normalized card with a suggested agent mapping, or a response naming why no card was returned.
     """
+    found: Optional[A2AFetchCardResponse] = None
     try:
         async with asyncio.timeout(float(settings.federation_timeout)):
             for url in build_candidate_urls(base_url, path):
@@ -803,11 +805,13 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
                     continue
                 found = _build_found_response(url, document, fetched.etag, fetched.max_age)
                 if found:
-                    return await _with_extended_card(found, headers)
+                    break
     except TimeoutError:
         logger.warning("A2A card search for %s exceeded the total deadline", sanitize_url_for_logging(base_url))
         return _unreachable()
-    return _not_found()
+    if found is None:
+        return _not_found()
+    return await _with_extended_card(found, headers)
 
 
 def same_origin(url: AnyHttpUrl, other: Optional[str]) -> bool:
@@ -919,11 +923,12 @@ async def fetch_extended_card(card: Dict[str, Any], source_url: str, headers: Op
     """
     try:
         interface = _select_interface(card)
-    except IndexError:
+        source = TypeAdapter(AnyHttpUrl).validate_python(source_url)
+    except (IndexError, ValidationError):
         return ExtendedCardResult("unavailable")
     if str(interface.get("protocolBinding", _DEFAULT_PROTOCOL_BINDING)).upper() != _DEFAULT_PROTOCOL_BINDING:
         return ExtendedCardResult("unavailable")
-    if headers and not same_origin(TypeAdapter(AnyHttpUrl).validate_python(source_url), str(interface["url"])):
+    if headers and not same_origin(source, str(interface["url"])):
         return ExtendedCardResult("unavailable")
     legacy = str(interface.get("protocolVersion", "1.0")).startswith("0.")
     payload = {"jsonrpc": "2.0", "id": "1", "method": "agent/getAuthenticatedExtendedCard" if legacy else "GetExtendedAgentCard", "params": {}}

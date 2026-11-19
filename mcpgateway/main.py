@@ -5078,6 +5078,7 @@ async def get_a2a_agent_stored_extended_card(
         raise HTTPException(status_code=404, detail=str(e))
     if card is None:
         raise HTTPException(status_code=404, detail="No stored extended Agent Card for this agent")
+    _audit_a2a_extended_card_read(request, user, agent_id)
     return card
 
 
@@ -5515,6 +5516,22 @@ def _audit_a2a_task_action(request: Request, user: Any, action: str, agent_id: s
         request_path=request.url.path,
         request_method=request.method,
         details={"agent_id": agent_id, **(details or {})},
+    )
+
+
+def _audit_a2a_extended_card_read(request: Request, user: Any, agent_id: str) -> None:
+    """Record an audit entry for a read of the stored extended Agent Card."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="read_a2a_extended_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
     )
 
 

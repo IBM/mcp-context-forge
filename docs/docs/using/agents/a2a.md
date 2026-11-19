@@ -455,6 +455,8 @@ Without `path`, the gateway tries `/.well-known/agent-card.json` and then `/.wel
 | `auth_rejected` | The agent answered 401 or 403. The credentials are wrong. |
 | `unavailable` | The request failed, the answer was not a card, the interface is not JSON-RPC, or the interface is on another origin. The credentials stay unproven. |
 
+The response adds these fields when an extended card is found: `extendedCard` (normalized to 1.0), `extendedRawCard` (the document as fetched, omitted when identical to `extendedCard`), `extendedEtag`, `extendedMaxAge`, and `extendedAdditions`. `extendedAdditions` lists the field paths that the extended card adds to the public card. It is `[]` when the extended card adds nothing. The extended request has its own deadline, so a slow extended card never discards the public card. A timeout gives `extendedOutcome` `unavailable`.
+
 | `outcome` | `found` | Meaning |
 |-----------|---------|---------|
 | `found` | `true` | A valid card. `card` is normalized to 1.0, `rawCard` is the document as fetched (omitted when identical), `suggestedAgent` maps the card, `warnings` lists what could not be mapped. |
@@ -479,9 +481,11 @@ pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends af
 
 The gateway sends the registration credentials (`basic`, `bearer`, `authheaders`) to `card_url` only when `card_url` has the same origin as `endpoint_url`.
 
-When the card declares an extended card and the registration carries credentials, the gateway also requests the extended card before any write. A rejected credential fails the registration with 400. A returned extended card is stored as a separate row with `kind` `extended`.
+When the card declares an extended card and the registration carries credentials, the gateway also requests the extended card before any write. A rejected credential fails the registration with 400. A returned extended card is stored as a separate row with `kind` `extended`. When the extended card is unavailable, the registration succeeds and the gateway stores no extended card, so the credentials stay unproven.
 
 `GET /a2a/{agent_id}/stored-card` returns the current stored card. It needs `a2a.read` and applies the same visibility rules as the agent read. It returns 404 when the agent has no stored card.
+
+Stored cards share one version counter per agent. A public card and an extended card stored together take two consecutive numbers, so the public versions can run 1, 3, 5. Each stored card has a `kind` of `public` or `extended`. For an `extended` card, `detectedVersion` and `sourceUrl` describe the public card the extended card belongs to, not the JSON-RPC interface. Each read of the stored extended card writes an audit entry.
 
 `GET /a2a/{agent_id}/stored-card/extended` returns the stored extended card. The extended card is content that the agent shows only to credentialed callers, so the route needs `a2a.update`, not `a2a.read`. The caller must also own the agent, as for task and push config routes: the agent owner, a team owner for team agents, or a platform admin. Other callers get 404. The route also returns 404 when the agent has no stored extended card.
 
