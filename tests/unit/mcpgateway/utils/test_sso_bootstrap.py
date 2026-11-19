@@ -187,7 +187,7 @@ def test_get_predefined_sso_providers_generic_oidc_provider_metadata(monkeypatch
 
 
 def test_get_predefined_sso_providers_generic_oidc_empty_role_mappings(monkeypatch):
-    """Generic OIDC bootstrap writes provider_metadata even when role_mappings is empty."""
+    """Empty role settings are omitted so they cannot shadow a later environment value."""
     # First-Party
     from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
 
@@ -224,8 +224,45 @@ def test_get_predefined_sso_providers_generic_oidc_empty_role_mappings(monkeypat
 
     assert "provider_metadata" in provider
     meta = provider["provider_metadata"]
-    assert meta["role_mappings"] == {}
-    assert meta["default_role"] is None
+    assert "role_mappings" not in meta
+    assert "default_role" not in meta
+    assert meta["groups_claim"] == "groups"
+
+
+def test_merge_provider_metadata_keeps_env_values_when_db_is_empty(caplog):
+    """Empty database values must not shadow configured environment values."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import _merge_provider_metadata
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        merged = _merge_provider_metadata(
+            {
+                "groups_claim": "groups",
+                "role_mappings": {"my-admin-group": "platform_admin"},
+                "default_role": "platform_viewer",
+                "sync_roles": True,
+            },
+            {
+                "groups_claim": "custom",
+                "role_mappings": {},
+                "default_role": None,
+                "admin_groups": [],
+                "sync_roles": False,
+            },
+            "myidp",
+        )
+
+    assert merged == {
+        "groups_claim": "custom",
+        "role_mappings": {"my-admin-group": "platform_admin"},
+        "default_role": "platform_viewer",
+        "admin_groups": [],
+        "sync_roles": False,
+    }
+    # Both non-empty values differ, so the override is reported.
+    assert "provider_metadata['groups_claim'] from the database overrides" in caplog.text
+    assert "provider_metadata['sync_roles'] from the database overrides" in caplog.text
+    assert "myidp" in caplog.text
 
 
 def test_get_predefined_sso_providers_adfs_enabled(monkeypatch):
@@ -583,6 +620,52 @@ class TestSSOBootstrapAsync:
 
         _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
         assert merged_config["provider_metadata"] == {"groups_claim": "custom", "new_setting": "value", "sync_roles": False}
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_fills_empty_db_metadata_from_env(self):
+        """A stored empty value must not keep ignoring a configured environment value."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "myidp"
+        mock_existing_provider.display_name = "My IdP"
+        mock_existing_provider.provider_metadata = {"groups_claim": "custom", "role_mappings": {}, "default_role": None}
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "myidp",
+            "name": "myidp",
+            "display_name": "My IdP",
+            "provider_type": "oidc",
+            "client_id": "client",
+            "client_secret": "secret",  # pragma: allowlist secret
+            "authorization_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "userinfo_url": "https://idp.example.com/userinfo",
+            "scope": "openid email",
+            "provider_metadata": {"groups_claim": "groups", "role_mappings": {"my-admin-group": "platform_admin"}, "default_role": "platform_viewer"},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["provider_metadata"] == {
+            "groups_claim": "custom",
+            "role_mappings": {"my-admin-group": "platform_admin"},
+            "default_role": "platform_viewer",
+        }
 
     @pytest.mark.asyncio
     async def test_bootstrap_prints_unchanged_provider(self, capsys):
