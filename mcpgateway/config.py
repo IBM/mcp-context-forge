@@ -1595,64 +1595,6 @@ class Settings(  # pylint: disable=too-many-ancestors
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
 
-    # ToolOps / LLM Provider Settings
-    llm_provider: str = Field(default="", description="LLM provider selection (openai, azure_openai, anthropic, aws_bedrock, ollama, watsonx)")
-    toolops_temperature: float = Field(default=0.1, description="Sampling temperature for ToolOps LLM calls")
-
-    # OpenAI Provider Settings
-    openai_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI API key")
-    openai_base_url: str = Field(default="", description="Base URL for OpenAI-compatible endpoints")
-    openai_model: str = Field(default="", description="OpenAI model name")
-    openai_max_retries: int = Field(default=2, description="Maximum number of retries for OpenAI requests")
-    openai_max_tokens: int = Field(
-        default=600,
-        validation_alias=AliasChoices("openai_max_tokens", "OPENAI_MAX_TOKENS", "openai_max_toekns", "OPENAI_MAX_TOEKNS"),
-        description="Maximum tokens for OpenAI requests",
-    )
-
-    # Azure OpenAI Provider Settings
-    azure_openai_api_key: SecretStr = Field(default=SecretStr(""), description="Azure OpenAI API key")
-    azure_openai_endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
-    azure_openai_api_version: str = Field(default="", description="Azure OpenAI API version")
-    azure_openai_deployment: str = Field(default="", description="Azure OpenAI deployment name")
-    azure_openai_model: str = Field(default="", description="Azure OpenAI model name")
-    azure_openai_max_retries: int = Field(default=2, description="Maximum number of retries for Azure OpenAI requests")
-    azure_openai_max_tokens: int = Field(
-        default=600,
-        validation_alias=AliasChoices("azure_openai_max_tokens", "AZURE_OPENAI_MAX_TOKENS", "azure_openai_max_toekns", "AZURE_OPENAI_MAX_TOEKNS"),
-        description="Maximum tokens for Azure OpenAI requests",
-    )
-
-    # Anthropic Provider Settings
-    anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key")
-    anthropic_model: str = Field(default="", description="Anthropic Claude model name")
-    anthropic_max_tokens: int = Field(default=4096, description="Maximum tokens for Anthropic requests")
-    anthropic_max_retries: int = Field(default=2, description="Maximum number of retries for Anthropic requests")
-
-    # AWS Bedrock Provider Settings
-    aws_bedrock_model_id: str = Field(default="", description="AWS Bedrock model ID")
-    aws_bedrock_region: str = Field(default="", description="AWS region for Bedrock")
-    aws_bedrock_max_tokens: int = Field(default=4096, description="Maximum tokens for AWS Bedrock requests")
-    aws_access_key_id: str = Field(default="", description="AWS Access Key ID")
-    aws_secret_access_key: SecretStr = Field(default=SecretStr(""), description="AWS Secret Access Key")
-    aws_session_token: SecretStr = Field(default=SecretStr(""), description="AWS Session Token")
-
-    # Ollama Provider Settings
-    ollama_model: str = Field(default="", description="Ollama model name")
-    ollama_base_url: str = Field(default="", description="Ollama base URL")
-
-    # IBM watsonx.ai Provider Settings
-    watsonx_apikey: SecretStr = Field(
-        default=SecretStr(""),
-        validation_alias=AliasChoices("watsonx_apikey", "WATSONX_APIKEY", "watsonx_api_key", "WATSONX_API_KEY"),
-        description="IBM Cloud API key for watsonx.ai",
-    )
-    watsonx_url: str = Field(default="", description="IBM watsonx.ai service endpoint URL")
-    watsonx_model_id: str = Field(default="", description="IBM watsonx.ai model ID")
-    watsonx_project_id: str = Field(default="", description="IBM watsonx.ai project ID")
-    watsonx_max_new_tokens: int = Field(default=1000, description="Maximum new tokens for watsonx.ai requests")
-    watsonx_decoding_method: str = Field(default="greedy", description="Decoding method for watsonx.ai requests")
-
     # Database query logging
     sqlalchemy_echo: bool = Field(default=False, description="Log all SQL queries (useful for N+1 detection and performance analysis)")
 

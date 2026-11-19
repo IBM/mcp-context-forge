@@ -32,9 +32,3 @@ def test_ssl_cache_ttl_rejects_invalid_values(monkeypatch, value):
         Settings(_env_file=None)
 
 
-@pytest.mark.parametrize("name", ["OPENAI_MAX_TOKENS", "OPENAI_MAX_TOEKNS"])
-def test_openai_max_tokens_aliases(monkeypatch, name):
-    monkeypatch.delenv("OPENAI_MAX_TOKENS", raising=False)
-    monkeypatch.delenv("OPENAI_MAX_TOEKNS", raising=False)
-    monkeypatch.setenv(name, "123")
-    assert Settings(_env_file=None).openai_max_tokens == 123
