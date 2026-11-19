@@ -8,6 +8,7 @@ Unit tests for re-fetching the Agent Card of a registered agent (#7540).
 
 # Standard
 import copy
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -23,7 +24,7 @@ from mcpgateway.db import A2AAgent, A2AAgentCard, Base
 from mcpgateway.schemas import A2ACardRefreshRequest
 from mcpgateway.services import a2a_service as a2a_service_module
 from mcpgateway.services.a2a_card_import import _build_found_response
-from mcpgateway.services.a2a_service import A2AAgentError, A2ACardRefreshThrottledError, A2AAgentService
+from mcpgateway.services.a2a_service import _origin_of, A2AAgentError, A2AAgentNotFoundError, A2ACardRefreshThrottledError, A2AAgentService
 from mcpgateway.utils.services_auth import encode_auth
 
 SOURCE_URL = "https://agent.example.com/.well-known/agent-card.json"
@@ -183,6 +184,38 @@ class TestRefreshCard:
         assert exc.value.retry_after > 0
         assert fetch.await_count == 1
 
+    async def test_endpoint_without_an_origin_finds_no_card(self, db, service, fetch):
+        """An endpoint that does not parse gives no card and sends no request."""
+        db.get(A2AAgent, "agent-1").endpoint_url = "not a url"
+        db.commit()
+        with pytest.raises(A2AAgentError, match="No A2A Agent Card"):
+            await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        fetch.assert_not_awaited()
+
+    async def test_storage_failure_leaves_the_card_unchanged(self, db, service, fetch, monkeypatch):
+        """A failed write rolls back, raises, and keeps the stored card."""
+        _store(db)
+        fetch.return_value = _found({**V1_CARD, "version": "9.9.9"}, etag='"v9"')
+        monkeypatch.setattr(db, "commit", MagicMock(side_effect=RuntimeError("disk full")))
+        with pytest.raises(A2AAgentError, match="Failed to store"):
+            await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        monkeypatch.undo()
+        assert [(row.version, row.card["version"]) for row in db.query(A2AAgentCard)] == [(1, "2.1.0")]
+
+    async def test_old_attempts_are_pruned_when_the_table_grows(self, db, service, fetch, monkeypatch):
+        """The attempt table drops entries older than the interval once it passes 10000 agents."""
+        monkeypatch.setattr(settings, "a2a_card_refresh_min_interval", 60)
+        long_ago = time.monotonic() - 1000
+        service._card_refresh_attempts = {f"old-{index}": long_ago for index in range(10001)}  # pylint: disable=protected-access
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert list(service._card_refresh_attempts) == ["agent-1"]  # pylint: disable=protected-access
+
+    async def test_credentials_are_withheld_for_an_unparsable_url(self, db, service):
+        """A URL that does not parse never receives the agent credential."""
+        agent = db.get(A2AAgent, "agent-1")
+        agent.auth_type, agent.auth_value = "bearer", encode_auth({"Authorization": "Bearer s"})
+        assert service._card_credentials(agent, "not a url") is None  # pylint: disable=protected-access
+
     async def test_non_owner_is_denied(self, db, service, fetch, monkeypatch):
         """Ownership is enforced like agent update."""
         from mcpgateway.services import permission_service
@@ -244,6 +277,33 @@ class TestRefreshRoute:
             await self._call(None)
         assert (exc.value.status_code, exc.value.headers["Retry-After"]) == (429, "12")
 
+    async def test_service_unavailable_is_503(self, monkeypatch):
+        """Without a service the route answers 503."""
+        monkeypatch.setattr(main, "a2a_service", None)
+        with pytest.raises(HTTPException) as exc:
+            await self._call()
+        assert exc.value.status_code == 503
+
+    async def test_non_owner_is_403(self, route):
+        """An ownership failure in the service is 403."""
+        route.refresh_card.side_effect = PermissionError("Only the owner can refresh the Agent Card of this agent")
+        with pytest.raises(HTTPException) as exc:
+            await self._call()
+        assert exc.value.status_code == 403
+
+    async def test_unknown_agent_is_404(self, route):
+        """An agent the caller cannot see is 404."""
+        route.refresh_card.side_effect = A2AAgentNotFoundError("nope")
+        with pytest.raises(HTTPException) as exc:
+            await self._call()
+        assert exc.value.status_code == 404
+
+    async def test_success_returns_the_service_result(self, route):
+        """The route returns what the service returns."""
+        result = MagicMock(status="unchanged")
+        route.refresh_card.return_value = result
+        assert await self._call() is result
+
     async def test_fetch_failure_is_400(self, route):
         route.refresh_card.side_effect = A2AAgentError("nope")
         with pytest.raises(HTTPException) as exc:
@@ -267,3 +327,50 @@ async def test_fetch_sends_if_none_match_and_maps_304(monkeypatch):
     monkeypatch.setattr(a2a_card_import, "_get_json", fake_get_json)
     result = await a2a_card_import.fetch_agent_card(SOURCE_URL, None, None, '"v1"')
     assert (seen["etag"], result.outcome, result.found) == ('"v1"', "not_modified", False)
+
+
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [
+        (None, None),
+        ("", None),
+        ("not a url", None),
+        ("https://agent.example.com/rpc/v1?x=1", "https://agent.example.com"),
+        ("https://agent.example.com:443/rpc", "https://agent.example.com"),
+        ("http://agent.example.com:80/rpc", "http://agent.example.com"),
+        ("http://127.0.0.1:9100/rpc", "http://127.0.0.1:9100"),
+    ],
+)
+def test_origin_of(url, origin):
+    """The origin keeps scheme, host, and a non-default port, and drops the rest."""
+    assert _origin_of(url) == origin
+
+
+@pytest.mark.asyncio
+async def test_not_modified_response_is_read_without_a_body(monkeypatch):
+    """A real 304 answer carries the ETag and max-age and no document."""
+    # First-Party
+    from mcpgateway.services import a2a_card_import
+    from mcpgateway.services.a2a_card_import import CardResponse
+
+    class _Resp:
+        status_code = 304
+        headers = {"etag": '"e"', "cache-control": "public, max-age=60"}
+
+    class _Stream:
+        async def __aenter__(self):
+            return _Resp()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Client:
+        def stream(self, *args, **kwargs):
+            return _Stream()
+
+    target = MagicMock()
+    target.pin.return_value = "https://1.2.3.4/card.json"
+    target.validated_url = "https://a.example.com/card.json"
+    target.extensions = {}
+    result = await a2a_card_import._read_body(_Client(), "https://a.example.com/card.json", target, {})  # pylint: disable=protected-access
+    assert result == CardResponse(304, etag='"e"', max_age=60)
