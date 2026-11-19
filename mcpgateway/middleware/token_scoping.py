@@ -190,6 +190,14 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Compliance reporting
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
+    # Export/import routes (export_import_router, mounted at the root and under /v1).
+    # The handlers require admin.export / admin.import, and the import routes also
+    # require an un-narrowed scope in RBAC (global_only=True).
+    ("GET", re.compile(r"^/export/?$"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/export/selective(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/import/?$"), Permissions.ADMIN_IMPORT),
+    ("GET", re.compile(r"^/import/status(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("POST", re.compile(r"^/import/cleanup(?:$|/)"), Permissions.ADMIN_IMPORT),
     # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
     # Order matters: the first method+path match wins, so the concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.

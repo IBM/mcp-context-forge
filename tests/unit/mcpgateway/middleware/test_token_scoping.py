@@ -413,6 +413,28 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", ["admin.*"]) is True
         assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", ["*"]) is True
 
+    def test_export_import_paths_require_their_admin_permissions(self, middleware):
+        """Layer 1 maps the export/import router to admin.export and admin.import."""
+        export_routes = [("GET", "/export"), ("POST", "/export/selective")]
+        for method, path in export_routes:
+            assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_EXPORT]) is True
+            assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_IMPORT]) is False
+            assert middleware._check_permission_restrictions(path, method, ["admin.*"]) is True
+
+        import_routes = [("POST", "/import"), ("GET", "/import/status"), ("GET", "/import/status/import-1"), ("POST", "/import/cleanup")]
+        for method, path in import_routes:
+            assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_IMPORT]) is True
+            assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_EXPORT]) is False
+            assert middleware._check_permission_restrictions(path, method, ["admin.*"]) is True
+
+        # The /v1 aliases strip to the same paths.
+        assert middleware._check_permission_restrictions("/v1/export", "GET", [Permissions.ADMIN_EXPORT]) is True
+        assert middleware._check_permission_restrictions("/v1/import", "POST", [Permissions.ADMIN_IMPORT]) is True
+
+        # Unrelated permissions do not grant access.
+        assert middleware._check_permission_restrictions("/export", "GET", [Permissions.GATEWAYS_READ]) is False
+        assert middleware._check_permission_restrictions("/import", "POST", [Permissions.SERVERS_CREATE]) is False
+
     @pytest.mark.asyncio
     async def test_oauth_status_paths_require_gateways_read(self, middleware):
         """GET /oauth/status/{gateway_id} and the batch GET /oauth/status are mapped to
