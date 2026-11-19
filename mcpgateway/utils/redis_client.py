@@ -306,49 +306,39 @@ def _strip_db_from_url(url: str) -> str:
     return parsed.geturl()
 
 
-def _mask_redis_url(url: str) -> str:
-    """Mask credentials in a Redis URL for safe logging.
+def _warn_if_rediss_without_ssl(settings: Any) -> None:
+    """Warn when the URL scheme implies TLS but the ``REDIS_SSL`` flag is off.
 
-    Replaces the password portion of the URL with ``***`` so that
-    connection details can be logged without leaking secrets.
+    The TLS settings (CA cert, hostname check) would be silently skipped.
 
     Args:
-        url: Redis connection URL, e.g. ``redis://:secret@host:6379``
-
-    Returns:
-        str: URL with password replaced by ``***``.
-
-    Examples:
-        >>> _mask_redis_url("redis://:secret@host:6379")
-        'redis://:***@host:6379'
-        >>> _mask_redis_url("redis://host:6379")
-        'redis://host:6379'
+        settings: Application settings object.
     """
-    parsed = urlparse(url)
-    if parsed.password:
-        host = f"[{parsed.hostname}]" if ":" in (parsed.hostname or "") else parsed.hostname
-        port = f":{parsed.port}" if parsed.port else ""
-        masked_netloc = f"{parsed.username or ''}:***@{host}{port}"
-        return parsed._replace(netloc=masked_netloc).geturl()
-    return url
+    if settings.redis_url and settings.redis_url.startswith("rediss://") and not settings.redis_ssl:
+        logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
 
 
-async def _create_cluster_client(settings: Any, aioredis: Any) -> Any:
+async def _create_cluster_client(settings: Any, url: str) -> Any:
     """Create a ``redis.asyncio.RedisCluster`` client.
 
     Args:
         settings: Application settings object.
-        aioredis: The ``redis.asyncio`` module.
+        url: Redis URL with the database selector already removed.
 
     Returns:
         An initialised ``RedisCluster`` async client.
+
+    Raises:
+        Exception: Any error from the initial ``ping()``, after the client is closed.
 
     Note:
         ``RedisCluster`` does not accept ``retry_on_timeout``,
         ``parser_class``, or ``single_connection_client``.  It does
         accept ``max_connections`` and ``health_check_interval``.
+        ``max_connections`` applies to each cluster node, not to the whole client.
     """
-    url = _strip_db_from_url(settings.redis_url)
+    # Third-Party
+    import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
 
     cluster_kwargs: dict[str, Any] = {
         "decode_responses": settings.redis_decode_responses,
@@ -359,26 +349,31 @@ async def _create_cluster_client(settings: Any, aioredis: Any) -> Any:
         "encoding": "utf-8",
     }
 
-    if url.startswith("rediss://") and not settings.redis_ssl:
-        logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
+    _warn_if_rediss_without_ssl(settings)
     cluster_kwargs.update(_build_ssl_kwargs(settings))
 
     client = aioredis.RedisCluster.from_url(url, **cluster_kwargs)
-    await client.ping()
+    try:
+        await client.ping()
+    except Exception:
+        await client.aclose()
+        raise
     return client
 
 
-async def _create_standalone_client(settings: Any, aioredis: Any, parser_class: Any) -> Any:
+async def _create_standalone_client(settings: Any, parser_class: Any) -> Any:
     """Create a standard ``redis.asyncio.Redis`` client.
 
     Args:
         settings: Application settings object.
-        aioredis: The ``redis.asyncio`` module.
         parser_class: Optional parser class override (or *None* for auto).
 
     Returns:
         An initialised ``Redis`` async client.
     """
+    # Third-Party
+    import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
+
     connection_kwargs: dict[str, Any] = {
         "decode_responses": settings.redis_decode_responses,
         "max_connections": settings.redis_max_connections,
@@ -393,10 +388,7 @@ async def _create_standalone_client(settings: Any, aioredis: Any, parser_class: 
     if parser_class is not None:
         connection_kwargs["parser_class"] = parser_class
 
-    # Warn when URL scheme implies TLS but REDIS_SSL flag is off — our ssl
-    # settings (CA cert, hostname check) would be silently skipped.
-    if settings.redis_url and settings.redis_url.startswith("rediss://") and not settings.redis_ssl:
-        logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
+    _warn_if_rediss_without_ssl(settings)
 
     # Inject TLS kwargs when REDIS_SSL=true (production).
     # Local dev: returns {} → no ssl kwarg → plain TCP connection.
@@ -452,7 +444,7 @@ async def get_redis_client() -> Optional[Any]:
 
     try:
         # Third-Party
-        import redis.asyncio as aioredis
+        import redis.asyncio  # noqa: F401  # pylint: disable=unused-import
     except ImportError:
         logger.warning("redis.asyncio not available, Redis disabled")
         _initialized = True
@@ -461,19 +453,23 @@ async def get_redis_client() -> Optional[Any]:
     # Validate cluster URL before attempting connection so
     # misconfigurations (e.g. /1) crash immediately instead of
     # being silently swallowed by the generic except below.
-    if settings.redis_cluster_mode:
-        _strip_db_from_url(settings.redis_url)
+    cluster_url = _strip_db_from_url(settings.redis_url) if settings.redis_cluster_mode else None
 
     try:
         # Get parser configuration (ADR-026)
         parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
 
-        if settings.redis_cluster_mode:
-            _client = await _create_cluster_client(settings, aioredis)
-            masked_url = _mask_redis_url(_strip_db_from_url(settings.redis_url))
-            logger.info(f"Redis Cluster client initialized: parser={_parser_info}, timeout={settings.redis_socket_timeout}s, url={masked_url}")
+        if cluster_url is not None:
+            _client = await _create_cluster_client(settings, cluster_url)
+            logger.info(
+                f"Redis Cluster client initialized: mode=cluster, "
+                f"pool_size_per_node={settings.redis_max_connections}, "
+                f"timeout={settings.redis_socket_timeout}s, "
+                f"health_check={settings.redis_health_check_interval}s"
+            )
+            logger.info("REDIS_PARSER and REDIS_RETRY_ON_TIMEOUT are not applied in Redis Cluster mode")
         else:
-            _client = await _create_standalone_client(settings, aioredis, parser_class)
+            _client = await _create_standalone_client(settings, parser_class)
             logger.info(
                 f"Redis client initialized: parser={_parser_info}, "
                 f"pool_size={settings.redis_max_connections}, "
@@ -484,8 +480,10 @@ async def get_redis_client() -> Optional[Any]:
         logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
         _client = None
     except ValueError as e:
-        # SSL misconfiguration — bad paths or unparseable certs; treat as fatal
+        # SSL misconfiguration — bad paths or unparseable certs
         logger.error(f"Redis SSL misconfiguration — client not started: {_sanitize(str(e))}")
+        if cluster_url is not None:
+            raise
         _client = None
     except Exception as e:
         logger.warning(f"Failed to connect to Redis: {_sanitize(str(e))}")

@@ -1043,6 +1043,15 @@
               "description": "MCP protocol version",
               "default": "2025-03-26"
             },
+            "REDIS_CLUSTER_MODE": {
+              "type": "string",
+              "description": "Use the RedisCluster client for Redis Cluster deployments",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
             "REDIS_DECODE_RESPONSES": {
               "type": "string",
               "description": "Return strings instead of bytes from Redis",

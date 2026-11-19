@@ -1335,6 +1335,7 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `REDIS_RETRY_ON_TIMEOUT`  | Retry on timeout           | `true`     | bool                     |
 | `REDIS_HEALTH_CHECK_INTERVAL` | Health check (secs)    | `30`       | int >= 0                 |
 | `REDIS_DECODE_RESPONSES`  | Return strings vs bytes    | `true`     | bool                     |
+| `REDIS_CLUSTER_MODE`      | Use the `RedisCluster` client (see [Redis Cluster Mode](scale.md#redis-cluster-mode)) | `false` | bool |
 | `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`       | int > 0                  |
 | `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |
