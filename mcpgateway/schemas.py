@@ -6361,6 +6361,44 @@ class A2AStoredCardRead(BaseModelWithConfigDict):
     etag: Optional[str] = Field(None, description="ETag returned with the card")
     max_age: Optional[int] = Field(None, description="Cache-Control max-age in seconds returned with the card")
     fetched_at: datetime = Field(..., description="When the card was fetched")
+    checked_at: Optional[datetime] = Field(None, description="When a re-fetch last found the card unchanged")
+
+
+class A2ACardRefreshRequest(BaseModelWithConfigDict):
+    """Request to re-fetch the Agent Card of a registered agent.
+
+    Both fields are optional. An empty request re-fetches from the stored ``source_url``,
+    or from the URLs derived from the agent ``endpoint_url`` when no card is stored.
+    """
+
+    base_url: Optional[AnyHttpUrl] = Field(None, description="Agent endpoint or card URL to fetch from instead of the stored source. Requires a2a.create")
+    headers: Optional[Dict[str, str]] = Field(None, description="Headers for this request only. Requires base_url. Never stored")
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "A2ACardRefreshRequest":
+        """Validate the URL and headers with the rules of ``A2AFetchCardRequest``.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If ``headers`` has no ``base_url``.
+        """
+        if self.headers and self.base_url is None:
+            raise ValueError("headers require base_url")
+        if self.base_url is not None:
+            A2AFetchCardRequest(base_url=self.base_url, headers=self.headers)
+        return self
+
+
+class A2ACardRefreshResponse(BaseModelWithConfigDict):
+    """Outcome of re-fetching the Agent Card of a registered agent."""
+
+    status: Literal["unchanged", "updated", "created"] = Field(..., description="Card unchanged, stored as the next version, or stored as the first version")
+    version: int = Field(..., description="Current stored card version after the call")
+    changed_keys: List[str] = Field(default_factory=list, description="Top-level card keys that differ from the previous version")
+    source_url: str = Field(..., description="URL the card came from")
+    checked_at: datetime = Field(..., description="When this check ran")
 
 
 class A2AFetchCardRequest(BaseModelWithConfigDict):
@@ -6435,8 +6473,8 @@ class A2AFetchCardResponse(BaseModelWithConfigDict):
     """
 
     found: bool = Field(..., description="Whether a valid A2A Agent Card was found")
-    outcome: Literal["found", "no_card", "auth_required", "unreachable"] = Field(
-        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, or host blocked or unreachable"
+    outcome: Literal["found", "no_card", "auth_required", "unreachable", "not_modified"] = Field(
+        ..., description="Why the fetch ended: card returned, no card at the location, credentials needed, host blocked or unreachable, or card unchanged since the supplied ETag"
     )
     reason: Optional[str] = Field(None, description="Fixed explanation when no card was found")
     auth_scheme: Optional[str] = Field(None, description="Scheme name from the WWW-Authenticate header when outcome is auth_required")
