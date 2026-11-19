@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.auth_context import resolve_canonical_user_id
+from mcpgateway.auth_context import get_eviction_identities, resolve_canonical_user_id
 from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -530,10 +530,11 @@ class TeamInvitationService:
 
             # Invalidate auth cache for user's team membership
             try:
-                self._fire_and_forget(auth_cache.invalidate_team(invitation.email))
-                self._fire_and_forget(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
-                self._fire_and_forget(auth_cache.invalidate_user_teams(invitation.email))
-                self._fire_and_forget(auth_cache.invalidate_team_membership(invitation.email))
+                for identity in get_eviction_identities(invitation.email, self.db, canonical):
+                    self._fire_and_forget(auth_cache.invalidate_team(identity))
+                    self._fire_and_forget(auth_cache.invalidate_user_role(identity, invitation.team_id))
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(identity))
+                    self._fire_and_forget(auth_cache.invalidate_team_membership(identity))
             except Exception as cache_error:
                 logger.debug("Failed to invalidate cache on invitation acceptance: %s", cache_error)
 

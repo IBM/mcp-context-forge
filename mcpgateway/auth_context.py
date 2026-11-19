@@ -126,6 +126,7 @@ import uuid
 # Third-Party
 from fastapi import Request
 import orjson
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -304,6 +305,97 @@ def resolve_canonical_user_id(email: str, db: Session) -> str:
     if user is not None and isinstance(user.user_id, str) and user.user_id:
         return user.user_id
     return email
+
+
+def identity_or_email(identity: str, email: str) -> str:
+    """Return *identity*, or *email* when *identity* is not a usable identity.
+
+    The ``"unknown"`` placeholder and a UUID value are not identities. A UUID
+    session subject is an opaque reference. Both cases take the e-mail.
+
+    Args:
+        identity: Identity extracted from a payload or user object
+        email: Fallback e-mail address
+
+    Returns:
+        str: The identity, or the e-mail when the identity is unusable
+
+    Examples:
+        >>> identity_or_email('u-1', 'a@example.com')
+        'u-1'
+        >>> identity_or_email('unknown', 'a@example.com')
+        'a@example.com'
+        >>> identity_or_email('0b1c2d3e-0000-4000-8000-000000000001', 'a@example.com')
+        'a@example.com'
+    """
+    if identity == "unknown" or _is_uuid_string(identity):
+        return email
+    return identity
+
+
+def get_cache_identity(payload: Mapping[str, Any], email: str) -> str:
+    """Return the identity that keys ``AuthCache`` entries for a JWT payload.
+
+    The ``user`` metadata of the payload supplies the identity. A payload
+    without identity keys falls back to the resolved e-mail. A UUID value is
+    an opaque session reference, not an identity, so it also falls back to
+    the resolved e-mail. ``get_current_user`` and the streamable HTTP
+    transport both call this helper, so both address the same cache entries.
+
+    Args:
+        payload: Decoded JWT payload
+        email: E-mail address resolved from the payload
+
+    Returns:
+        str: Identity to use as the ``AuthCache`` key
+
+    Examples:
+        >>> get_cache_identity({'user': {'user_id': 'u-1', 'email': 'a@example.com'}}, 'a@example.com')
+        'u-1'
+        >>> get_cache_identity({}, 'a@example.com')
+        'a@example.com'
+        >>> get_cache_identity({'user': {'user_id': '0b1c2d3e-0000-4000-8000-000000000001'}}, 'a@example.com')
+        'a@example.com'
+        >>> get_cache_identity({'user': {'sub': 'entra-sub-1'}}, 'a@example.com')
+        'entra-sub-1'
+    """
+    return identity_or_email(get_user_id(payload.get("user") or {"email": email}), email)
+
+
+def get_eviction_identities(email: str, db: Session, user_id: Optional[str] = None) -> tuple[str, ...]:
+    """Return every identity under which ``AuthCache`` may hold entries for a user.
+
+    Cache writes use the e-mail for some paths and the canonical ``user_id``
+    for others. An eviction must cover both. Pass ``user_id`` when a loaded
+    row already carries it, which saves the lookup. A canonical id equal to
+    the e-mail yields a single identity. A failed lookup yields the e-mail
+    alone, so the e-mail eviction still runs.
+
+    Args:
+        email: E-mail address of the user whose entries must go
+        db: SQLAlchemy session used to resolve the canonical id when ``user_id`` is absent
+        user_id: Canonical id from an already loaded row, if available
+
+    Returns:
+        tuple[str, ...]: The e-mail, followed by the canonical id when it differs
+
+    Examples:
+        >>> get_eviction_identities('a@example.com', None, user_id='u-1')
+        ('a@example.com', 'u-1')
+        >>> get_eviction_identities('a@example.com', None, user_id='a@example.com')
+        ('a@example.com',)
+    """
+    if isinstance(user_id, str) and user_id:
+        canonical = user_id
+    else:
+        try:
+            canonical = resolve_canonical_user_id(email, db)
+        except SQLAlchemyError:
+            logger.warning("Canonical user_id lookup failed; evicting by e-mail only")
+            return (email,)
+    if canonical == email:
+        return (email,)
+    return (email, canonical)
 
 
 def _is_uuid_string(value: str) -> bool:

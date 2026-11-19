@@ -79,13 +79,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
+from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -114,12 +113,12 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -2104,9 +2103,7 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 # via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
 # argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
 # so the gateway's existing tool_service.py schema validation is the only path.
-async def call_tool(
-    name: str, arguments: dict
-) -> Union[
+async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
@@ -2753,14 +2750,18 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     auth_context_resolved = False
     platform_admin_email = getattr(settings, "platform_admin_email", "")
     if email:
+        # First-Party
+        from mcpgateway.auth_context import get_cache_identity  # pylint: disable=import-outside-toplevel
+
         jti = payload.get("jti")
+        cache_identity = get_cache_identity(payload, email)
         if settings.auth_cache_enabled:
             try:
                 # First-Party
                 from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
                 auth_cache = get_auth_cache()
-                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                cached_ctx = await auth_cache.get_auth_context(cache_identity, jti)
                 if cached_ctx is not None:
                     if cached_ctx.is_token_revoked:
                         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
@@ -2796,7 +2797,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     auth_context_resolved = True
                     try:
                         await auth_cache.set_auth_context(
-                            email,
+                            cache_identity,
                             jti,
                             CachedAuthContext(
                                 user=batched_user,
@@ -2846,7 +2847,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                         from mcpgateway.cache.auth_cache import CachedAuthContext  # pylint: disable=import-outside-toplevel
 
                         await auth_cache.set_auth_context(
-                            email,
+                            cache_identity,
                             jti,
                             CachedAuthContext(
                                 user=(
@@ -6478,13 +6479,14 @@ class _StreamableHttpAuthHandler:
 
             # First-Party
             from mcpgateway.auth import _get_auth_context_batched_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
-            from mcpgateway.auth_context import jwt_subject_is_uuid  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth_context import get_cache_identity, jwt_subject_is_uuid  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
             user_email = await _resolve_jwt_user_email_for_streamable(user_payload)
             if not user_email and settings.require_user_in_db and jwt_subject_is_uuid(user_payload):
                 return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
+            cache_identity = get_cache_identity(user_payload, user_email) if user_email else None
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin
@@ -6499,7 +6501,7 @@ class _StreamableHttpAuthHandler:
 
             if user_email and auth_cache is not None:
                 try:
-                    cached_ctx = await auth_cache.get_auth_context(user_email, jti)
+                    cached_ctx = await auth_cache.get_auth_context(cache_identity, jti)
                     if cached_ctx is not None:
                         _record_mcp_auth_cache_event("auth_context_hit")
                         if cached_ctx.is_token_revoked:
@@ -6517,7 +6519,7 @@ class _StreamableHttpAuthHandler:
                             return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                         if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
-                            cached_team_ids = await auth_cache.get_user_teams(f"{user_email}:True")
+                            cached_team_ids = await auth_cache.get_user_teams(f"{cache_identity}:True")
                             if cached_team_ids is not None:
                                 _record_mcp_auth_cache_event("teams_cache_hit")
                     else:
@@ -6549,7 +6551,7 @@ class _StreamableHttpAuthHandler:
 
                     if auth_cache is not None:
                         await auth_cache.set_auth_context(
-                            user_email,
+                            cache_identity,
                             jti,
                             CachedAuthContext(
                                 user=cached_user,
@@ -6559,7 +6561,7 @@ class _StreamableHttpAuthHandler:
                         )
                         if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
                             cached_team_ids = list(batched_auth_ctx.get("team_ids") or [])
-                            await auth_cache.set_user_teams(f"{user_email}:True", cached_team_ids)
+                            await auth_cache.set_user_teams(f"{cache_identity}:True", cached_team_ids)
                             _record_mcp_auth_cache_event("teams_batch_hit")
                 except HTTPException:
                     raise
@@ -6602,7 +6604,7 @@ class _StreamableHttpAuthHandler:
                     if auth_cache is not None:
                         try:
                             await auth_cache.set_auth_context(
-                                user_email,
+                                cache_identity,
                                 jti,
                                 CachedAuthContext(
                                     user=(

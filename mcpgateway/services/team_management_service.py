@@ -30,19 +30,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
-from mcpgateway.auth_context import resolve_canonical_user_id
+from mcpgateway.auth_context import get_eviction_identities, resolve_canonical_user_id
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.schemas import MAX_TEAM_MEMBER_SEEDS, TeamMemberSeed
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import PublicValidationError
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
-from mcpgateway.utils.error_formatter import PublicValidationError
 
 # Initialize logging
 logging_service = LoggingService()
@@ -547,10 +547,11 @@ class TeamManagementService:
             include_admin_stats: Whether to also invalidate admin stats (skip on removal).
         """
         try:
-            self._fire_and_forget(auth_cache.invalidate_team(user_email))
-            self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
-            self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
-            self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
+            for identity in get_eviction_identities(user_email, self.db):
+                self._fire_and_forget(auth_cache.invalidate_team(identity))
+                self._fire_and_forget(auth_cache.invalidate_user_role(identity, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(identity))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(identity))
             if include_admin_stats:
                 self._fire_and_forget(admin_stats_cache.invalidate_teams())
         except Exception as cache_error:
@@ -574,7 +575,8 @@ class TeamManagementService:
                 .all()
             )
             for membership in memberships:
-                self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+                for identity in get_eviction_identities(membership.user_email, self.db, membership.user_id):
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(identity))
             self._fire_and_forget(admin_stats_cache.invalidate_teams())
         except Exception as cache_error:
             logger.warning("Failed to invalidate caches after team update for %s: %s", SecurityValidator.sanitize_log_message(team_id), cache_error)
@@ -944,9 +946,10 @@ class TeamManagementService:
             # Invalidate auth cache for creator's team membership
             # Without this, the cache won't know the user belongs to this new team
             try:
-                await auth_cache.invalidate_user_teams(created_by)
-                await auth_cache.invalidate_team_membership(created_by)
-                await auth_cache.invalidate_user_role(created_by, team_id)
+                for identity in get_eviction_identities(created_by, self.db):
+                    await auth_cache.invalidate_user_teams(identity)
+                    await auth_cache.invalidate_team_membership(identity)
+                    await auth_cache.invalidate_user_role(identity, team_id)
                 await admin_stats_cache.invalidate_teams()
             except Exception as cache_error:
                 logger.debug("Failed to invalidate cache on team create: %s", cache_error)
@@ -1164,9 +1167,10 @@ class TeamManagementService:
                 self._fire_and_forget(admin_stats_cache.invalidate_teams())
                 # Also invalidate team cache, teams list cache, and team membership cache for each member
                 for membership in memberships:
-                    self._fire_and_forget(auth_cache.invalidate_team(membership.user_email))
-                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
-                    self._fire_and_forget(auth_cache.invalidate_team_membership(membership.user_email))
+                    for identity in get_eviction_identities(membership.user_email, self.db, membership.user_id):
+                        self._fire_and_forget(auth_cache.invalidate_team(identity))
+                        self._fire_and_forget(auth_cache.invalidate_user_teams(identity))
+                        self._fire_and_forget(auth_cache.invalidate_team_membership(identity))
             except Exception as cache_error:
                 logger.debug("Failed to invalidate caches on team delete: %s", cache_error)
 
@@ -1486,7 +1490,8 @@ class TeamManagementService:
 
             # Invalidate role cache
             try:
-                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+                for identity in get_eviction_identities(user_email, self.db):
+                    self._fire_and_forget(auth_cache.invalidate_user_role(identity, team_id))
             except Exception as cache_error:
                 logger.debug("Failed to invalidate cache on role update: %s", cache_error)
 

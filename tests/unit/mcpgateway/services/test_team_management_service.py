@@ -2889,8 +2889,10 @@ class TestTeamManagementService:
 
         member_alice = MagicMock(spec=EmailTeamMember)
         member_alice.user_email = "alice@example.com"
+        member_alice.user_id = "alice@example.com"
         member_bob = MagicMock(spec=EmailTeamMember)
         member_bob.user_email = "bob@example.com"
+        member_bob.user_id = "bob@example.com"
 
         mock_db.query.return_value.filter.return_value.first.return_value = team
         # Second query returns active memberships

@@ -270,6 +270,9 @@
             "AUTH_CACHE_ENABLED": {
               "type": "string"
             },
+            "AUTH_CACHE_KEY_VERSION": {
+              "type": "string"
+            },
             "AUTH_CACHE_REVOCATION_TTL": {
               "type": "string"
             },

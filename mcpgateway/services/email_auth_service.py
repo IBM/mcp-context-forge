@@ -39,6 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import get_eviction_identities
 from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH, is_passwordless_user, PASSWORDLESS_HASH_TYPE
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -50,7 +51,8 @@ from mcpgateway.db import (
     EmailTeamMember,
     EmailTeamMemberHistory,
     EmailUser,
-    Gateway as DbGateway,
+)
+from mcpgateway.db import (
     PasswordResetToken,
     PendingUserApproval,
     Role,
@@ -60,6 +62,7 @@ from mcpgateway.db import (
     UserRole,
     utc_now,
 )
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -67,8 +70,8 @@ from mcpgateway.services.email_notification_service import AuthEmailNotification
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
 from mcpgateway.sso_provider_ids import canonicalize_sso_provider_id, SSOProviderValidationError
-from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.error_formatter import PublicValidationError
+from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
 logging_service = LoggingService()
@@ -465,27 +468,36 @@ class EmailAuthService:
         """
         return build_frontend_url("/reset-password", token)
 
-    async def _invalidate_user_auth_cache(self, email: str) -> None:
-        """Invalidate cached authentication data for a user.
+    async def _invalidate_user_auth_cache(self, email: str, user_id: Optional[str] = None) -> None:
+        """Invalidate cached authentication data for a user under every identity.
 
         Args:
             email: User email for cache invalidation.
+            user_id: Canonical user ID from an already loaded user row, if available.
         """
         try:
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
+            identities = get_eviction_identities(email, self.db, user_id)
+            results = await asyncio.wait_for(asyncio.shield(asyncio.gather(*(auth_cache.invalidate_user(identity) for identity in identities), return_exceptions=True)), timeout=5.0)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.debug("Failed to invalidate auth cache for %s: %s", email, result)
         except asyncio.TimeoutError:
             logger.warning("Auth cache invalidation timed out for %s - continuing", email)
         except Exception as cache_error:  # nosec B110
             logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
 
-    async def _invalidate_deleted_user_auth_caches(self, email: str) -> None:
+    async def _invalidate_deleted_user_auth_caches(self, email: str, identities: tuple[str, ...]) -> None:
         """Invalidate all auth-cache entries affected by permanent user deletion.
 
+        The caller captures ``identities`` before the user row is deleted,
+        because the canonical ID is not resolvable afterwards.
+
         Args:
-            email: User email for cache invalidation.
+            email: User email for log messages.
+            identities: Every identity under which the user's entries may be cached.
         """
         try:
             # First-Party
@@ -493,9 +505,7 @@ class EmailAuthService:
 
             results = await asyncio.wait_for(
                 asyncio.gather(
-                    auth_cache.invalidate_user(email),
-                    auth_cache.invalidate_user_teams(email),
-                    auth_cache.invalidate_team_membership(email),
+                    *(invalidate(identity) for identity in identities for invalidate in (auth_cache.invalidate_user, auth_cache.invalidate_user_teams, auth_cache.invalidate_team_membership)),
                     return_exceptions=True,
                 ),
                 timeout=5.0,
@@ -2216,6 +2226,8 @@ class EmailAuthService:
             if not user:
                 raise PublicValidationError(f"User {email} not found")
 
+            eviction_identities = get_eviction_identities(email, self.db, user.user_id)
+
             # Check if user owns any teams
             teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
             teams_owned = self.db.execute(teams_owned_stmt).scalars().all()
@@ -2376,7 +2388,7 @@ class EmailAuthService:
             self.db.commit()
             notify_dataplane()
 
-            await self._invalidate_deleted_user_auth_caches(email)
+            await self._invalidate_deleted_user_auth_caches(email, eviction_identities)
 
             logger.info("User %s deleted permanently", SecurityValidator.sanitize_log_message(email))
             return True
