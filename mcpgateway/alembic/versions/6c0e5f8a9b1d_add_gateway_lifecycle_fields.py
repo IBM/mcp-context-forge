@@ -119,6 +119,11 @@ def downgrade() -> None:
 
     inspector = sa.inspect(bind)
     columns = _column_names(inspector, GATEWAY_TABLE)
-    for column_name in reversed(LIFECYCLE_COLUMNS):
-        if column_name in columns:
-            op.drop_column(GATEWAY_TABLE, column_name)
+    columns_to_drop = [column_name for column_name in reversed(LIFECYCLE_COLUMNS) if column_name in columns]
+    if columns_to_drop:
+        # SQLite versions before 3.35 cannot DROP COLUMN outside batch mode;
+        # batch_alter_table recreates the table instead, and is a no-op wrapper
+        # on backends that support dropping columns directly.
+        with op.batch_alter_table(GATEWAY_TABLE) as batch_op:
+            for column_name in columns_to_drop:
+                batch_op.drop_column(column_name)
