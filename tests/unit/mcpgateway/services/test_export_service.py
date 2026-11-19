@@ -1694,7 +1694,7 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     hidden_prompt.tags = []
     hidden_prompt.enabled = True
 
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt, hidden_prompt]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt]
 
     exported = await export_service._export_selected_prompts(
         mock_db,
@@ -1704,6 +1704,18 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     )
     assert len(exported) == 1
     assert exported[0]["name"] == "visible-prompt"
+    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["p1"]]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_scoped_name_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden prompt sharing a name with a visible prompt must not enter the query."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="reader-p", name="shared-name")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_prompts(mock_db, ["shared-name"], user_email="reader@example.com", token_teams=[])
+
+    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["reader-p"]]
 
 
 @pytest.mark.asyncio
@@ -1724,7 +1736,7 @@ async def test_export_selected_prompts_scoped_no_visible_match_returns_empty(exp
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_visibility_filters_non_visible(export_service, mock_db):
     """Ensure selective resource export enforces visibility scoping when context is provided."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r1", uri="file:///visible.txt")])
 
     now = datetime.now(timezone.utc)
     visible_resource = MagicMock()
@@ -1746,7 +1758,7 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     hidden_resource.enabled = True
     hidden_resource.updated_at = now
 
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource, hidden_resource]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource]
 
     exported = await export_service._export_selected_resources(
         mock_db,
@@ -1756,12 +1768,24 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     )
     assert len(exported) == 1
     assert exported[0]["uri"] == "file:///visible.txt"
+    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["r1"]]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_scoped_uri_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden resource sharing a URI with a visible resource must not enter the query."""
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="reader-r", uri="file:///shared.txt")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_resources(mock_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=[])
+
+    assert list(mock_db.execute.call_args[0][0].compile().params.values()) == [["reader-r"]]
 
 
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_no_visible_match_returns_empty(export_service, mock_db):
     """When scoped visibility yields no selected resources, export should short-circuit to empty."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible-only.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r9", uri="file:///visible-only.txt")])
 
     exported = await export_service._export_selected_resources(
         mock_db,
