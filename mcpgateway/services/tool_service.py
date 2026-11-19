@@ -123,7 +123,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -2648,6 +2648,7 @@ class ToolService(BaseService):
                     "display_name": db_tool.display_name,
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
+                    **sigv4_audit_values(getattr(db_tool, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -3089,10 +3090,14 @@ class ToolService(BaseService):
                 db.add_all(tools_to_add)
 
             audit_counts: dict[str | None, dict[str, int]] = {}
+            audit_sigv4_fingerprints: dict[str | None, set[str]] = {}
             for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
                 for db_tool in tools:
                     counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
                     counts[operation] += 1
+                    fingerprint = sigv4_audit_values(getattr(db_tool, "sigv4_config", None), registration=True).get("sigv4_key_fingerprint")
+                    if fingerprint:
+                        audit_sigv4_fingerprints.setdefault(db_tool.team_id, set()).add(fingerprint)
 
             # Commit the chunk
             db.commit()
@@ -3110,7 +3115,11 @@ class ToolService(BaseService):
                     resource_type="tool",
                     resource_id=None,
                     team_id=audit_team_id,
-                    details={"count": sum(counts.values()), "import_batch_id": import_batch_id},
+                    details={
+                        "count": sum(counts.values()),
+                        "import_batch_id": import_batch_id,
+                        **({"sigv4_key_fingerprints": sorted(audit_sigv4_fingerprints[audit_team_id])} if audit_team_id in audit_sigv4_fingerprints else {}),
+                    },
                 )
 
         except Exception as e:
@@ -8136,6 +8145,7 @@ class ToolService(BaseService):
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
 
+            original_sigv4_config = tool.sigv4_config
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
                     if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
@@ -8212,6 +8222,7 @@ class ToolService(BaseService):
                     "name": tool.name,
                     "display_name": tool.display_name,
                     "version": tool.version,
+                    **sigv4_audit_values(tool.sigv4_config, original_sigv4_config),
                 },
                 context={
                     "modified_via": modified_via,

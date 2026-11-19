@@ -10,6 +10,7 @@ Unit tests for the SigV4 request signer.
 from datetime import datetime, timedelta, timezone
 import hashlib
 import re
+import time
 from unittest.mock import patch
 
 # Third-Party
@@ -183,6 +184,38 @@ class TestSigner:
         other = self._signer()
         args = ("GET", "https://b.s3.amazonaws.com/a%20b", {"host": "b.s3.amazonaws.com"}, b"")
         assert s3.sign(*args)["Authorization"] != other.sign(*args)["Authorization"]
+
+
+class TestSigningOverhead:
+    """Signing adds a small, bounded cost to each upstream request."""
+
+    REQUESTS = 1000
+    WARMUP = 200
+    P99_BUDGET_MS = 0.2
+    CI_P99_LIMIT_MS = 2.0
+
+    @staticmethod
+    def _p99_ms(signer: SigV4Signer, body: bytes) -> float:
+        headers = {"host": "api.example.com", "content-type": "application/json"}
+        url = "https://api.example.com/v1/tools/call?b=2&a=1"
+        for _ in range(TestSigningOverhead.WARMUP):
+            signer.sign("POST", url, headers, body)
+        samples = []
+        for _ in range(TestSigningOverhead.REQUESTS):
+            start = time.perf_counter_ns()
+            signer.sign("POST", url, headers, body)
+            samples.append(time.perf_counter_ns() - start)
+        samples.sort()
+        return samples[int(len(samples) * 0.99) - 1] / 1_000_000
+
+    def test_signing_p99_stays_within_bound(self):
+        creds = SigV4Credentials.from_config({**VALID_CONFIG, "session_token": "session-token-value"})  # pragma: allowlist secret
+        signer = SigV4Signer(creds)
+
+        p99 = self._p99_ms(signer, b'{"message": "hello"}' * 25)
+
+        print(f"SigV4 sign() p99 over {self.REQUESTS} requests: {p99:.4f} ms (budget {self.P99_BUDGET_MS} ms)")
+        assert p99 < self.CI_P99_LIMIT_MS
 
 
 class TestAuthFlow:

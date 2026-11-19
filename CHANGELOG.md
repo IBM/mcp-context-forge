@@ -11,6 +11,12 @@
 
 ### Added
 
+- **SigV4 credential hygiene, audit, and access-control tests** ([#7626](https://github.com/IBM/mcp-context-forge/issues/7626), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - ContextForge redacts SigV4 credentials in logs, traces, and SIEM exports, and audits SigV4 registration and rotation.
+    - Redaction covers `secret_access_key`, `session_token`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential` in headers, query parameters, request logs, trace payloads, and SIEM events. The `OTEL_REDACT_FIELDS` and `SIEM_EXPORT_REDACT_FIELDS` defaults list these names. An existing explicit setting keeps its value, so add the names to it.
+    - Gateway and tool create and update audit entries carry `sigv4_key_fingerprint`. A credential rotation adds `sigv4_credential_rotated` and `sigv4_previous_key_fingerprint`. The fingerprint is the first 12 hex characters of the SHA-256 of the access key ID. The entries never hold the access key ID, the secret, or the session token.
+    - ContextForge audits registration and rotation only, not each signed request or health check. No role changes: the `developer` role keeps `gateways.create`, `gateways.update`, `tools.create`, and `tools.update`.
+    - Adds deny-path tests for create, update, and the stored-credential handshake, a plaintext-at-rest regression test, a signing p99 benchmark, and live gateway deny tests. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md#security-properties).
+
 - **AWS Signature V4 signing for REST tools** ([#7561](https://github.com/IBM/mcp-context-forge/issues/7561), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - A REST tool accepts `auth_type: "sigv4"`. A standalone tool carries its own `sigv4_config`. A tool under a SigV4 gateway inherits the gateway credential.
     - ContextForge signs the final request, so the body hash covers the exact bytes sent and URL templates are substituted first. The tool `sigv4_config` takes precedence over the gateway one.
     - `unsigned_payload: true` in `sigv4_config` sends `UNSIGNED-PAYLOAD` for services that accept it. After an HTTP 401, the request is signed again once. A 403 is not retried.

@@ -37,6 +37,9 @@ STATIC_SENSITIVE_PARAMS: FrozenSet[str] = frozenset(
         "credentials",
         "tavilyapikey",  # Tavily-specific
         "tavilyApiKey",  # Tavily-specific (camelCase)
+        "x-amz-signature",  # AWS SigV4 presigned URL
+        "x-amz-credential",  # AWS SigV4 presigned URL
+        "x-amz-security-token",  # AWS SigV4 presigned URL
     }
 )
 

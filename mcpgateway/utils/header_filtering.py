@@ -20,6 +20,7 @@ _SENSITIVE_REQUEST_HEADER_PATTERNS = (
     re.compile(r"^api-key$", re.IGNORECASE),
     re.compile(r"^apikey$", re.IGNORECASE),
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^x-amz-(?:security-token|signature|credential)$", re.IGNORECASE),
     re.compile(r"^cookie$", re.IGNORECASE),
     re.compile(r"^set-cookie$", re.IGNORECASE),
     re.compile(r"^host$", re.IGNORECASE),

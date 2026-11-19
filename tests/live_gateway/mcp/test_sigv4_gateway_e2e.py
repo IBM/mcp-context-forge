@@ -669,6 +669,34 @@ class TestSigV4LiveFlow:
         assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
         assert not _gateway_named(admin_api, name), "a denied registration must not leave a gateway row behind"
 
+    def test_caller_without_update_permission_cannot_rotate_the_credential(self, admin_api: httpx.Client, sigv4_gateway: dict[str, Any]) -> None:
+        """A token scoped away from ``gateways.update`` cannot replace the stored SigV4 credential."""
+        token = make_test_jwt("nobody@example.com", is_admin=False, teams=[], scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
+        body = {"auth_type": "sigv4", "sigv4_config": {"access_key_id": _ACCESS_KEY_ID, "secret_access_key": _WRONG_SECRET_ACCESS_KEY, "region": _REGION, "service": _SERVICE}}
+
+        with httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}, timeout=30.0) as limited:
+            resp = limited.put(f"/gateways/{sigv4_gateway['id']}", json=body)
+
+        assert resp.status_code in (401, 403), f"expected a deny for a caller without gateways.update, got {resp.status_code} {resp.text}"
+        assert _WRONG_SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_wrong_team_caller_cannot_register_or_rotate(self, admin_api: httpx.Client, sigv4_gateway: dict[str, Any], stub_upstream: dict[str, Any]) -> None:
+        """A non-admin token for an unrelated team cannot register a team gateway or rotate another gateway's credential."""
+        name = f"sigv4-e2e-wrongteam-{uuid.uuid4().hex[:8]}"
+        token = make_test_jwt("outsider@example.com", is_admin=False, teams=["unrelated-team"], secret=JWT_SECRET)
+        create_body = {**_sigv4_payload(name, stub_upstream["mcp_url"]), "visibility": "team", "team_id": "unrelated-team"}
+        update_body = {"auth_type": "sigv4", "sigv4_config": {"access_key_id": _ACCESS_KEY_ID, "secret_access_key": _WRONG_SECRET_ACCESS_KEY, "region": _REGION, "service": _SERVICE}}
+
+        with httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}, timeout=30.0) as outsider:
+            created = outsider.post("/gateways", json=create_body)
+            updated = outsider.put(f"/gateways/{sigv4_gateway['id']}", json=update_body)
+
+        assert created.status_code in (401, 403, 404), f"expected a deny for registering in an unrelated team, got {created.status_code} {created.text}"
+        assert updated.status_code in (401, 403, 404), f"expected a deny for rotating another gateway's credential, got {updated.status_code} {updated.text}"
+        assert _SECRET_ACCESS_KEY not in created.text + updated.text, "a rejection echoed a secret"
+        assert _WRONG_SECRET_ACCESS_KEY not in updated.text, "a rejection echoed the submitted secret"
+        assert not _gateway_named(admin_api, name), "a denied registration must not leave a gateway row behind"
+
     async def test_rotated_secret_takes_effect_without_stale_sessions(self, admin_api: httpx.Client, hub_client, sigv4_gateway: dict[str, Any], stub_upstream: dict[str, Any]) -> None:
         """A credential update the upstream refuses breaks the next call; restoring the secret recovers it.
 

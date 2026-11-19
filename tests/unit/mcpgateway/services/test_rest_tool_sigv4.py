@@ -411,3 +411,47 @@ def test_httpx2_builders_ignore_unsigned_payload():
     assert isinstance(mcp_auth, SigV4Auth)
     assert mcp_auth.signer.unsigned_payload is False
     assert rest_auth.signer.unsigned_payload is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["transport_error", "server_error", "unauthorized"])
+async def test_failing_signed_call_leaks_no_credential_to_logs(invoke, upstream, caplog, failure):
+    """A failing SigV4 REST call logs no secret, signature, session token or access key."""
+    if failure == "transport_error":
+
+        def boom(request):
+            raise httpx.ConnectError(f"connect failed for {request.url}", request=request)
+
+        upstream.handler = boom  # type: ignore[method-assign]
+    else:
+        upstream.statuses = [500] if failure == "server_error" else [401, 401]
+
+    with caplog.at_level("DEBUG"):
+        try:
+            await invoke({"id": "1", "note": "x"}, tool_sigv4=stored_config(session_token=SESSION_TOKEN))
+        except Exception as exc:  # pylint: disable=broad-except
+            assert failure == "transport_error", exc
+
+    logged = "\n".join(record.getMessage() + "\n" + str(record.__dict__.get("exc_text") or "") for record in caplog.records)
+    sent = upstream.requests[0] if upstream.requests else None
+    forbidden = [SECRET_KEY, SESSION_TOKEN, ACCESS_KEY]
+    if sent is not None:
+        forbidden.append(received_signature(sent))
+    for value in forbidden:
+        assert value not in logged
+    assert "AWS4-HMAC-SHA256 Credential=" not in logged
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_credentials_log_no_secret(invoke, caplog):
+    """The credential-load failure log names the tool and the exception class only."""
+    broken = plain_config(session_token=SESSION_TOKEN)
+    broken["secret_access_key"] = "not-encrypted"  # pragma: allowlist secret
+
+    with caplog.at_level("DEBUG"), pytest.raises(ToolInvocationError):
+        await invoke({"id": "1", "note": "x"}, tool_sigv4=broken)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert SECRET_KEY not in logged
+    assert SESSION_TOKEN not in logged
+    assert "not-encrypted" not in logged

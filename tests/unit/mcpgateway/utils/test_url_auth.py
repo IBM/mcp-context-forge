@@ -252,3 +252,38 @@ class TestSanitizeExceptionMessage:
         result = sanitize_exception_message(msg)
         assert "api_key=REDACTED" in result
         assert "localkey" not in result
+
+
+class TestAwsSigV4PresignedParams:
+    """X-Amz-* secrets are redacted from URLs and exception messages in any case."""
+
+    PRESIGNED = "https://bucket.s3.amazonaws.com/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAEXAMPLE%2F20260101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260101T000000Z&X-Amz-Expires=300&X-Amz-Security-Token=SESSIONTOKENVALUE&X-Amz-SignedHeaders=host&X-Amz-Signature=deadbeefcafe"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("name", ["x-amz-signature", "x-amz-credential", "x-amz-security-token"])
+    def test_names_are_in_the_static_set(self, name):
+        assert name in STATIC_SENSITIVE_PARAMS
+
+    @pytest.mark.parametrize("name", ["X-Amz-Signature", "x-amz-signature", "X-AMZ-SIGNATURE", "x-Amz-Credential", "X-AMZ-CREDENTIAL", "X-Amz-Security-Token", "x-amz-security-token"])
+    def test_url_redacts_each_name_in_any_case(self, name):
+        result = sanitize_url_for_logging(f"https://api.example.com/x?{name}=secretvalue&page=1")
+        assert "secretvalue" not in result
+        assert f"{name}=REDACTED" in result
+        assert "page=1" in result
+
+    def test_presigned_url_redacts_only_the_secret_values(self):
+        result = sanitize_url_for_logging(self.PRESIGNED)
+        for leaked in ("deadbeefcafe", "SESSIONTOKENVALUE", "AKIAEXAMPLE"):
+            assert leaked not in result
+        assert "X-Amz-Expires=300" in result
+        assert "X-Amz-SignedHeaders=host" in result
+
+    @pytest.mark.parametrize("name", ["X-Amz-Signature", "x-amz-credential", "X-AMZ-SECURITY-TOKEN"])
+    def test_exception_message_redacts_each_name_in_any_case(self, name):
+        result = sanitize_exception_message(f"ConnectError for url 'https://api.example.com/x?{name}=secretvalue'")
+        assert "secretvalue" not in result
+        assert "REDACTED" in result
+
+    def test_exception_message_redacts_a_presigned_url(self):
+        result = sanitize_exception_message(f"Client error '403 Forbidden' for url '{self.PRESIGNED}'")
+        for leaked in ("deadbeefcafe", "SESSIONTOKENVALUE", "AKIAEXAMPLE"):
+            assert leaked not in result
