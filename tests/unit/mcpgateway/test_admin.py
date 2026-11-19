@@ -21019,15 +21019,19 @@ class TestUtilityFunctions:
         assert result.startswith("/root/admin/?")
         assert result.endswith("#catalog")
 
-    def test_get_client_ip_forwarded_for(self):
+    def test_get_client_ip_ignores_forwarded_for(self):
         request = MagicMock(spec=Request)
         request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
-        assert get_client_ip(request) == "192.168.1.1"
+        request.client = MagicMock()
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
-    def test_get_client_ip_real_ip(self):
+    def test_get_client_ip_ignores_real_ip(self):
         request = MagicMock(spec=Request)
         request.headers = {"X-Real-IP": "10.0.0.5"}
-        assert get_client_ip(request) == "10.0.0.5"
+        request.client = MagicMock()
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
     def test_get_client_ip_direct(self):
         request = MagicMock(spec=Request)

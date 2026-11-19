@@ -1615,6 +1615,10 @@ def _build_admin_redirect(
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
+    ``request.client`` is already resolved from X-Forwarded-For by
+    ``ProxyHeadersMiddleware`` for peers in ``FORWARDED_ALLOW_IPS``; raw
+    forwarding headers are never read here.
+
     Args:
         request: FastAPI request object
 
@@ -1624,19 +1628,9 @@ def get_client_ip(request: Request) -> str:
     Examples:
         >>> from unittest.mock import MagicMock
         >>>
-        >>> # Test with X-Forwarded-For header
+        >>> # Forwarding headers are ignored
         >>> mock_request = MagicMock()
         >>> mock_request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
-        >>> get_client_ip(mock_request)
-        '192.168.1.1'
-        >>>
-        >>> # Test with X-Real-IP header
-        >>> mock_request.headers = {"X-Real-IP": "10.0.0.5"}
-        >>> get_client_ip(mock_request)
-        '10.0.0.5'
-        >>>
-        >>> # Test with direct client IP
-        >>> mock_request.headers = {}
         >>> mock_request.client.host = "127.0.0.1"
         >>> get_client_ip(mock_request)
         '127.0.0.1'
@@ -1646,17 +1640,6 @@ def get_client_ip(request: Request) -> str:
         >>> get_client_ip(mock_request)
         'unknown'
     """
-    # Check for X-Forwarded-For header (proxy/load balancer)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-
-    # Check for X-Real-IP header
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-
-    # Fall back to direct client IP
     return request.client.host if request.client else "unknown"
 
 

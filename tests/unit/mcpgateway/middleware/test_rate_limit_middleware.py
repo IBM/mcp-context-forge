@@ -212,21 +212,21 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware.get_endpoint_tier("/health")
         assert tier["limit"] == 500
 
-    def test_get_client_ip_forwarded(self, middleware, mock_request):
-        """Test IP extraction from X-Forwarded-For."""
-        mock_request.headers["X-Forwarded-For"] = "10.0.0.1, 192.168.1.1"
+    def test_get_client_ip_ignores_x_forwarded_for(self, middleware, mock_request):
+        """Raw X-Forwarded-For is ignored even with trust_proxy_auth; ProxyHeadersMiddleware owns that."""
+        mock_request.headers["X-Forwarded-For"] = "198.51.100.7, 192.168.1.1"
 
         ip = middleware._get_client_ip(mock_request)
 
-        assert ip == "10.0.0.1"
+        assert ip == "192.168.1.100"
 
-    def test_get_client_ip_x_real(self, middleware, mock_request):
-        """Test IP extraction from X-Real-IP."""
-        mock_request.headers = {"X-Real-IP": "10.0.0.2"}
+    def test_get_client_ip_ignores_x_real_ip(self, middleware, mock_request):
+        """Raw X-Real-IP is ignored even with trust_proxy_auth."""
+        mock_request.headers = {"X-Real-IP": "198.51.100.7"}
 
         ip = middleware._get_client_ip(mock_request)
 
-        assert ip == "10.0.0.2"
+        assert ip == "192.168.1.100"
 
     def test_get_client_ip_fallback(self, middleware, mock_request):
         """Test IP fallback to request.scope client."""
@@ -1210,10 +1210,10 @@ class TestRateLimitMiddlewareTiers:
             middleware.redis_client = original_client
             middleware._sliding_window_script = original_script
 
-    def test_get_client_ip_with_both_headers(self, middleware):
-        """Test IP extraction prefers X-Forwarded-For."""
+    def test_get_client_ip_ignores_both_headers(self, middleware):
+        """Test IP extraction uses the resolved scope client, not forwarding headers."""
         mock_request = MagicMock()
-        mock_request.headers = {"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"}
+        mock_request.headers = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.8"}
         mock_request.scope = {"client": ("10.0.0.1", 12345)}
 
         ip = middleware._get_client_ip(mock_request)

@@ -328,11 +328,11 @@ def test_client_ip_and_user_agent():
     request = MagicMock()
     request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1", "User-Agent": "TestAgent"}
     request.client = SimpleNamespace(host="10.0.0.2")
-    assert admin.get_client_ip(request) == "192.168.1.1"
+    assert admin.get_client_ip(request) == "10.0.0.2"
     assert admin.get_user_agent(request) == "TestAgent"
 
     request.headers = {"X-Real-IP": "10.0.0.5"}
-    assert admin.get_client_ip(request) == "10.0.0.5"
+    assert admin.get_client_ip(request) == "10.0.0.2"
 
     request.headers = {}
     request.client = None

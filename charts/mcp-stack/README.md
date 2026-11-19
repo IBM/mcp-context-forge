@@ -218,6 +218,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.APP_NAME | string | `"ContextForge"` |  |
 | mcpContextForge.config.HOST | string | `"0.0.0.0"` |  |
 | mcpContextForge.config.PORT | string | `"4444"` |  |
+| mcpContextForge.config.FORWARDED_ALLOW_IPS | string | `"127.0.0.1,::1"` | Proxies allowed to set X-Forwarded-For/Proto. Set to the ingress or proxy CIDR to keep client IPs. |
 | mcpContextForge.config.APP_ROOT_PATH | string | `""` |  |
 | mcpContextForge.config.CLIENT_MODE | string | `"false"` |  |
 | mcpContextForge.config.TEMPLATES_DIR | string | `"/app/mcpgateway/templates"` |  |

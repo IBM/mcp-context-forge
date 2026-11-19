@@ -25,11 +25,10 @@ Register this middleware **before** ``ProxyHeadersMiddleware`` in the
 ``ProxyHeadersMiddleware`` in the ASGI call chain, ensuring the scheme is
 already corrected when we derive the default port for ``scope["server"]``).
 
-Trust decisions (which upstream IPs may set forwarded headers) are the
-responsibility of the caller — this middleware always acts when
-``X-Forwarded-Host`` is present.  The gateway should only register it
-when proxy headers are trusted (the same condition under which
-``ProxyHeadersMiddleware`` is registered).
+This middleware makes no trust decision: it acts whenever
+``X-Forwarded-Host`` is present.  The gateway registers it unconditionally,
+and it does not apply the ``FORWARDED_ALLOW_IPS`` peer check that
+``ProxyHeadersMiddleware`` applies.
 
 When Uvicorn merges upstream support, this middleware can be removed.
 """
