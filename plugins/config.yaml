@@ -86,6 +86,8 @@ plugins:
       field_overrides: []
 
   # PII Filter Plugin - Run first with highest priority for security
+  # Disabled by default. An active PII filter rewrites prompt arguments, tool arguments, and tool
+  # results in place, which changes payloads for each deployment that uses this file.
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks:
@@ -96,7 +98,7 @@ plugins:
         "tool_post_invoke",
       ]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "enforce" # enforce | enforce_ignore_error | permissive | disabled
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 50 # Lower number = higher priority (runs first)
     conditions:
       - prompts: [] # Empty list = apply to all prompts
@@ -286,7 +288,7 @@ plugins:
   # dedicated `plugin.metrics.rate_limiter` observability span. Requires
   # cpex-rate-limiter>=0.1.7 (see pyproject.toml) -- earlier releases do not emit metrics.
   #
-  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with by_user/by_tenant
+  # Left mode: "disabled" deliberately: this plugin ships with by_user/by_tenant
   # limits below and hooks prompt_pre_fetch/tool_pre_invoke, so flipping mode to "sequential"
   # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
   # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
@@ -388,7 +390,7 @@ plugins:
   # `plugin.metrics.url_reputation` observability span. Requires cpex-url-reputation>=0.3.5 (see
   # pyproject.toml) -- earlier releases do not emit metrics.
   #
-  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # Left mode: "disabled" deliberately: this plugin ships with
   # blocked_domains/blocked_patterns below and only hooks resource_pre_fetch, so flipping mode to
   # "sequential" would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled"
   # plugins are never instantiated or registered (see cpex/framework/manager.py load_plugins():
@@ -443,7 +445,7 @@ plugins:
   # the gateway uses -- IBM/cpex-plugins#124). 0.3.7 fixes retry detection; earlier releases do
   # not emit metrics at all.
   #
-  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # Left mode: "disabled" deliberately: this plugin ships with
   # retry_on_status/max_retries below and hooks tool_post_invoke, so flipping mode to "sequential"
   # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
   # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
@@ -833,7 +835,7 @@ plugins:
   # `plugin.metrics.secrets_detection` observability span. Requires cpex-secrets-detection>=0.3.7
   # (see pyproject.toml) -- earlier releases do not emit metrics.
   #
-  # Left mode: "disabled" deliberately, unlike PIIFilter above: this plugin ships with
+  # Left mode: "disabled" deliberately: this plugin ships with
   # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
   # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
   # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
@@ -877,7 +879,7 @@ plugins:
   # cpex-encoded-exfil-detection>=0.3.6 (see pyproject.toml) -- earlier releases do not emit
   # metrics.
   #
-  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # Left mode: "disabled" deliberately: this plugin ships with
   # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
   # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
   # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if

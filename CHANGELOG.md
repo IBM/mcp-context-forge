@@ -80,6 +80,8 @@
 
 ### Changed
 
+- **`PIIFilterPlugin` ships disabled in the default plugin configuration** ([#7636](https://github.com/IBM/mcp-context-forge/issues/7636)) - `plugins/config.yaml` now sets `PIIFilterPlugin` to `mode: "disabled"`, the same as each other bundled plugin. Before, the plugin ran in `enforce` mode and masked prompt arguments, tool arguments, and tool results in each deployment that used this file with `PLUGINS_ENABLED=true`. The `mcp-stack` Helm chart is such a deployment by default. The credit-card detector also matched digit runs in decimal numbers, which made JSON tool results invalid.
+    - Upgrade note: to keep PII masking, supply a plugin configuration that sets `PIIFilterPlugin` to `mode: "enforce"`. Use `PLUGINS_CONFIG_FILE`, or `mcpContextForge.pluginConfig` in the Helm chart.
 - **Team-management authorization** - Protected team-management operations require a token that includes the target team and the required RBAC permissions. A personal-team token does not authorize management of other teams. For automation, create the token with the target `team_id`.
     - Admin UI edit, update, and delete require team ownership or platform-administrator permission. Platform-administrator permission also controls the member-limit exemption, matching REST behavior.
     - Requester cancellation requires the caller's pending request and matching URL team. An unavailable request returns `404` instead of `400`.
