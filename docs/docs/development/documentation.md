@@ -19,7 +19,7 @@ From project root:
 
 ```bash
 make install-docs
-make docs-serve
+make docs-serve  # http://localhost:8003 (auto-reload on save)
 ```
 
 ---
@@ -98,7 +98,7 @@ Guidelines:
 3. You can nest `.pages` files in deeper folders - rules apply hierarchically.
 4. Avoid circular references: do **not** include files from *other* directories.
 
-After saving a `.pages` file, simply refresh the browser running `make serve`; MkDocs will hot-reload and the navigation tree will update instantly.
+After saving a `.pages` file, simply refresh the browser running `make docs-serve`; MkDocs will hot-reload and the navigation tree will update instantly.
 
 ---
 
