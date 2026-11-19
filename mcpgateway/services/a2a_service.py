@@ -464,6 +464,40 @@ def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, A
         raise PublicValidationError("Send the OAuth client secret again when you change the token URL.")
 
 
+def _origin_of(url: Optional[str]) -> Optional[str]:
+    """Return the scheme, host, and port of a URL as an origin URL, parsed as the card fetch parses it.
+
+    The well-known card path belongs to the origin, not to the path of the agent endpoint.
+
+    Args:
+        url: Agent endpoint URL, or ``None``.
+
+    Returns:
+        The origin without path, query, or fragment, or ``None`` when ``url`` is missing or invalid.
+
+    Examples:
+        >>> _origin_of("https://agent.example.com/rpc/v1?x=1")
+        'https://agent.example.com'
+        >>> _origin_of("http://127.0.0.1:9100/rpc")
+        'http://127.0.0.1:9100'
+        >>> _origin_of("https://agent.example.com:443/rpc")
+        'https://agent.example.com'
+        >>> _origin_of("not a url") is None
+        True
+        >>> _origin_of(None) is None
+        True
+    """
+    if not url:
+        return None
+    try:
+        parsed = TypeAdapter(AnyHttpUrl).validate_python(url)
+    except ValidationError:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = f":{parsed.port}" if parsed.port and parsed.port != default_port else ""
+    return f"{parsed.scheme}://{parsed.host}{port}"
+
+
 class A2ACardRefreshThrottledError(Exception):
     """Raised when an agent card is re-fetched again before the minimum interval has passed.
 
@@ -1384,8 +1418,10 @@ class A2AAgentService(BaseService):
             fetched = await fetch_agent_card(latest.source_url, None, self._card_credentials(agent, latest.source_url), latest.etag)
             if fetched.outcome != "no_card":
                 return fetched
-        endpoint_url = str(agent.endpoint_url)
-        return await fetch_agent_card(endpoint_url, None, self._card_credentials(agent, endpoint_url))
+        origin = _origin_of(agent.endpoint_url)
+        if origin is None:
+            return A2AFetchCardResponse(found=False, outcome="no_card")
+        return await fetch_agent_card(origin, None, self._card_credentials(agent, origin))
 
     @staticmethod
     def _latest_card(db: Session, agent_id: str) -> Optional[A2AAgentCard]:
