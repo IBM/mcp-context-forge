@@ -2234,7 +2234,9 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 # via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
 # argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
 # so the gateway's existing tool_service.py schema validation is the only path.
-async def call_tool(name: str, arguments: dict) -> Union[
+async def call_tool(
+    name: str, arguments: dict
+) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],

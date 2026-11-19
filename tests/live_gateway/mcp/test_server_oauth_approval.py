@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Check virtual-server issuer authorization against an isolated running gateway."""
+"""Location: ./tests/live_gateway/mcp/test_server_oauth_approval.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Check virtual-server issuer authorization against an isolated running gateway.
+"""
 
 # Standard
 from contextlib import contextmanager

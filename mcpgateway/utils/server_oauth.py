@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Validate virtual-server OAuth trust and approval generations."""
+"""Location: ./mcpgateway/utils/server_oauth.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Validate virtual-server OAuth trust and approval generations.
+"""
 
 # Standard
 import ipaddress

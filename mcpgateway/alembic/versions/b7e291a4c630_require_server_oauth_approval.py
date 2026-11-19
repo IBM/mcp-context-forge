@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Require administrator approval for virtual-server OAuth settings.
+"""Location: ./mcpgateway/alembic/versions/b7e291a4c630_require_server_oauth_approval.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Require administrator approval for virtual-server OAuth settings.
 
 Revision ID: b7e291a4c630
-Revises: f6b8d3e1a5c2
+Revises: 7a3a6305ddb6
 """
 
 # Third-Party
@@ -10,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "b7e291a4c630"  # pragma: allowlist secret
-down_revision = "f6b8d3e1a5c2"  # pragma: allowlist secret
+down_revision = "7a3a6305ddb6"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Check virtual-server OAuth approval, migration, and session boundaries."""
+"""Location: ./tests/unit/mcpgateway/test_server_oauth_approval.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Check virtual-server OAuth approval, migration, and session boundaries.
+"""
 
 # Standard
 from contextlib import asynccontextmanager
