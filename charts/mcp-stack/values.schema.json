@@ -1892,12 +1892,12 @@
             "IDENTITY_SIGN_CLAIMS": {
               "type": "string",
               "enum": ["true", "false"],
-              "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification",
+              "description": "Sign propagated user claims as a short-lived HS256 JWS for upstream verification",
               "default": "false"
             },
             "IDENTITY_CLAIMS_SECRET": {
               "type": "string",
-              "description": "Secret for signing identity claims (uses JWT_SECRET_KEY if unset)",
+              "description": "Dedicated secret for signing identity claims. Required when IDENTITY_SIGN_CLAIMS is true; must differ from JWT_SECRET_KEY",
               "default": ""
             },
             "AUTH_REQUIRED": {

@@ -63,9 +63,9 @@ Operators choose via `IDENTITY_PROPAGATION_MODE`: `headers`, `meta`, or `both` (
 
 A configurable list (`IDENTITY_SENSITIVE_ATTRIBUTES`) strips internal-only fields (password hashes, internal IDs) before propagation. The `UserContext` is copied — the original is never mutated.
 
-### 5. HMAC Claim Signing
+### 5. Claim Signing
 
-Optional HMAC-SHA256 signing (`IDENTITY_SIGN_CLAIMS=true`) allows upstream servers to verify that identity claims originated from the gateway and were not tampered with.
+Optional signing (`IDENTITY_SIGN_CLAIMS=true`) adds an HS256 JWS over every identity claim, with `iss`, `aud` (target gateway id), a 60-second `exp`, and a `jti`. Upstream servers verify it to confirm that the claims came from the gateway, were not changed, and are fresh. Signing uses a dedicated `IDENTITY_CLAIMS_SECRET` and never `JWT_SECRET_KEY`, because every verifier holds the secret.
 
 ### 6. Audit Trail Enhancement
 

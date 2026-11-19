@@ -445,8 +445,8 @@ mcpContextForge:
     IDENTITY_PROPAGATION_MODE: "both"          # headers, meta, or both
     IDENTITY_PROPAGATION_HEADERS_PREFIX: "X-Forwarded-User" # prefix for identity HTTP headers
     # IDENTITY_SENSITIVE_ATTRIBUTES: '["password_hash","internal_id","ssn"]' # attributes to strip
-    # IDENTITY_SIGN_CLAIMS: "false"            # HMAC-sign propagated claims for upstream verification
-    # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
+    # IDENTITY_SIGN_CLAIMS: "false"            # sign propagated claims as a short-lived JWS for upstream verification
+    # IDENTITY_CLAIMS_SECRET: ""               # required when signing; must differ from JWT_SECRET_KEY
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.

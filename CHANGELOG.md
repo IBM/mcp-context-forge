@@ -20,6 +20,10 @@
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
+### Security
+
+- **Identity claim signing covers every claim** - With `IDENTITY_SIGN_CLAIMS=true`, `X-Forwarded-User-Claims-Signature` and `_meta.user.claims_signature` now carry an HS256 JWS over all propagated identity claims, including the admin flag, teams, roles, groups, and delegation chain. The token has `iss`, `aud` (target gateway id), a 60-second `exp`, and a `jti`. Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`; the gateway no longer falls back to `JWT_SECRET_KEY` and refuses to start without the secret or with a secret equal to `JWT_SECRET_KEY`. **Breaking:** upstream verifiers of the old hex HMAC must switch to JWS verification. See [Identity Propagation](docs/docs/manage/identity-propagation.md#claim-signing). If an earlier deployment ran with signing on and no `IDENTITY_CLAIMS_SECRET`, rotate `JWT_SECRET_KEY`.
+
 ### Added
 
 - **SigV4 credential hygiene, audit, and access-control tests** ([#7626](https://github.com/IBM/mcp-context-forge/issues/7626), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - ContextForge redacts SigV4 credentials in logs, traces, and SIEM exports, and audits SigV4 registration and rotation.
