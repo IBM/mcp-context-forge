@@ -1158,6 +1158,72 @@ def test_build_azure_request_no_defaults(service):
     assert "max_tokens" not in body
 
 
+def test_build_azure_request_reasoning_model_maps_token_limit(service):
+    """Reasoning deployments use max_completion_tokens and reject temperature."""
+    request = ChatCompletionRequest(
+        model="gpt-5.4-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        temperature=0.7,
+        max_tokens=200,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base="https://res.openai.azure.com",
+        config={"deployment_name": "gpt-5.4-mini"},
+        default_temperature=0.3,
+        default_max_tokens=50,
+    )
+    model = _make_model(model_id="gpt-5.4-mini")
+
+    url, headers, body = service._build_azure_request(request, provider, model)
+
+    assert body["max_completion_tokens"] == 200
+    assert "max_tokens" not in body
+    assert "temperature" not in body
+
+
+def test_build_azure_request_reasoning_deployment_with_custom_model_id(service):
+    """A reasoning deployment is detected even when the configured model id is custom."""
+    request = ChatCompletionRequest(
+        model="custom-chat",
+        messages=[ChatMessage(role="user", content="hi")],
+        max_tokens=100,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base="https://res.openai.azure.com",
+        config={"deployment_name": "o1-mini"},
+        default_temperature=0.7,
+        default_max_tokens=None,
+    )
+    model = _make_model(model_id="custom-chat")
+
+    url, headers, body = service._build_azure_request(request, provider, model)
+
+    assert body["max_completion_tokens"] == 100
+    assert "max_tokens" not in body
+    assert "temperature" not in body
+
+
+def test_build_azure_request_reasoning_model_uses_provider_default_tokens(service):
+    """Reasoning deployments map the provider token default to max_completion_tokens."""
+    request = ChatCompletionRequest(model="o3-mini", messages=[ChatMessage(role="user", content="hi")])
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base="https://res.openai.azure.com",
+        config={"deployment_name": "o3-mini"},
+        default_temperature=0.7,
+        default_max_tokens=50,
+    )
+    model = _make_model(model_id="o3-mini")
+
+    url, headers, body = service._build_azure_request(request, provider, model)
+
+    assert body["max_completion_tokens"] == 50
+    assert "max_tokens" not in body
+    assert "temperature" not in body
+
+
 def test_build_anthropic_request_explicit_temperature(service):
     """Anthropic request with explicit temperature (line 330)."""
     request = ChatCompletionRequest(
