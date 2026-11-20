@@ -12,6 +12,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
+import httpx
 import jwt
 from pydantic import ValidationError
 import pytest
@@ -23,6 +24,7 @@ from mcpgateway.services.a2a_oauth import A2AOAuthError, resolve_a2a_agent_oauth
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.a2a_service import A2AAgentError
 from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
+from mcpgateway.utils.ssrf_pinning import PinnedTarget
 
 ENDPOINT = "https://agent.example.com/a2a"
 CONFIG = {"grant_type": "client_credentials", "client_id": "c", "client_secret": "s", "token_url": "https://idp.example.com/token"}  # pragma: allowlist secret
@@ -258,12 +260,15 @@ class TestA2AOAuthConfigSchema:
 
 
 @pytest.mark.asyncio
-async def test_repeated_resource_is_sent_as_an_encoded_form_body(monkeypatch):
-    """A list of pairs becomes a form-encoded body, because httpx fails on a list as ``data``."""
+@pytest.mark.parametrize("custom_tls", [False, True])
+@pytest.mark.parametrize("form_type", [list, tuple])
+async def test_repeated_resource_is_sent_as_an_encoded_form_body(monkeypatch, custom_tls, form_type):
+    """Preserve repeated form parameters and TLS hostname across pinned address fallback."""
     # First-Party
     from mcpgateway.services.oauth_manager import OAuthManager
 
     sent = {}
+    attempted_urls = []
 
     class _Client:
         async def __aenter__(self):
@@ -273,17 +278,34 @@ async def test_repeated_resource_is_sent_as_an_encoded_form_body(monkeypatch):
             return False
 
         async def post(self, url, **kwargs):
+            attempted_urls.append(url)
+            if len(attempted_urls) == 1:
+                raise httpx.ConnectError("Connection refused")
             sent.update(kwargs)
             return MagicMock()
 
-    pinned = MagicMock()
-    pinned.pin = lambda url: url
-    pinned.apply_headers = lambda headers: dict(headers)
-    pinned.extensions = {}
+    pinned = PinnedTarget(
+        validated_url="https://idp.example.com/token",
+        hostname="idp.example.com",
+        original_authority="idp.example.com",
+        resolved_ips=("203.0.113.1", "203.0.113.2"),
+    )
     monkeypatch.setattr("mcpgateway.services.oauth_manager.resolve_pinned_target", AsyncMock(return_value=pinned))
     monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", lambda **_kwargs: _Client())
 
-    await OAuthManager()._post_token_request("https://idp.example.com/token", [("grant_type", "client_credentials"), ("resource", "https://a"), ("resource", "https://b")])
+    if custom_tls:
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_cached_ssl_context", lambda *_args, **_kwargs: object())
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.httpx.AsyncClient", lambda **_kwargs: _Client())
+
+    await OAuthManager()._post_token_request(
+        "https://idp.example.com/token",
+        form_type([("grant_type", "client_credentials"), ("resource", "https://a"), ("resource", "https://b")]),
+        ca_certificate="custom-ca" if custom_tls else None,
+    )
+
+    assert attempted_urls == ["https://203.0.113.1/token", "https://203.0.113.2/token"]
+    assert sent["headers"]["Host"] == "idp.example.com"
+    assert sent["extensions"] == {"sni_hostname": "idp.example.com"}
 
     assert sent["content"] == "grant_type=client_credentials&resource=https%3A%2F%2Fa&resource=https%3A%2F%2Fb"
     assert sent["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
