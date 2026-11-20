@@ -446,7 +446,6 @@ mcpContextForge:
     IDENTITY_PROPAGATION_HEADERS_PREFIX: "X-Forwarded-User" # prefix for identity HTTP headers
     # IDENTITY_SENSITIVE_ATTRIBUTES: '["password_hash","internal_id","ssn"]' # attributes to strip
     # IDENTITY_SIGN_CLAIMS: "false"            # sign propagated claims as a short-lived JWS for upstream verification
-    # IDENTITY_CLAIMS_SECRET: ""               # required when signing; must differ from JWT_SECRET_KEY
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
@@ -858,6 +857,7 @@ mcpContextForge:
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
+    # IDENTITY_CLAIMS_SECRET: ""             # required when signing identity claims; must differ from JWT_SECRET_KEY
     TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
