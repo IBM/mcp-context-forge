@@ -2070,6 +2070,107 @@ async def test_run_sse_to_stdio_pump_message_and_keepalive_forwarding(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sse_url", "endpoint_data", "expected_post_url"),
+    [
+        (
+            "http://127.0.0.1:18731/sse",
+            "/messages/?session_id=91c4b7231f9348879a7ec9246e1df5f9",
+            "http://127.0.0.1:18731/messages/?session_id=91c4b7231f9348879a7ec9246e1df5f9",
+        ),
+        (
+            "http://127.0.0.1:18731/sse",
+            "http://gateway.example/message",
+            "http://gateway.example/message",
+        ),
+    ],
+)
+async def test_run_sse_to_stdio_resolves_message_endpoint(monkeypatch, translate, sse_url, endpoint_data, expected_post_url):
+    """Relative SSE endpoint events are resolved against the SSE URL before POST."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    endpoint_ready = asyncio.Event()
+    posted: list[str] = []
+    posted_event = asyncio.Event()
+
+    class GatedReader:
+        def __init__(self, lines: Sequence[str]):
+            self._lines = [ln.encode() for ln in lines]
+
+        async def readline(self) -> bytes:
+            await endpoint_ready.wait()
+            return self._lines.pop(0) if self._lines else b""
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = GatedReader(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'])
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", sse_url)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: endpoint"
+            yield "data: " + endpoint_data
+            yield ""
+            endpoint_ready.set()
+            await posted_event.wait()
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+        async def post(self, url, content=None, headers=None, **_k):
+            posted.append(url)
+            posted_event.set()
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    from mcpgateway.services import http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await asyncio.wait_for(
+            translate._run_sse_to_stdio(sse_url, None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0),
+            timeout=5,
+        )
+
+    assert posted == [expected_post_url]
+
+
+@pytest.mark.asyncio
 async def test_run_sse_to_stdio_pump_retry_warning_and_backoff(monkeypatch, translate):
     """Cover pump retry warning + sleep/backoff path."""
     # Third-Party
