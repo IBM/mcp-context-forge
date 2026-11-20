@@ -80,7 +80,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
-from mcpgateway.utils.identity_propagation import build_identity_headers, IdentitySigningError
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -2307,6 +2307,7 @@ class ResourceService(BaseService):
                             if isinstance(user_identity, UserCtx):
                                 try:
                                     headers.update(build_identity_headers(user_identity, gateway, audience=gateway_audience))
+                                    meta_data = build_identity_meta(user_identity, meta_data, gateway, audience=gateway_audience)
                                 except IdentitySigningError as signing_exc:
                                     logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_audience, signing_exc)
                                     raise ResourceError(IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE) from signing_exc

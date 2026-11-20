@@ -21,7 +21,7 @@ Tests cover:
 """
 
 # Standard
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timezone
 import time
 from types import SimpleNamespace
@@ -1984,6 +1984,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
+            patch("mcpgateway.services.resource_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,
             patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=client_mock),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
         ):
@@ -1998,6 +1999,7 @@ class TestResourceServiceIdentityPropagationCoverage:
 
         assert result == "hello"
         mock_build_headers.assert_called_once_with(user_context, gateway, audience="gw-1")
+        mock_build_meta.assert_called_once_with(user_context, None, gateway, audience="gw-1")
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_updates_headers_from_plugin_context(self):
@@ -2402,6 +2404,76 @@ class TestDirectProxyAudienceBinding:
         gateway = _real_gateway()
         headers = await _run_transport_path(path, gateway)
         assert _decode(headers[SIG], audience=str(gateway.id))["aud"] == str(gateway.id)
+
+
+async def _run_pooled_resource_read(*, meta_data=None, meta_error: bool = False):
+    """Run invoke_resource through the pooled SSE session path; return the _meta sent upstream."""
+    # First-Party
+    from mcpgateway.services.resource_service import ResourceService
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    gateway = MagicMock(id="gw-1", name="Gateway", url="https://gateway.example.com/mcp", transport="sse", auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None)
+    gateway.ca_certificate = None
+    gateway.ca_certificate_sig = None
+    gateway.identity_propagation = None
+    upstream_session = AsyncMock()
+    upstream_session.send_request = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="ok", blob=None)]))
+
+    @asynccontextmanager
+    async def fake_acquire(**_kwargs):
+        yield MagicMock(session=upstream_session)
+
+    registry = MagicMock(acquire=fake_acquire)
+    span = MagicMock()
+    span.__enter__.return_value = MagicMock()
+    span.__exit__.return_value = False
+    meta_patch = patch("mcpgateway.services.resource_service.build_identity_meta", side_effect=IdentitySigningError("no secret")) if meta_error else nullcontext()
+    token = request_headers_var.set({"mcp-session-id": "downstream-1"})
+    try:
+        with (
+            patch("mcpgateway.services.resource_service.create_span", return_value=span),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            meta_patch,
+        ):
+            await ResourceService().invoke_resource(
+                MagicMock(),
+                resource_id="res-1",
+                resource_uri="resource://example",
+                user_identity=UserContext(user_id="alice@co.com", email="alice@co.com"),
+                resource_obj=MagicMock(gateway_id="gw-1"),
+                gateway_obj=gateway,
+                meta_data=meta_data,
+            )
+    finally:
+        request_headers_var.reset(token)
+    return upstream_session.send_request.call_args.args[0].params.meta
+
+
+class TestPooledResourceReadSignsMeta:
+    """A pooled session carries no claims header, so each resource read signs through _meta."""
+
+    @pytest.mark.asyncio
+    async def test_meta_carries_fresh_claims_signature(self, signing_settings):
+        meta = await _run_pooled_resource_read()
+        assert _decode(meta["user"]["claims_signature"], audience="gw-1")["email"] == "alice@co.com"
+
+    @pytest.mark.asyncio
+    async def test_caller_meta_keys_are_preserved(self, signing_settings):
+        caller_meta = {"trace": "abc"}
+        meta = await _run_pooled_resource_read(meta_data=caller_meta)
+        assert meta["trace"] == "abc"
+        assert "claims_signature" in meta["user"]
+        assert caller_meta == {"trace": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_signing_failure_raises_resource_error(self, signing_settings):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        with pytest.raises(ResourceError, match="misconfigured"):
+            await _run_pooled_resource_read(meta_error=True)
 
 
 class TestIdentitySigningFailureSurfaces:
