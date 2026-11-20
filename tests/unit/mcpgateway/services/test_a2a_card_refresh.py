@@ -116,6 +116,38 @@ class TestRefreshCard:
         assert db.query(A2AAgentCard).count() == 1
         assert db.query(A2AAgentCard).one().checked_at is not None
 
+    async def test_extended_row_is_not_taken_for_the_current_public_card(self, db, service, fetch):
+        """A newer extended row never becomes the comparison base or the source URL of the public card."""
+        _store(db)
+        _store(db, version=2, kind="extended", card={**V1_CARD, "secret": 1}, source_url="https://other.example.com/x")
+        result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert (result.status, result.version, result.source_url) == ("unchanged", 1, SOURCE_URL)
+        assert fetch.await_args.args[0] == SOURCE_URL
+
+    async def test_changed_public_card_takes_the_next_shared_version(self, db, service, fetch):
+        """The shared counter skips the extended row."""
+        _store(db)
+        _store(db, version=2, kind="extended", card={**V1_CARD, "secret": 1})
+        fetch.return_value = _found({**V1_CARD, "version": "2.2.0"}, etag='"v2"')
+        result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert (result.status, result.version) == ("updated", 3)
+
+    async def test_refresh_stores_and_updates_the_extended_card(self, db, service, fetch):
+        """A found extended card is stored once and left alone when unchanged."""
+        _store(db)
+        extended = {**V1_CARD, "skills": [{"id": "s", "name": "s", "description": "d", "tags": []}]}
+        found = _found()
+        found.extended_outcome, found.extended_card, found.extended_etag = "found", extended, '"e1"'
+        fetch.return_value = found
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        rows = db.query(A2AAgentCard).filter_by(kind="extended").all()
+        assert [(row.version, row.card) for row in rows] == [(2, extended)]
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert db.query(A2AAgentCard).filter_by(kind="extended").count() == 1
+        found.extended_card = {**extended, "extra": 1}
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert sorted(row.version for row in db.query(A2AAgentCard).filter_by(kind="extended")) == [2, 3]
+
     async def test_304_records_check_and_sends_stored_etag(self, db, service, fetch):
         """The stored ETag goes out as If-None-Match; a 304 is an unchanged check."""
         _store(db)

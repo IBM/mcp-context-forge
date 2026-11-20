@@ -1424,17 +1424,18 @@ class A2AAgentService(BaseService):
         return await fetch_agent_card(origin, None, self._card_credentials(agent, origin))
 
     @staticmethod
-    def _latest_card(db: Session, agent_id: str) -> Optional[A2AAgentCard]:
-        """Return the highest stored card version of an agent.
+    def _latest_card(db: Session, agent_id: str, kind: str = "public") -> Optional[A2AAgentCard]:
+        """Return the highest stored card version of one kind for an agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
+            kind: ``public`` or ``extended``.
 
         Returns:
-            The current card row, or ``None``.
+            The current card row of that kind, or ``None``.
         """
-        return db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+        return db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
 
     async def refresh_card(
         self,
@@ -1482,6 +1483,38 @@ class A2AAgentService(BaseService):
             raise A2AAgentError("No A2A Agent Card was found")
         return self._record_card_check(db, agent_id, fetched)
 
+    def _store_refreshed_extended_card(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, now: Any) -> None:
+        """Store a changed extended card as the next version, without committing.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result. Only a ``found`` extended outcome stores a row.
+            now: Time of the check.
+        """
+        if fetched.extended_outcome != "found" or fetched.extended_card is None:
+            return
+        document = fetched.extended_raw_card if fetched.extended_raw_card is not None else fetched.extended_card
+        current = self._latest_card(db, agent_id, "extended")
+        if current is not None and current.card == document:
+            current.checked_at = now
+            return
+        top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+        db.add(
+            A2AAgentCard(
+                a2a_agent_id=agent_id,
+                version=top + 1,
+                kind="extended",
+                card=document,
+                detected_version=fetched.detected_version,
+                source_url=fetched.source_url,
+                etag=fetched.extended_etag,
+                max_age=fetched.extended_max_age,
+                fetched_at=now,
+                checked_at=now,
+            )
+        )
+
     def _record_card_check(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse) -> A2ACardRefreshResponse:
         """Store a changed card as the next version, or record the check of an unchanged card.
 
@@ -1502,6 +1535,7 @@ class A2AAgentService(BaseService):
             latest = self._latest_card(db, agent_id)
             document = (fetched.raw_card if fetched.raw_card is not None else fetched.card) or {}
             if latest is not None and (fetched.outcome == "not_modified" or latest.card == document):
+                self._store_refreshed_extended_card(db, agent_id, fetched, now)
                 latest.checked_at = now
                 if fetched.etag:
                     latest.etag = fetched.etag
@@ -1511,11 +1545,13 @@ class A2AAgentService(BaseService):
                 return A2ACardRefreshResponse(status="unchanged", version=latest.version, changed_keys=[], source_url=latest.source_url, checked_at=now)
             previous = latest.card if latest is not None else {}
             changed = sorted(key for key in set(previous) | set(document) if previous.get(key) != document.get(key))
-            version = (latest.version if latest is not None else 0) + 1
+            top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+            version = top + 1
             db.add(
                 A2AAgentCard(
                     a2a_agent_id=agent_id,
                     version=version,
+                    kind="public",
                     card=document,
                     detected_version=fetched.detected_version,
                     source_url=fetched.source_url,
@@ -1525,6 +1561,8 @@ class A2AAgentService(BaseService):
                     checked_at=now,
                 )
             )
+            db.flush()
+            self._store_refreshed_extended_card(db, agent_id, fetched, now)
             db.commit()
             return A2ACardRefreshResponse(status="updated" if latest is not None else "created", version=version, changed_keys=changed, source_url=fetched.source_url, checked_at=now)
         except Exception as exc:
