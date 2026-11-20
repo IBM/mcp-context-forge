@@ -18,7 +18,7 @@ It handles:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Any, cast, Dict, List, Optional, TypedDict
+from typing import Any, cast, Dict, Iterable, List, Optional, Sequence, TypedDict
 
 # Third-Party
 from sqlalchemy import or_, select
@@ -1079,6 +1079,21 @@ class ExportService:
 
         return exported_servers
 
+    @staticmethod
+    def _filter_visible_ids(visible_items: Iterable[Any], requested: Iterable[str], key_attrs: Sequence[str]) -> List[str]:
+        """Return the IDs of visible items whose ``key_attrs`` match a requested identifier.
+
+        Args:
+            visible_items: Items the requesting principal may see.
+            requested: Identifiers named in the selective export request.
+            key_attrs: Item attributes compared against the requested identifiers.
+
+        Returns:
+            IDs of the visible items that match, as strings.
+        """
+        requested_set = set(requested)
+        return [str(item.id) for item in visible_items if any(str(getattr(item, attr)) in requested_set for attr in key_attrs)]
+
     async def _export_selected_prompts(self, db: Session, prompt_names: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific prompts by their identifiers using batch queries.
 
@@ -1098,8 +1113,7 @@ class ExportService:
 
         if self._is_scoped_selective_export(user_email, token_teams):
             visible_prompts = await self._fetch_all_prompts(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
-            requested = set(prompt_names)
-            selected_ids = [str(prompt.id) for prompt in visible_prompts if str(prompt.id) in requested or getattr(prompt, "name", None) in requested]
+            selected_ids = self._filter_visible_ids(visible_prompts, prompt_names, ("id", "name"))
             if not selected_ids:
                 return []
             prompt_query = select(DbPrompt).where(DbPrompt.id.in_(selected_ids))
@@ -1151,8 +1165,7 @@ class ExportService:
 
         if self._is_scoped_selective_export(user_email, token_teams):
             visible_resources = await self._fetch_all_resources(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
-            requested = set(resource_uris)
-            selected_ids = [str(resource.id) for resource in visible_resources if resource.uri in requested]
+            selected_ids = self._filter_visible_ids(visible_resources, resource_uris, ("uri",))
             if not selected_ids:
                 return []
             resource_query = select(DbResource).where(DbResource.id.in_(selected_ids))
