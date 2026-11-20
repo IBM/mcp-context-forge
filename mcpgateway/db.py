@@ -1374,6 +1374,11 @@ class Permissions:
     # Plugin permissions
     PLUGINS_READ = "plugins.read"
 
+    # Application event permissions
+    EVENTS_READ = "events.read"
+    EVENTS_SUBSCRIBE = "events.subscribe"
+    EVENTS_UNSUBSCRIBE = "events.unsubscribe"
+
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
     RESOURCES_READ = "resources.read"
@@ -1397,7 +1402,7 @@ class Permissions:
 
     # MCP method permission prefixes — used by token_catalog_service (generation-time)
     # and token_scoping middleware (runtime) to auto-grant servers.use transport access.
-    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.")
+    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.", "events.")
 
     # LLM proxy permissions
     LLM_READ = "llm.read"

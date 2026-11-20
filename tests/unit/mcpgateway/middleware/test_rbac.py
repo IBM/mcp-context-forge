@@ -493,6 +493,9 @@ class TestTokenScopeGrants:
             (["tools.execute"], "servers.use", True),
             (["tools.read"], "servers.use", True),
             (["resources.read"], "servers.use", True),
+            (["events.read"], "servers.use", True),
+            (["events.*"], "events.subscribe", True),
+            (["events.read"], "events.subscribe", False),
             (["prompts.read"], "servers.use", True),
             (["tools.execute", "servers.use"], "servers.use", True),
             # Non-MCP permissions get no transport compensation

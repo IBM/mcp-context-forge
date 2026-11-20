@@ -181,3 +181,60 @@ GitHub Actions enforce:
 CI configs live in `.github/workflows/`.
 
 ---
+
+## Experimental MCP Events providers
+
+`MCPGATEWAY_MCP_EVENTS_ENABLED=false` keeps application Events disabled by default.
+Enable it only with a trusted provider registered for an exact virtual server.
+Authorized callers discover `capabilities.events` through `initialize` or `server/discover`.
+The same authenticated MCP endpoint handles `events/list`, `events/subscribe`, and `events/unsubscribe`.
+
+The gateway checks token permission limits, current RBAC, virtual-server visibility, and provider authorization.
+Assign the explicit `events.read`, `events.subscribe`, and `events.unsubscribe` permissions through normal role governance.
+Existing role records are unchanged. Wildcard permissions retain their existing semantics.
+
+Register providers through the trusted application lifespan on every worker:
+
+```python
+from contextlib import asynccontextmanager
+from mcpgateway.services.mcp_events import event_provider
+
+
+def attach_event_owner(app, server_id, owner):
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(application):
+        with event_provider(server_id, owner):
+            async with original_lifespan(application):
+                yield
+
+    app.router.lifespan_context = lifespan
+```
+
+The owner implements the `EventProvider` protocol in `mcpgateway/services/mcp_events.py`:
+
+- `authorize(context, method)` checks current application rights before discovery or a method call.
+- `request(context, method, params)` validates event names and arguments under the original caller's authority.
+- `context.server_id`, `context.user`, and `context.headers` come from native transport authentication.
+- Application input and `_meta` never establish identity or replace the original caller with a privileged service identity.
+
+The application owner supplies durable subscriptions, protected signing-secret custody, callback verification,
+expiration, rotation, revocation, and delivery receipts. Recheck current rights before a subscription commit and every delivery.
+Validate public HTTPS destinations at connection time, preserve TLS hostname verification, and reject redirects.
+Keep subscription parameters and bearer tokens out of provider logs and stored identity snapshots.
+The gateway omits Events parameters from detailed request logs and returns sanitized provider errors.
+
+This dispatch path supports the webhook-based draft documented in
+[OpenAI MCP Events](https://developers.openai.com/plugins/build/mcp-events).
+Application owners define replay behavior and return `cursor: null` when replay is unsupported.
+Only register providers whose callback and subscription lifecycle satisfy that contract.
+
+The native black-box journey uses the full gateway, synthetic accounts, and a private temporary SQLite database:
+
+```bash
+pytest -o addopts='' tests/live_gateway/mcp/test_mcp_events.py
+```
+
+Its synthetic owner qualifies protocol dispatch and gateway authorization.
+Production acceptance additionally requires the real application owner's durable lifecycle and client processing evidence.
