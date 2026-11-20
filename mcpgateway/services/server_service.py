@@ -1493,8 +1493,7 @@ class ServerService(BaseService):
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
             oauth_changed = previous_oauth_enabled != server.oauth_enabled or (
-                previous_oauth_config != server.oauth_config
-                and await decrypt_oauth_config_for_runtime(previous_oauth_config) != await decrypt_oauth_config_for_runtime(server.oauth_config)
+                previous_oauth_config != server.oauth_config and await decrypt_oauth_config_for_runtime(previous_oauth_config) != await decrypt_oauth_config_for_runtime(server.oauth_config)
             )
             if oauth_changed:
                 server.oauth_config_generation = uuid4().hex
