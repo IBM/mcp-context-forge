@@ -806,6 +806,97 @@ class TestGetOrRegisterClient:
                     gateway_id="test-gw-autoreg", gateway_name="Test", issuer="https://as-autoreg.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
                 )
 
+    @pytest.mark.asyncio
+    async def test_get_or_register_client_skips_expired_registration(self, test_db):
+        """An expired registration must not be reused; a new client is registered instead."""
+        # Standard
+        from datetime import datetime, timedelta, timezone
+
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+
+        dcr_service = DcrService()
+        gateway = Gateway(id="test-gw-expired", name="Test", slug="test-expired", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        expired_client = RegisteredOAuthClient(
+            id="expired-id",
+            gateway_id="test-gw-expired",
+            issuer="https://as-expired.example.com",
+            client_id="expired-client",
+            client_secret_encrypted="encrypted",
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            is_active=True,
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        test_db.add(expired_client)
+        test_db.commit()
+
+        with patch.object(dcr_service, "register_client") as mock_register:
+            mock_register.return_value = RegisteredOAuthClient(
+                id="replacement-id",
+                gateway_id="test-gw-expired",
+                issuer="https://as-expired.example.com",
+                client_id="replacement-client",
+                client_secret_encrypted="encrypted",
+                redirect_uris="[]",
+                grant_types="[]",
+            )
+            result = await dcr_service.get_or_register_client(
+                gateway_id="test-gw-expired",
+                gateway_name="Test",
+                issuer="https://as-expired.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+        mock_register.assert_called_once()
+        assert result.client_id == "replacement-client"
+        test_db.refresh(expired_client)
+        assert expired_client.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_get_or_register_client_keeps_unexpired_and_no_expiry(self, test_db):
+        """A future expires_at, or no expires_at, still reuses the active registration."""
+        # Standard
+        from datetime import datetime, timedelta, timezone
+
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+
+        dcr_service = DcrService()
+        gateway = Gateway(id="test-gw-unexpired", name="Test", slug="test-unexpired", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        unexpired = RegisteredOAuthClient(
+            id="unexpired-id",
+            gateway_id="test-gw-unexpired",
+            issuer="https://as-unexpired.example.com",
+            client_id="unexpired-client",
+            client_secret_encrypted="encrypted",
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            is_active=True,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        test_db.add(unexpired)
+        test_db.commit()
+
+        result = await dcr_service.get_or_register_client(
+            gateway_id="test-gw-unexpired",
+            gateway_name="Test",
+            issuer="https://as-unexpired.example.com",
+            redirect_uri="http://localhost:4444/callback",
+            scopes=["mcp:read"],
+            db=test_db,
+        )
+        assert result.id == "unexpired-id"
+        assert result.is_active is True
+
 
 class TestUpdateClientRegistration:
     """Test updating client registration (RFC 7591 section 4.2)."""

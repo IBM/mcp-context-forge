@@ -398,6 +398,21 @@ class DcrService:
 
         return registered_client
 
+    @staticmethod
+    def _is_registration_expired(client: RegisteredOAuthClient) -> bool:
+        """Return True when the registration's client secret has a past expires_at.
+
+        A missing expires_at means the Authorization Server did not advertise an
+        expiry (client_secret_expires_at was absent or 0), so the registration
+        remains reusable.
+        """
+        expires_at = client.expires_at
+        if expires_at is None:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= datetime.now(timezone.utc)
+
     async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Get existing registered client or register new one.
 
@@ -426,8 +441,18 @@ class DcrService:
         )
 
         if existing_client:
-            logger.debug("Found existing registered client for gateway %s and issuer %s", gateway_id, normalized_issuer)
-            return existing_client
+            if self._is_registration_expired(existing_client):
+                logger.info(
+                    "Registered client %s for gateway %s and issuer %s has expired; it will not be reused",
+                    SecurityValidator.sanitize_log_message(existing_client.client_id),
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(normalized_issuer),
+                )
+                existing_client.is_active = False
+                db.commit()
+            else:
+                logger.debug("Found existing registered client for gateway %s and issuer %s", gateway_id, normalized_issuer)
+                return existing_client
 
         # No existing client, check if auto-register is enabled
         if not self.settings.dcr_auto_register_on_missing_credentials:
