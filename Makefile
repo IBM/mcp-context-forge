@@ -180,6 +180,7 @@ endef
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
+# help: install-docs         - Install only the docs dependency group (mkdocs etc.) into the venv
 # help: ensure-secrets       - Seed .env from .env.example if absent, then patch placeholder secrets (GHSA-8pcq-mx48-hjvj)
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
@@ -313,6 +314,10 @@ ensure-secrets:
 	@if [ -f .env ]; then \
 		$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env; \
 	fi
+
+.PHONY: install-docs
+install-docs: venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group docs"
 
 .PHONY: install-dev
 install-dev: venv
@@ -3264,7 +3269,7 @@ scc-report:
 # help: 📚 DOCUMENTATION & SBOM
 # help: docs                 - Build docs (graphviz + handsdown + images + SBOM)
 # help: docs-assets           - Sync logo/icon SVGs from mcpgateway/static to docs
-# help: docs-serve            - Sync assets and serve docs locally with mkdocs
+# help: docs-serve            - Sync assets and serve docs locally with mkdocs (activates the venv, installs docs deps if missing)
 # help: images               - Generate architecture & dependency diagrams
 
 # Pick the right "in-place" flag for sed (BSD vs GNU)
@@ -3290,10 +3295,11 @@ docs-assets:
 
 .PHONY: docs-serve
 docs-serve: docs-assets
+	@test -x "$(VENV_DIR)/bin/mkdocs" || $(MAKE) install-docs
 ifeq ($(shell uname),Darwin)
-	@cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve"
 else
-	@cd $(DOCS_DIR) && mkdocs serve
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && cd $(DOCS_DIR) && mkdocs serve"
 endif
 
 .PHONY: docs
@@ -4878,7 +4884,7 @@ hadolint:
 # 📦 DEPENDENCY MANAGEMENT
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
-# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
+# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml
 
 .PHONY: deps-update
 
@@ -4886,8 +4892,7 @@ deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
 	@test -f ./.github/tools/update_dependencies.py || { echo "❌ update_dependencies.py not found in ./.github/tools."; exit 1; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
-	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
+	@echo "✅ Dependencies updated in pyproject.toml"
 
 
 # =============================================================================
