@@ -428,8 +428,8 @@ class CatalogService:
 
         Args:
             oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
-                optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
-                audience/resource), or None.
+                optionally client_id/client_secret/token_url/authorization_url/
+                registration_endpoint/redirect_uri/audience/resource), or None.
 
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
@@ -458,7 +458,7 @@ class CatalogService:
         # manually-created gateway can (#5967 follow-up). username/password are omitted:
         # grant_type is hardcoded to authorization_code above, so those password-grant-only
         # fields would never be read.
-        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "registration_endpoint", "redirect_uri", "audience"):
             value = oauth_credentials.get(key)
             if value is None or value == "":
                 continue
@@ -640,13 +640,16 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                # Carry any OAuth credentials the caller supplied (issuer, scopes, and
-                # optionally client_id/client_secret/token_url/authorization_url) onto the
-                # gateway up front, so a second PUT /gateways/{id} is never required (#5967).
+                # Seed the gateway from catalog OAuth metadata, then let explicit request
+                # credentials override it. This keeps API registration consistent with the
+                # catalog entry and avoids a second PUT /gateways/{id} (#7400).
+                catalog_oauth = server_data.get("oauth") or {}
+                request_oauth = request.oauth_credentials if request else None
+                merged_oauth = {**catalog_oauth, **(request_oauth or {})}
                 # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
                 # in later - automatically for providers that support discovery/DCR - by the
                 # existing GET /oauth/authorize/{gateway_id} flow.
-                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials if request else None)
+                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(merged_oauth)
 
                 # Runs the same URL/SSRF and grant-type validation normal gateway registration
                 # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through

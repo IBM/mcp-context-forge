@@ -61,6 +61,7 @@ def test_catalog_server_oauth_metadata_parses_nested_block():
             "issuer": "https://mcp.linear.app",
             "authorization_url": "https://mcp.linear.app/authorize",
             "token_url": "https://mcp.linear.app/token",
+            "registration_endpoint": "https://mcp.linear.app/register",
             "scopes": ["read", "write"],
             "supports_dcr": True,
             "resource": "https://mcp.linear.app/mcp",
@@ -71,6 +72,7 @@ def test_catalog_server_oauth_metadata_parses_nested_block():
     assert server.oauth.issuer == "https://mcp.linear.app"
     assert server.oauth.authorization_url == "https://mcp.linear.app/authorize"
     assert server.oauth.token_url == "https://mcp.linear.app/token"
+    assert server.oauth.registration_endpoint == "https://mcp.linear.app/register"
     assert server.oauth.scopes == ["read", "write"]
     assert server.oauth.supports_dcr is True
     assert server.oauth.resource == "https://mcp.linear.app/mcp"
@@ -83,6 +85,7 @@ def test_catalog_oauth_metadata_defaults():
     assert metadata.issuer is None
     assert metadata.authorization_url is None
     assert metadata.token_url is None
+    assert metadata.registration_endpoint is None
     assert metadata.scopes == []
     assert metadata.supports_dcr is False
     assert metadata.resource is None
@@ -113,6 +116,7 @@ def test_seeded_oauth_entries_in_real_catalog_file():
         raw = next(s for s in servers if s["id"] == server.id)["oauth"]
         assert "client_id" not in raw
         assert "client_secret" not in raw
+        assert "{tenantid}" not in (raw.get("issuer") or "")
 
 
 @pytest.mark.asyncio
@@ -507,7 +511,6 @@ async def test_register_catalog_server_tags_validation_error_handling(service):
             return MagicMock(id="test-id", name="Test Server", tags=[])
 
         with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", mock_register_gateway):
-
             result = await service.register_catalog_server("test-server", None, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
 
             # Registration should succeed even with some invalid tags
@@ -559,7 +562,6 @@ async def test_register_catalog_server_oauth_without_credentials(service):
             patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
             patch("mcpgateway.services.catalog_service.validate_tags_field", return_value=[{"id": "oauth", "label": "oauth"}]),
         ):
-
             result = await service.register_catalog_server("oauth-server", None, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
 
             # Verify OAuth server was registered successfully but requires configuration
@@ -592,12 +594,11 @@ async def test_register_forwards_identity_to_gateway_service(service):
     assert kwargs["team_id"] is None
     assert kwargs["visibility"] == "private"
 
+
 @pytest.mark.asyncio
 async def test_register_oauth_skip_init_stamps_owner(service):
     """The OAuth skip-initialization path stamps the caller onto the gateway row."""
-    fake_catalog = {
-        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
-    }
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]}
 
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
         db = MagicMock()
@@ -631,9 +632,7 @@ async def test_register_oauth_invalid_config_does_not_leak_client_secret(service
     response's error/message fields, since those are logged and rendered verbatim
     in the admin UI's HTMX error tooltip.
     """
-    fake_catalog = {
-        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
-    }
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]}
     secret = "SUPER-SECRET-CLIENT-VALUE"  # pragma: allowlist secret
 
     request = CatalogServerRegisterRequest(
@@ -662,9 +661,7 @@ async def test_register_oauth_non_string_client_secret_is_rejected(service):
     test_build_oauth_config_from_credentials_rejects_non_string_values for the unit-level check
     this exercises end to end."""
     secret = {"inner": "PLAINTEXT-SECRET"}  # pragma: allowlist secret
-    fake_catalog = {
-        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
-    }
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]}
     request = CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials={"issuer": "https://issuer.example.com", "client_secret": secret})
 
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
@@ -701,6 +698,12 @@ def test_build_oauth_config_from_credentials_carries_resource_and_audience_field
     assert "password" not in raw
     assert raw["audience"] == "https://api.example.com"
     assert raw["resource"] == "https://api.example.com/mcp"
+
+
+def test_build_oauth_config_from_credentials_carries_registration_endpoint(service):
+    """Catalog metadata must preserve a pre-recorded RFC 7591 endpoint for DCR."""
+    raw = service._build_oauth_config_from_credentials({"registration_endpoint": "https://issuer.example.com/register"})
+    assert raw["registration_endpoint"] == "https://issuer.example.com/register"
 
 
 def test_build_oauth_config_from_credentials_ignores_caller_supplied_grant_type(service):
@@ -759,7 +762,7 @@ def test_build_oauth_config_from_credentials_scopes_list_normalized(service):
     assert raw["scopes"] == ["repo", "read:user"]
 
 
-@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"])
+@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "registration_endpoint", "redirect_uri", "audience"])
 def test_build_oauth_config_from_credentials_rejects_non_string_values(service, key):
     """A dict/list/int value for a known credential key must be rejected outright rather than
     silently persisted. Left unchecked, `_encrypt_oauth_secret_value`'s `isinstance(value, str)`
@@ -775,12 +778,27 @@ async def test_register_oauth_skip_init_persists_oauth_credentials(service):
     """oauth_credentials submitted with the register request land on the gateway's
     oauth_config in a single call - no second PUT /gateways/{id} required (#5967)."""
     fake_catalog = {
-        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+        "catalog_servers": [
+            {
+                "id": "oauth-server",
+                "name": "OAuth Server",
+                "url": "https://oauth.example.com/mcp",
+                "description": "OAuth server",
+                "auth_type": "OAuth2.1",
+                "tags": [],
+                "oauth": {
+                    "issuer": "https://issuer.example.com",
+                    "authorization_url": "https://issuer.example.com/authorize",
+                    "token_url": "https://issuer.example.com/token",
+                    "registration_endpoint": "https://issuer.example.com/register",
+                    "scopes": ["catalog-read"],
+                },
+            }
+        ]
     }
     req = CatalogServerRegisterRequest(
         server_id="oauth-server",
         oauth_credentials={
-            "issuer": "https://issuer.example.com",
             "client_id": "client-123",
             "client_secret": "super-secret",  # pragma: allowlist secret
             "scopes": ["read", "write"],
@@ -815,6 +833,9 @@ async def test_register_oauth_skip_init_persists_oauth_credentials(service):
     stored = db_gateway.oauth_config
     assert stored["grant_type"] == "authorization_code"
     assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["authorization_url"] == "https://issuer.example.com/authorize"
+    assert stored["token_url"] == "https://issuer.example.com/token"
+    assert stored["registration_endpoint"] == "https://issuer.example.com/register"
     assert stored["client_id"] == "client-123"
     assert stored["scopes"] == ["read", "write"]
     # Sensitive values are encrypted at rest, never stored as the plaintext submitted.
@@ -828,9 +849,7 @@ async def test_register_oauth_skip_init_survives_slow_discovery(service):
     A slow/unreachable issuer must not pin the request worker and DB connection for up to 60s
     (two sequential settings.oauth_request_timeout probes) - registration should still succeed,
     with the submitted credentials persisted minus the discovered endpoints."""
-    fake_catalog = {
-        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
-    }
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]}
     req = CatalogServerRegisterRequest(
         server_id="oauth-server",
         oauth_credentials={"issuer": "https://issuer.example.com", "client_id": "client-123"},
@@ -873,9 +892,7 @@ async def test_register_oauth_and_api_key_without_api_key_skips_initialization(s
     """A mixed OAuth2.1 & API Key catalog entry registered with no api_key must take the
     skip-initialization path rather than falling through to a doomed connection test."""
     fake_catalog = {
-        "catalog_servers": [
-            {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
-        ]
+        "catalog_servers": [{"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}]
     }
 
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
@@ -914,9 +931,7 @@ async def test_register_oauth_and_api_key_with_both_uses_bearer_and_drops_oauth_
     presence, so a persisted-but-unused oauth_config would be a silent no-op. The caller can still
     switch this gateway to OAuth explicitly via PUT /gateways/{id}."""
     fake_catalog = {
-        "catalog_servers": [
-            {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
-        ]
+        "catalog_servers": [{"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}]
     }
     req = CatalogServerRegisterRequest(
         server_id="mixed-server",
@@ -1493,6 +1508,7 @@ async def test_register_explicit_public_honored(service):
 async def test_register_team_without_team_id_rejected(service):
     """visibility=team without a team_id is rejected."""
     from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+
     req = CatalogServerRegisterRequest(server_id="1", visibility="team")
     db = MagicMock()
     with pytest.raises(CatalogRegistrationPermissionError, match="team_id is required"):
@@ -1503,6 +1519,7 @@ async def test_register_team_without_team_id_rejected(service):
 async def test_register_foreign_team_rejected(service):
     """A team_id not in the caller's token scope is rejected."""
     from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+
     req = CatalogServerRegisterRequest(server_id="1", visibility="team", team_id="foreign-team")
     db = MagicMock()
     with pytest.raises(CatalogRegistrationPermissionError, match="not in the caller's token scope"):
@@ -1513,6 +1530,7 @@ async def test_register_foreign_team_rejected(service):
 async def test_register_public_only_token_cannot_create_private(service):
     """Public-only tokens (token_teams=[]) cannot create private registrations."""
     from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+
     db = MagicMock()
     with pytest.raises(CatalogRegistrationPermissionError, match="Public-only tokens"):
         await service.register_catalog_server("1", None, db, created_by="u@x.com", owner_email="u@x.com", token_teams=[])
@@ -1522,6 +1540,7 @@ async def test_register_public_only_token_cannot_create_private(service):
 async def test_register_unknown_owner_rejected(service):
     """An unknown or empty owner is rejected."""
     from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+
     db = MagicMock()
     with pytest.raises(CatalogRegistrationPermissionError, match="Authenticated identity required"):
         await service.register_catalog_server("1", None, db, created_by="unknown", owner_email="unknown", token_teams=None)
@@ -1544,6 +1563,7 @@ async def test_register_owner_email_set_from_caller(service):
 async def test_bulk_rejects_invalid_scope_before_any_registration(service):
     """Bulk registration with an invalid common scope rejects before creating any gateway."""
     from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+
     fake_request = CatalogBulkRegisterRequest(server_ids=["1", "2"], visibility="team")
     mock_register = AsyncMock()
     db = MagicMock()
