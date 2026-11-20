@@ -48,7 +48,16 @@ from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgen
 from mcpgateway.services.a2a_card_import import fetch_agent_card, same_origin
 from mcpgateway.services.a2a_errors import A2AAgentError
 from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, forget_a2a_oauth_failures, resolve_a2a_agent_oauth_headers
-from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import (
+    _jsonrpc_error_message,
+    dump_agent_skills,
+    get_agent_skills,
+    is_terminal_task_state,
+    is_v1_a2a_protocol,
+    prepare_a2a_invocation,
+    prepare_pinned_a2a_invocation,
+    resolve_a2a_headers,
+)
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache
@@ -244,36 +253,6 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
             f"Allowed domains: {allowed_domains!r}. "
             f"Add the domain to UAID_ALLOWED_DOMAINS or set UAID_ALLOW_ALL_DOMAINS=true for development."
         )
-
-
-def _jsonrpc_error_message(response: Any) -> Optional[str]:
-    """Describe a JSON-RPC error carried in an A2A response.
-
-    A2A runs JSON-RPC over HTTP, so an agent can reject a call while the
-    transport still answers 200. Returns None for a response without an error.
-
-    Args:
-        response: The decoded A2A response body.
-
-    Returns:
-        A human-readable error message, or None when the response is not a
-        JSON-RPC error.
-    """
-    if not isinstance(response, dict):
-        return None
-    if response.get("jsonrpc") != "2.0":
-        return None
-    error = response.get("error")
-    if not error:
-        return None
-    detail = None
-    if isinstance(error, dict):
-        detail = error.get("message")
-        if not detail and "code" in error:
-            detail = f"code {error['code']}"
-    elif isinstance(error, str):
-        detail = error
-    return f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}"
 
 
 def _is_jwt_token(token: str) -> bool:
