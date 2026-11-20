@@ -677,6 +677,52 @@ async def test_register_oauth_uses_catalog_defaults(service, credentials):
     assert fake_catalog["catalog_servers"][0]["oauth"] == defaults
 
 
+async def _register_oauth_with_catalog(service, catalog_oauth, credentials):
+    fake_catalog = {"catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": [], "oauth": catalog_oauth}]}
+    request = CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials=credentials)
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+        with patch("mcpgateway.services.catalog_service.select"), patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"):
+            await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+    return db.add.call_args[0][0].oauth_config
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_skips_catalog_issuer_when_dcr_unsupported(service):
+    """supports_dcr: false and no client_id -> catalog issuer is not applied (no DCR attempt)."""
+    catalog_oauth = {"issuer": "https://issuer.example.com", "authorization_url": "https://issuer.example.com/authorize", "token_url": "https://issuer.example.com/token", "supports_dcr": False}
+    config = await _register_oauth_with_catalog(service, catalog_oauth, {"scopes": ["read"]})
+    assert "issuer" not in config
+    assert config["authorization_url"] == "https://issuer.example.com/authorize"
+    assert config["token_url"] == "https://issuer.example.com/token"
+
+    config = await _register_oauth_with_catalog(service, catalog_oauth, {"client_id": "abc"})
+    assert config["issuer"] == "https://issuer.example.com"
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_issuer_override_drops_catalog_endpoints(service):
+    """A submitted issuer different from the catalog one does not keep the catalog endpoints."""
+    catalog_oauth = {"issuer": "https://issuer.example.com", "authorization_url": "https://issuer.example.com/authorize", "token_url": "https://issuer.example.com/token"}
+    config = await _register_oauth_with_catalog(service, catalog_oauth, {"issuer": "https://other.example.com"})
+    assert config["issuer"] == "https://other.example.com"
+    assert "authorization_url" not in config
+    assert "token_url" not in config
+
+    config = await _register_oauth_with_catalog(service, catalog_oauth, {"issuer": "https://issuer.example.com"})
+    assert config["authorization_url"] == "https://issuer.example.com/authorize"
+
+
 @pytest.mark.asyncio
 async def test_register_oauth_invalid_config_does_not_leak_client_secret(service):
     """A GatewayCreate validation failure (e.g. bad issuer URL) must never echo the
