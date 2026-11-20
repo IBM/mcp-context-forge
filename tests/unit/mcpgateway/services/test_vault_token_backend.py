@@ -696,7 +696,7 @@ class TestVaultTokenBackendRevoke:
         mock_db.get.return_value = mock_gateway
 
         with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
-            mock_vault.return_value = {}  # Successful delete
+            mock_vault.side_effect = [{"data": {"data": {"gateway_id": "gw-123"}}}, {}]  # stored record, then successful delete
 
             result = await backend.revoke_user_tokens(
                 gateway_id="gw-123",
@@ -705,9 +705,8 @@ class TestVaultTokenBackendRevoke:
             )
 
             assert result is True
-            # Verify DELETE was called
-            call_args = mock_vault.call_args
-            assert call_args[0][0] == "DELETE"
+            # The record is checked first, then deleted.
+            assert [call.args[0] for call in mock_vault.await_args_list] == ["GET", "DELETE"]
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_not_found(self):
@@ -2192,14 +2191,13 @@ class TestVaultTokenBackendAdditionalCoverage:
         VaultTokenBackend._token_cache[cache_key] = {"token": "cached", "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300)}
 
         with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
-            mock_vault.return_value = None
+            mock_vault.side_effect = [{"data": {"data": {}}}, None]
 
             await backend.revoke_user_tokens("gw-123", "team1", "user@test.com")
 
             # Assert: DELETE called and cache entry marked expired (not deleted —
             # expire-in-place lets other workers' copies become stale within one TTL cycle).
-            mock_vault.assert_called_once()
-            assert mock_vault.call_args[0][0] == "DELETE"
+            assert [call.args[0] for call in mock_vault.await_args_list] == ["GET", "DELETE"]
             assert cache_key in VaultTokenBackend._token_cache
             assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
 
@@ -2684,3 +2682,74 @@ async def test_validation_token_missing_vault_record(response):
     assert await backend.read_validation_token("gw-1", "team-1", "caller@example.com") is None
     backend._vault_request.assert_awaited_once()
     assert backend._vault_request.await_args.args[0] == "GET"
+
+
+@pytest.mark.asyncio
+async def test_revoke_user_tokens_missing_record_reports_false_without_delete_but_expires_cache():
+    """Vault answers a DELETE for a missing path with 204, so revoke checks first and reports False."""
+    from pydantic import SecretStr
+
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth", vault_token_cache_enabled=True, vault_token_cache_ttl=300, vault_token_cache_max_size=10)
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
+    cache_key = ("team-1", backend._hash_server_id("https://example.com/mcp"), "caller@example.com")
+    VaultTokenBackend._token_cache[cache_key] = {"token": "cached", "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300)}
+    backend._vault_request = AsyncMock(return_value=None)
+    try:
+        assert await backend.revoke_user_tokens("gw-1", "team-1", "caller@example.com") is False
+        assert [call.args[0] for call in backend._vault_request.await_args_list] == ["GET"]
+        assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
+    finally:
+        VaultTokenBackend._token_cache.pop(cache_key, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        ({}, ("access-value", "refresh-value")),
+        ({"token": {"access_token": "access-value"}}, ("access-value", None)),
+        ({"token": {"access_token": "", "refresh_token": 5}}, (None, None)),
+        ({"token": "not-a-dict"}, (None, None)),
+        ({"gateway_id": "gw-2"}, None),
+        ({"email": "other@example.com"}, None),
+        ({"mcp_url": "https://other.example.com/mcp"}, None),
+    ],
+)
+async def test_revocation_tokens_require_exact_vault_binding(overrides, expected):
+    """Revocation reads only the caller's exactly bound record, never refreshing or caching."""
+    from pydantic import SecretStr
+
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth")
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
+    data = {
+        "gateway_id": "gw-1", "email": "caller@example.com", "mcp_url": "https://example.com/mcp",
+        "token": {"access_token": "access-value", "refresh_token": "refresh-value"},
+        **overrides,
+    }
+    backend._vault_request = AsyncMock(return_value={"data": {"data": data}})
+    backend._refresh_access_token = AsyncMock()
+    backend._write_token_cache = MagicMock()
+    result = await backend.read_revocation_tokens("gw-1", "team-1", "caller@example.com")
+    if expected is None:
+        assert result is None
+    else:
+        assert (result.access_token, result.refresh_token) == expected
+        assert "access-value" not in repr(result)
+    backend._refresh_access_token.assert_not_called()
+    backend._write_token_cache.assert_not_called()
+    assert backend._vault_request.call_args.args[0] == "GET"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [None, {}])
+async def test_revocation_tokens_missing_vault_record(response):
+    """A missing Vault record means there is nothing to revoke."""
+    from pydantic import SecretStr
+
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth")
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
+    backend._vault_request = AsyncMock(return_value=response)
+    assert await backend.read_revocation_tokens("gw-1", "team-1", "caller@example.com") is None

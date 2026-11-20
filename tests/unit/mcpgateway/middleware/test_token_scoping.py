@@ -441,6 +441,13 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.TOOLS_READ]) is False
 
     @pytest.mark.asyncio
+    async def test_oauth_token_delete_path_requires_gateways_read(self, middleware):
+        """Layer 1 maps the per-user OAuth token delete route to gateways.read, like the status route."""
+        assert middleware._check_permission_restrictions("/oauth/tokens/gw1", "DELETE", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/oauth/tokens/gw1", "DELETE", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/tokens/gw1", "DELETE", ["*"]) is True
+
+    @pytest.mark.asyncio
     async def test_registered_client_paths_require_oauth_client_permissions(self, middleware):
         """Layer 1 maps the DCR registered-client routes to admin.oauth_clients permissions."""
         # Read permission covers both GET routes (collection and per-gateway lookup)

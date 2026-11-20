@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from mcpgateway.config import get_settings
-from mcpgateway.services.token_backends.base import ValidationToken
+from mcpgateway.services.token_backends.base import RevocationTokens, ValidationToken
 
 # Import backends
 from mcpgateway.services.token_backends import (
@@ -331,6 +331,18 @@ class TokenStorageService:
             Access token details, or None when no token exists.
         """
         return await self._backend.get_user_token_details(gateway_id, self._get_team_id(gateway_id, app_user_email), app_user_email, threshold_seconds)
+
+    async def read_revocation_tokens(self, gateway_id: str, app_user_email: str) -> RevocationTokens | None:
+        """Read a user's stored tokens for RFC 7009 revocation, without refresh or persistence.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            app_user_email: User whose tokens to read.
+
+        Returns:
+            The stored tokens, or None when none are stored.
+        """
+        return await self._backend.read_revocation_tokens(gateway_id, self._get_team_id(gateway_id, app_user_email), app_user_email)
 
     # REMOVED: get_any_valid_token() - This was a security vulnerability
     # All OAuth tokens MUST be user-specific to prevent cross-user token access
