@@ -282,6 +282,9 @@ class TokenCatalogService:
                 "permissions": scope.permissions if scope.permissions is not None else [],
                 "ip_restrictions": scope.ip_restrictions or [],
                 "time_restrictions": scope.time_restrictions or {},
+                # The scoping middleware reads this from the JWT; without it,
+                # quotas stored on the token row can never be enforced.
+                "usage_limits": scope.usage_limits or {},
             }
         else:
             scopes_dict = {
@@ -289,6 +292,7 @@ class TokenCatalogService:
                 "permissions": [],  # Empty = inherit from RBAC at runtime
                 "ip_restrictions": [],
                 "time_restrictions": {},
+                "usage_limits": {},
             }
 
         # Auto-inject servers.use for tokens with explicit MCP-related permissions.
