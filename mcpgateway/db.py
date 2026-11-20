@@ -5241,6 +5241,7 @@ class A2AAgentCard(Base):
     etag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     max_age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (UniqueConstraint("a2a_agent_id", "version", name="uq_a2a_agent_cards_agent_version"),)
 
