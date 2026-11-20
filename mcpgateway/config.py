@@ -1826,7 +1826,7 @@ class Settings(  # pylint: disable=too-many-ancestors
         empty, placeholder, known-weak, and too-short (below
         ``password_min_length_user``, the OWASP baseline) values when their
         consuming authentication feature is enabled (feature-gated fail-closed).
-        ``identity_claims_secret`` gets the full secret checks when
+        ``identity_claims_secret`` gets the full secret checks when it is set or
         ``identity_sign_claims`` is on, and must differ from ``jwt_secret_key``.
         No entropy floor is applied to passwords: the Shannon-entropy check used
         for random secrets is a poor signal for human-chosen passwords and the
@@ -1891,8 +1891,8 @@ class Settings(  # pylint: disable=too-many-ancestors
                     check_placeholder=True,
                 )
 
-        if self.identity_sign_claims:
-            claims_secret = self.identity_claims_secret.get_secret_value() if self.identity_claims_secret else ""
+        claims_secret = self.identity_claims_secret.get_secret_value() if self.identity_claims_secret else ""
+        if self.identity_sign_claims or claims_secret:
             self._enforce_secret_strength(
                 "identity_claims_secret",
                 claims_secret,

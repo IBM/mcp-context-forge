@@ -1315,6 +1315,22 @@ def test_identity_sign_claims_accepts_dedicated_secret():
     assert s.identity_claims_secret.get_secret_value() == _STRONG_CLAIMS
 
 
+def test_identity_claims_secret_weak_with_global_flag_off():
+    """A weak claims secret refuses startup even when global signing is off."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="identity_claims_secret"):
+        Settings(jwt_secret_key=_STRONG_JWT, identity_sign_claims=False, identity_claims_secret="changeme", environment="development", _env_file=None)  # nosec B106  # pragma: allowlist secret
+
+
+def test_identity_claims_secret_jwt_reuse_with_global_flag_off():
+    """Reusing JWT_SECRET_KEY as the claims secret refuses startup even when global signing is off."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="jwt_secret_key"):
+        Settings(jwt_secret_key=_STRONG_JWT, identity_sign_claims=False, identity_claims_secret=_STRONG_JWT, environment="development", _env_file=None)
+
+
 def test_identity_sign_claims_off_ignores_secret():
     """Without claim signing, no claims secret is required."""
     s = Settings(jwt_secret_key=_STRONG_JWT, identity_sign_claims=False, environment="development", _env_file=None)
