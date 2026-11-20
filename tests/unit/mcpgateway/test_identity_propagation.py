@@ -11,7 +11,7 @@ Tests cover:
 - build_identity_meta() merging behavior with all optional fields
 - filter_sensitive_attributes() including settings fallback
 - _resolve_config() per-gateway overrides for all keys
-- _sign_claims() JWT secret fallback
+- Claims JWS signing: claim coverage, expiry, audience, key separation
 - Per-gateway configuration override
 - Plugin convenience helpers (PluginContext.user_context, user_email, user_groups)
 - _set_user_identity_from_dict() transport helper
@@ -21,12 +21,15 @@ Tests cover:
 """
 
 # Standard
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timezone
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import jwt
 from pydantic import SecretStr
 import pytest
 
@@ -35,11 +38,15 @@ from cpex.framework import GlobalContext, PluginContext
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.identity_propagation import (
     _resolve_config,
-    _sign_claims,
+    IdentitySigningError,
     build_identity_headers,
     build_identity_meta,
     filter_sensitive_attributes,
 )
+
+
+JWT_SECRET = "jwt-secret-for-tests-only-0123456789abcdef"  # pragma: allowlist secret
+CLAIMS_SECRET = "identity-claims-secret-for-tests-0123456789"  # pragma: allowlist secret
 
 
 def _isolated_client(mock_client, captured_kwargs=None):
@@ -177,12 +184,13 @@ class TestBuildIdentityHeaders:
         mock_settings.identity_propagation_mode = "both"
         mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
         mock_settings.identity_sign_claims = True
-        mock_settings.identity_claims_secret = SecretStr("test-secret")  # pragma: allowlist secret
+        mock_settings.identity_claims_secret = SecretStr(CLAIMS_SECRET)
+        mock_settings.jwt_secret_key = SecretStr(JWT_SECRET)
         mock_settings.identity_sensitive_attributes = []
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
-        headers = build_identity_headers(uc)
-        assert "X-Forwarded-User-Claims-Signature" in headers
-        assert len(headers["X-Forwarded-User-Claims-Signature"]) == 64  # SHA-256 hex
+        headers = build_identity_headers(uc, audience="gw-1")
+        claims = jwt.decode(headers["X-Forwarded-User-Claims-Signature"], CLAIMS_SECRET, algorithms=["HS256"], audience="gw-1")
+        assert claims["email"] == "alice@co.com"
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_delegation_chain_header(self, mock_settings):
@@ -519,44 +527,163 @@ class TestResolveConfig:
         assert cfg["enabled"] is False  # Falls back to global
 
 # ---------------------------------------------------------------------------
-# _sign_claims tests
+# Claims JWS signing tests
 # ---------------------------------------------------------------------------
-class TestSignClaims:
-    """Tests for _sign_claims() HMAC signing."""
+@pytest.fixture
+def signing_settings():
+    """Patch settings with propagation and claim signing on, using a dedicated secret."""
+    with patch("mcpgateway.utils.identity_propagation.settings") as mock_settings:
+        mock_settings.identity_propagation_enabled = True
+        mock_settings.identity_propagation_mode = "both"
+        mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
+        mock_settings.identity_sign_claims = True
+        mock_settings.identity_claims_secret = SecretStr(CLAIMS_SECRET)
+        mock_settings.jwt_secret_key = SecretStr(JWT_SECRET)
+        mock_settings.identity_sensitive_attributes = []
+        yield mock_settings
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64  # SHA-256 hex
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_identity_claims_secret_actually_changes_the_signature(self, mock_settings):
-        """The configured secret must actually be used as the HMAC key, not merely present.
+def _full_user(**overrides) -> UserContext:
+    fields = dict(
+        user_id="alice@co.com",
+        email="alice@co.com",
+        full_name="Alice",
+        is_admin=False,
+        groups=["eng"],
+        teams=["team-a"],
+        roles=["viewer"],
+        auth_method="bearer",
+        service_account="ci-bot",
+        delegation_chain=["ci-bot", "alice@co.com"],
+    )
+    fields.update(overrides)
+    return UserContext(**fields)
 
-        test_uses_identity_claims_secret and test_falls_back_to_empty_when_no_secrets only
-        assert len(sig) == 64, which would still pass even if identity_claims_secret were
-        silently ignored (HMAC-SHA256 always produces a 64-char hex digest, regardless of
-        key). Signing the same payload with a real secret and with no secret at all and
-        asserting the two signatures differ is what actually proves the secret is honored.
-        """
-        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
-        mock_settings.jwt_secret_key = SecretStr("jwt-fallback-secret")  # pragma: allowlist secret
-        sig_with_secret = _sign_claims("test-payload")
 
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = None
-        sig_without_secret = _sign_claims("test-payload")
+def _decode(token: str, secret: str = CLAIMS_SECRET, audience: str = "gw-1") -> dict:
+    return jwt.decode(token, secret, algorithms=["HS256"], audience=audience)
 
-        assert sig_with_secret != sig_without_secret
+
+SIG = "X-Forwarded-User-Claims-Signature"
+
+
+class TestClaimsToken:
+    """The claims signature is a short-lived, audience-bound JWS over every identity claim."""
+
+    def test_token_covers_every_claim(self, signing_settings):
+        uc = _full_user(is_admin=True)
+        claims = _decode(build_identity_headers(uc, audience="gw-1")[SIG])
+        assert claims["id"] == "alice@co.com"
+        assert claims["email"] == "alice@co.com"
+        assert claims["full_name"] == "Alice"
+        assert claims["is_admin"] is True
+        assert claims["groups"] == ["eng"]
+        assert claims["teams"] == ["team-a"]
+        assert claims["roles"] == ["viewer"]
+        assert claims["auth_method"] == "bearer"
+        assert claims["service_account"] == "ci-bot"
+        assert claims["delegation_chain"] == ["ci-bot", "alice@co.com"]
+        assert claims["iss"] == "mcpgateway-identity-propagation"
+
+    def test_token_claims_match_headers(self, signing_settings):
+        headers = build_identity_headers(_full_user(), audience="gw-1")
+        claims = _decode(headers[SIG])
+        assert headers["X-Forwarded-User-Admin"] == str(claims["is_admin"]).lower()
+        assert headers["X-Forwarded-User-Teams"] == ",".join(claims["teams"])
+        assert headers["X-Forwarded-User-Roles"] == ",".join(claims["roles"])
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("is_admin", True),
+            ("teams", ["team-a", "team-evil"]),
+            ("roles", ["platform_admin"]),
+            ("groups", ["eng", "root"]),
+            ("delegation_chain", ["mallory", "alice@co.com"]),
+            ("service_account", "other-bot"),
+            ("auth_method", "api_key"),
+        ],
+    )
+    def test_changing_a_claim_changes_the_signed_payload(self, signing_settings, field, value):
+        base = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        changed = _decode(build_identity_headers(_full_user(**{field: value}), audience="gw-1")[SIG])
+        assert changed[field] == value
+        assert base[field] != changed[field]
+
+    def test_tampered_token_fails_verification(self, signing_settings):
+        token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        header, payload, signature = token.split(".")
+        forged = jwt.encode({**_decode(token), "is_admin": True}, "attacker-key-0123456789abcdef0123456789", algorithm="HS256").split(".")[1]
+        with pytest.raises(jwt.InvalidSignatureError):
+            _decode(f"{header}.{forged}.{signature}")
+
+    def test_token_is_short_lived(self, signing_settings):
+        claims = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        assert claims["exp"] - claims["iat"] == 60
+
+    def test_expired_token_is_rejected(self, signing_settings):
+        past = time.time() - 120
+        with patch("mcpgateway.utils.identity_propagation.time.time", return_value=past):
+            token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        with pytest.raises(jwt.ExpiredSignatureError):
+            _decode(token)
+
+    def test_token_has_unique_jti(self, signing_settings):
+        first = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        second = _decode(build_identity_headers(_full_user(), audience="gw-1")[SIG])
+        assert first["jti"] != second["jti"]
+
+    def test_audience_defaults_to_gateway_id(self, signing_settings):
+        gateway = SimpleNamespace(id="gw-1", identity_propagation=None)
+        assert _decode(build_identity_headers(_full_user(), gateway)[SIG])["aud"] == "gw-1"
+
+    def test_explicit_audience_wins_and_binds(self, signing_settings):
+        gateway = SimpleNamespace(id="gw-1", identity_propagation=None)
+        token = build_identity_headers(_full_user(), gateway, audience="gw-2")[SIG]
+        assert _decode(token, audience="gw-2")["aud"] == "gw-2"
+        with pytest.raises(jwt.InvalidAudienceError):
+            _decode(token, audience="gw-1")
+
+    def test_refuses_without_audience(self, signing_settings):
+        with pytest.raises(ValueError):
+            build_identity_headers(_full_user())
+
+    def test_token_not_verifiable_with_jwt_secret(self, signing_settings):
+        token = build_identity_headers(_full_user(), audience="gw-1")[SIG]
+        with pytest.raises(jwt.InvalidSignatureError):
+            _decode(token, secret=JWT_SECRET)
+
+    @pytest.mark.parametrize("secret", [None, SecretStr(""), SecretStr(JWT_SECRET)])
+    def test_runtime_refuses_without_dedicated_secret(self, signing_settings, secret):
+        signing_settings.identity_claims_secret = secret
+        with pytest.raises(ValueError, match="IDENTITY_CLAIMS_SECRET"):
+            build_identity_headers(_full_user(), audience="gw-1")
+        with pytest.raises(ValueError):
+            build_identity_meta(_full_user(), audience="gw-1")
+
+    def test_per_gateway_sign_claims_override_refuses_without_secret(self, signing_settings):
+        signing_settings.identity_sign_claims = False
+        signing_settings.identity_claims_secret = None
+        with pytest.raises(ValueError):
+            build_identity_headers(_full_user(), identity_propagation={"enabled": True, "sign_claims": True}, audience="gw-1")
+
+    def test_meta_carries_claims_signature(self, signing_settings):
+        user = build_identity_meta(_full_user(), audience="gw-1")["user"]
+        claims = _decode(user["claims_signature"])
+        assert "claims_signature" not in claims
+        assert claims["teams"] == user["teams"]
+        assert claims["is_admin"] == user["is_admin"]
+
+    def test_no_signature_when_sign_claims_false(self, signing_settings):
+        signing_settings.identity_sign_claims = False
+        signing_settings.identity_claims_secret = None
+        assert SIG not in build_identity_headers(_full_user())
+        assert "claims_signature" not in build_identity_meta(_full_user())["user"]
 
     def test_identity_claims_secret_is_a_secret_type(self):
         """The identity-claims signing key must not be a bare string."""
         # Standard
         from typing import get_args
-
-        # Third-Party
-        from pydantic import SecretStr
 
         # First-Party
         from mcpgateway.config import Settings
@@ -564,19 +691,6 @@ class TestSignClaims:
         annotation = Settings.model_fields["identity_claims_secret"].annotation
         assert SecretStr in get_args(annotation), "identity_claims_secret must be Optional[SecretStr]"
 
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_falls_back_to_jwt_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = SecretStr("jwt-fallback-secret")
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64
-
-    @patch("mcpgateway.utils.identity_propagation.settings")
-    def test_falls_back_to_empty_when_no_secrets(self, mock_settings):
-        mock_settings.identity_claims_secret = None
-        mock_settings.jwt_secret_key = None
-        sig = _sign_claims("test-payload")
-        assert len(sig) == 64  # Still produces a valid HMAC (with empty key)
 
 # ---------------------------------------------------------------------------
 # build_identity_headers — additional branch coverage
@@ -1870,6 +1984,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
+            patch("mcpgateway.services.resource_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,
             patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=client_mock),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
         ):
@@ -1883,7 +1998,8 @@ class TestResourceServiceIdentityPropagationCoverage:
             )
 
         assert result == "hello"
-        mock_build_headers.assert_called_once_with(user_context, gateway)
+        mock_build_headers.assert_called_once_with(user_context, gateway, audience="gw-1")
+        mock_build_meta.assert_called_once_with(user_context, None, gateway, audience="gw-1")
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_updates_headers_from_plugin_context(self):
@@ -2059,7 +2175,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 plugin_global_context=plugin_global_context,
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=None)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=None, audience="tool-1")
         assert pinned_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
         pinned_client.aclose.assert_awaited_once()
 
@@ -2143,8 +2259,8 @@ class TestToolServiceIdentityPropagationCoverage:
             )
 
         expected = None if cached_setting == "missing" else cached_setting
-        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=expected)
-        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, identity_propagation=expected)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, identity_propagation=expected, audience="gw-1")
+        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True}, identity_propagation=expected, audience="gw-1")
 
 class TestStreamableHttpTransportIdentityPropagationCoverage:
     """Cover transport identity forwarding branches."""
@@ -2231,3 +2347,275 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
             user_identity_var.reset(identity_token)
 
         mock_build_headers.assert_called_once_with(identity, gateway)
+
+
+def _proxy_client_mock():
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+    client.list_resources = AsyncMock(return_value=MagicMock(resources=[]))
+    client.read_resource = AsyncMock(return_value=MagicMock(contents=[]))
+    return client
+
+
+def _real_gateway():
+    return MagicMock(id="gw-real-1", url="https://gateway.example.com/mcp", identity_propagation=None, auth_type=None, passthrough_headers=[])
+
+
+async def _run_transport_path(path: str, gateway, *, signing_error: bool = False):
+    """Run one streamable HTTP direct-proxy path; return the headers sent upstream."""
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as transport
+    from mcpgateway.transports.context import request_headers_var, user_identity_var
+
+    identity_token = user_identity_var.set(_full_user())
+    headers_token = request_headers_var.set({})
+    proxy = MagicMock(return_value=_proxy_client_mock())
+    patches = [
+        patch.object(transport, "build_gateway_auth_headers", return_value={}),
+        patch.object(transport, "mcp_proxy_client", proxy),
+    ]
+    if signing_error:
+        patches.append(patch.object(transport, "build_identity_headers", side_effect=IdentitySigningError("no secret")))
+    try:
+        for p in patches:
+            p.start()
+        if path == "list_tools":
+            await transport._proxy_list_tools_to_gateway(gateway, {}, {})
+        elif path == "list_resources":
+            await transport._proxy_list_resources_to_gateway(gateway, {}, {})
+        else:
+            await transport._proxy_read_resource_to_gateway(gateway, "resource://example", {})
+    finally:
+        for p in patches:
+            p.stop()
+        request_headers_var.reset(headers_token)
+        user_identity_var.reset(identity_token)
+    return proxy.call_args.kwargs["headers"]
+
+
+class TestDirectProxyAudienceBinding:
+    """Direct-proxy paths sign with the real gateway id as the audience."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["list_tools", "list_resources", "read_resource"])
+    async def test_transport_path_signs_for_gateway(self, signing_settings, path):
+        gateway = _real_gateway()
+        headers = await _run_transport_path(path, gateway)
+        assert _decode(headers[SIG], audience=str(gateway.id))["aud"] == str(gateway.id)
+
+
+async def _run_pooled_resource_read(*, meta_data=None, meta_error: bool = False):
+    """Run invoke_resource through the pooled SSE session path; return the _meta sent upstream."""
+    # First-Party
+    from mcpgateway.services.resource_service import ResourceService
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    gateway = MagicMock(id="gw-1", name="Gateway", url="https://gateway.example.com/mcp", transport="sse", auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None)
+    gateway.ca_certificate = None
+    gateway.ca_certificate_sig = None
+    gateway.identity_propagation = None
+    upstream_session = AsyncMock()
+    upstream_session.send_request = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="ok", blob=None)]))
+
+    @asynccontextmanager
+    async def fake_acquire(**_kwargs):
+        yield MagicMock(session=upstream_session)
+
+    registry = MagicMock(acquire=fake_acquire)
+    span = MagicMock()
+    span.__enter__.return_value = MagicMock()
+    span.__exit__.return_value = False
+    meta_patch = patch("mcpgateway.services.resource_service.build_identity_meta", side_effect=IdentitySigningError("no secret")) if meta_error else nullcontext()
+    token = request_headers_var.set({"mcp-session-id": "downstream-1"})
+    try:
+        with (
+            patch("mcpgateway.services.resource_service.create_span", return_value=span),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            meta_patch,
+        ):
+            await ResourceService().invoke_resource(
+                MagicMock(),
+                resource_id="res-1",
+                resource_uri="resource://example",
+                user_identity=UserContext(user_id="alice@co.com", email="alice@co.com"),
+                resource_obj=MagicMock(gateway_id="gw-1"),
+                gateway_obj=gateway,
+                meta_data=meta_data,
+            )
+    finally:
+        request_headers_var.reset(token)
+    return upstream_session.send_request.call_args.args[0].params.meta
+
+
+class TestPooledResourceReadSignsMeta:
+    """A pooled session carries no claims header, so each resource read signs through _meta."""
+
+    @pytest.mark.asyncio
+    async def test_meta_carries_fresh_claims_signature(self, signing_settings):
+        meta = await _run_pooled_resource_read()
+        assert _decode(meta["user"]["claims_signature"], audience="gw-1")["email"] == "alice@co.com"
+
+    @pytest.mark.asyncio
+    async def test_caller_meta_keys_are_preserved(self, signing_settings):
+        caller_meta = {"trace": "abc"}
+        meta = await _run_pooled_resource_read(meta_data=caller_meta)
+        assert meta["trace"] == "abc"
+        assert "claims_signature" in meta["user"]
+        assert caller_meta == {"trace": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_signing_failure_raises_resource_error(self, signing_settings):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        with pytest.raises(ResourceError, match="misconfigured"):
+            await _run_pooled_resource_read(meta_error=True)
+
+
+class TestIdentitySigningFailureSurfaces:
+    """A signing failure is a configuration error on every upstream path, never an empty result."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["list_tools", "list_resources", "read_resource"])
+    async def test_transport_path_raises_configuration_error(self, path):
+        # First-Party
+        from mcp.shared.exceptions import MCPError
+
+        with pytest.raises(MCPError, match="misconfigured"):
+            await _run_transport_path(path, _real_gateway(), signing_error=True)
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_raises_resource_error(self):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        gateway = MagicMock(id="gw-1", url="https://gateway.example.com/mcp", transport="streamablehttp", auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None, ca_certificate=None, ca_certificate_sig=None, name="Gateway")
+        mock_span = MagicMock()
+        mock_span.__enter__.return_value = MagicMock()
+        mock_span.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.resource_service.create_span", return_value=mock_span),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+        ):
+            with pytest.raises(ResourceError, match="misconfigured"):
+                await ResourceService().invoke_resource(
+                    MagicMock(),
+                    resource_id="res-1",
+                    resource_uri="resource://example",
+                    user_identity=UserContext(user_id="user-1", email="user@example.com"),
+                    resource_obj=MagicMock(gateway_id="gw-1"),
+                    gateway_obj=gateway,
+                )
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_raises_resource_error(self):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+        from mcpgateway.services import resource_service
+
+        service = ResourceService()
+        db = MagicMock()
+        gateway = MagicMock(id="gw-1", gateway_mode="direct_proxy", url="https://gateway.example.com/mcp")
+        db.execute.return_value.scalar_one_or_none.return_value = MagicMock(gateway=gateway, enabled=True)
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(service, "_check_resource_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.resource_service.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch.object(resource_service.settings, "mcpgateway_direct_proxy_enabled", True),
+        ):
+            with pytest.raises(ResourceError, match="misconfigured"):
+                await service.read_resource(db, resource_uri="resource://example", user="user@example.com", plugin_global_context=context)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_raises_tool_invocation_error(self):
+        # First-Party
+        from mcpgateway.services import tool_service
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        db = MagicMock()
+        gateway = MagicMock(id="gw-1", gateway_mode="direct_proxy", passthrough_headers=[], url="https://gateway.example.com/mcp")
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        fresh = MagicMock()
+        fresh.__enter__.return_value = db
+        fresh.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", return_value=fresh),
+            patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch.object(tool_service.settings, "mcpgateway_direct_proxy_enabled", True),
+        ):
+            with pytest.raises(ToolInvocationError, match="misconfigured"):
+                await ToolService().invoke_tool_direct(
+                    gateway_id="gw-1",
+                    name="gw-tool",
+                    arguments={},
+                    user_email="user@example.com",
+                    user_context=UserContext(user_id="user-1", email="user@example.com"),
+                )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("integration_type", ["REST", "MCP"])
+    async def test_invoke_tool_raises_tool_invocation_error(self, integration_type):
+        # First-Party
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        service = ToolService()
+        service._get_plugin_manager = AsyncMock(return_value=None)
+        service._check_tool_access = AsyncMock(return_value=True)
+        is_rest = integration_type == "REST"
+        cache = MagicMock()
+        cache.enabled = True
+        cache.get = AsyncMock(
+            return_value={
+                "status": "active",
+                "tool": {
+                    "id": "tool-1",
+                    "name": "t",
+                    "original_name": "t",
+                    "enabled": True,
+                    "reachable": True,
+                    "integration_type": integration_type,
+                    "request_type": "POST" if is_rest else "streamablehttp",
+                    "url": "https://api.example.com/tools" if is_rest else None,
+                    "headers": {},
+                    "gateway_id": None if is_rest else "gw-1",
+                },
+                "gateway": None
+                if is_rest
+                else {
+                    "id": "gw-1",
+                    "name": "Gateway",
+                    "url": "https://gateway.example.com/mcp",
+                    "auth_type": None,
+                    "auth_value": None,
+                    "auth_query_params": None,
+                    "oauth_config": None,
+                    "ca_certificate": None,
+                    "ca_certificate_sig": None,
+                    "passthrough_headers": [],
+                },
+            }
+        )
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
+        mock_span = MagicMock()
+        mock_span.__enter__.return_value = MagicMock()
+        mock_span.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
+            patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
+            patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
+        ):
+            with pytest.raises(ToolInvocationError, match="misconfigured"):
+                await service.invoke_tool(MagicMock(), name="t", arguments={}, plugin_global_context=context)

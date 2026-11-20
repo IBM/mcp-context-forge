@@ -529,6 +529,23 @@ def _validate_header_mapping_targets(v: dict | None) -> dict | None:
     return v
 
 
+def _require_claims_secret_for_signing(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject per-gateway claim signing when no IDENTITY_CLAIMS_SECRET is configured.
+
+    Args:
+        v: Per-gateway identity propagation configuration.
+
+    Returns:
+        The unchanged configuration.
+
+    Raises:
+        ValueError: If ``sign_claims`` is true and ``IDENTITY_CLAIMS_SECRET`` is unset.
+    """
+    if v and v.get("sign_claims") is True and not settings.identity_claims_secret:
+        raise ValueError("identity_propagation.sign_claims requires IDENTITY_CLAIMS_SECRET to be configured")
+    return v
+
+
 def _coerce_visibility(v: Optional[str]) -> Optional[str]:
     """Normalize legacy visibility values in Read/response schemas.
 
@@ -3951,6 +3968,8 @@ class GatewayCreate(BaseModelWithConfigDict):
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
 
+    _validate_identity_propagation = field_validator("identity_propagation")(classmethod(lambda cls, v: _require_claims_secret_for_signing(v)))
+
     @field_validator("gateway_mode", mode="before")
     @classmethod
     def default_gateway_mode(cls, v: Optional[str]) -> str:
@@ -4417,6 +4436,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+
+    _validate_identity_propagation = field_validator("identity_propagation")(classmethod(lambda cls, v: _require_claims_secret_for_signing(v)))
 
     @field_validator("tags")
     @classmethod
