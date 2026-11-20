@@ -1,6 +1,6 @@
 import { PANEL_SEARCH_CONFIG, TOGGLE_FRAGMENT_MAP } from "./constants.js";
 import { navigateAdmin } from "./navigation.js";
-import { buildTableUrl, getCookie, isInactiveChecked } from "./utils.js";
+import { buildTableUrl, getCookie, getCSRFCookieName, isInactiveChecked } from "./utils.js";
 
 // ===================================================================
 // ENTITY TYPE DISPLAY NAMES
@@ -41,7 +41,7 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
   }
   const csrfToken =
     typeof getCookie === "function"
-      ? getCookie("mcpgateway_csrf_token") || ""
+      ? getCookie(getCSRFCookieName()) || ""
       : "";
   if (csrfToken) {
     formData.set("csrf_token", csrfToken);
