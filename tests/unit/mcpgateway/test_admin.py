@@ -264,6 +264,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
+from mcpgateway.admin import _redact_url_userinfo
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
@@ -13294,6 +13295,52 @@ async def test_get_configuration_settings_does_not_mask_empty_sensitive_values(m
     monkeypatch.setattr(settings, "basic_auth_password", "")
     result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == ""
+
+
+@pytest.mark.asyncio
+async def test_get_configuration_settings_redacts_url_credentials(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "database_url", "postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp")  # pragma: allowlist secret
+    monkeypatch.setattr(settings, "redis_url", "redis://:redispass@redis:6379/0")  # pragma: allowlist secret
+    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    group = result["groups"]["Database & Cache"]
+    assert group["database_url"] == "postgresql+psycopg://***@pgbouncer:6432/mcp"
+    assert group["redis_url"] == "redis://***@redis:6379/0"
+    assert "dbpass" not in str(result)
+    assert "redispass" not in str(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parameter", ["password", "pwd", "secret", "token", "sslpassword"])
+async def test_get_configuration_settings_redacts_url_query_secrets(parameter, monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "database_url", f"postgresql://db/mcp?{parameter}=sensitive-value")
+    monkeypatch.setattr(settings, "redis_url", f"redis://cache/0?{parameter}=sensitive-value")
+    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    group = result["groups"]["Database & Cache"]
+    assert group["database_url"] == "postgresql://db/mcp?***"
+    assert group["redis_url"] == "redis://cache/0?***"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "postgresql+psycopg://***@pgbouncer:6432/mcp"),  # pragma: allowlist secret
+        ("postgresql://u:pa/ss@h:5432/db", "***"),  # pragma: allowlist secret
+        ("postgresql://db/mcp?password=secret", "postgresql://db/mcp?***"),  # pragma: allowlist secret
+        ("redis://host/0#secret", "redis://host/0#***"),
+        ("redis://[::1/x?password=secret", "***"),  # pragma: allowlist secret
+        (None, None),
+        ("", ""),
+        ("redis://host/0?user@domain", "***"),
+        ("redis://host/0#user@domain", "***"),
+        ("redis://host /0", "***"),
+        ("redis://host\n/0", "***"),
+        ("http:google.com", "***"),
+        ("/some/path", "***"),
+    ],
+)
+def test_redact_url_userinfo(url, expected):
+
+    assert _redact_url_userinfo(url) == expected
 
 
 @pytest.mark.asyncio

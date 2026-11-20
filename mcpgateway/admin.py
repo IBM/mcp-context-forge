@@ -3062,6 +3062,34 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
+def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
+    """Redact URL userinfo, query strings, and fragments.
+
+    Args:
+        url: URL that may contain credentials.
+
+    Returns:
+        The URL with sensitive parts replaced, or the input unchanged when it has none.
+
+    """
+    if not url:
+        return url
+
+    try:
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
+            return "***"
+        parsed = urllib.parse.urlsplit(url)
+        if not url.startswith(f"{parsed.scheme}://") or "@" in parsed.query or "@" in parsed.fragment:
+            return "***"
+        if "@" in parsed.path and ":" in parsed.netloc and "@" not in parsed.netloc:
+            return "***"
+        base = url.split("?", 1)[0].split("#", 1)[0]
+        redacted = re.sub(r"^([A-Za-z][\w+.-]*://)[^/?#]*@", r"\1***@", base)
+        return redacted + ("?***" if parsed.query else "") + ("#***" if parsed.fragment else "")
+    except Exception:
+        return "***"
+
+
 @admin_router.get("/config/settings")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
@@ -3142,9 +3170,9 @@ async def get_configuration_settings(
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
-            "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
+            "database_url": _redact_url_userinfo(settings.database_url),
             "cache_type": settings.cache_type,
-            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
+            "redis_url": _redact_url_userinfo(settings.redis_url),
             "db_pool_size": settings.db_pool_size,
             "db_max_overflow": settings.db_max_overflow,
         },
