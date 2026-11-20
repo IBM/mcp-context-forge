@@ -182,7 +182,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -3059,6 +3059,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     "tools_count": len(tools),
                     "resources_count": len(db_resources),
                     "prompts_count": len(db_prompts),
+                    **sigv4_audit_values(getattr(db_gateway, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -4264,6 +4265,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             "url": gateway.url,
                             "version": gateway.version,
                             "status": gateway.status,
+                            **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                         },
                         context={
                             "modified_via": modified_via,
@@ -4485,6 +4487,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "name": gateway.name,
                         "url": gateway.url,
                         "version": gateway.version,
+                        **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                     },
                     context={
                         "modified_via": modified_via,

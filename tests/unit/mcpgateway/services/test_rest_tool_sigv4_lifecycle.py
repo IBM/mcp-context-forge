@@ -25,7 +25,7 @@ from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.export_service import ExportService
 from mcpgateway.services.tool_service import ToolError, ToolService
 from mcpgateway.utils.error_formatter import PublicValidationError
-from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret
+from mcpgateway.utils.sigv4 import access_key_fingerprint, decrypt_sigv4_secret, is_encrypted_sigv4_secret
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
 TOKEN = "example-session-token"  # pragma: allowlist secret
@@ -901,3 +901,213 @@ class TestIsolatedClientTrustStore:
             cached.assert_not_called()
         finally:
             await client.aclose()
+
+
+class TestSigV4ToolAuditAttribution:
+    """Tool registration and rotation record key fingerprints, never credentials."""
+
+    FINGERPRINT = access_key_fingerprint(CONFIG["access_key_id"])
+    OTHER_ACCESS_KEY_ID = "AKIAI44QH8DHBEXAMPLE"  # pragma: allowlist secret
+
+    @staticmethod
+    def _assert_no_credential_in(call_kwargs):
+        rendered = repr(call_kwargs)
+        for forbidden in (SECRET, TOKEN, CONFIG["access_key_id"], TestSigV4ToolAuditAttribution.OTHER_ACCESS_KEY_ID, "N" * 40):
+            assert forbidden not in rendered
+
+    @pytest.mark.asyncio
+    async def test_registration_records_the_fingerprint(self, service):
+        db = _db_for_create()
+        with patch("mcpgateway.services.tool_service.audit_trail") as audit, patch.object(service, "convert_tool_to_read", return_value=MagicMock()):
+            await service.register_tool(db, _create(sigv4_config={**CONFIG, "session_token": TOKEN}), owner_email="owner@example.com")
+
+        audit.log_action.assert_called_once()
+        call = audit.log_action.call_args.kwargs
+        assert call["action"] == "create_tool"
+        assert call["resource_name"] == "aws-tool"
+        assert call["new_values"]["auth_type"] == "sigv4"
+        assert call["new_values"]["sigv4_key_fingerprint"] == self.FINGERPRINT
+        assert "db" not in call
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
+    async def test_non_sigv4_registration_audit_entry_is_unchanged(self, service):
+        db = _db_for_create()
+        with patch("mcpgateway.services.tool_service.audit_trail") as audit, patch.object(service, "convert_tool_to_read", return_value=MagicMock()):
+            await service.register_tool(db, ToolCreate(name="plain", url="https://api.example.com/x", integration_type="REST", request_type="GET"))
+
+        assert set(audit.log_action.call_args.kwargs["new_values"]) == {"name", "display_name", "visibility", "integration_type"}
+
+    async def _update(self, service, tool, update):
+        with (
+            patch("mcpgateway.services.tool_service.audit_trail") as audit,
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(service, "convert_tool_to_read", return_value={}),
+        ):
+            await service.update_tool(MagicMock(), "t1", update)
+        audit.log_action.assert_called_once()
+        return audit.log_action.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_key_rotation_records_old_and_new_fingerprint(self, service):
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None), sigv4_config={**CONFIG, "access_key_id": self.OTHER_ACCESS_KEY_ID, "secret_access_key": "N" * 40})
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert call["action"] == "update_tool"
+        assert call["new_values"]["sigv4_credential_rotated"] is True
+        assert call["new_values"]["sigv4_key_fingerprint"] == access_key_fingerprint(self.OTHER_ACCESS_KEY_ID)
+        assert call["new_values"]["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
+    async def test_secret_rotation_with_the_same_key_id_is_a_rotation(self, service):
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None), sigv4_config={**CONFIG, "secret_access_key": "N" * 40})
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert call["new_values"]["sigv4_credential_rotated"] is True
+        assert call["new_values"]["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+
+    @pytest.mark.asyncio
+    async def test_masked_echo_is_not_a_rotation(self, service):
+        update = _update(
+            auth=SimpleNamespace(auth_type="sigv4", auth_value=None),
+            sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value, "session_token": settings.masked_auth_value},
+        )
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert "sigv4_credential_rotated" not in call["new_values"]
+        assert "sigv4_key_fingerprint" not in call["new_values"]
+
+    @pytest.mark.asyncio
+    async def test_resending_the_same_secret_is_not_a_rotation(self, service):
+        update = _update(auth=SimpleNamespace(auth_type="sigv4", auth_value=None), sigv4_config={**CONFIG, "session_token": TOKEN})
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert "sigv4_credential_rotated" not in call["new_values"]
+
+    @pytest.mark.asyncio
+    async def test_description_only_update_is_not_a_rotation(self, service):
+        call = await self._update(service, _stored_tool(), _update(description="edited"))
+
+        assert set(call["new_values"]) == {"name", "display_name", "version"}
+
+    @pytest.mark.asyncio
+    async def test_non_sigv4_tool_audit_entry_is_unchanged(self, service):
+        call = await self._update(service, _stored_tool(auth_type="bearer", sigv4_config=None), _update(description="edited"))
+
+        assert set(call["new_values"]) == {"name", "display_name", "version"}
+
+    @pytest.mark.asyncio
+    async def test_switching_away_from_sigv4_records_the_removal(self, service):
+        update = _update(auth=SimpleNamespace(auth_type="bearer", auth_value="encoded"))
+
+        call = await self._update(service, _stored_tool(), update)
+
+        assert call["new_values"]["sigv4_credential_removed"] is True
+        assert call["new_values"]["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprint" not in call["new_values"]
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
+    async def test_bulk_registration_records_fingerprints_without_credentials(self, service):
+        db = MagicMock()
+        sigv4_tool = SimpleNamespace(id="tool-a", name="a", team_id="team-a", sigv4_config=protect_sigv4_config_sync(dict(CONFIG)))
+        plain_tool = SimpleNamespace(id="tool-b", name="b", team_id="team-b", sigv4_config=None)
+        results = iter([{"status": "add", "tool": sigv4_tool}, {"status": "add", "tool": plain_tool}])
+
+        with (
+            patch("mcpgateway.services.tool_service.audit_trail") as audit,
+            patch.object(service, "_process_single_tool_for_bulk", side_effect=lambda **_: next(results)),
+            patch.object(service, "_gateway_tool_validation_policies", return_value={}),
+            patch("mcpgateway.services.tool_service.notify_dataplane"),
+        ):
+            stats = service._process_tool_chunk(
+                db,
+                chunk=[_create(name="a"), _create(name="b")],
+                conflict_strategy="skip",
+                visibility="public",
+                team_id=None,
+                owner_email="dev@example.com",
+                created_by="dev@example.com",
+                created_from_ip=None,
+                created_via="api",
+                created_user_agent=None,
+                import_batch_id="batch-1",
+                federation_source=None,
+                existing_tools_map={},
+            )
+
+        assert stats["created"] == 2
+        details_by_team = {call.kwargs["team_id"]: call.kwargs["details"] for call in audit.log_action.call_args_list}
+        assert details_by_team["team-a"]["sigv4_key_fingerprints"] == [self.FINGERPRINT]
+        assert "sigv4_key_fingerprints" not in details_by_team["team-b"]
+        (entry,) = details_by_team["team-a"]["sigv4_tools"]
+        assert (entry["tool_id"], entry["name"], entry["sigv4_key_fingerprint"]) == ("tool-a", "a", self.FINGERPRINT)
+        assert "sigv4_tools" not in details_by_team["team-b"]
+        for call in audit.log_action.call_args_list:
+            self._assert_no_credential_in(call.kwargs)
+
+    def _bulk_update(self, service, stored, incoming):
+        db = MagicMock()
+        stored.headers = None
+        stored.id = "tool-1"
+        with (
+            patch("mcpgateway.services.tool_service.audit_trail") as audit,
+            patch.object(service, "_gateway_tool_validation_policies", return_value={}),
+            patch("mcpgateway.services.tool_service.notify_dataplane"),
+        ):
+            stats = service._process_tool_chunk(
+                db,
+                chunk=[incoming],
+                conflict_strategy="update",
+                visibility="public",
+                team_id=None,
+                owner_email="dev@example.com",
+                created_by="dev@example.com",
+                created_from_ip=None,
+                created_via="api",
+                created_user_agent=None,
+                import_batch_id="batch-1",
+                federation_source=None,
+                existing_tools_map={incoming.name: stored},
+            )
+        assert stats["updated"] == 1, stats
+        audit.log_action.assert_called_once()
+        return audit.log_action.call_args.kwargs
+
+    def test_bulk_update_rotation_records_tool_identity_and_both_fingerprints(self, service):
+        incoming = _create(sigv4_config={**CONFIG, "access_key_id": self.OTHER_ACCESS_KEY_ID, "secret_access_key": "N" * 40})
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        assert call["action"] == "bulk_update_tools"
+        (entry,) = call["details"]["sigv4_tools"]
+        assert entry["tool_id"] == "tool-1"
+        assert entry["name"] == "aws-tool"
+        assert entry["sigv4_credential_rotated"] is True
+        assert entry["sigv4_key_fingerprint"] == access_key_fingerprint(self.OTHER_ACCESS_KEY_ID)
+        assert entry["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        self._assert_no_credential_in(call)
+
+    def test_bulk_update_with_the_same_credential_is_not_a_rotation(self, service):
+        incoming = _create(sigv4_config={**CONFIG, "session_token": TOKEN})
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        assert "sigv4_tools" not in call["details"]
+        assert call["details"]["sigv4_key_fingerprints"] == [self.FINGERPRINT]
+
+    def test_bulk_update_switching_away_from_sigv4_records_the_removal(self, service):
+        incoming = ToolCreate(name="aws-tool", url="https://api.example.com/x", integration_type="REST", request_type="POST")
+
+        call = self._bulk_update(service, _stored_tool(), incoming)
+
+        (entry,) = call["details"]["sigv4_tools"]
+        assert entry["sigv4_credential_removed"] is True
+        assert entry["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprints" not in call["details"]
+        self._assert_no_credential_in(call)

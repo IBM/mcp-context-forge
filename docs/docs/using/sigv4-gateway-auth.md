@@ -199,10 +199,16 @@ How the signing works:
 ## Security properties
 
 - The secret access key and session token are encrypted at rest with `AUTH_ENCRYPTION_SECRET`. API reads return them masked. No API or log output shows the plaintext.
+- Logs, traces, and SIEM exports redact `secret_access_key`, `session_token`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential`. This covers header values, query parameters, JSON fields, and the signature inside a SigV4 `Authorization` header value in free text. SIEM field names match without regard to letter case. A failed upstream call logs no signature or credential.
 - An `Authorization` header sent by a client never replaces the signature. SigV4 gateways ignore it.
 - Export skips SigV4 gateways and SigV4 REST tools, so signing credentials never reach an export file.
 - Two SigV4 gateways collide only when `access_key_id`, `region`, and `service` all match. A SigV4 gateway never collides with a gateway of another auth type.
 - A SigV4 request that returns HTTP 401 is signed again once. Both sends share the tool timeout.
+- Registration and rotation of a SigV4 credential write an audit entry for the gateway or tool. The entry holds `sigv4_key_fingerprint`, the first 12 hex characters of the SHA-256 of the access key ID. A rotation adds `sigv4_credential_rotated` and `sigv4_previous_key_fingerprint`. A removal, such as a switch to another auth type, adds `sigv4_credential_removed` and `sigv4_previous_key_fingerprint`. A change to only the gateway name or description writes none of these fields. The entry never holds the access key ID, the secret, or the session token.
+- A bulk import writes one `bulk_create_tools` or `bulk_update_tools` entry per team. The entry lists `sigv4_key_fingerprints` for the team. It also lists `sigv4_tools` when a tool registers, rotates, or removes a credential. Each item holds `tool_id`, `name`, and the same `sigv4_*` fields as a single create or update.
+- ContextForge does not audit each signed request or health check. The gateway or tool ID in the audit entry identifies the holder of the credential.
+- The `developer` role keeps `gateways.create`, `gateways.update`, `tools.create`, and `tools.update`, so a developer can register and rotate SigV4 credentials. Visibility and ownership rules still apply. A caller outside the owning team, a non-owner, and a public-only token cannot update the gateway.
+- A tool under a SigV4 gateway receives the gateway credential only through the ownership rules in [Sign REST tool calls](#sign-rest-tool-calls).
 - A stored secret that ContextForge cannot decrypt fails closed. The call returns an error and sends no unsigned request.
 
 ## Limits

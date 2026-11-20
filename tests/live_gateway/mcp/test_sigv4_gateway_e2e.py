@@ -45,6 +45,7 @@ import hmac
 import logging
 import os
 import re
+import secrets
 import socket
 import threading
 import time
@@ -475,6 +476,77 @@ def sigv4_gateway(admin_api: httpx.Client, stub_upstream: dict[str, Any]) -> Gen
             logger.warning("Failed to delete gateway %s during teardown", gateway_id)
 
 
+@pytest.fixture(scope="module")
+def sigv4_team_world(admin_api: httpx.Client, stub_upstream: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
+    """Persisted callers and a team-owned SigV4 gateway for the access-control tests.
+
+    ``viewer`` holds no ``gateways.update``. ``outsider`` is a developer of team B, which does not own the gateway of team A.
+    The gateway is owned by the admin, so a developer of team A who is not the owner is also denied.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    password = f"Aa1!{secrets.token_urlsafe(24)}"
+    users: list[str] = []
+    teams: list[str] = []
+    memberships: list[tuple[str, str]] = []
+    assignments: list[tuple[str, str, str]] = []
+    gateway_id: str | None = None
+
+    def _must(resp: httpx.Response, expected: tuple[int, ...], what: str) -> httpx.Response:
+        assert resp.status_code in expected, f"{what} returned {resp.status_code}: {resp.text[:500]}"
+        return resp
+
+    def _create_user(email: str) -> None:
+        users.append(email)
+        _must(
+            admin_api.post(
+                "/auth/email/admin/users", json={"email": email, "password": password, "full_name": "SigV4 Access Test", "is_admin": False, "is_active": True, "password_change_required": False}
+            ),
+            (201,),
+            f"create user {email}",
+        )
+
+    def _create_team(name: str) -> str:
+        team_id = _must(admin_api.post("/teams/", json={"name": name, "visibility": "private"}), (200, 201), f"create team {name}").json()["id"]
+        teams.append(team_id)
+        return team_id
+
+    try:
+        viewer_email = f"sigv4-viewer-{suffix}@example.com"
+        outsider_email = f"sigv4-outsider-{suffix}@example.com"
+        _create_user(viewer_email)
+        _create_user(outsider_email)
+        team_a = _create_team(f"sigv4-team-a-{suffix}")
+        team_b = _create_team(f"sigv4-team-b-{suffix}")
+        _must(admin_api.post(f"/teams/{team_b}/members", json={"email": outsider_email, "role": "member"}), (200, 201), "add outsider to team B")
+        memberships.append((outsider_email, team_b))
+        developer_id = next(row["id"] for row in _must(admin_api.get("/rbac/roles"), (200,), "list roles").json() if row["name"] == "developer")
+        _must(admin_api.post(f"/rbac/users/{outsider_email}/roles", json={"role_id": developer_id, "scope": "team", "scope_id": team_b}), (200, 201), "grant developer in team B")
+        assignments.append((outsider_email, developer_id, team_b))
+
+        name = f"sigv4-e2e-team-{suffix}"
+        payload = {**_sigv4_payload(name, stub_upstream["mcp_url"]), "visibility": "team", "team_id": team_a}
+        created = _must(admin_api.post("/gateways", json=payload), (200, 201), "register the team gateway").json()
+        gateway_id = created["id"]
+
+        def _client(email: str, teams_claim: list[str]) -> httpx.Client:
+            token = make_test_jwt(email, is_admin=False, teams=teams_claim, secret=JWT_SECRET, include_email_claim=True)
+            return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}, timeout=30.0)
+
+        with _client(viewer_email, []) as viewer, _client(outsider_email, [team_b]) as outsider:
+            yield {"gateway_id": gateway_id, "team_a": team_a, "team_b": team_b, "viewer": viewer, "outsider": outsider}
+    finally:
+        if gateway_id:
+            admin_api.delete(f"/gateways/{gateway_id}")
+        for email, role_id, team_id in assignments:
+            admin_api.delete(f"/rbac/users/{email}/roles/{role_id}", params={"scope": "team", "scope_id": team_id})
+        for email, team_id in memberships:
+            admin_api.delete(f"/teams/{team_id}/members/{email}")
+        for email in users:
+            admin_api.delete(f"/auth/email/admin/users/{email}")
+        for team_id in teams:
+            admin_api.delete(f"/teams/{team_id}")
+
+
 @pytest.fixture
 async def hub_client():
     """An MCP client session against the live hub endpoint (``/mcp/``)."""
@@ -667,6 +739,33 @@ class TestSigV4LiveFlow:
 
         assert resp.status_code in (401, 403), f"expected a deny for a caller without gateways.create, got {resp.status_code} {resp.text}"
         assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+        assert not _gateway_named(admin_api, name), "a denied registration must not leave a gateway row behind"
+
+    def test_caller_without_update_permission_cannot_rotate_the_credential(self, admin_api: httpx.Client, sigv4_team_world: dict[str, Any]) -> None:
+        """A persisted user without ``gateways.update`` gets 403, and the stored credential is unchanged."""
+        body = {"auth_type": "sigv4", "sigv4_config": {"access_key_id": _ACCESS_KEY_ID, "secret_access_key": _WRONG_SECRET_ACCESS_KEY, "region": _REGION, "service": _SERVICE}}
+
+        resp = sigv4_team_world["viewer"].put(f"/gateways/{sigv4_team_world['gateway_id']}", json=body)
+
+        assert resp.status_code == 403, f"expected 403 for a caller without gateways.update, got {resp.status_code} {resp.text}"
+        assert "User not found" not in resp.text, "the caller must exist so the permission check, not authentication, denies it"
+        assert _WRONG_SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_wrong_team_caller_cannot_register_or_rotate(self, admin_api: httpx.Client, sigv4_team_world: dict[str, Any], stub_upstream: dict[str, Any]) -> None:
+        """A developer of team B cannot register a gateway in team A or rotate the credential of team A's gateway."""
+        name = f"sigv4-e2e-wrongteam-{uuid.uuid4().hex[:8]}"
+        create_body = {**_sigv4_payload(name, stub_upstream["mcp_url"]), "visibility": "team", "team_id": sigv4_team_world["team_a"]}
+        update_body = {"auth_type": "sigv4", "sigv4_config": {"access_key_id": _ACCESS_KEY_ID, "secret_access_key": _WRONG_SECRET_ACCESS_KEY, "region": _REGION, "service": _SERVICE}}
+        outsider = sigv4_team_world["outsider"]
+
+        created = outsider.post("/gateways", json=create_body)
+        updated = outsider.put(f"/gateways/{sigv4_team_world['gateway_id']}", json=update_body)
+
+        assert created.status_code == 403, f"expected 403 for registering in another team, got {created.status_code} {created.text}"
+        assert updated.status_code == 403, f"expected 403 for rotating another team's credential, got {updated.status_code} {updated.text}"
+        assert "User not found" not in created.text + updated.text, "the caller must exist so the team check, not authentication, denies it"
+        assert _SECRET_ACCESS_KEY not in created.text + updated.text, "a rejection echoed a secret"
+        assert _WRONG_SECRET_ACCESS_KEY not in updated.text, "a rejection echoed the submitted secret"
         assert not _gateway_named(admin_api, name), "a denied registration must not leave a gateway row behind"
 
     async def test_rotated_secret_takes_effect_without_stale_sessions(self, admin_api: httpx.Client, hub_client, sigv4_gateway: dict[str, Any], stub_upstream: dict[str, Any]) -> None:

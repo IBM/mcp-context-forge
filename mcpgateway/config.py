@@ -2520,7 +2520,19 @@ class Settings(  # pylint: disable=too-many-ancestors
     siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
     siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
     siem_export_redact_fields: List[str] = Field(
-        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key"],
+        default_factory=lambda: [
+            "user_email",
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "secret_access_key",
+            "session_token",
+            "x-amz-security-token",
+            "x-amz-signature",
+            "x-amz-credential",
+        ],
         description="Fields to redact before exporting events",
     )
     siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
@@ -3337,7 +3349,10 @@ class Settings(  # pylint: disable=too-many-ancestors
     )
     otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
     otel_redact_fields: str = Field(
-        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid",
+        default=(
+            "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid,"
+            "session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential"
+        ),
         description="Comma-separated trace payload field names to redact before export",
     )
     otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")
