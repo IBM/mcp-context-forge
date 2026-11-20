@@ -512,7 +512,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
 | `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
 | `PASSWORD_RESET_RATE_WINDOW_MINUTES` | Password reset rate-limit window        | `15`                  | int > 0 |
-| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Invalidate active sessions on reset     | `true`                | bool    |
+| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Reject older sessions, revoke API tokens | `true`                | bool    |
 | `PASSWORD_RESET_MIN_RESPONSE_MS` | Minimum forgot-password response duration    | `250`                 | int >= 0 |
 | `PROTECT_ALL_ADMINS`         | Allow active admin accounts to bypass login lockout. Admin self-demotion and last-active-admin protection are always enforced independently. | `true` | bool |
 | `SMTP_ENABLED`                | Enable SMTP notifications for auth emails        | `false`               | bool    |

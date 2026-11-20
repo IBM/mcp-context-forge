@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import collections
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
 import time
 from types import SimpleNamespace
@@ -11908,6 +11909,43 @@ async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_session_issued_before_password_change(monkeypatch):
+    """Session tokens older than password_changed_at are rejected on the fallback lookup path."""
+    changed_at = datetime.now(timezone.utc)
+
+    async def fake_verify(_token):
+        return {
+            "sub": "stale@example.com",
+            "jti": "stale-jti",
+            "token_use": "session",
+            "iat": int(changed_at.timestamp()) - 60,
+            "teams": [],
+        }
+
+    stale_user = MagicMock()
+    stale_user.is_active = True
+    stale_user.password_changed_at = changed_at
+
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=stale_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+    assert any(b"Token has been revoked" in m.get("body", b"") for m in sent)
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_revocation_check_exception_fails_open(monkeypatch):
     """Revocation-check backend failures should fail open and allow the request."""
 
@@ -14550,7 +14588,7 @@ async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch)
 
     assert first["is_admin"] is True
     assert second["is_admin"] is True
-    batch_lookup.assert_called_once_with("batched@example.com", "jti-2")
+    batch_lookup.assert_called_once_with("batched@example.com", "jti-2", {"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
     auth_cache.set_auth_context.assert_awaited_once()
     assert isinstance(cached[("batched@example.com", "jti-2")], CachedAuthContext)
 
@@ -14736,7 +14774,7 @@ async def test_auth_jwt_session_token_keys_cache_and_lookups_by_email(monkeypatc
 
     monkeypatch.setattr(
         "mcpgateway.auth._get_auth_context_batched_sync",
-        lambda email, jti: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
+        lambda email, jti, payload=None: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
     )
     monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-x"]))
     monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))

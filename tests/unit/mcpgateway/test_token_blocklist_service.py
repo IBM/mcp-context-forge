@@ -614,14 +614,6 @@ class TestErrorHandling:
             result = blocklist_service.cleanup_expired_tokens()
             assert result == 0
 
-    def test_revoke_user_tokens_placeholder(self, blocklist_service):
-        """Test revoke_user_tokens placeholder method."""
-        # This is a placeholder method that logs a warning
-        result = blocklist_service.revoke_user_tokens(user_email="test@example.com", revoked_by="admin@example.com", reason="security")
-
-        # Should return 0 (not implemented yet)
-        assert result == 0
-
     def test_get_revocation_stats_error(self, blocklist_service):
         """Test get_revocation_stats handles database errors gracefully."""
         with patch.object(blocklist_service.db, "execute") as mock_execute:
