@@ -147,12 +147,62 @@ curl -sS -X PUT "$GW/gateways/<gateway-id>" \
 - Send the masked value as `secret_access_key` or `session_token` to keep the stored value. A client can send back a gateway it just read without overwriting the secret.
 - Change `auth_type` to another value to drop SigV4. ContextForge then clears `sigv4_config`.
 
+## Sign REST tool calls
+
+A REST tool can send SigV4-signed requests too. Two forms exist.
+
+- **Standalone tool.** Set `auth_type` to `sigv4` and add a `sigv4_config` object to `POST /tools`.
+- **Tool under a SigV4 gateway.** Set `auth_type` to `sigv4` and `gateway_id` to the gateway. Omit `sigv4_config`. The tool signs with the gateway credential.
+
+```bash
+curl -sS -X POST "$GW/tools" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "tool": {
+      "name": "orders-api",
+      "url": "https://<id>.execute-api.<region>.amazonaws.com/orders/{id}",
+      "integration_type": "REST",
+      "request_type": "POST",
+      "auth_type": "sigv4",
+      "sigv4_config": {
+        "access_key_id": "<access-key-id>",
+        "secret_access_key": "<secret-access-key>",
+        "region": "<region>",
+        "service": "execute-api"
+      }
+    }
+  }'
+```
+
+How the signing works:
+
+- ContextForge signs the final request. The body hash covers the exact bytes sent. URL template values are substituted before signing.
+- The tool `sigv4_config` takes precedence. Without it, the tool uses the credential of its gateway when that gateway uses `sigv4`. Without either, the call fails and sends no request.
+- A tool that has a `sigv4_config` uses the same fields as the gateway, plus one optional field: `unsigned_payload`. A gateway `sigv4_config` rejects `unsigned_payload` with HTTP 422, because MCP transport signing always hashes the body.
+- `unsigned_payload: true` sends `UNSIGNED-PAYLOAD` in place of the body hash. Use it only for services that accept it, such as S3. The default is a signed body hash.
+- After an HTTP 401, ContextForge signs the request again with a fresh timestamp and sends it once more. It never retries after an HTTP 403.
+- Each call uses its own HTTP client. The signing object never moves between calls.
+- A client `Authorization` header or `X-Upstream-Authorization` header never replaces the signature.
+- ContextForge never stores credentials in `auth_value`. A read of the tool returns `sigv4_config` with the secret fields masked.
+- Send the masked value as `secret_access_key` or `session_token` on `PUT /tools/{id}` to keep the stored secret. Change `auth_type` to another value to drop SigV4 and clear `sigv4_config`.
+- Only REST tools accept `sigv4`. MCP tools from a SigV4 gateway are signed through the gateway.
+- A tool signs only when its `auth_type` is `sigv4`. A tool with another `auth_type` under a SigV4 gateway keeps its own authentication and is never signed with the gateway credential.
+- To make a tool under a SigV4 gateway inherit its credential, the gateway must use `sigv4`. The caller must see the gateway under the usual visibility rules, including the team scope of the caller's token. The caller must also own the gateway, hold the team owner role for it, or be a platform admin. A public gateway does not grant the credential to other callers. Otherwise the request fails with HTTP 403.
+- ContextForge repeats this check when an update changes the `url` or the `auth` of a tool that inherits a gateway credential. An update that sends the stored `url` unchanged skips the check.
+- A request without a caller identity fails the check. An unknown gateway ID and a hidden gateway return the same error, so a caller cannot probe for gateway IDs.
+- Bulk registration applies the same check to each tool that inherits a gateway credential. The tool is rejected and counted as failed, and the rest of the batch continues.
+- Switching a tool to `sigv4` clears any stored `auth_value`.
+- A masked `secret_access_key` is valid only when the tool already stores a secret to keep. Otherwise the request fails with HTTP 400.
+- A tool without `sigv4` keeps presigned URLs working. A URL that already carries `X-Amz-Signature` is sent as is and gets no second signature.
+- A tool with `auth_type: "sigv4"` rejects a URL that carries `X-Amz-Signature`. A query signature and an `Authorization` signature cannot share one request.
+
 ## Security properties
 
 - The secret access key and session token are encrypted at rest with `AUTH_ENCRYPTION_SECRET`. API reads return them masked. No API or log output shows the plaintext.
 - An `Authorization` header sent by a client never replaces the signature. SigV4 gateways ignore it.
-- Export skips SigV4 gateways, so signing credentials never reach an export file.
+- Export skips SigV4 gateways and SigV4 REST tools, so signing credentials never reach an export file.
 - Two SigV4 gateways collide only when `access_key_id`, `region`, and `service` all match. A SigV4 gateway never collides with a gateway of another auth type.
+- A SigV4 request that returns HTTP 401 is signed again once. Both sends share the tool timeout.
 - A stored secret that ContextForge cannot decrypt fails closed. The call returns an error and sends no unsigned request.
 
 ## Limits
@@ -160,7 +210,10 @@ curl -sS -X PUT "$GW/gateways/<gateway-id>" \
 - ContextForge stores static credentials. It does not refresh an expired STS session token. Update `sigv4_config` before the token expires.
 - The Admin UI cannot change SigV4 credentials. Saving the edit form keeps the stored settings. Use the API to change them.
 - The modern listener skips SigV4 gateways, because a standing stream cannot sign each request. SigV4 gateways get no list-changed push events.
-- SigV4 applies to `SSE` and `STREAMABLEHTTP` gateways.
+- SigV4 applies to `SSE` and `STREAMABLEHTTP` gateways, and to REST tools.
+- The Admin UI tool forms have no SigV4 option. Create and change SigV4 REST tools through the API.
+- Configuration import does not carry SigV4 tool credentials, because export skips them. Register those tools through the API.
+- The downgrade of migration `f6b8d3e1a5c2` drops `tools.sigv4_config`. It first disables each tool with `auth_type = 'sigv4'` and clears its `auth_type`. Set another auth type, then re-enable the tool.
 
 ## Troubleshooting
 
@@ -170,5 +223,7 @@ curl -sS -X PUT "$GW/gateways/<gateway-id>" \
 | `422` on registration | Missing field, unknown key, or malformed region, service, or access key ID. |
 | Registration works, then health checks fail | The IAM identity lost its permission, or the key was rotated or disabled in AWS. |
 | Calls fail after the session token expires | STS tokens expire. Update `sigv4_config` with a new token. |
-| `no such column: sigv4_config` | The database lacks migration `e5a7c2d9b4f1`. Restart the gateway or run `alembic upgrade head`. |
+| `no such column: sigv4_config` | The database lacks migration `e5a7c2d9b4f1` (gateways) or `f6b8d3e1a5c2` (tools). Restart the gateway or run `alembic upgrade head`. |
+| `422` on `POST /tools` with `sigv4` | A standalone tool needs `sigv4_config`, or a `gateway_id`. Only REST tools accept `sigv4`. |
+| A REST tool call fails with a SigV4 error and sends nothing | The tool and its gateway both have no usable SigV4 credential, or the stored secret cannot be decrypted. |
 | An unsigned `curl` to the upstream URL returns `200` | The endpoint is public. Set its auth type to `AWS_IAM` or the equivalent. |

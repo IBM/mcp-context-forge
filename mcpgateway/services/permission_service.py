@@ -25,6 +25,20 @@ from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_n
 
 logger = logging.getLogger(__name__)
 
+# SECURITY: User, role and identity-provider administration spans every team.
+# A team-scoped role must never grant these permissions, so check_permission()
+# evaluates them against global and personal roles only.
+GLOBAL_ONLY_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        Permissions.ADMIN_USER_MANAGEMENT,
+        Permissions.ADMIN_SECURITY_AUDIT,
+        Permissions.ADMIN_SSO_PROVIDERS_CREATE,
+        Permissions.ADMIN_SSO_PROVIDERS_READ,
+        Permissions.ADMIN_SSO_PROVIDERS_UPDATE,
+        Permissions.ADMIN_SSO_PROVIDERS_DELETE,
+    }
+)
+
 
 class PermissionService:
     """Service for checking and managing user permissions.
@@ -102,6 +116,8 @@ class PermissionService:
             check_any_team: If True, check permission across ALL team-scoped roles
                            (used for list/read endpoints with multi-team session tokens)
 
+        ``team_id`` and ``check_any_team`` are ignored for ``GLOBAL_ONLY_PERMISSIONS``.
+
         Returns:
             bool: True if permission is granted, False otherwise
 
@@ -131,6 +147,9 @@ class PermissionService:
             elif allow_admin_bypass and await self._is_user_admin(user_email):
                 # Check if user is admin (bypass all permission checks if allowed)
                 return True
+
+            if permission in GLOBAL_ONLY_PERMISSIONS:
+                team_id, check_any_team = None, False
 
             # Get user's effective permissions (uses cache when valid)
             user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams)

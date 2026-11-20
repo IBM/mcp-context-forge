@@ -328,6 +328,15 @@ class TestUpdateGateway:
         reg.evict_gateway.assert_awaited_once_with("gw-1")
 
     @pytest.mark.asyncio
+    async def test_masked_secret_without_a_stored_secret_is_rejected(self, reg):
+        """A masked placeholder cannot create a credential that does not exist."""
+        gateway = self._gateway(auth_type="bearer", sigv4_config=None)
+        service = self._service()
+
+        with pytest.raises(Exception, match="secret_access_key must be provided"):
+            await self._update(service, self._db(gateway), GatewayUpdate(auth_type="sigv4", sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value}))
+
+    @pytest.mark.asyncio
     async def test_switching_away_clears_signing_material(self, reg):
         gateway = self._gateway()
         service = self._service()

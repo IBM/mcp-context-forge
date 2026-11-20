@@ -301,6 +301,10 @@ from mcpgateway.schemas import GatewayCreate
 from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError
 
 
+# Local
+from tests.helpers.auth import make_test_scope_request
+
+
 class FakeForm(dict):
     """Enhanced fake form with better list handling."""
 
@@ -393,6 +397,7 @@ def allow_permission(monkeypatch):
     """Allow RBAC permission checks to pass for decorator-wrapped handlers."""
     mock_perm_service = MagicMock()
     mock_perm_service.check_permission = AsyncMock(return_value=True)
+    mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
@@ -10420,6 +10425,7 @@ async def test_admin_create_team_unexpected_exception(monkeypatch, mock_db, allo
 @pytest.mark.asyncio
 async def test_admin_view_team_members_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state = make_test_scope_request(["team-1"]).state
     response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
@@ -10433,6 +10439,7 @@ async def test_admin_view_team_members_success(monkeypatch, mock_request, mock_d
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state = make_test_scope_request(["team-1"]).state
     response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Team Members" in response.body.decode()
@@ -10445,6 +10452,7 @@ async def test_admin_view_team_members_team_not_found(monkeypatch, mock_request,
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state = make_test_scope_request(["team-1"]).state
     response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
 
@@ -10456,6 +10464,7 @@ async def test_admin_view_team_members_exception(monkeypatch, mock_request, mock
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state = make_test_scope_request(["team-1"]).state
     response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     assert "error loading members" in response.body.decode().lower()
@@ -10469,6 +10478,7 @@ async def test_admin_add_team_members_view_not_owner(monkeypatch, mock_request, 
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
@@ -10483,6 +10493,7 @@ async def test_admin_add_team_members_view_success(monkeypatch, mock_request, mo
     team_service.get_team_members = AsyncMock(return_value=[(SimpleNamespace(email="a@example.com"), SimpleNamespace())])
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Select Users to Add" in response.body.decode()
@@ -10491,6 +10502,7 @@ async def test_admin_add_team_members_view_success(monkeypatch, mock_request, mo
 @pytest.mark.asyncio
 async def test_admin_add_team_members_view_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
 
@@ -10502,6 +10514,7 @@ async def test_admin_add_team_members_view_team_not_found(monkeypatch, mock_requ
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
 
@@ -10513,6 +10526,7 @@ async def test_admin_add_team_members_view_exception(monkeypatch, mock_request, 
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     assert "error loading add members view" in response.body.decode().lower()
@@ -10524,6 +10538,7 @@ async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, a
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=50))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Edit Team" in response.body.decode()
@@ -10532,6 +10547,7 @@ async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, a
 @pytest.mark.asyncio
 async def test_admin_get_team_edit_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
 
@@ -10543,6 +10559,7 @@ async def test_admin_get_team_edit_team_not_found(monkeypatch, mock_request, moc
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
 
@@ -10554,6 +10571,7 @@ async def test_admin_get_team_edit_exception(monkeypatch, mock_request, mock_db,
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     assert "error loading team" in response.body.decode().lower()
@@ -10570,6 +10588,7 @@ async def test_admin_update_team_missing_name_htmx(monkeypatch, mock_db, allow_p
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -10590,6 +10609,7 @@ async def test_admin_update_team_dangerous_js_pattern_htmx(monkeypatch, mock_db,
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -10609,6 +10629,7 @@ async def test_admin_update_team_success(monkeypatch, mock_db, allow_permission)
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
@@ -10627,6 +10648,7 @@ async def test_admin_update_team_with_max_members(monkeypatch, mock_db, allow_pe
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
@@ -10649,6 +10671,7 @@ async def test_admin_update_team_with_nonnumeric_max_members(monkeypatch, mock_d
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
@@ -10665,6 +10688,7 @@ async def test_admin_update_team_with_zero_max_members(monkeypatch, mock_db, all
     request.headers = {"HX-Request": "true"}
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "max_members": "0"}))
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "at least 1" in response.body.decode()
@@ -10678,6 +10702,7 @@ async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=25))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     body = response.body.decode()
     assert 'name="max_members"' in body
@@ -10689,9 +10714,12 @@ async def test_admin_get_team_edit_over_limit_non_admin(monkeypatch, mock_reques
     """Non-admin editing a team whose max_members exceeds the limit sees an empty field with a hint."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     monkeypatch.setattr(settings, "max_members_per_team", 100)
+    allow_permission.check_platform_admin_permission.return_value = False
     team_service = MagicMock()
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "is_admin": False, "db": mock_db})
     body = response.body.decode()
     # Field should be empty to avoid browser validation blocking form submission
@@ -10708,6 +10736,7 @@ async def test_admin_get_team_edit_over_limit_admin(monkeypatch, mock_request, m
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
     body = response.body.decode()
     # Admin sees the actual value, no max attribute
@@ -10726,6 +10755,7 @@ async def test_admin_get_team_edit_null_max_members(monkeypatch, mock_request, m
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=None))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     body = response.body.decode()
     assert "checked" in body
@@ -10746,6 +10776,7 @@ async def test_admin_update_team_use_default_checkbox_clears_override(monkeypatc
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     _, kwargs = team_service.update_team.call_args
@@ -10765,6 +10796,7 @@ async def test_admin_update_team_empty_max_members_no_checkbox_sends_unset(monke
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     _, kwargs = team_service.update_team.call_args
@@ -10784,6 +10816,7 @@ async def test_admin_update_team_rejected_personal_team_htmx(monkeypatch, mock_d
     team_service.update_team = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -10803,6 +10836,7 @@ async def test_admin_update_team_rejected_personal_team_redirect(monkeypatch, mo
     team_service.update_team = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10827,6 +10861,7 @@ async def test_admin_get_team_edit_blocks_other_personal_team(monkeypatch, mock_
     )
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-personal']
     response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "cannot be edited" in response.body.decode().lower()
@@ -10850,6 +10885,7 @@ async def test_admin_get_team_edit_blocks_own_personal_team(monkeypatch, mock_re
     )
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-personal']
     response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "cannot be edited" in response.body.decode().lower()
@@ -10862,6 +10898,7 @@ async def test_admin_update_team_email_auth_disabled(monkeypatch, mock_db, allow
     request.scope = {"root_path": "/root"}
     request.headers = {}
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One"}))
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
@@ -10879,6 +10916,7 @@ async def test_admin_update_team_missing_name_redirect(monkeypatch, mock_db, all
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10896,6 +10934,7 @@ async def test_admin_update_team_invalid_characters_htmx_and_redirect(monkeypatc
     htmx_request.scope = {"root_path": "/root"}
     htmx_request.headers = {"HX-Request": "true"}
     htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Bad!"}))
+    htmx_request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -10906,6 +10945,7 @@ async def test_admin_update_team_invalid_characters_htmx_and_redirect(monkeypatc
     non_htmx_request.scope = {"root_path": "/root"}
     non_htmx_request.headers = {}
     non_htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Bad!"}))
+    non_htmx_request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10927,6 +10967,7 @@ async def test_admin_update_team_description_dangerous_pattern_redirect(monkeypa
     team_service.update_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10946,6 +10987,7 @@ async def test_admin_update_team_success_redirect(monkeypatch, mock_db, allow_pe
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10964,6 +11006,7 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     htmx_request.scope = {"root_path": "/root"}
     htmx_request.headers = {"HX-Request": "true"}
     htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
+    htmx_request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 500
@@ -10973,6 +11016,7 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     non_htmx_request.scope = {"root_path": "/root"}
     non_htmx_request.headers = {}
     non_htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
+    non_htmx_request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -10992,6 +11036,7 @@ async def test_admin_update_team_passes_skip_limits_for_admin(monkeypatch, mock_
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
     assert isinstance(response, HTMLResponse)
     _, kwargs = team_service.update_team.call_args
@@ -11007,10 +11052,13 @@ async def test_admin_update_team_passes_skip_limits_false_for_nonadmin(monkeypat
     request.headers = {"HX-Request": "true"}
     request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "50"}))
 
+    allow_permission.check_platform_admin_permission.return_value = False
     team_service = MagicMock()
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     _, kwargs = team_service.update_team.call_args
@@ -11030,6 +11078,7 @@ async def test_admin_update_team_value_error_htmx_rolls_back(monkeypatch, mock_d
     team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -11051,6 +11100,7 @@ async def test_admin_update_team_value_error_redirect(monkeypatch, mock_db, allo
     team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -11070,6 +11120,7 @@ async def test_admin_add_team_members_private_not_owner(monkeypatch, mock_db, al
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
@@ -11121,6 +11172,7 @@ async def test_admin_add_team_members_full_flow(monkeypatch, mock_db, allow_perm
     auth_service.get_user_by_email = AsyncMock(side_effect=get_user)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
@@ -11135,6 +11187,7 @@ async def test_admin_add_team_members_email_auth_disabled(monkeypatch, mock_db, 
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({}))
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
@@ -11151,6 +11204,7 @@ async def test_admin_add_team_members_team_not_found(monkeypatch, mock_db, allow
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 404
@@ -11167,6 +11221,7 @@ async def test_admin_add_team_members_exception(monkeypatch, mock_db, allow_perm
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "error adding member" in response.body.decode().lower()
@@ -11183,6 +11238,7 @@ async def test_admin_add_team_members_no_users_selected(monkeypatch, mock_db, al
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
@@ -11203,6 +11259,7 @@ async def test_admin_add_team_members_single_user_spaces_no_changes(monkeypatch,
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "No changes made" in response.body.decode()
@@ -11234,6 +11291,7 @@ async def test_admin_add_team_members_last_owner_role_change_and_member_exceptio
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="ok@example.com"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
@@ -11273,6 +11331,7 @@ async def test_admin_add_team_members_removal_constraints_and_removal_exception(
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
@@ -11299,6 +11358,7 @@ async def test_admin_add_team_members_more_than_five_errors(monkeypatch, mock_db
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    request.state = make_test_scope_request(["team-1"]).state
     response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "... and 1 more" in response.body.decode()
@@ -11316,6 +11376,7 @@ async def test_admin_update_team_member_role_success(monkeypatch, mock_db, allow
     team_service.update_member_role = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
@@ -11325,6 +11386,7 @@ async def test_admin_update_team_member_role_success(monkeypatch, mock_db, allow
 async def test_admin_update_team_member_role_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 403
 
@@ -11338,6 +11400,7 @@ async def test_admin_update_team_member_role_team_not_found(monkeypatch, mock_db
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 404
 
@@ -11352,6 +11415,7 @@ async def test_admin_update_team_member_role_not_owner(monkeypatch, mock_db, all
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "member@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
@@ -11368,6 +11432,7 @@ async def test_admin_update_team_member_role_requires_user_email(monkeypatch, mo
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
 
@@ -11383,6 +11448,7 @@ async def test_admin_update_team_member_role_requires_role(monkeypatch, mock_db,
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "role is required" in response.body.decode().lower()
@@ -11400,6 +11466,7 @@ async def test_admin_update_team_member_role_exception(monkeypatch, mock_db, all
     team_service.update_member_role = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "error updating role" in response.body.decode().lower()
@@ -11417,6 +11484,7 @@ async def test_admin_remove_team_member_success(monkeypatch, mock_db, allow_perm
     team_service.remove_member_from_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "removed successfully" in response.body.decode()
@@ -11426,6 +11494,7 @@ async def test_admin_remove_team_member_success(monkeypatch, mock_db, allow_perm
 async def test_admin_remove_team_member_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 403
 
@@ -11440,6 +11509,7 @@ async def test_admin_remove_team_member_team_not_found(monkeypatch, mock_db, all
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 404
 
@@ -11455,6 +11525,7 @@ async def test_admin_remove_team_member_not_owner(monkeypatch, mock_db, allow_pe
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "member@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
@@ -11471,6 +11542,7 @@ async def test_admin_remove_team_member_requires_user_email(monkeypatch, mock_db
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
 
@@ -11487,6 +11559,7 @@ async def test_admin_remove_team_member_failed_to_remove(monkeypatch, mock_db, a
     team_service.remove_member_from_team = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "failed to remove member" in response.body.decode().lower()
@@ -11504,6 +11577,7 @@ async def test_admin_remove_team_member_value_error(monkeypatch, mock_db, allow_
     team_service.remove_member_from_team = AsyncMock(side_effect=ValueError("last owner"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "last owner" in response.body.decode().lower()
@@ -11519,6 +11593,7 @@ async def test_admin_remove_team_member_exception(monkeypatch, mock_db, allow_pe
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "error removing member" in response.body.decode().lower()
@@ -11533,6 +11608,7 @@ async def test_admin_delete_team_success(monkeypatch, mock_db, allow_permission)
     team_service.delete_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "deleted successfully" in response.body.decode()
@@ -11548,6 +11624,7 @@ async def test_admin_delete_team_rejected_personal_team(monkeypatch, mock_db, al
     team_service.delete_team = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-personal']
     response = await admin_delete_team("team-personal", request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 409
@@ -11558,6 +11635,7 @@ async def test_admin_delete_team_rejected_personal_team(monkeypatch, mock_db, al
 async def test_admin_delete_team_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
+    request.state.token_teams = ['team-1']
     response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 403
 
@@ -11571,6 +11649,7 @@ async def test_admin_delete_team_exception(monkeypatch, mock_db, allow_permissio
     team_service.delete_team = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    request.state.token_teams = ['team-1']
     response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "error deleting team" in response.body.decode().lower()
@@ -11950,6 +12029,7 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     team_service.get_team_members = AsyncMock(return_value=[(SimpleNamespace(email=current_user_email), SimpleNamespace(role="owner", joined_at=datetime.now(timezone.utc)))])
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -11989,6 +12069,7 @@ async def test_admin_users_partial_html_controls(monkeypatch, mock_request, mock
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    mock_request.state.token_teams = [None]
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -12032,6 +12113,7 @@ async def test_admin_users_partial_html_controls_uses_resolve_root_path(monkeypa
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    mock_request.state.token_teams = [None]
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -12049,6 +12131,7 @@ async def test_admin_users_partial_html_controls_uses_resolve_root_path(monkeypa
 @pytest.mark.asyncio
 async def test_admin_users_partial_html_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state.token_teams = [None]
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -12093,6 +12176,7 @@ async def test_admin_users_partial_html_selector_team_members_fetch_exception(mo
     team_service.get_team_members = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = ['team-1']
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -12137,6 +12221,7 @@ async def test_admin_users_partial_html_default_render(monkeypatch, mock_request
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    mock_request.state.token_teams = [None]
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -12162,6 +12247,7 @@ async def test_admin_users_partial_html_exception(monkeypatch, mock_request, moc
     auth_service.list_users = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
+    mock_request.state.token_teams = [None]
     response = await admin_users_partial_html(
         request=mock_request,
         page=1,
@@ -17424,6 +17510,7 @@ async def test_admin_teams_partial_html_enriched_non_admin(monkeypatch, mock_req
 @pytest.mark.asyncio
 async def test_admin_team_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
@@ -17443,6 +17530,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
     team_service.count_team_owners.return_value = 1
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -17453,6 +17541,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
 async def test_admin_team_members_partial_html_invalid_team_id(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
+    mock_request.state.token_teams = ['not-a-uuid']
     response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
@@ -17468,6 +17557,7 @@ async def test_admin_team_members_partial_html_team_not_found(monkeypatch, mock_
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
@@ -17484,6 +17574,7 @@ async def test_admin_team_members_partial_html_not_owner(monkeypatch, mock_reque
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
@@ -17496,7 +17587,9 @@ async def test_admin_team_members_partial_html_exception(monkeypatch, mock_reque
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    scoped_team_id = str(uuid4())
+    mock_request.state.token_teams = [scoped_team_id.replace("-", "")]
+    response = await admin_team_members_partial_html(scoped_team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading members" in response.body.decode().lower()
 
@@ -17516,6 +17609,7 @@ async def test_admin_team_members_partial_html_with_search(monkeypatch, mock_req
     team_service.count_team_owners.return_value = 1
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="john", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     team_service.get_team_members.assert_awaited_once_with(normalized_id, page=1, per_page=5, search="john")
@@ -17536,6 +17630,7 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -17555,6 +17650,7 @@ async def test_admin_team_non_members_partial_html_empty_search(monkeypatch, moc
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "search for users" in response.body.decode().lower()
@@ -17576,6 +17672,7 @@ async def test_admin_team_non_members_partial_html_short_search(monkeypatch, moc
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="a", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "type at least 2 characters" in response.body.decode().lower()
@@ -17585,6 +17682,7 @@ async def test_admin_team_non_members_partial_html_short_search(monkeypatch, moc
 @pytest.mark.asyncio
 async def test_admin_team_non_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    mock_request.state.token_teams = ['team-1']
     response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "email authentication is disabled" in response.body.decode().lower()
@@ -17596,6 +17694,7 @@ async def test_admin_team_non_members_partial_html_invalid_team_id(monkeypatch, 
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
+    mock_request.state.token_teams = ['not-a-uuid']
     response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
@@ -17615,6 +17714,7 @@ async def test_admin_team_non_members_partial_html_team_not_found(monkeypatch, m
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
@@ -17635,6 +17735,7 @@ async def test_admin_team_non_members_partial_html_not_owner(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
@@ -17655,6 +17756,7 @@ async def test_admin_team_non_members_partial_html_exception(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
+    mock_request.state.token_teams = [team_id.replace("-", "")]
     response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading non-members" in response.body.decode().lower()
@@ -20922,15 +21024,19 @@ class TestUtilityFunctions:
         assert result.startswith("/root/admin/?")
         assert result.endswith("#catalog")
 
-    def test_get_client_ip_forwarded_for(self):
+    def test_get_client_ip_ignores_forwarded_for(self):
         request = MagicMock(spec=Request)
         request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
-        assert get_client_ip(request) == "192.168.1.1"
+        request.client = MagicMock()
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
-    def test_get_client_ip_real_ip(self):
+    def test_get_client_ip_ignores_real_ip(self):
         request = MagicMock(spec=Request)
         request.headers = {"X-Real-IP": "10.0.0.5"}
-        assert get_client_ip(request) == "10.0.0.5"
+        request.client = MagicMock()
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
     def test_get_client_ip_direct(self):
         request = MagicMock(spec=Request)
@@ -21700,6 +21806,7 @@ class TestTeamJoinRequests:
     async def test_admin_leave_team_email_auth_disabled(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 403
 
@@ -21714,6 +21821,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 200
         assert "Successfully left the team" in result.body.decode()
@@ -21726,6 +21834,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 404
 
@@ -21739,6 +21848,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "Cannot leave your personal team" in result.body.decode()
@@ -21753,6 +21863,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "not a member" in result.body.decode().lower()
@@ -21768,6 +21879,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "failed to leave team" in result.body.decode().lower()
@@ -21780,6 +21892,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
+        request.state.token_teams = ['team-1']
         result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "error leaving team" in result.body.decode().lower()
@@ -21885,7 +21998,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
-        assert result.status_code == 400
+        assert result.status_code == 404
 
     @pytest.mark.asyncio
     async def test_admin_cancel_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
@@ -21946,6 +22059,7 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 200
         assert "a@b.com" in result.body.decode()
@@ -21962,6 +22076,7 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 200
         assert "No pending join requests" in result.body.decode()
@@ -21971,6 +22086,7 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 403
 
@@ -21983,6 +22099,7 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
 
@@ -21997,6 +22114,7 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "member@test.com"})
         assert result.status_code == 403
 
@@ -22012,6 +22130,7 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.state.token_teams = ['team-1']
         result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 400
         assert "error loading join requests" in result.body.decode().lower()
@@ -22025,7 +22144,7 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(return_value=member)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 200
         assert "approved" in result.body.decode().lower()
 
@@ -22036,13 +22155,13 @@ class TestTeamJoinRequests:
         ts.get_user_role_in_team = AsyncMock(return_value="member")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "member@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "member@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 403
 
     @pytest.mark.asyncio
     async def test_admin_approve_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -22053,7 +22172,7 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 404
 
     @pytest.mark.asyncio
@@ -22064,7 +22183,7 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 400
         assert "some other validation error" in result.body.decode()
 
@@ -22076,7 +22195,7 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 400
         assert "error approving join request" in result.body.decode().lower()
 
@@ -22088,7 +22207,7 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 200
         assert "rejected" in result.body.decode().lower()
 
@@ -22100,7 +22219,7 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 404
 
     @pytest.mark.asyncio
@@ -22111,14 +22230,14 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 400
         assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_reject_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -22129,7 +22248,7 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"}, request=make_test_scope_request(['team-1']))
         assert result.status_code == 400
         assert "error rejecting join request" in result.body.decode().lower()
 
@@ -22154,7 +22273,7 @@ class TestTeamLookups:
 
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@test.com"})
+        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@test.com"}, request=make_test_scope_request(None))
         assert result["count"] == 2
         assert result["team_ids"] == ["id-1", "id-2"]
 
@@ -22171,7 +22290,7 @@ class TestTeamLookups:
 
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "user@test.com"})
+        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "user@test.com"}, request=make_test_scope_request(None))
         assert result["count"] == 1
 
     @pytest.mark.asyncio
@@ -22190,7 +22309,7 @@ class TestTeamLookups:
         ts.get_user_teams = AsyncMock(return_value=[team1, team2, team3])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility="public", q="zzz", db=mock_db, user={"email": "user@test.com"})
+        result = await admin_get_all_team_ids(include_inactive=False, visibility="public", q="zzz", db=mock_db, user={"email": "user@test.com"}, request=make_test_scope_request(None))
         assert result["team_ids"] == ["t3"]
         assert result["count"] == 1
 
@@ -22201,7 +22320,7 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "ghost@test.com"})
+        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "ghost@test.com"}, request=make_test_scope_request(None))
         assert result == {"team_ids": [], "count": 0}
 
     @pytest.mark.asyncio
@@ -27576,7 +27695,7 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-            await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db}, request=make_test_scope_request(None))
 
             # Verify get_all_team_ids was called with include_personal=False and personal_owner_email
             mock_team_service.get_all_team_ids.assert_called_once()
@@ -27863,7 +27982,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-            result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+            result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db}, request=make_test_scope_request(None))
 
             # Verify service was called with personal_owner_email
             mock_team_service.get_all_team_ids.assert_called_once()
@@ -27889,7 +28008,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-            await admin_get_all_team_ids(include_inactive=True, visibility="public", q="search", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_all_team_ids(include_inactive=True, visibility="public", q="search", db=mock_db, user={"email": "admin@example.com", "db": mock_db}, request=make_test_scope_request(None))
 
             call_kwargs = mock_team_service.get_all_team_ids.call_args[1]
             assert call_kwargs["include_inactive"] is True

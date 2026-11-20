@@ -144,7 +144,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
-from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
@@ -2455,7 +2455,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
-        sigv4_config = await protect_sigv4_config_for_storage(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
+        sigv4_config = protect_sigv4_config_sync(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
@@ -4051,7 +4051,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if gateway_update.sigv4_config is not None:
                     if gateway.auth_type != "sigv4":
                         raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
-                    gateway.sigv4_config = await protect_sigv4_config_for_storage(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
+                    gateway.sigv4_config = protect_sigv4_config_sync(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
                 elif gateway.auth_type == "sigv4" and not getattr(gateway, "sigv4_config", None):
                     raise PublicValidationError("auth_type 'sigv4' requires sigv4_config")
 

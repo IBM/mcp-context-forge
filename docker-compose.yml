@@ -420,6 +420,10 @@ services:
       - MCP_CLIENT_AUTH_ENABLED=true
       - MCP_REQUIRE_AUTH=true
       - TRUST_PROXY_AUTH=false
+      # Proxies allowed to set X-Forwarded-For/Proto. The default trusts loopback plus RFC 1918 so nginx on mcpnet
+      # can forward client IPs. Narrow to the mcpnet subnet if other containers on it are untrusted.
+      # If you publish port 4444 directly, set FORWARDED_ALLOW_IPS=127.0.0.1,::1.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=${LOG_LEVEL:-ERROR}  # Required for SQLALCHEMY_ECHO output during load testing

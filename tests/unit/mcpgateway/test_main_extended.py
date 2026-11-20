@@ -4946,7 +4946,8 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod.settings, "mcp_client_connect_mode", "auto")
         monkeypatch.setattr(main_mod.settings, "cache_type", cache_type)
         monkeypatch.setattr(main_mod.settings, "primary_worker_election_backend", election_backend)
-        monkeypatch.setattr("mcpgateway.services.leader_election.start_primary_worker_elector", AsyncMock(side_effect=lambda: events.append("elector")))
+        start_elector = AsyncMock(side_effect=lambda *_: events.append("elector"))
+        monkeypatch.setattr("mcpgateway.services.leader_election.start_primary_worker_elector", start_elector)
         monkeypatch.setattr("mcpgateway.services.leader_election.stop_primary_worker_elector", AsyncMock())
 
         listener = MagicMock()
@@ -4957,6 +4958,8 @@ class TestLifespanAdvanced:
 
         async with main_mod.lifespan(main_mod.app):
             pass
+
+        return start_elector
 
     @pytest.mark.asyncio
     async def test_lifespan_warns_when_listeners_use_filelock_with_redis_cache(self, monkeypatch, caplog):
@@ -4969,11 +4972,15 @@ class TestLifespanAdvanced:
 
     @pytest.mark.asyncio
     async def test_lifespan_starts_listeners_after_redis_elector(self, monkeypatch, caplog):
+        # First-Party
+        import mcpgateway.main as main_mod
+
         events = []
         with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
-            await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=events)
+            start_elector = await self._run_lifespan_with_modern_listeners(monkeypatch, cache_type="redis", election_backend="redis", events=events)
 
         assert events == ["elector", "listener"]
+        start_elector.assert_awaited_once_with(main_mod.get_redis_client.return_value)
         assert "set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster" not in caplog.text
 
     @pytest.mark.asyncio

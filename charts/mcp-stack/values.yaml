@@ -257,6 +257,7 @@ mcpContextForge:
     APP_NAME: ContextForge            # public-facing name of the gateway
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
+    FORWARDED_ALLOW_IPS: "127.0.0.1,::1"  # proxies allowed to set X-Forwarded-For/Proto; set to your ingress/proxy CIDR to keep client IPs
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
     CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
 
@@ -290,6 +291,7 @@ mcpContextForge:
     REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
     REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
     REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+    REDIS_CLUSTER_MODE: "false"      # Use RedisCluster client for cluster deployments (handles MOVED/ASK redirects)
 
     # ─ Redis leader election (multi-node) ─
     REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)

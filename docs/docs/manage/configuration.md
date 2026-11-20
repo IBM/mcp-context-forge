@@ -562,6 +562,7 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` | Maximum concurrent `subscriptions/listen` streams for one authenticated principal on one worker. The gateway refuses further streams with "Subscription limit reached" | `32` | int (1-1024) |
 | `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` | Maximum concurrent `subscriptions/listen` streams on one worker, shared by all anonymous callers when `MCP_REQUIRE_AUTH` is false. `0` refuses all anonymous streams | `256` | int (0-1024) |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
+| `FORWARDED_ALLOW_IPS`         | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` set the request client address and `request.url` scheme. Requests from other peers use the socket address and scheme. Behind a non-loopback proxy, set this to the proxy address range to keep client IPs (rate limits, token IP restrictions, login and admin audit) and `https` request URLs. `*` trusts every peer and lets clients spoof their IP. Invalid entries stop startup. A CIDR must not have host bits set (`10.0.0.0/24`, not `10.0.0.1/24`). Use `*` alone | `127.0.0.1,::1` | string |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 !!! warning "MCP Access Control Dependencies"
@@ -1335,6 +1336,7 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `REDIS_RETRY_ON_TIMEOUT`  | Retry on timeout           | `true`     | bool                     |
 | `REDIS_HEALTH_CHECK_INTERVAL` | Health check (secs)    | `30`       | int >= 0                 |
 | `REDIS_DECODE_RESPONSES`  | Return strings vs bytes    | `true`     | bool                     |
+| `REDIS_CLUSTER_MODE`      | Use the `RedisCluster` client (see [Redis Cluster Mode](scale.md#redis-cluster-mode)) | `false` | bool |
 | `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`       | int > 0                  |
 | `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |

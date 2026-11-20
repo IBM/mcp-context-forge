@@ -1,0 +1,83 @@
+###############################################################################
+#  Redis Cluster override
+#
+#  Replaces the single `redis` service with a 3-master Redis Cluster
+#  (bitnami redis-cluster, no replicas) and points the gateway at it.
+#  Redis Cluster needs at least 3 masters.
+#
+#  Usage:  make compose-up REDIS=cluster
+#          make compose-down REDIS=cluster
+#
+#  Needs Docker Compose 2.24 or later (uses the `!reset` tag).
+#  Cluster nodes announce container IPs, so the cluster is reachable only from
+#  inside the mcpnet network. No host port is published.
+###############################################################################
+
+services:
+
+  gateway:
+    environment:
+      - REDIS_URL=redis://:secret@redis-node-0:6379  # pragma: allowlist secret
+      - REDIS_CLUSTER_MODE=true
+    depends_on:
+      redis: !reset null
+      redis-node-2:
+        condition: service_healthy   # cluster creator: healthy once cluster_state:ok
+
+  redis:
+    profiles: ["redis-standalone"]   # not started in cluster mode
+
+  redis-node-0:
+    image: docker.io/bitnamilegacy/redis-cluster:7.2
+    environment: &redis-cluster-env
+      REDIS_PASSWORD: secret  # pragma: allowlist secret
+      REDISCLI_AUTH: secret  # pragma: allowlist secret  (bitnami's cluster-create wait loop runs redis-cli ping without -a)
+      REDIS_NODES: "redis-node-0 redis-node-1 redis-node-2"
+    networks: [mcpnet]
+    healthcheck: &redis-cluster-ping
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]  # pragma: allowlist secret
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  redis-node-1:
+    image: docker.io/bitnamilegacy/redis-cluster:7.2
+    environment: *redis-cluster-env
+    networks: [mcpnet]
+    healthcheck: *redis-cluster-ping
+
+  redis-node-2:
+    image: docker.io/bitnamilegacy/redis-cluster:7.2
+    environment:
+      <<: *redis-cluster-env
+      REDIS_CLUSTER_REPLICAS: "0"
+      REDIS_CLUSTER_CREATOR: "yes"
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+    networks: [mcpnet]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli cluster info | grep -q cluster_state:ok"]  # pragma: allowlist secret
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  redis_exporter:
+    environment:
+      - REDIS_ADDR=redis://redis-node-0:6379
+      - REDIS_PASSWORD=secret  # pragma: allowlist secret
+      - REDIS_EXPORTER_IS_CLUSTER=true
+    depends_on:
+      redis: !reset null
+      redis-node-2:
+        condition: service_healthy
+
+  redis_commander:
+    environment:
+      - REDIS_HOSTS=local:redis-node-0:6379:0:secret  # pragma: allowlist secret
+    depends_on:
+      redis: !reset null
+      redis-node-2:
+        condition: service_healthy

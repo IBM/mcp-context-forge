@@ -987,26 +987,25 @@ class TestGetDb:
 
 
 class TestGetClientIpBranches:
-    """Tests for get_client_ip helper covering X-Forwarded-For and X-Real-IP."""
+    """get_client_ip ignores raw forwarding headers and returns the resolved client host."""
 
-    def test_x_forwarded_for(self):
+    def test_ignores_x_forwarded_for(self):
         # First-Party
         from mcpgateway.routers.email_auth import get_client_ip
 
         request = MagicMock()
-        request.headers = {"X-Forwarded-For": "10.0.0.1, 10.0.0.2"}
-        assert get_client_ip(request) == "10.0.0.1"
+        request.headers = {"X-Forwarded-For": "198.51.100.7, 10.0.0.2"}
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
-    def test_x_real_ip(self):
+    def test_ignores_x_real_ip(self):
         # First-Party
         from mcpgateway.routers.email_auth import get_client_ip
 
         request = MagicMock()
-        # MagicMock headers with .get that returns None for X-Forwarded-For, value for X-Real-IP
-        headers_mock = MagicMock()
-        headers_mock.get = lambda key, default=None: {"X-Real-IP": "192.168.1.1"}.get(key, default)
-        request.headers = headers_mock
-        assert get_client_ip(request) == "192.168.1.1"
+        request.headers = {"X-Real-IP": "198.51.100.7"}
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
 
 class TestCreateAccessTokenEdgeCases:

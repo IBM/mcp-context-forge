@@ -1028,6 +1028,10 @@
               "description": "Application port",
               "default": "4444"
             },
+            "FORWARDED_ALLOW_IPS": {
+              "type": "string",
+              "description": "Comma-separated proxy IPs/CIDRs allowed to set X-Forwarded-For/Proto"
+            },
             "PROMPT_CACHE_SIZE": {
               "type": "string",
               "description": "Prompt cache size",
@@ -1042,6 +1046,15 @@
               "type": "string",
               "description": "MCP protocol version",
               "default": "2025-03-26"
+            },
+            "REDIS_CLUSTER_MODE": {
+              "type": "string",
+              "description": "Use the RedisCluster client for Redis Cluster deployments",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "REDIS_DECODE_RESPONSES": {
               "type": "string",

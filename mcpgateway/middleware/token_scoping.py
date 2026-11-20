@@ -191,8 +191,10 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
-    # Order matters: the first method+path match wins, so the concrete /a2a/invoke
+    # Order matters: the first method+path match wins. The stored extended card needs
+    # a2a.update, so it precedes the general GET /a2a rule. The concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
+    ("GET", re.compile(r"^/a2a/[^/]+/stored-card/extended/?$"), Permissions.A2A_UPDATE),
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
@@ -209,6 +211,14 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
     ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
+    # Export/import routes on export_import_router. The handlers require
+    # admin.export / admin.import (the import routes are global_only); without
+    # these entries the default-deny below rejects correctly scoped tokens.
+    ("GET", re.compile(r"^/export(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/export/selective(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/import(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("GET", re.compile(r"^/import/status(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("POST", re.compile(r"^/import/cleanup(?:$|/)"), Permissions.ADMIN_IMPORT),
     # A2A agent plugin bindings live under /a2a-agents/... (hyphen), which does not
     # match ^/a2a(?:$|/) above. Decorators on a2a_agent_plugin_bindings require
     # tools.read / tools.manage_plugins — same contract as tool plugin bindings (#6701).
@@ -523,9 +533,9 @@ class TokenScopingMiddleware:
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request.
 
-        Only trusts X-Forwarded-For / X-Real-IP headers when a trusted proxy
-        configuration is in place (ProxyHeadersMiddleware with specific hosts).
-        Otherwise, uses the direct connection IP to prevent header spoofing.
+        ``ProxyHeadersMiddleware`` resolves ``request.client`` from
+        X-Forwarded-For only when the direct peer is listed in
+        ``FORWARDED_ALLOW_IPS``; otherwise it is the socket peer.
 
         Args:
             request: FastAPI request object
@@ -533,11 +543,6 @@ class TokenScopingMiddleware:
         Returns:
             str: Client IP address
         """
-        # Use direct client IP as the secure default.
-        # Proxy headers are only trustworthy when Uvicorn/Starlette's
-        # ProxyHeadersMiddleware has already rewritten request.client from a
-        # trusted upstream.  That middleware replaces request.client.host with
-        # the real client IP, so we can rely on it directly.
         return request.client.host if request.client else "unknown"
 
     def _check_ip_restrictions(self, client_ip: str, ip_restrictions: list) -> bool:

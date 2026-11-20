@@ -60,7 +60,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, TextContent, Tool
 import pytest
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
 
 # First-Party
@@ -101,7 +101,17 @@ def _canonical_query(raw_query: str) -> str:
     return "&".join(f"{key}={value}" for key, value in pairs)
 
 
-def verify_sigv4(method: str, raw_path: str, raw_query: str, headers: dict[str, str], body: bytes, *, secret_access_key: str, now: datetime | None = None) -> str | None:
+def verify_sigv4(
+    method: str,
+    raw_path: str,
+    raw_query: str,
+    headers: dict[str, str],
+    body: bytes,
+    *,
+    secret_access_key: str,
+    now: datetime | None = None,
+    allow_unsigned_payload: bool = False,
+) -> str | None:
     """Verify a SigV4 request the way an AWS service does.
 
     Args:
@@ -112,6 +122,7 @@ def verify_sigv4(method: str, raw_path: str, raw_query: str, headers: dict[str, 
         body: Received body bytes.
         secret_access_key: The secret the access key resolves to.
         now: Reference time, defaults to the current UTC time.
+        allow_unsigned_payload: Accept the ``UNSIGNED-PAYLOAD`` marker in place of the body hash.
 
     Returns:
         str | None: ``None`` when the signature is valid, otherwise the refusal reason.
@@ -139,6 +150,8 @@ def verify_sigv4(method: str, raw_path: str, raw_query: str, headers: dict[str, 
         return "credential date does not match x-amz-date"
 
     payload_hash = hashlib.sha256(body).hexdigest()
+    if allow_unsigned_payload and headers.get("x-amz-content-sha256") == "UNSIGNED-PAYLOAD":
+        payload_hash = "UNSIGNED-PAYLOAD"
     if headers.get("x-amz-content-sha256") != payload_hash:
         return "x-amz-content-sha256 does not match the body"
 
@@ -281,6 +294,62 @@ def _make_upstream_app(log: _RequestLog, secret_access_key: str) -> Any:
     return verifying_app
 
 
+def _make_rest_upstream_app(log: _RequestLog, secret_access_key: str) -> Any:
+    """Build a stub REST upstream behind a SigV4-verifying ASGI wrapper.
+
+    The stub accepts ``UNSIGNED-PAYLOAD`` only on paths that start with ``/unsigned``.
+    It records the received headers so a test can check that no credential leaks.
+
+    Args:
+        log: Receives one record per request with the verification outcome.
+        secret_access_key: The secret an access key resolves to.
+
+    Returns:
+        Any: ASGI application.
+    """
+
+    async def rest_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        chunks: list[bytes] = []
+        more = True
+        while more:
+            message = await receive()
+            chunks.append(message.get("body", b""))
+            more = message.get("more_body", False)
+        body = b"".join(chunks)
+
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope["headers"]}
+        raw_path = scope.get("raw_path", scope["path"].encode()).decode()
+        reason = verify_sigv4(
+            scope["method"],
+            raw_path,
+            scope.get("query_string", b"").decode(),
+            headers,
+            body,
+            secret_access_key=secret_access_key,
+            allow_unsigned_payload=scope["path"].startswith("/unsigned"),
+        )
+        log.record(
+            OrderedDict(
+                method=scope["method"],
+                path=scope["path"],
+                signed=bool(headers.get("authorization")),
+                verified=reason is None,
+                reason=reason,
+                payload_hash=headers.get("x-amz-content-sha256"),
+                body=body,
+                headers=headers,
+            )
+        )
+        if reason is not None:
+            await PlainTextResponse("signature rejected", status_code=403)(scope, receive, send)
+            return
+        await JSONResponse({"echo": body.decode("utf-8", "replace"), "path": scope["path"]})(scope, receive, send)
+
+    return rest_app
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -302,6 +371,57 @@ def stub_upstream() -> Generator[dict[str, Any], None, None]:
         yield {"mcp_url": f"http://{_UPSTREAM_HOST}:{port}/mcp", "log": log}
     finally:
         _stop_uvicorn(server, thread, "sigv4-upstream")
+
+
+@pytest.fixture(scope="module")
+def stub_rest_upstream() -> Generator[dict[str, Any], None, None]:
+    """Start the SigV4-verifying REST stub on a host port."""
+    log = _RequestLog()
+    port = _free_port()
+    server, thread = _serve_uvicorn(_make_rest_upstream_app(log, _SECRET_ACCESS_KEY), port, "sigv4-rest-upstream")
+    try:
+        yield {"base_url": f"http://{_UPSTREAM_HOST}:{port}", "log": log}
+    finally:
+        _stop_uvicorn(server, thread, "sigv4-rest-upstream")
+
+
+def _rest_sigv4_config(**overrides: Any) -> dict[str, Any]:
+    """Return a ``sigv4_config`` for a REST tool."""
+    return {"access_key_id": _ACCESS_KEY_ID, "secret_access_key": _SECRET_ACCESS_KEY, "region": _REGION, "service": _SERVICE, **overrides}
+
+
+def _rest_tool_body(name: str, url: str, **overrides: Any) -> dict[str, Any]:
+    """Return a ``POST /tools`` body for a REST tool."""
+    tool = {
+        "name": name,
+        "url": url,
+        "integration_type": "REST",
+        "request_type": "POST",
+        "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}},
+        **overrides,
+    }
+    return {"tool": tool, "team_id": None, "visibility": "private"}
+
+
+@pytest.fixture
+def rest_tool_factory(admin_api: httpx.Client) -> Generator[Any, None, None]:
+    """Create REST tools through ``POST /tools`` and delete them at teardown."""
+    created: list[str] = []
+
+    def _create(name_prefix: str, url: str, **overrides: Any) -> httpx.Response:
+        resp = admin_api.post("/tools", json=_rest_tool_body(f"{name_prefix}-{uuid.uuid4().hex[:8]}", url, **overrides))
+        if resp.status_code in (200, 201):
+            created.append(resp.json()["id"])
+        return resp
+
+    try:
+        yield _create
+    finally:
+        for tool_id in created:
+            try:
+                admin_api.delete(f"/tools/{tool_id}")
+            except Exception:  # noqa: BLE001
+                logger.warning("Failed to delete tool %s during teardown", tool_id)
 
 
 def _sigv4_payload(name: str, url: str, **config_overrides: Any) -> dict[str, Any]:
@@ -577,3 +697,155 @@ class TestSigV4LiveFlow:
         result = await hub_client.call_tool(sigv4_gateway["tool_name"], {"message": "after-restore"})
         assert result.is_error is False, f"tool call failed after restoring the secret: {result.content}"
         assert all(record["verified"] for record in stub_upstream["log"].snapshot())
+
+
+# ---------------------------------------------------------------------------
+# REST tool live tests
+# ---------------------------------------------------------------------------
+@skip_no_gateway
+class TestSigV4RestToolLiveFlow:
+    """Black-box verification of SigV4 signing for REST tools on a live gateway."""
+
+    async def test_standalone_tool_signs_the_json_body(self, hub_client, rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]) -> None:
+        """A standalone REST tool sends a signature whose payload hash matches the JSON body."""
+        resp = rest_tool_factory("sigv4-rest", f"{stub_rest_upstream['base_url']}/orders", auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+        assert resp.status_code in (200, 201), resp.text
+        stub_rest_upstream["log"].clear()
+
+        result = await hub_client.call_tool(resp.json()["name"], {"message": "hello-rest"})
+
+        assert result.is_error is False, f"tool call failed: {result.content}"
+        records = stub_rest_upstream["log"].snapshot()
+        assert records, "the REST stub received no request"
+        assert all(record["verified"] for record in records), f"the verifier refused a request: {records}"
+        assert hashlib.sha256(records[-1]["body"]).hexdigest() == records[-1]["payload_hash"]
+        assert b"hello-rest" in records[-1]["body"]
+
+    async def test_no_credential_reaches_the_upstream_headers(self, hub_client, rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]) -> None:
+        """Only the signature leaves the gateway: no secret, access-key header or static auth value."""
+        resp = rest_tool_factory("sigv4-rest-hdr", f"{stub_rest_upstream['base_url']}/headers", auth_type="sigv4", sigv4_config=_rest_sigv4_config(session_token=_SESSION_TOKEN))
+        assert resp.status_code in (200, 201), resp.text
+        stub_rest_upstream["log"].clear()
+
+        result = await hub_client.call_tool(resp.json()["name"], {"message": "headers"})
+
+        assert result.is_error is False, f"tool call failed: {result.content}"
+        record = stub_rest_upstream["log"].snapshot()[-1]
+        assert record["verified"]
+        assert not any(_SECRET_ACCESS_KEY in value for value in record["headers"].values()), "the secret access key reached the upstream"
+        assert record["headers"].get("x-amz-security-token") == _SESSION_TOKEN
+        assert record["headers"]["authorization"].startswith("AWS4-HMAC-SHA256 ")
+
+    async def test_unsigned_payload_opt_in(self, hub_client, rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]) -> None:
+        """``unsigned_payload`` sends the ``UNSIGNED-PAYLOAD`` marker instead of a body hash."""
+        resp = rest_tool_factory("sigv4-rest-unsigned", f"{stub_rest_upstream['base_url']}/unsigned/upload", auth_type="sigv4", sigv4_config=_rest_sigv4_config(unsigned_payload=True))
+        assert resp.status_code in (200, 201), resp.text
+        stub_rest_upstream["log"].clear()
+
+        result = await hub_client.call_tool(resp.json()["name"], {"message": "stream"})
+
+        assert result.is_error is False, f"tool call failed: {result.content}"
+        record = stub_rest_upstream["log"].snapshot()[-1]
+        assert record["verified"]
+        assert record["payload_hash"] == "UNSIGNED-PAYLOAD"
+
+    async def test_tool_under_sigv4_gateway_inherits_the_gateway_credential(
+        self, hub_client, admin_api: httpx.Client, sigv4_gateway: dict[str, Any], rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]
+    ) -> None:
+        """A REST tool with ``gateway_id`` and no ``sigv4_config`` signs with the gateway credential."""
+        resp = rest_tool_factory("sigv4-rest-gw", f"{stub_rest_upstream['base_url']}/inherited", auth_type="sigv4", gateway_id=sigv4_gateway["id"])
+        assert resp.status_code in (200, 201), resp.text
+        stub_rest_upstream["log"].clear()
+
+        result = await hub_client.call_tool(resp.json()["name"], {"message": "inherit"})
+
+        assert result.is_error is False, f"tool call failed: {result.content}"
+        record = stub_rest_upstream["log"].snapshot()[-1]
+        assert record["verified"]
+        assert record["path"] == "/inherited"
+
+    def test_tool_read_masks_the_secret(self, admin_api: httpx.Client, rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]) -> None:
+        """No read of the tool returns the secret access key or the session token."""
+        resp = rest_tool_factory("sigv4-rest-mask", f"{stub_rest_upstream['base_url']}/mask", auth_type="sigv4", sigv4_config=_rest_sigv4_config(session_token=_SESSION_TOKEN))
+        assert resp.status_code in (200, 201), resp.text
+        tool_id = resp.json()["id"]
+
+        bodies = [resp.text, admin_api.get(f"/tools/{tool_id}").text, admin_api.get("/tools?limit=0").text]
+
+        for body in bodies:
+            assert _SECRET_ACCESS_KEY not in body, "secret_access_key leaked through the API"
+            assert _SESSION_TOKEN not in body, "session_token leaked through the API"
+        read = admin_api.get(f"/tools/{tool_id}").json()
+        assert read["sigv4Config"]["access_key_id"] == _ACCESS_KEY_ID
+        assert read["sigv4Config"]["secret_access_key"] != _SECRET_ACCESS_KEY
+
+    async def test_masked_value_on_update_keeps_the_stored_secret(self, hub_client, admin_api: httpx.Client, rest_tool_factory: Any, stub_rest_upstream: dict[str, Any]) -> None:
+        """Submitting the masked read value back leaves the stored secret in place."""
+        resp = rest_tool_factory("sigv4-rest-keep", f"{stub_rest_upstream['base_url']}/keep", auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+        assert resp.status_code in (200, 201), resp.text
+        tool = resp.json()
+        masked_config = admin_api.get(f"/tools/{tool['id']}").json()["sigv4Config"]
+
+        updated = admin_api.put(f"/tools/{tool['id']}", json={"auth_type": "sigv4", "sigv4_config": {**masked_config, "region": _REGION}})
+        assert updated.status_code < 400, updated.text
+        stub_rest_upstream["log"].clear()
+        result = await hub_client.call_tool(tool["name"], {"message": "after-update"})
+
+        assert result.is_error is False, f"tool call failed after a masked update: {result.content}"
+        assert all(record["verified"] for record in stub_rest_upstream["log"].snapshot())
+
+    def test_sigv4_without_config_or_gateway_is_rejected(self, admin_api: httpx.Client, stub_rest_upstream: dict[str, Any]) -> None:
+        """A standalone tool needs its own ``sigv4_config``."""
+        resp = admin_api.post("/tools", json=_rest_tool_body(f"sigv4-rest-noconfig-{uuid.uuid4().hex[:8]}", f"{stub_rest_upstream['base_url']}/x", auth_type="sigv4"))
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+
+    def test_sigv4_on_a_non_rest_tool_is_rejected(self, admin_api: httpx.Client, stub_rest_upstream: dict[str, Any]) -> None:
+        """Only REST tools support SigV4."""
+        body = _rest_tool_body(
+            f"sigv4-rest-mcp-{uuid.uuid4().hex[:8]}", f"{stub_rest_upstream['base_url']}/x", auth_type="sigv4", sigv4_config=_rest_sigv4_config(), integration_type="MCP", request_type="SSE"
+        )
+
+        resp = admin_api.post("/tools", json=body)
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+        assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_presigned_url_on_a_sigv4_tool_is_rejected(self, admin_api: httpx.Client, stub_rest_upstream: dict[str, Any]) -> None:
+        """A query signature and an Authorization signature cannot share one request."""
+        url = f"{stub_rest_upstream['base_url']}/x?X-Amz-Signature=abc"
+        body = _rest_tool_body(f"sigv4-rest-presigned-{uuid.uuid4().hex[:8]}", url, auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+
+        resp = admin_api.post("/tools", json=body)
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+        assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_gateway_rejects_unsigned_payload(self, admin_api: httpx.Client, stub_upstream: dict[str, Any]) -> None:
+        """MCP transport signing ignores ``unsigned_payload``, so a gateway refuses it."""
+        name = f"sigv4-e2e-unsigned-{uuid.uuid4().hex[:8]}"
+
+        resp = admin_api.post("/gateways", json=_sigv4_payload(name, stub_upstream["mcp_url"], unsigned_payload=True))
+
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code} {resp.text}"
+        assert not _gateway_named(admin_api, name), "a rejected config must not leave a gateway row behind"
+
+    def test_unauthenticated_tool_registration_is_rejected(self, stub_rest_upstream: dict[str, Any]) -> None:
+        """An unauthenticated caller cannot register a SigV4 tool."""
+        body = _rest_tool_body(f"sigv4-rest-unauth-{uuid.uuid4().hex[:8]}", f"{stub_rest_upstream['base_url']}/x", auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+        with httpx.Client(base_url=BASE_URL, timeout=30.0) as anonymous:
+            resp = anonymous.post("/tools", json=body)
+
+        assert resp.status_code == 401, f"expected 401, got {resp.status_code} {resp.text}"
+        assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"
+
+    def test_caller_without_tool_permission_is_rejected(self, stub_rest_upstream: dict[str, Any]) -> None:
+        """A token scoped away from ``tools.create`` cannot register a SigV4 tool."""
+        token = make_test_jwt("nobody@example.com", is_admin=False, teams=[], scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
+        body = _rest_tool_body(f"sigv4-rest-noperm-{uuid.uuid4().hex[:8]}", f"{stub_rest_upstream['base_url']}/x", auth_type="sigv4", sigv4_config=_rest_sigv4_config())
+
+        with httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}, timeout=30.0) as limited:
+            resp = limited.post("/tools", json=body)
+
+        assert resp.status_code in (401, 403), f"expected a deny, got {resp.status_code} {resp.text}"
+        assert _SECRET_ACCESS_KEY not in resp.text, "the rejection echoed the submitted secret"

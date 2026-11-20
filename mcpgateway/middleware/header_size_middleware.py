@@ -134,15 +134,6 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address as string
         """
-        if settings.trust_proxy_auth:
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                return real_ip
-
         client = request.scope.get("client")
         if client:
             return client[0]
