@@ -1584,18 +1584,18 @@ def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, 
     return headers
 
 
-def _identity_signing_error(gateway_id: Any, exc: IdentitySigningError) -> JSONRPCError:
-    """Log an identity signing failure and map it to a JSON-RPC configuration error.
+def _identity_signing_error(gateway_id: Any, exc: IdentitySigningError) -> MCPError:
+    """Log an identity signing failure and map it to an MCP configuration error.
 
     Args:
         gateway_id: Gateway whose upstream call needed signed identity claims.
         exc: The signing failure.
 
     Returns:
-        The JSON-RPC error to raise.
+        The MCP error to raise.
     """
     logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_id, exc)
-    return JSONRPCError(-32000, "Identity claim signing is misconfigured")
+    return MCPError(code=types.INTERNAL_ERROR, message="Identity claim signing is misconfigured")
 
 
 async def _proxy_list_tools_to_gateway(
@@ -3163,6 +3163,8 @@ async def list_tools() -> List[types.Tool]:
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return _tools_for_client(tools)
+        except MCPError:
+            raise
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -3438,6 +3440,8 @@ async def list_resources() -> List[types.Resource]:
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [_to_mcp_resource(resource) for resource in resources]
+        except MCPError:
+            raise
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []

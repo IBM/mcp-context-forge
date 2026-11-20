@@ -2411,9 +2411,9 @@ class TestIdentitySigningFailureSurfaces:
     @pytest.mark.parametrize("path", ["list_tools", "list_resources", "read_resource"])
     async def test_transport_path_raises_configuration_error(self, path):
         # First-Party
-        from mcpgateway.validation.jsonrpc import JSONRPCError
+        from mcp.shared.exceptions import MCPError
 
-        with pytest.raises(JSONRPCError, match="misconfigured"):
+        with pytest.raises(MCPError, match="misconfigured"):
             await _run_transport_path(path, _real_gateway(), signing_error=True)
 
     @pytest.mark.asyncio

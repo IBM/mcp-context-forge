@@ -12959,6 +12959,42 @@ class TestDirectProxyMode:
         assert result == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler", ["list_tools", "list_resources", "read_resource"])
+    async def test_direct_proxy_identity_signing_failure_reaches_client(self, handler):
+        """A signing failure is an MCP configuration error, never an empty catalog."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.utils.identity_propagation import IdentitySigningError
+
+        mock_gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy", url="http://remote.example.com/mcp", passthrough_headers=[], auth_type=None)
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": ["team1"], "is_authenticated": True})
+        identity_token = tr.user_identity_var.set(MagicMock())
+        call = {"list_tools": tr.list_tools, "list_resources": tr.list_resources, "read_resource": lambda: tr.read_resource("file:///test.txt")}[handler]
+
+        try:
+            with (
+                patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
+                patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True),
+                patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
+                patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            ):
+                with pytest.raises(MCPError, match="misconfigured"):
+                    await call()
+        finally:
+            tr.user_identity_var.reset(identity_token)
+
+    @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_mode_success_text(self):
         """Test read_resource uses direct_proxy and returns text content."""
         mock_gateway = MagicMock()
