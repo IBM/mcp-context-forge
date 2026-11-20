@@ -208,7 +208,7 @@ def _validate_oauth_discovery(discovery: Any) -> None:
         discovery: The ``oauth_config["discovery"]`` value, or ``None``.
 
     Raises:
-        ValueError: If ``discovery`` is not an object, names an unsupported grant, or its ``token_url`` is not a string or fails validation.
+        ValueError: If ``discovery`` is not an object, names an unsupported grant, or its ``token_url`` or ``openIdConnectUrl`` is not a string or fails validation.
     """
     if discovery is None:
         return
@@ -217,11 +217,15 @@ def _validate_oauth_discovery(discovery: Any) -> None:
     if discovery.get("grant_type") not in OAUTH_DISCOVERY_GRANT_TYPES:
         raise ValueError(f"oauth_config.discovery.grant_type must be one of: {', '.join(OAUTH_DISCOVERY_GRANT_TYPES)}")
     raw_value = discovery.get("token_url")
-    if raw_value in (None, ""):
-        return
-    if not isinstance(raw_value, str):
-        raise ValueError("oauth_config.discovery.token_url must be a string URL")
-    validate_core_url(raw_value, "OAuth config discovery.token_url")
+    if raw_value not in (None, ""):
+        if not isinstance(raw_value, str):
+            raise ValueError("oauth_config.discovery.token_url must be a string URL")
+        validate_core_url(raw_value, "OAuth config discovery.token_url")
+    oidc_url = discovery.get("openIdConnectUrl")
+    if oidc_url not in (None, ""):
+        if not isinstance(oidc_url, str):
+            raise ValueError("oauth_config.discovery.openIdConnectUrl must be a string URL")
+        validate_core_url(oidc_url, "OAuth config discovery.openIdConnectUrl")
 
 
 TOKEN_EXCHANGE_ONLY_OAUTH_KEYS = ("discovery", "actor_token_source", "actor_token_type", "actor")

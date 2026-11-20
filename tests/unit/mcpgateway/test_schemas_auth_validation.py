@@ -1150,3 +1150,31 @@ class TestOauthConfigDiscoveryValidation:
     def test_unsupported_discovery_grant_rejected(self, grant_type):
         with pytest.raises(ValidationError, match="discovery.grant_type"):
             GatewayUpdate(oauth_config=_token_exchange_config(discovery={"grant_type": grant_type}))
+
+    def test_discovery_openid_connect_url_validated(self):
+        with pytest.raises(ValidationError, match="discovery.openIdConnectUrl"):
+            GatewayUpdate(oauth_config=_token_exchange_config(discovery={"grant_type": "client_credentials", "openIdConnectUrl": "javascript:alert(1)"}))
+
+    def test_discovery_openid_connect_url_must_be_string(self):
+        with pytest.raises(ValidationError, match="discovery.openIdConnectUrl must be a string URL"):
+            GatewayUpdate(oauth_config=_token_exchange_config(discovery={"grant_type": "client_credentials", "openIdConnectUrl": 123}))
+
+
+class TestA2AOauthDiscoveryConfig:
+    """A2A agents may carry an OIDC discovery URL on a client_credentials config."""
+
+    def test_a2a_accepts_openid_connect_discovery_without_token_url(self):
+        agent = A2AAgentCreate(
+            name="agent",
+            endpoint_url="https://agent.example.com/rpc",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "discovery": {
+                    "grant_type": "client_credentials",
+                    "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration",
+                },
+            },
+        )
+        assert agent.oauth_config["discovery"]["openIdConnectUrl"] == "https://idp.example.com/.well-known/openid-configuration"
+        assert "token_url" not in agent.oauth_config
