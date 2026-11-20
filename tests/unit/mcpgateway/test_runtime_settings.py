@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from mcpgateway.config import Settings
+from mcpgateway.config_sections import SSLCacheSettings
 
 
 def test_sqlalchemy_echo_empty_disables_logging(monkeypatch):
@@ -17,10 +18,23 @@ def test_sqlalchemy_echo_empty_disables_logging(monkeypatch):
     assert Settings(_env_file=None).sqlalchemy_echo is False
 
 
-@pytest.mark.parametrize("name", ["GATEWAY_REPLICAS", "SSL_CONTEXT_CACHE_MAX_SIZE"])
-def test_integer_settings_reject_empty_values(monkeypatch, name):
-    monkeypatch.setenv(name, "")
+@pytest.mark.parametrize("value", ["", "0", "-1"])
+def test_gateway_replicas_reject_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("GATEWAY_REPLICAS", value)
     with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1"])
+def test_ssl_cache_max_size_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("SSL_CONTEXT_CACHE_MAX_SIZE", value)
+    with pytest.raises(ValidationError):
+        SSLCacheSettings(_env_file=None)
+
+
+def test_sqlalchemy_echo_rejects_invalid_value(monkeypatch):
+    monkeypatch.setenv("SQLALCHEMY_ECHO", "invalid")
+    with pytest.raises(ValidationError, match="sqlalchemy_echo"):
         Settings(_env_file=None)
 
 
@@ -34,11 +48,11 @@ def test_loopback_key_requires_certificate(monkeypatch):
 @pytest.mark.parametrize("value, expected", [("", None), ("   ", None), ("60", 60)])
 def test_ssl_cache_ttl_parsing(monkeypatch, value, expected):
     monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", value)
-    assert Settings(_env_file=None).ssl_context_cache_ttl == expected
+    assert SSLCacheSettings(_env_file=None).ssl_context_cache_ttl == expected
 
 
 @pytest.mark.parametrize("value", ["invalid", "0", "-1"])
 def test_ssl_cache_ttl_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", value)
-    with pytest.raises(ValidationError, match="SSL_CONTEXT_CACHE_TTL"):
-        Settings(_env_file=None)
+    with pytest.raises(ValidationError, match="ssl_context_cache_ttl"):
+        SSLCacheSettings(_env_file=None)

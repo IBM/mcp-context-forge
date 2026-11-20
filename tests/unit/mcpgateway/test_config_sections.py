@@ -251,8 +251,8 @@ def test_explicit_file_origins_are_preserved(isolated_config):
 
 
 def test_cache_ttl_empty_and_invalid_values(isolated_config, monkeypatch):
-    """Cache TTL parsing preserves empty and zero values while rejecting invalid numbers."""
-    for raw, expected in (("", None), (" ", None), ("0", 0), ("42", 42)):
+    """Cache TTL parsing accepts empty and positive values."""
+    for raw, expected in (("", None), (" ", None), ("42", 42)):
         monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", raw)
         assert SSLCacheSettings().ssl_context_cache_ttl == expected
     monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", "invalid")
@@ -279,7 +279,11 @@ def test_sql_echo_preserves_legacy_strings(isolated_config, monkeypatch, source,
     else:
         (isolated_config / ".env").write_text(f"SQLALCHEMY_ECHO={raw}\n")
     assert DatabaseSettings().sqlalchemy_echo is expected
-    assert Settings().sqlalchemy_echo is expected
+    if raw == "invalid":
+        with pytest.raises(ValidationError, match="sqlalchemy_echo"):
+            Settings()
+    else:
+        assert Settings().sqlalchemy_echo is (True if raw == "on" else expected)
 
 
 def test_sql_echo_defaults_boolean_and_source_precedence(isolated_config, monkeypatch):

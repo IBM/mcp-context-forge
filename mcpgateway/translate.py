@@ -146,7 +146,6 @@ except ImportError:
     httpx = None  # type: ignore[assignment]
 
 # First-Party
-from mcpgateway.config_sections import TransportSettings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
 

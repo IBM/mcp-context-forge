@@ -40,8 +40,6 @@ def test_admin_ui_deprecation_notice_flag(monkeypatch, configured, expected):
 def test_runtime_settings_read_environment(monkeypatch):
     for name, value in {
         "SQLALCHEMY_ECHO": "true",
-        "SSL_CONTEXT_CACHE_MAX_SIZE": "42",
-        "SSL_CONTEXT_CACHE_TTL": "60",
         "LOOPBACK_CLIENT_CERT": "/tmp/client.crt",
         "LOOPBACK_CLIENT_KEY": "/tmp/client.key",
         "GATEWAY_REPLICAS": "2",
@@ -51,8 +49,6 @@ def test_runtime_settings_read_environment(monkeypatch):
     configured = Settings(_env_file=None)
 
     assert configured.sqlalchemy_echo is True
-    assert configured.ssl_context_cache_max_size == 42
-    assert configured.ssl_context_cache_ttl == 60
     assert configured.loopback_client_cert == "/tmp/client.crt"
     assert configured.loopback_client_key == "/tmp/client.key"
     assert configured.gateway_replicas == 2

@@ -62,7 +62,7 @@ from urllib.parse import urlparse, urlsplit
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, SecretStr, ValidationInfo
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import NoDecode
 
 from mcpgateway._security_constants import calculate_entropy
@@ -238,7 +238,7 @@ class Settings(  # pylint: disable=too-many-ancestors
 
     # Basic Settings
     app_name: str = "ContextForge"
-    gateway_replicas: int = Field(default=1, description="Gateway replica count used during database bootstrap")
+    gateway_replicas: PositiveInt = Field(default=1, description="Gateway replica count used during database bootstrap")
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     api_allow_basic_auth: bool = Field(
@@ -1598,44 +1598,18 @@ class Settings(  # pylint: disable=too-many-ancestors
     # Database query logging
     sqlalchemy_echo: bool = Field(default=False, description="Log all SQL queries (useful for N+1 detection and performance analysis)")
 
-    # SSL context caching
-    ssl_context_cache_max_size: PositiveInt = Field(default=100, description="Maximum number of cached SSL contexts")
-    ssl_context_cache_ttl: Optional[PositiveInt] = Field(default=None, description="SSL context cache TTL in seconds. None or empty disables expiration.")
-
     # Loopback client cert / key for internal HTTP calls
     loopback_client_cert: Optional[str] = Field(default=None, description="Path to client certificate for loopback HTTP calls")
     loopback_client_key: Optional[str] = Field(default=None, description="Path to client key for loopback HTTP calls")
-
-    # Gateway replicas
-    gateway_replicas: PositiveInt = Field(default=1, description="Number of gateway replicas in deployment (used for multi-replica warnings with SQLite)")
 
     # Forge Content-Type
     forge_content_type: str = Field(default="application/json", description="Content-Type for outgoing requests to Forge")
 
     @field_validator("sqlalchemy_echo", mode="before")
     @classmethod
-    def parse_empty_sqlalchemy_echo(cls, value: Any) -> Any:
+    def parse_sqlalchemy_echo(cls, value: Any) -> Any:
         """Treat an empty SQLALCHEMY_ECHO value as disabled."""
         return False if value == "" else value
-
-    @field_validator("ssl_context_cache_ttl", mode="before")
-    @classmethod
-    def parse_ssl_context_cache_ttl(cls, v: Any) -> Optional[int]:
-        """Parse SSL_CONTEXT_CACHE_TTL preserving None for empty or unset values."""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            v_str = v.strip()
-            if not v_str:
-                return None
-            try:
-                val = int(v_str)
-            except ValueError as e:
-                raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds") from e
-            if val <= 0:
-                raise ValueError("SSL_CONTEXT_CACHE_TTL must be a positive integer")
-            return val
-        return v
 
     @model_validator(mode="after")
     def validate_loopback_cert_key_pair(self) -> Self:

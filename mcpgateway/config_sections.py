@@ -184,8 +184,8 @@ class ReverseProxySettings(EnvironmentSettings):
 class SSLCacheSettings(EnvironmentSettings):
     """Configure SSL context cache limits without gateway initialization."""
 
-    ssl_context_cache_max_size: int = Field(default=100, description="Maximum cached SSL contexts (SSL_CONTEXT_CACHE_MAX_SIZE).")
-    ssl_context_cache_ttl: int | None = Field(default=None, description="SSL context lifetime in seconds; empty means unlimited (SSL_CONTEXT_CACHE_TTL).")
+    ssl_context_cache_max_size: PositiveInt = Field(default=100, description="Maximum cached SSL contexts (SSL_CONTEXT_CACHE_MAX_SIZE).")
+    ssl_context_cache_ttl: PositiveInt | None = Field(default=None, description="SSL context lifetime in seconds; empty means unlimited (SSL_CONTEXT_CACHE_TTL).")
 
     @field_validator("ssl_context_cache_ttl", mode="before")
     @classmethod
