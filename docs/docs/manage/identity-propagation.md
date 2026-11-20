@@ -134,7 +134,10 @@ The JWS payload holds every identity claim (`id`, `email`, `full_name`, `groups`
 | `iat` / `exp` | Issue time and expiry, 60 seconds apart |
 | `jti` | Unique token id per request |
 
-Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`. The gateway refuses to start when `IDENTITY_SIGN_CLAIMS=true` and the secret is missing, weak, or equal to `JWT_SECRET_KEY`. A per-gateway `sign_claims` override without a secret fails the upstream call instead of sending unsigned or wrongly signed claims.
+Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`. The gateway refuses to start when `IDENTITY_CLAIMS_SECRET` is set but weak or equal to `JWT_SECRET_KEY`, or when `IDENTITY_SIGN_CLAIMS=true` and the secret is missing. The gateway rejects a per-gateway `sign_claims` override at save time when no secret is configured. If the secret is removed later, the upstream call fails with a configuration error instead of sending unsigned or wrongly signed claims.
+
+!!! note "Pooled upstream sessions"
+    A pooled (session-affinity) upstream session reuses its HTTP headers for every call. The gateway does not send the `X-Forwarded-User-Claims-Signature` header on these sessions, because the token would expire and repeat. Verify `_meta.user.claims_signature` instead. It carries a fresh token on each call.
 
 ```bash
 # Enable claim signing

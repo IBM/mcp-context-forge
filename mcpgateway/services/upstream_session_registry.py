@@ -1139,8 +1139,11 @@ class UpstreamSessionRegistry:
             merged_headers.update(headers)
         # Persistent defaults must exclude downstream session IDs and request-specific
         # propagation headers. Each MCP message carries its own trace context.
+        # The expiring claims JWS would go stale and replay on a reused session;
+        # pooled calls send a fresh token in ``_meta.user.claims_signature`` instead.
         for hdr in list(merged_headers):
-            if hdr.lower() in ("x-mcp-session-id", "mcp-session-id", "traceparent", "tracestate", "baggage", "x-correlation-id"):
+            name = hdr.lower()
+            if name in ("x-mcp-session-id", "mcp-session-id", "traceparent", "tracestate", "baggage", "x-correlation-id") or name.endswith("-claims-signature"):
                 del merged_headers[hdr]
 
         req = SessionCreateRequest(
