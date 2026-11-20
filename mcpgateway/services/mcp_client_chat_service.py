@@ -1596,17 +1596,22 @@ class GatewayProvider:
                     self.llm = OpenAI(**kwargs)
 
             elif provider_type == "azure_openai":
-                if not provider.api_base:
-                    raise ValueError("Azure OpenAI requires base_url (azure_endpoint) to be configured")
+                # Map DB schema keys to langchain-openai kwargs.
+                # DB stores: deployment_name, resource_name, api_version
+                # (see llm_provider_configs.AzureOpenAIConfig)
+                resource_name = config.get("resource_name")
+                azure_endpoint = provider.api_base or (f"https://{resource_name}.openai.azure.com" if resource_name else None)
+                if not azure_endpoint:
+                    raise ValueError("Azure OpenAI requires base_url (azure_endpoint) or resource_name to be configured")
 
-                azure_deployment = config.get("azure_deployment", model.model_id)
-                api_version = config.get("api_version", "2024-05-01-preview")
+                azure_deployment = config.get("deployment_name") or config.get("azure_deployment") or config.get("deployment") or model.model_id
+                api_version = config.get("api_version") or getattr(provider, "api_version", None) or "2024-05-01-preview"
                 max_retries = config.get("max_retries", 2)
 
                 kwargs.update(
                     {
                         "api_key": api_key,
-                        "azure_endpoint": provider.api_base,
+                        "azure_endpoint": azure_endpoint,
                         "azure_deployment": azure_deployment,
                         "api_version": api_version,
                         "model": model.model_id,
