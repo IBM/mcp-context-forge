@@ -647,6 +647,49 @@ def test_build_ollama_openai_compat_request_max_tokens(service):
     assert body["max_tokens"] == 200
 
 
+def test_build_ollama_request_native_forwards_request_max_tokens(service):
+    """Native /api/chat maps the request token limit to options.num_predict."""
+    request = ChatCompletionRequest(
+        model="llama3",
+        messages=[ChatMessage(role="user", content="hi")],
+        max_tokens=128,
+        temperature=0.4,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.OLLAMA,
+        api_base="http://ollama.local",
+        default_temperature=0.1,
+        default_max_tokens=77,
+    )
+    model = _make_model(model_id="llama3")
+
+    url, _headers, body = service._build_ollama_request(request, provider, model)
+
+    assert url.endswith("/api/chat")
+    assert "max_tokens" not in body
+    assert body["options"]["num_predict"] == 128
+    assert body["options"]["temperature"] == 0.4
+
+
+def test_build_ollama_request_native_forwards_default_max_tokens(service):
+    """Native /api/chat uses the provider token limit when the request omits one."""
+    request = ChatCompletionRequest(model="llama3", messages=[ChatMessage(role="user", content="hi")])
+    provider = _make_provider(
+        provider_type=LLMProviderType.OLLAMA,
+        api_base="http://ollama.local/",
+        default_temperature=None,
+        default_max_tokens=77,
+    )
+    model = _make_model(model_id="llama3")
+
+    url, _headers, body = service._build_ollama_request(request, provider, model)
+
+    assert url.endswith("/api/chat")
+    assert "max_tokens" not in body
+    assert body["options"]["num_predict"] == 77
+    assert "temperature" not in body["options"]
+
+
 @pytest.mark.asyncio
 async def test_chat_completion_auto_initialize(service, monkeypatch):
     """chat_completion auto-initializes when client is None (line 413)."""
