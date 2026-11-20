@@ -527,7 +527,9 @@ async def admin_test_api(
     test_type = body.get("test_type", "models")
     model_id = body.get("model_id")
     message = body.get("message", "Hello! Please respond with a short greeting.")
-    max_tokens = body.get("max_tokens", 100)
+    # Leave the token limit unset unless requested; reasoning deployments reject
+    # the legacy max_tokens parameter that a hardcoded default would send.
+    max_tokens = body.get("max_tokens")
 
     start_time = time.time()
 
