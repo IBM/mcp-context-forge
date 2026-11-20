@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Add protocol_binding to a2a_agents.
 
 Revision ID: u5e6f7a8b9c0
-Revises: 7ac83e50bd12
+Revises: b7e291a4c630
 
 The column stores the wire binding an agent was registered with: "jsonrpc" or "http_json".
 NULL means "not set". Those rows keep the agent_type and trailing slash heuristic.
@@ -20,7 +20,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "u5e6f7a8b9c0"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "7ac83e50bd12"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b7e291a4c630"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
