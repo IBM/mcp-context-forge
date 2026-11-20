@@ -87,6 +87,7 @@ from mcpgateway.auth_context import (
     import_envelope_includes_roots,
     is_trusted_internal_mcp_request,
     is_unrestricted_platform_admin,
+    require_server_oauth_admin,
     selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
@@ -176,6 +177,7 @@ from mcpgateway.schemas import (
     RPCRequest,
     ServerCreateRequest,
     ServerHandshakeRequest,
+    ServerOAuthApprovalRequest,
     ServerRead,
     ServerUpdate,
     TaggedEntity,
@@ -192,11 +194,11 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
+    completion_error_code,
     CompletionError,
     CompletionInvalidParamsError,
     CompletionNotSupportedError,
     CompletionService,
-    completion_error_code,
 )
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
@@ -232,10 +234,10 @@ from mcpgateway.services.mcp_catalog_service import list_catalog_page
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
-from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -249,13 +251,14 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.env_deprecation import warn_deprecated_envs
 from mcpgateway.utils.error_formatter import (
-    PUBLIC_REASON_CODES,
     ErrorFormatter,
     extract_reason_code,
+    PUBLIC_REASON_CODES,
     PublicValidationError,
     safe_error_detail,
     sanitize_validation_error_for_log,
@@ -263,7 +266,6 @@ from mcpgateway.utils.error_formatter import (
 )
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
-from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -4219,6 +4221,7 @@ async def create_server(
     """
     try:
         server = payload.server
+        oauth_authorized = await require_server_oauth_admin(request, user, db, server.model_fields_set)
         team_id = payload.team_id
         visibility = payload.visibility
 
@@ -4244,6 +4247,7 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            oauth_authorized=oauth_authorized,
         )
         db.commit()
         db.close()
@@ -4287,6 +4291,7 @@ async def update_server(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is updating server with ID {server_id}")
+        oauth_authorized = await require_server_oauth_admin(request, user, db, server.model_fields_set)
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
@@ -4301,6 +4306,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            oauth_authorized=oauth_authorized,
         )
         db.commit()
         db.close()
@@ -4319,6 +4325,41 @@ async def update_server(
     except IntegrityError as e:
         logger.error(f"Integrity error while updating server {server_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@server_router.post("/{server_id}/oauth/approve")
+@require_permission("servers.update")
+async def approve_server_oauth(
+    server_id: str,
+    payload: ServerOAuthApprovalRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> dict[str, Any]:
+    """Approve the virtual-server OAuth settings displayed during administrator review.
+
+    Args:
+        server_id: Reviewed server identifier.
+        payload: Server version displayed during review.
+        request: Authenticated request.
+        db: Active database session.
+        user: Authenticated principal.
+
+    Returns:
+        Approval status and updated server version.
+
+    Raises:
+        HTTPException: If authorization, configuration validation, or version checks fail.
+    """
+    await require_server_oauth_admin(request, user, db, {"oauth_config"})
+    try:
+        return await server_service.approve_oauth_config(db, server_id, payload.version, user_id=get_user_id(user))
+    except ServerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ServerLockConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ServerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @server_router.post("/{server_id}/state", response_model=ServerRead)
@@ -8316,6 +8357,7 @@ async def refresh_gateway_tools(
         user_email = get_user_email(user)
         # Build user_context for Vault token path selection on authorization_code gateways.
         # Uses jwt_teams_claim for session tokens so admin bypass doesn't erase team scope.
+        # First-Party
         from mcpgateway.routers.oauth_router import _build_user_context  # pylint: disable=import-outside-toplevel
 
         user_context = _build_user_context(user)
@@ -8650,6 +8692,12 @@ async def handle_internal_mcp_rpc(request: Request):
     user = _build_internal_mcp_forwarded_user(request)
     db = SessionLocal()
     try:
+        # First-Party
+        from mcpgateway.utils.server_oauth import server_oauth_context_is_current  # pylint: disable=import-outside-toplevel
+
+        auth_context = get_internal_mcp_auth_context(request) or {}
+        if not server_oauth_context_is_current(db, auth_context):
+            raise HTTPException(status_code=401, detail="OAuth configuration requires administrator approval or session reauthentication")
         response = await _handle_rpc_authenticated(request, db=db, user=user)
         if db.is_active and db.in_transaction() is not None:
             db.commit()

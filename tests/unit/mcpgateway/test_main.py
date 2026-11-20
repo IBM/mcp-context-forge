@@ -1208,6 +1208,69 @@ class TestServerEndpoints:
         mock_list_prompts.assert_called_once()
 
 
+@pytest.mark.parametrize("wrapper", ["server", "virtual_server"])
+@pytest.mark.parametrize(
+    "fields", [{"oauth_enabled": False}, {"oauth_enabled": True}, {"oauth_config": None}, {"oauth_config": {}}, {"oauth_config": {"authorization_servers": ["https://issuer.example.com"]}}]
+)
+def test_server_oauth_create_rejects_explicit_fields(test_client, auth_headers, monkeypatch, wrapper, fields):
+    """Unauthorized callers cannot submit OAuth fields through either create wrapper."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    with patch("mcpgateway.main.server_service.register_server", new_callable=AsyncMock) as register:
+        response = test_client.post("/servers", json={wrapper: {"name": "oauth_server", **fields}}, headers=auth_headers)
+    assert response.status_code == 403
+    register.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"oauth_enabled": False},
+        {"oauth_enabled": True},
+        {"oauth_enabled": None},
+        {"oauth_config": None},
+        {"oauth_config": {}},
+        {"oauth_config": {"authorization_servers": ["https://issuer.example.com"]}},
+    ],
+)
+def test_server_oauth_update_rejects_explicit_fields(test_client, auth_headers, monkeypatch, caplog, fields):
+    """Unauthorized callers cannot submit OAuth update fields, including explicit defaults."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    with patch("mcpgateway.main.server_service.update_server", new_callable=AsyncMock) as update:
+        response = test_client.put("/servers/server-id", json=fields, headers=auth_headers)
+    assert response.status_code == 403
+    event = next(record for record in caplog.records if getattr(record, "event_type", None) == "server_oauth_authorization_denied")
+    assert event.security_event is True
+    assert event.oauth_fields == sorted(fields)
+    update.assert_not_awaited()
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_server_oauth_approval_requires_unrestricted_admin(test_client, auth_headers, monkeypatch, authorized):
+    """Reapproval requires unrestricted authority before calling the approval service."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=authorized))
+    with patch("mcpgateway.main.server_service.approve_oauth_config", new_callable=AsyncMock, return_value={"oauth_config_approved": True, "version": 3}) as approve:
+        response = test_client.post("/servers/server-id/oauth/approve", json={"version": 2}, headers=auth_headers)
+    assert response.status_code == (200 if authorized else 403)
+    if authorized:
+        approve.assert_awaited_once()
+        assert approve.call_args.kwargs["user_id"]
+    else:
+        approve.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure,status", [("missing", 404), ("stale", 409), ("unconfigured", 422)])
+def test_server_oauth_approval_preserves_service_errors(test_client, auth_headers, monkeypatch, failure, status):
+    """REST approval preserves missing, concurrent-update, and invalid-configuration errors."""
+    from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNotFoundError
+
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+    failures = {"missing": ServerNotFoundError("missing"), "stale": ServerLockConflictError("stale"), "unconfigured": ServerError("unconfigured")}
+    with patch("mcpgateway.main.server_service.approve_oauth_config", new_callable=AsyncMock, side_effect=failures[failure]):
+        response = test_client.post("/servers/server-id/oauth/approve", json={"version": 2}, headers=auth_headers)
+    assert response.status_code == status
+    assert response.json()["detail"] == failure
+
+
 class TestServerHandshakeEndpoint:
     """Tests for POST /servers/{server_id}/test-handshake (issue #6370).
 

@@ -643,6 +643,83 @@ outside that list falls back to the trusted-provider path.
     Trust only issuers authorized to assert identities for accounts accessible through this
     virtual server. DB role and team checks still apply.
 
+### Virtual-server OAuth approval and upgrades
+
+Virtual-server OAuth settings select an issuer that can assert existing local identities.
+Only an unrestricted platform administrator can submit `oauth_enabled` or `oauth_config` through REST or the Admin UI.
+The existing `servers.create` and `servers.update` permissions still apply.
+Team administrators and platform administrators with team-scoped or public-only API tokens cannot configure this trust.
+
+Non-admin clients must omit both OAuth fields from create and update requests.
+Explicit unchanged values, `false`, `null`, and empty configurations receive HTTP 403.
+The entire request fails, including unrelated changes in that request.
+Omitted fields preserve stored OAuth settings during updates.
+
+!!! warning "Upgrade requires issuer review"
+    Migration `b7e291a4c630` marks every existing configuration unapproved, including configurations created by administrators.
+    It retains issuer settings for review. It does not infer approval from ownership or creator metadata.
+    Authentication through a pending server issuer returns HTTP 503.
+    Protected-resource metadata returns HTTP 404 or 503 without advertising the issuer.
+
+Use this upgrade sequence:
+
+1. Stop older workers before they can serve requests against the migrated database.
+2. Deploy the migration and updated application together.
+3. Restart every gateway worker to stop streams authenticated before the migration.
+4. Review each required server's issuer, audience, scopes, and other OAuth settings.
+5. Approve the reviewed version with unrestricted administrator credentials.
+6. Reconnect OAuth clients after approval.
+
+Keep pending servers OAuth-enabled. They continue to reject anonymous requests even when `MCP_REQUIRE_AUTH` is false.
+Independent gateway and trusted-provider authentication paths retain their existing rules.
+Approve only issuers authorized to assert identities for the server's accessible accounts.
+
+#### REST review and approval
+
+Set `GATEWAY_URL`, `SERVER_ID`, and `ADMIN_TOKEN` for your deployment.
+Use an unrestricted administrator token with `servers.read` and `servers.update` permissions.
+Read the server and review its settings:
+
+```bash
+review=$(curl --fail --silent --show-error \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$GATEWAY_URL/servers/$SERVER_ID")
+printf '%s\n' "$review" | jq '{id, version, oauthEnabled, oauthConfigApproved, oauthConfig}'
+```
+
+After review, approve that exact version:
+
+```bash
+approval=$(printf '%s\n' "$review" | jq '{version}')
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "$approval" \
+  "$GATEWAY_URL/servers/$SERVER_ID/oauth/approve"
+```
+
+Success returns HTTP 200 with `{"oauth_config_approved": true, "version": <new_version>}`.
+A stale reviewed version returns HTTP 409. Read the server again and review the current settings before retrying.
+Unauthorized callers receive HTTP 403. Missing servers return HTTP 404.
+Disabled OAuth or a configuration without a usable issuer returns HTTP 422.
+
+#### Admin UI review and approval
+
+Open the server details as an unrestricted administrator.
+Review the displayed OAuth configuration and select the approval action.
+The UI submits `POST /admin/servers/{server_id}/oauth/approve` with form field `version` from that review.
+This endpoint applies the same authorization and version checks as REST.
+
+Authorized creation or an actual OAuth configuration change can approve usable settings atomically.
+Saving unchanged OAuth settings or unrelated metadata preserves approval and the configuration generation.
+Use the explicit approval action for unchanged pending settings.
+Actual OAuth changes and explicit reapproval invalidate sessions from the previous generation.
+Disabling OAuth clears its configuration and approval.
+
+Successful explicit approval records the approver, server, generation, and reviewed/resulting versions in the audit trail.
+Creation and update audit events include OAuth approval state without recording OAuth tokens or secrets.
+Authorization denials emit `server_oauth_authorization_denied` security events.
+
 ### Directory sync through repeated single-user calls
 
 Submit one `POST /v1/admin/users/sso` per directory user. Each call has an independent outcome;

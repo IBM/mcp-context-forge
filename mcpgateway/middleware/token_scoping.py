@@ -131,6 +131,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # state|toggle sub-resource rule below.
     ("POST", re.compile(r"^/servers/[^/]+/test-handshake(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
+    ("POST", re.compile(r"^/servers/[^/]+/oauth/approve/?$"), Permissions.SERVERS_UPDATE),
     ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
@@ -275,6 +276,7 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),
     ("POST", re.compile(r"^/admin/servers/[^/]+/delete(?:$|/)"), Permissions.SERVERS_DELETE),
     ("POST", re.compile(r"^/admin/servers/[^/]+/(?:edit|state)(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("POST", re.compile(r"^/admin/servers/[^/]+/oauth/approve/?$"), Permissions.SERVERS_UPDATE),
     ("GET", re.compile(r"^/admin/servers(?:$|/)"), Permissions.SERVERS_READ),
     # Token/tag read surfaces
     ("GET", re.compile(r"^/admin/tokens(?:$|/)"), Permissions.TOKENS_READ),

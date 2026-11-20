@@ -66,7 +66,6 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_user_helpers import is_passwordless_user
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import (
@@ -75,11 +74,15 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
-    get_user_id as get_canonical_user_id,
+)
+from mcpgateway.auth_context import (
     import_envelope_includes_roots,
     is_unrestricted_platform_admin,
+    require_server_oauth_admin,
     selective_selection_includes_roots,
 )
+from mcpgateway.auth_context import get_user_id as get_canonical_user_id
+from mcpgateway.auth_user_helpers import is_passwordless_user
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -170,7 +173,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, a2a_enabled, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import a2a_enabled, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -215,6 +218,7 @@ from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationErr
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
+from mcpgateway.utils.origin import is_allowed_redirect, normalize_origin_parts, origin_from_url
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
@@ -225,7 +229,6 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeE
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
-from mcpgateway.utils.origin import is_allowed_redirect, normalize_origin_parts, origin_from_url
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Conditional imports for gRPC support (only if grpcio is installed)
@@ -3555,6 +3558,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         True
     """
     form = await request.form()
+    oauth_authorized = await require_server_oauth_admin(request, user, db, form.keys())
     # is_inactive_checked = form.get("is_inactive_checked", "false")
     team_id = _form_team_id(form)
 
@@ -3641,6 +3645,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             created_user_agent=creation_metadata["created_user_agent"],
             team_id=team_id_cast,
             visibility=visibility,
+            oauth_authorized=oauth_authorized,
         )
         return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -3661,6 +3666,37 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_add_server: {ex}")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+def _merge_server_oauth_form_config(existing: Dict[str, Any], submitted: Dict[str, Any]) -> Dict[str, Any]:
+    """Preserve OAuth settings that the edit form does not expose.
+
+    Args:
+        existing: Stored OAuth settings.
+        submitted: OAuth settings parsed from editable controls.
+
+    Returns:
+        Stored settings with changed controls applied.
+    """
+    merged = dict(existing)
+    issuers = existing.get("authorization_servers")
+    if not isinstance(issuers, list) or not issuers:
+        issuers = [existing.get("authorization_server", "")]
+    issuer = submitted["authorization_servers"][0]
+    if issuer != issuers[0]:
+        merged.pop("authorization_server", None)
+        merged["authorization_servers"] = [issuer, *issuers[1:]]
+    for key, alias in (("scopes_supported", "scopes"), ("token_endpoint", "token_endpoint"), ("audience", "audience")):
+        value = submitted.get(key)
+        previous = existing.get(key) or existing.get(alias)
+        if key == "scopes_supported":
+            previous = previous.split() if isinstance(previous, str) else previous
+        if (value or None) != (previous or None):
+            merged.pop(alias, None)
+            merged.pop(key, None)
+            if value:
+                merged[key] = value
+    return merged
 
 
 @admin_router.post("/servers/{server_id}/edit")
@@ -3706,6 +3742,7 @@ async def admin_edit_server(
         'admin_edit_server'
     """
     form = await request.form()
+    oauth_authorized = await require_server_oauth_admin(request, user, db, form.keys())
     team_id = _form_team_id(form)
 
     # Parse tags from comma-separated string
@@ -3780,9 +3817,14 @@ async def admin_edit_server(
             "visibility": visibility,
             "team_id": team_id,
             "owner_email": user_email,
-            "oauth_enabled": oauth_enabled,
-            "oauth_config": oauth_config,
         }
+        if oauth_authorized:
+            if oauth_config:
+                existing_server = db.get(DbServer, server_id)
+                existing_config = getattr(existing_server, "oauth_config", None)
+                if isinstance(existing_config, dict):
+                    oauth_config = _merge_server_oauth_form_config(existing_config, oauth_config)
+            server_kwargs.update(oauth_enabled=oauth_enabled, oauth_config=oauth_config)
         # Only include instructions when the form field was submitted; omitting it leaves the
         # stored override unchanged.  Passing None explicitly would land in model_fields_set
         # and clear a previously saved override.
@@ -3799,6 +3841,7 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            oauth_authorized=oauth_authorized,
         )
 
         return ORJSONResponse(
@@ -3827,6 +3870,41 @@ async def admin_edit_server(
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_edit_server: {ex}")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+@admin_router.post("/servers/{server_id}/oauth/approve")
+@require_permission("servers.update", allow_admin_bypass=False)
+async def admin_approve_server_oauth(request: Request, server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+    """Approve reviewed server OAuth settings through the Admin UI.
+
+    Args:
+        request: Authenticated request containing the reviewed version.
+        server_id: Reviewed server identifier.
+        db: Active database session.
+        user: Authenticated principal.
+
+    Returns:
+        Approval status or an authorization, validation, or version error.
+
+    Raises:
+        HTTPException: If the caller lacks OAuth administration authority.
+    """
+    await require_server_oauth_admin(request, user, db, {"oauth_config"})
+    form = await request.form()
+    try:
+        version = int(str(form.get("version", "")))
+        if version < 1:
+            raise ValueError("Invalid reviewed version")
+        result = await server_service.approve_oauth_config(db, server_id, version, user_id=get_user_id(user))
+        return ORJSONResponse(content=result)
+    except (TypeError, ValueError):
+        return ORJSONResponse(content={"detail": "A positive reviewed version is required"}, status_code=422)
+    except ServerNotFoundError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=404)
+    except ServerLockConflictError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=409)
+    except ServerError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=422)
 
 
 @admin_router.post("/servers/{server_id}/state")
@@ -4679,6 +4757,7 @@ async def admin_ui(
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
+            "can_manage_server_oauth": can_manage_roots,
             # Password policy - pass actual requirements dict for user creation
             "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),

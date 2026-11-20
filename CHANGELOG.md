@@ -9,6 +9,17 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Virtual-server OAuth requires administrator approval** - Only unrestricted platform administrators can submit
+  `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
+  or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.
+  Tokens from a pending server issuer receive HTTP 503. Protected-resource metadata excludes pending issuers.
+  Deploy the migration and application together. Restart all workers to stop existing authenticated streams.
+  Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
+  `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
+  See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
 ### Added
 
 - **SigV4 credential hygiene, audit, and access-control tests** ([#7626](https://github.com/IBM/mcp-context-forge/issues/7626), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - ContextForge redacts SigV4 credentials in logs, traces, and SIEM exports, and audits SigV4 registration and rotation.

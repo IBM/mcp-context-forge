@@ -1888,6 +1888,8 @@ class TestServerService:
         """Test disabling OAuth on a server."""
         # Setup existing server with OAuth enabled
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"authorization_server": "https://auth.example.com"}
 
         test_db.get = Mock(return_value=mock_server)
@@ -1947,6 +1949,8 @@ class TestServerService:
         encryption = get_encryption_service(settings.auth_encryption_secret)
         existing_secret = await encryption.encrypt_secret_async("already-stored")
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": existing_secret}
 
         test_db.get = Mock(return_value=mock_server)
@@ -1996,6 +2000,8 @@ class TestServerService:
     async def test_update_server_oauth_config_legacy_object_without_model_fields_set(self, server_service, mock_server, test_db):
         """Legacy update objects without model_fields_set still update oauth_config."""
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = None
 
         test_db.get = Mock(return_value=mock_server)
@@ -2061,6 +2067,8 @@ class TestServerService:
         """Test that OAuth config is included in server read response."""
         # Setup server with OAuth config
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://idp.example.com",
             "client_secret": "do-not-leak",  # pragma: allowlist secret
@@ -2301,6 +2309,8 @@ class TestServerService:
         """Raises ServerError when no OAuth config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = None
         db = MagicMock()
         db.get.return_value = mock_server
@@ -2311,6 +2321,8 @@ class TestServerService:
         """Raises ServerError when no authorization_servers in config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"scopes_supported": ["read"]}
         db = MagicMock()
         db.get.return_value = mock_server
@@ -2321,6 +2333,8 @@ class TestServerService:
         """Returns RFC 9728 metadata with singular authorization_server config (wrapped in array)."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://idp.example.com",
             "scopes_supported": ["openid", "profile"],
@@ -2339,6 +2353,8 @@ class TestServerService:
         """Returns RFC 9728 metadata preserving all authorization_servers from plural config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://idp1.com", "https://idp2.com"],
         }
@@ -2436,6 +2452,8 @@ class TestServerService:
         """
         # Setup server with OAuth already enabled
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://original-idp.example.com"],
             "scopes_supported": ["openid"],

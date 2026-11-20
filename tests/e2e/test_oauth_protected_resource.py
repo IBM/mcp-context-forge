@@ -36,6 +36,7 @@ from unittest.mock import patch as mock_patch
 
 # Third-Party
 import pytest_asyncio
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from sqlalchemy import create_engine
@@ -159,7 +160,8 @@ async def oauth_test_db():
     test_user_context_db = TestSessionLocal()
     test_user_context["db"] = test_user_context_db
 
-    async def simple_mock_user_with_permissions():
+    async def simple_mock_user_with_permissions(request: Request):
+        request.state.token_teams = None
         return test_user_context
 
     # First-Party

@@ -124,7 +124,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 # Third-Party
-from fastapi import Request
+from fastapi import HTTPException, Request
 import orjson
 from sqlalchemy.orm import Session
 
@@ -917,6 +917,33 @@ async def is_unrestricted_platform_admin(request: Request, user: Any, db: Sessio
     from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
     return await PermissionService(db).check_platform_admin_permission(user_email, token_teams=None)
+
+
+async def require_server_oauth_admin(request: Request, user: Any, db: Session, fields: Any) -> bool:
+    """Authorize explicitly submitted virtual-server OAuth fields.
+
+    Args:
+        request: Authenticated request.
+        user: Authenticated principal.
+        db: Permission lookup session.
+        fields: Submitted field names before form normalization.
+
+    Returns:
+        Whether this submission contains authorized OAuth settings.
+
+    Raises:
+        HTTPException: If a caller submits OAuth fields without unrestricted administrator authority.
+    """
+    protected = {"oauth_enabled", "oauth_config", "oauth_authorization_server", "oauth_scopes", "oauth_token_endpoint", "oauth_audience", "oauth_controls"}
+    if not protected.intersection(fields):
+        return False
+    if not await is_unrestricted_platform_admin(request, user, db):
+        logger.warning(
+            "Virtual-server OAuth configuration denied",
+            extra={"security_event": True, "event_type": "server_oauth_authorization_denied", "user_id": get_user_id(user), "oauth_fields": sorted(protected.intersection(fields))},
+        )
+        raise HTTPException(status_code=403, detail="Virtual-server OAuth settings require unrestricted platform-admin authority")
+    return True
 
 
 def configuration_export_includes_roots(include_types: Optional[List[str]], exclude_types: Optional[List[str]]) -> bool:
