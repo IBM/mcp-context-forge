@@ -37,6 +37,7 @@ from __future__ import annotations
 # Standard Library
 import asyncio
 import importlib
+import json
 import sys
 import types
 from typing import Any, Sequence
@@ -4934,15 +4935,16 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     calls = []
     routes: dict[str, Any] = {}
     app_holder: dict[str, Any] = {}
-    pubsub_holder: dict[str, Any] = {}
-    stdio_holder: dict[str, Any] = {}
 
     # Mock all the classes we need
     class MockStdIO:
         def __init__(self, cmd, pubsub, **kwargs):
             calls.append("stdio_init")
             self._pubsub = pubsub
-            self.send = AsyncMock()
+
+        async def send(self, raw):
+            request = json.loads(raw)
+            await self._pubsub.publish(json.dumps({"id": request["id"], "result": "pong"}))
 
         async def start(self):
             calls.append("stdio_start")
@@ -4980,21 +4982,6 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
             """Make FastAPI callable for ASGI wrapper."""
             calls.append("fastapi_called")
 
-    class DummyPubSub:
-        next_message: str | None = None
-
-        def __init__(self):
-            pubsub_holder["pubsub"] = self
-
-        def subscribe(self):
-            queue = asyncio.Queue()
-            if self.next_message is not None:
-                queue.put_nowait(self.next_message)
-            return queue
-
-        def unsubscribe(self, _queue):
-            return None
-
     class MockMCPServer:
         def __init__(self, name):
             calls.append("mcp_server_init")
@@ -5028,14 +5015,9 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     monkeypatch.setattr(translate, "FastAPI", MockFastAPI)
     monkeypatch.setattr(translate, "MCPServer", MockMCPServer)
     monkeypatch.setattr(translate, "StreamableHTTPSessionManager", MockSessionManager)
-    monkeypatch.setattr(translate, "_PubSub", DummyPubSub)
     monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
     monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
-    monkeypatch.setattr(
-        translate.asyncio,
-        "get_running_loop",
-        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
-    )
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *args: None)
 
     # Test with both SSE and streamable HTTP
     await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=True, stateless=True, json_response=True)
@@ -5047,15 +5029,17 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     assert "context_exit" in calls
 
     # Exercise /mcp handler with correlated response
-    DummyPubSub.next_message = '{"id": 1, "result": "pong"}'
     mcp_handler = routes["/mcp"]
 
     class DummyRequest:
+        headers = {}
+
         async def body(self):
             return b'{"id": 1, "method": "ping"}'
 
     response = await mcp_handler(DummyRequest())
     assert response.status_code == 200
+    assert json.loads(response.body) == {"id": 1, "result": "pong"}
 
     # Invalid JSON payload returns 400
     class BadRequest:
@@ -5064,6 +5048,36 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
 
     bad_response = await mcp_handler(BadRequest())
     assert bad_response.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sessions", [(None, None), ("first", "second")])
+async def test_streamable_http_scopes_cancellations_and_routes_batched_replies(translate, sessions):
+    """Only unambiguous cancellations reach the child and only SSE messages reach subscribers."""
+    bridge = translate._StdioHttpBridge()
+    sse = bridge.subscribe()
+    writes = asyncio.Queue()
+    stdio = types.SimpleNamespace(send=writes.put)
+    request = {"jsonrpc": "2.0", "id": "same", "method": "ping"}
+    first = asyncio.create_task(bridge.forward(stdio, request, sessions[0]))
+    first_id = json.loads(await writes.get())["id"]
+    second = asyncio.create_task(bridge.forward(stdio, request, sessions[1]))
+    second_id = json.loads(await writes.get())["id"]
+
+    cancel = {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "same", "reason": "stop"}}
+    assert (await bridge.forward(stdio, cancel, sessions[0])).status_code == 202
+    if sessions[0] is None:
+        assert writes.empty()
+    else:
+        assert json.loads(writes.get_nowait())["params"] == {"requestId": first_id, "reason": "stop"}
+
+    error = {"code": -32603, "message": "failed"}
+    notification = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+    await bridge.publish(json.dumps([{"id": second_id, "error": error}, notification, {"id": first_id, "result": {}}]))
+    assert json.loads((await first).body) == {"id": "same", "result": {}}
+    assert json.loads((await second).body) == {"id": "same", "error": error}
+    assert json.loads(sse.get_nowait()) == [notification]
+    assert sse.empty()
 
 
 @pytest.mark.asyncio
@@ -5551,32 +5565,12 @@ async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_ide
     """Cover /mcp branches, ASGI wrapper routing, shutdown idempotency, and cleanup fallback/timeout paths."""
     # Standard
     import builtins
-    from contextlib import suppress
 
     calls: list[tuple[str, str | None]] = []
     routes: dict[str, Any] = {}
     app_holder: dict[str, Any] = {}
-    pubsub_holder: dict[str, Any] = {}
     stdio_holder: dict[str, Any] = {}
     stop_called = asyncio.Event()
-
-    class PubSub:
-        def __init__(self):
-            self.truthy = True
-            self._subscribers: list[asyncio.Queue[str]] = []
-            pubsub_holder["pubsub"] = self
-
-        def __bool__(self):
-            return self.truthy
-
-        def subscribe(self):
-            q: asyncio.Queue[str] = asyncio.Queue()
-            self._subscribers.append(q)
-            return q
-
-        def unsubscribe(self, q):
-            with suppress(ValueError):
-                self._subscribers.remove(q)
 
     class StdIO:
         def __init__(self, _cmd, pubsub, **_k):
@@ -5649,7 +5643,6 @@ async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_ide
         def __exit__(self, *_a):
             return False
 
-    monkeypatch.setattr(translate, "_PubSub", PubSub)
     monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
     monkeypatch.setattr(translate, "FastAPI", FastAPI)
     monkeypatch.setattr(translate, "MCPServer", lambda *_a, **_k: None)
@@ -5683,7 +5676,7 @@ async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_ide
     monkeypatch.setattr(translate.uvicorn, "Server", Server)
 
     # Immediately invoke signal callbacks to schedule shutdown early (idempotent path).
-    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda _sig, cb: cb()))
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda _sig, cb: cb())
 
     await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=False, expose_streamable_http=True)
 
@@ -5701,69 +5694,36 @@ async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_ide
     assert ("original_app", "/other") in calls
 
     mcp_handler = routes["/mcp"]
-    pubsub = pubsub_holder["pubsub"]
     stdio = stdio_holder["stdio"]
 
     # Notification -> 202
     class NotifyReq:
+        headers = {}
+
         async def body(self):
             return b'{"method":"ping"}'
 
     notif = await mcp_handler(NotifyReq())
     assert notif.status_code == 202
 
-    # Pubsub missing -> accepted (202)
-    pubsub.truthy = False
-
     class IdReq:
+        headers = {}
+
         async def body(self):
             return b'{"id": 1, "method":"ping"}'
 
-    accepted = await mcp_handler(IdReq())
-    assert accepted.status_code == 202
-    pubsub.truthy = True
-
-    # TimeoutError -> accepted no response yet (covers TimeoutError break).
-    async def timeout_wait_for(queue_get_coro, timeout=None):
-        _ = timeout
-        queue_get_coro.close()
+    async def timeout_wait_for(reply, timeout):
+        reply.cancel()
         raise asyncio.TimeoutError()
 
     monkeypatch.setattr(translate.asyncio, "wait_for", timeout_wait_for)
     no_resp = await mcp_handler(IdReq())
     assert no_resp.status_code == 202
 
-    # Skip non-JSON and wrong-id candidate, then timeout.
-    msgs = iter(["not json", '{"id": 999, "result": "no"}'])
-
-    async def seq_wait_for(queue_get_coro, timeout=None):
-        _ = timeout
-        queue_get_coro.close()
-        try:
-            return next(msgs)
-        except StopIteration:
-            raise asyncio.TimeoutError()
-
-    monkeypatch.setattr(translate.asyncio, "wait_for", seq_wait_for)
-    no_match = await mcp_handler(IdReq())
-    assert no_match.status_code == 202
-
-    # remaining==0 path -> accept.
-    times = iter([0.0, 10.0])
-
-    class Loop:
-        def time(self):
-            return next(times)
-
-    # Patch asyncio.get_event_loop only for this call; leaving it patched breaks pytest-asyncio teardown.
-    real_get_event_loop = translate.asyncio.get_event_loop
-    translate.asyncio.get_event_loop = lambda: Loop()  # type: ignore[assignment]
-    try:
-        monkeypatch.setattr(translate.asyncio, "wait_for", timeout_wait_for)
-        remaining_zero = await mcp_handler(IdReq())
-        assert remaining_zero.status_code == 202
-    finally:
-        translate.asyncio.get_event_loop = real_get_event_loop  # type: ignore[assignment]
+    wire_id = json.loads(stdio.send.await_args.args[0])["id"]
+    subscriber = stdio._pubsub.subscribe()
+    await stdio._pubsub.publish(json.dumps({"id": wire_id, "result": "late"}))
+    assert subscriber.empty()
 
     # stdio missing -> raise
     stdio.truthy = False

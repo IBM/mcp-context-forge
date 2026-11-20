@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import os
+import shlex
 import sys
 
 # Third-Party
@@ -31,6 +32,63 @@ from mcpgateway.translate import _build_fastapi, _PubSub, _run_stdio_to_sse, Std
 
 # Test configuration
 TEST_HOST = "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_clients_can_reuse_request_ids(tmp_path, unused_tcp_port):
+    """Each client receives its own tool result when both clients send the same ID."""
+    child = tmp_path / "tool_server.py"
+    child.write_text(
+        """import json
+import sys
+
+requests = [json.loads(sys.stdin.readline()) for _ in range(2)]
+for request in reversed(requests):
+    content = [{"type": "text", "text": request["params"]["name"]}]
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {"content": content}}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    bridge = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "mcpgateway.translate",
+        "--stdio",
+        shlex.join([sys.executable, str(child)]),
+        "--expose-streamable-http",
+        "--port",
+        str(unused_tcp_port),
+    )
+    url = f"http://{TEST_HOST}:{unused_tcp_port}"
+    try:
+        async with httpx.AsyncClient(base_url=url) as first, httpx.AsyncClient(base_url=url) as second:
+            async with asyncio.timeout(30):
+                while bridge.returncode is None:
+                    try:
+                        if (await first.get("/healthz")).is_success:
+                            break
+                    except httpx.ConnectError:
+                        pass
+                    await asyncio.sleep(0.05)
+                else:
+                    pytest.fail(f"Translate exited during startup with code {bridge.returncode}")
+
+            async def call_tool(client, name):
+                response = await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name}})
+                assert response.status_code == 200
+                reply = response.json()
+                assert reply["id"] == 1
+                return reply["result"]["content"][0]["text"]
+
+            assert await asyncio.gather(call_tool(first, "alpha"), call_tool(second, "beta")) == ["alpha", "beta"]
+    finally:
+        if bridge.returncode is None:
+            bridge.terminate()
+            try:
+                await asyncio.wait_for(bridge.wait(), timeout=10)
+            except TimeoutError:
+                bridge.kill()
+                await bridge.wait()
 
 
 @pytest.fixture
