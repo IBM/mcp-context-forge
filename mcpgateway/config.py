@@ -1608,8 +1608,8 @@ class Settings(  # pylint: disable=too-many-ancestors
     @field_validator("sqlalchemy_echo", mode="before")
     @classmethod
     def parse_sqlalchemy_echo(cls, value: Any) -> Any:
-        """Treat an empty SQLALCHEMY_ECHO value as disabled."""
-        return False if value == "" else value
+        """Disable SQL logging for empty values and the legacy on value."""
+        return False if isinstance(value, str) and value.lower() in {"", "on"} else value
 
     @model_validator(mode="after")
     def validate_loopback_cert_key_pair(self) -> Self:

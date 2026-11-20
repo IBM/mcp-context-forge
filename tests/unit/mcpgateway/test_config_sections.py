@@ -270,7 +270,7 @@ def test_toolops_preserves_legacy_token_names(isolated_config, monkeypatch):
 
 
 @pytest.mark.parametrize("source", ["process", "file"])
-@pytest.mark.parametrize("raw, expected", [("", False), ("invalid", False), ("on", False), ("true", True), ("TrUe", True), ("1", True), ("yes", True), ("false", False), ("0", False)])
+@pytest.mark.parametrize("raw, expected", [("", False), ("invalid", False), ("on", False), ("ON", False), ("true", True), ("TrUe", True), ("1", True), ("yes", True), ("false", False), ("0", False)])
 def test_sql_echo_preserves_legacy_strings(isolated_config, monkeypatch, source, raw, expected):
     """Database settings preserve SQL echo parsing across process and file inputs."""
     monkeypatch.delenv("SQLALCHEMY_ECHO", raising=False)
@@ -283,7 +283,7 @@ def test_sql_echo_preserves_legacy_strings(isolated_config, monkeypatch, source,
         with pytest.raises(ValidationError, match="sqlalchemy_echo"):
             Settings()
     else:
-        assert Settings().sqlalchemy_echo is (True if raw == "on" else expected)
+        assert Settings().sqlalchemy_echo is expected
 
 
 def test_sql_echo_defaults_boolean_and_source_precedence(isolated_config, monkeypatch):
