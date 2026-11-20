@@ -112,7 +112,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
-from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -400,6 +400,20 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
             logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
         except Exception:  # noqa: BLE001  # nosec B110
             pass
+
+
+def _identity_signing_failure(audience: Any, exc: IdentitySigningError) -> "ToolInvocationError":
+    """Log an identity signing failure and map it to a tool invocation error.
+
+    Args:
+        audience: Gateway or tool identifier the claims were signed for.
+        exc: The signing failure.
+
+    Returns:
+        The error to raise.
+    """
+    logger.error("Identity claim signing is misconfigured for %s: %s", audience, exc)
+    return ToolInvocationError("Identity claim signing is misconfigured for the tool gateway")
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:
@@ -4501,8 +4515,11 @@ class ToolService(BaseService):
 
             # Inject identity propagation headers
             if user_context:
-                headers.update(build_identity_headers(user_context, gateway))
-                meta_data = build_identity_meta(user_context, meta_data, gateway)
+                try:
+                    headers.update(build_identity_headers(user_context, gateway))
+                    meta_data = build_identity_meta(user_context, meta_data, gateway)
+                except IdentitySigningError as signing_exc:
+                    raise _identity_signing_failure(gateway_id, signing_exc) from signing_exc
 
             gateway_url = gateway.url
 
@@ -6132,7 +6149,10 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str or tool_id))
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str or tool_id))
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str or tool_id, signing_exc) from signing_exc
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -6606,8 +6626,11 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation, audience=gateway_id_str)
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str))
+                            meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation, audience=gateway_id_str)
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str, signing_exc) from signing_exc
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None

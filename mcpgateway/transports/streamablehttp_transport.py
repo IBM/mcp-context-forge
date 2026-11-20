@@ -116,7 +116,7 @@ from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationEr
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
-from mcpgateway.utils.identity_propagation import build_identity_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, IdentitySigningError
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.mcp_cursor import catalog_session_id
@@ -1584,6 +1584,20 @@ def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, 
     return headers
 
 
+def _identity_signing_error(gateway_id: Any, exc: IdentitySigningError) -> JSONRPCError:
+    """Log an identity signing failure and map it to a JSON-RPC configuration error.
+
+    Args:
+        gateway_id: Gateway whose upstream call needed signed identity claims.
+        exc: The signing failure.
+
+    Returns:
+        The JSON-RPC error to raise.
+    """
+    logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_id, exc)
+    return JSONRPCError(-32000, "Identity claim signing is misconfigured")
+
+
 async def _proxy_list_tools_to_gateway(
     gateway: Any,
     request_headers: dict,
@@ -1627,6 +1641,8 @@ async def _proxy_list_tools_to_gateway(
                 tools_result = await client.list_tools()
             return filter_model_visible_tools(tools_result.tools)
 
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         if paginate:
             log_proxy_catalog_failure(gateway.id, "tools/list", e)
@@ -1688,6 +1704,8 @@ async def _proxy_list_resources_to_gateway(
             logger.info("Received %s resources from gateway %s", len(resource_list), gateway.id)
             return resource_list
 
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         if paginate:
             log_proxy_catalog_failure(gateway.id, "resources/list", e)
@@ -1777,6 +1795,8 @@ async def _proxy_read_resource_to_gateway(  # pylint: disable=unused-argument
 
     except ResourceInputRequired:
         raise
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
         return []

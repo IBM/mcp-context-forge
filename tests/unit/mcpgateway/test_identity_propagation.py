@@ -38,6 +38,7 @@ from cpex.framework import GlobalContext, PluginContext
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.identity_propagation import (
     _resolve_config,
+    IdentitySigningError,
     build_identity_headers,
     build_identity_meta,
     filter_sensitive_attributes,
@@ -2344,3 +2345,205 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
             user_identity_var.reset(identity_token)
 
         mock_build_headers.assert_called_once_with(identity, gateway)
+
+
+def _proxy_client_mock():
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+    client.list_resources = AsyncMock(return_value=MagicMock(resources=[]))
+    client.read_resource = AsyncMock(return_value=MagicMock(contents=[]))
+    return client
+
+
+def _real_gateway():
+    return MagicMock(id="gw-real-1", url="https://gateway.example.com/mcp", identity_propagation=None, auth_type=None, passthrough_headers=[])
+
+
+async def _run_transport_path(path: str, gateway, *, signing_error: bool = False):
+    """Run one streamable HTTP direct-proxy path; return the headers sent upstream."""
+    # First-Party
+    from mcpgateway.transports import streamablehttp_transport as transport
+    from mcpgateway.transports.context import request_headers_var, user_identity_var
+
+    identity_token = user_identity_var.set(_full_user())
+    headers_token = request_headers_var.set({})
+    proxy = MagicMock(return_value=_proxy_client_mock())
+    patches = [
+        patch.object(transport, "build_gateway_auth_headers", return_value={}),
+        patch.object(transport, "mcp_proxy_client", proxy),
+    ]
+    if signing_error:
+        patches.append(patch.object(transport, "build_identity_headers", side_effect=IdentitySigningError("no secret")))
+    try:
+        for p in patches:
+            p.start()
+        if path == "list_tools":
+            await transport._proxy_list_tools_to_gateway(gateway, {}, {})
+        elif path == "list_resources":
+            await transport._proxy_list_resources_to_gateway(gateway, {}, {})
+        else:
+            await transport._proxy_read_resource_to_gateway(gateway, "resource://example", {})
+    finally:
+        for p in patches:
+            p.stop()
+        request_headers_var.reset(headers_token)
+        user_identity_var.reset(identity_token)
+    return proxy.call_args.kwargs["headers"]
+
+
+class TestDirectProxyAudienceBinding:
+    """Direct-proxy paths sign with the real gateway id as the audience."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["list_tools", "list_resources", "read_resource"])
+    async def test_transport_path_signs_for_gateway(self, signing_settings, path):
+        gateway = _real_gateway()
+        headers = await _run_transport_path(path, gateway)
+        assert _decode(headers[SIG], audience=str(gateway.id))["aud"] == str(gateway.id)
+
+
+class TestIdentitySigningFailureSurfaces:
+    """A signing failure is a configuration error on every upstream path, never an empty result."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["list_tools", "list_resources", "read_resource"])
+    async def test_transport_path_raises_configuration_error(self, path):
+        # First-Party
+        from mcpgateway.validation.jsonrpc import JSONRPCError
+
+        with pytest.raises(JSONRPCError, match="misconfigured"):
+            await _run_transport_path(path, _real_gateway(), signing_error=True)
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_raises_resource_error(self):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        gateway = MagicMock(id="gw-1", url="https://gateway.example.com/mcp", transport="streamablehttp", auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None, ca_certificate=None, ca_certificate_sig=None, name="Gateway")
+        mock_span = MagicMock()
+        mock_span.__enter__.return_value = MagicMock()
+        mock_span.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.resource_service.create_span", return_value=mock_span),
+            patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
+            patch("mcpgateway.services.resource_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+        ):
+            with pytest.raises(ResourceError, match="misconfigured"):
+                await ResourceService().invoke_resource(
+                    MagicMock(),
+                    resource_id="res-1",
+                    resource_uri="resource://example",
+                    user_identity=UserContext(user_id="user-1", email="user@example.com"),
+                    resource_obj=MagicMock(gateway_id="gw-1"),
+                    gateway_obj=gateway,
+                )
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_raises_resource_error(self):
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+        from mcpgateway.services import resource_service
+
+        service = ResourceService()
+        db = MagicMock()
+        gateway = MagicMock(id="gw-1", gateway_mode="direct_proxy", url="https://gateway.example.com/mcp")
+        db.execute.return_value.scalar_one_or_none.return_value = MagicMock(gateway=gateway, enabled=True)
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(service, "_check_resource_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.resource_service.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch.object(resource_service.settings, "mcpgateway_direct_proxy_enabled", True),
+        ):
+            with pytest.raises(ResourceError, match="misconfigured"):
+                await service.read_resource(db, resource_uri="resource://example", user="user@example.com", plugin_global_context=context)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_raises_tool_invocation_error(self):
+        # First-Party
+        from mcpgateway.services import tool_service
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        db = MagicMock()
+        gateway = MagicMock(id="gw-1", gateway_mode="direct_proxy", passthrough_headers=[], url="https://gateway.example.com/mcp")
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        fresh = MagicMock()
+        fresh.__enter__.return_value = db
+        fresh.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", return_value=fresh),
+            patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch.object(tool_service.settings, "mcpgateway_direct_proxy_enabled", True),
+        ):
+            with pytest.raises(ToolInvocationError, match="misconfigured"):
+                await ToolService().invoke_tool_direct(
+                    gateway_id="gw-1",
+                    name="gw-tool",
+                    arguments={},
+                    user_email="user@example.com",
+                    user_context=UserContext(user_id="user-1", email="user@example.com"),
+                )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("integration_type", ["REST", "MCP"])
+    async def test_invoke_tool_raises_tool_invocation_error(self, integration_type):
+        # First-Party
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        service = ToolService()
+        service._get_plugin_manager = AsyncMock(return_value=None)
+        service._check_tool_access = AsyncMock(return_value=True)
+        is_rest = integration_type == "REST"
+        cache = MagicMock()
+        cache.enabled = True
+        cache.get = AsyncMock(
+            return_value={
+                "status": "active",
+                "tool": {
+                    "id": "tool-1",
+                    "name": "t",
+                    "original_name": "t",
+                    "enabled": True,
+                    "reachable": True,
+                    "integration_type": integration_type,
+                    "request_type": "POST" if is_rest else "streamablehttp",
+                    "url": "https://api.example.com/tools" if is_rest else None,
+                    "headers": {},
+                    "gateway_id": None if is_rest else "gw-1",
+                },
+                "gateway": None
+                if is_rest
+                else {
+                    "id": "gw-1",
+                    "name": "Gateway",
+                    "url": "https://gateway.example.com/mcp",
+                    "auth_type": None,
+                    "auth_value": None,
+                    "auth_query_params": None,
+                    "oauth_config": None,
+                    "ca_certificate": None,
+                    "ca_certificate_sig": None,
+                    "passthrough_headers": [],
+                },
+            }
+        )
+        context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
+        mock_span = MagicMock()
+        mock_span.__enter__.return_value = MagicMock()
+        mock_span.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
+            patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
+            patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
+        ):
+            with pytest.raises(ToolInvocationError, match="misconfigured"):
+                await service.invoke_tool(MagicMock(), name="t", arguments={}, plugin_global_context=context)

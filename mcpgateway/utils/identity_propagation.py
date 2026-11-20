@@ -62,6 +62,10 @@ def _resolve_config(gateway: Optional[Any] = None, identity_propagation: Optiona
     }
 
 
+class IdentitySigningError(ValueError):
+    """Identity claims cannot be signed because the signing configuration is missing or unsafe."""
+
+
 def _claims_secret() -> str:
     """Return the dedicated identity-claims signing secret.
 
@@ -69,12 +73,12 @@ def _claims_secret() -> str:
         The configured ``IDENTITY_CLAIMS_SECRET`` value.
 
     Raises:
-        ValueError: If the secret is unset, empty, or equal to ``JWT_SECRET_KEY``.
+        IdentitySigningError: If the secret is unset, empty, or equal to ``JWT_SECRET_KEY``.
     """
     secret = settings.identity_claims_secret.get_secret_value() if settings.identity_claims_secret else ""
     jwt_secret = settings.jwt_secret_key.get_secret_value() if settings.jwt_secret_key else ""
     if not secret or secret == jwt_secret:
-        raise ValueError(_SIGNING_REFUSED)
+        raise IdentitySigningError(_SIGNING_REFUSED)
     return secret
 
 
@@ -140,10 +144,10 @@ def _claims_token(claims: Dict[str, Any], audience: Optional[str]) -> str:
         Compact JWS string.
 
     Raises:
-        ValueError: If no audience is known or no dedicated secret is configured.
+        IdentitySigningError: If no audience is known or no dedicated secret is configured.
     """
     if not audience:
-        raise ValueError(_SIGNING_REFUSED)
+        raise IdentitySigningError(_SIGNING_REFUSED)
     now = int(time.time())
     payload = {
         **claims,
