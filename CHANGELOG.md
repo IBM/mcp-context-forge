@@ -78,6 +78,8 @@
 
 - **Redis Cluster mode** ([#6490](https://github.com/IBM/mcp-context-forge/issues/6490), [#7559](https://github.com/IBM/mcp-context-forge/pull/7559)) - Set `REDIS_CLUSTER_MODE=true` to make the shared Redis client a `redis.asyncio.RedisCluster`, which follows `MOVED` and `ASK` redirects. The default is `false`. Cluster mode accepts only database 0 in `REDIS_URL`; any other value fails at startup. Clients that do not use the shared factory stay standalone. See [Redis Cluster Mode](docs/docs/manage/scale.md#redis-cluster-mode).
 
+- **Extra OAuth authorization parameters** ([#4044](https://github.com/IBM/mcp-context-forge/issues/4044)) - `oauth_config.extra_auth_params` adds provider-specific parameters to the authorization URL, for example `{"access_type": "offline", "prompt": "consent"}` so that Google issues a refresh token. The API rejects names that the gateway sets or that change the authorization flow, such as `state`, `redirect_uri` and `code_challenge`, with `422`. The authorization URL builder checks the stored value again.
+
 ### Changed
 
 - **Team-management authorization** - Protected team-management operations require a token that includes the target team and the required RBAC permissions. A personal-team token does not authorize management of other teams. For automation, create the token with the target `team_id`.

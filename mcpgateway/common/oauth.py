@@ -7,7 +7,8 @@ Shared OAuth helpers and sensitive-key definitions.
 """
 
 # Standard
-from typing import Any, Optional
+import re
+from typing import Any, Dict, Optional
 
 # Third-Party
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -123,6 +124,84 @@ def is_delegation_config(oauth_config: Any) -> bool:
         (False, False)
     """
     return isinstance(oauth_config, dict) and (oauth_config.get("actor_token_source") or ACTOR_TOKEN_SOURCE_NONE) != ACTOR_TOKEN_SOURCE_NONE
+
+
+# Authorization request parameters the gateway sets itself (RFC 6749 Section
+# 4.1.1, RFC 7636 Section 4.3, RFC 8707 Section 2) or that change how the
+# authorization response or client authentication works (RFC 9101, RFC 9126,
+# OAuth 2.0 Multiple Response Type Encoding Practices). ``extra_auth_params``
+# can never set or override these, so it cannot weaken PKCE, state, or the
+# redirect target. Names compare case-insensitively.
+RESERVED_AUTHORIZATION_PARAMS: frozenset[str] = frozenset(
+    {
+        "response_type",
+        "response_mode",
+        "client_id",
+        "client_secret",
+        "client_assertion",
+        "client_assertion_type",
+        "redirect_uri",
+        "state",
+        "scope",
+        "code_challenge",
+        "code_challenge_method",
+        "resource",
+        "audience",
+        "request",
+        "request_uri",
+    }
+)
+
+MAX_EXTRA_AUTH_PARAMS: int = 16
+MAX_EXTRA_AUTH_PARAM_VALUE_LENGTH: int = 512
+
+# RFC 3986 unreserved characters only, so a name never needs encoding.
+_EXTRA_AUTH_PARAM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{1,64}$")
+_CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def validate_extra_auth_params(raw: Any) -> Dict[str, str]:
+    """Validate ``oauth_config.extra_auth_params`` and return a clean copy.
+
+    Some providers need authorization request parameters that the gateway does
+    not set, for example ``access_type=offline`` for a Google refresh token or
+    ``prompt=consent`` for Atlassian. The schema and the authorization URL
+    builder both call this function, so a stored config that skipped the API
+    boundary still cannot override a reserved parameter.
+
+    Args:
+        raw: Value of ``oauth_config["extra_auth_params"]``. ``None`` or an
+            empty mapping means no extra parameters.
+
+    Returns:
+        Dict[str, str]: A new dict with the names and values to add.
+
+    Raises:
+        ValueError: If the value is not a mapping of string names to string
+            values, has too many entries, uses an invalid or reserved name,
+            or has a value that is too long or contains control characters.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("oauth_config.extra_auth_params must be an object of string names to string values")
+    if len(raw) > MAX_EXTRA_AUTH_PARAMS:
+        raise ValueError(f"oauth_config.extra_auth_params has too many entries (max {MAX_EXTRA_AUTH_PARAMS})")
+
+    params: Dict[str, str] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not _EXTRA_AUTH_PARAM_NAME_PATTERN.match(name):
+            raise ValueError("oauth_config.extra_auth_params names must be 1-64 characters of letters, digits, '.', '_', '~' or '-'")
+        if name.lower() in RESERVED_AUTHORIZATION_PARAMS:
+            raise ValueError(f"oauth_config.extra_auth_params cannot set '{name}': the gateway sets this parameter or it changes the authorization flow")
+        if not isinstance(value, str):
+            raise ValueError(f"oauth_config.extra_auth_params['{name}'] must be a string")
+        if len(value) > MAX_EXTRA_AUTH_PARAM_VALUE_LENGTH:
+            raise ValueError(f"oauth_config.extra_auth_params['{name}'] is too long (max {MAX_EXTRA_AUTH_PARAM_VALUE_LENGTH} characters)")
+        if _CONTROL_CHARACTER_PATTERN.search(value):
+            raise ValueError(f"oauth_config.extra_auth_params['{name}'] must not contain control characters")
+        params[name] = value
+    return params
 
 
 def is_sensitive_oauth_key(key: Any) -> bool:
