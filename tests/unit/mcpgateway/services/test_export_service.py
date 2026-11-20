@@ -13,11 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.common.models import Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.db import Base, EmailUser
+from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource
 from mcpgateway.schemas import GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
 from mcpgateway.services.export_service import _exportable_resource_base, ExportError, ExportService, ExportValidationError
@@ -64,6 +69,12 @@ def export_service():
 def mock_db():
     """Create a mock database session."""
     return MagicMock()
+
+
+def executed_bound_values(db: MagicMock) -> list[str]:
+    """Return the flattened bound parameter values of the last statement passed to ``db.execute``."""
+    params = db.execute.call_args[0][0].compile().params
+    return [value for bound in params.values() for value in (bound if isinstance(bound, (list, tuple)) else [bound])]
 
 
 @pytest.fixture
@@ -1478,6 +1489,7 @@ async def test_export_selected_prompts_success_and_empty_list(export_service, mo
     exported = await export_service._export_selected_prompts(mock_db, ["p1"])
     assert exported[0]["input_schema"]["properties"]["a"]["type"] == "string"
     assert exported[0]["is_active"] is True
+    assert executed_bound_values(mock_db) == ["p1", "p1"]
 
 
 @pytest.mark.asyncio
@@ -1502,6 +1514,7 @@ async def test_export_selected_resources_success_and_empty_list(export_service, 
     exported = await export_service._export_selected_resources(mock_db, ["file:///x"])
     assert exported[0]["uri"] == "file:///x"
     assert exported[0]["last_modified"] == now.isoformat()
+    assert executed_bound_values(mock_db) == ["file:///x"]
 
 
 @pytest.mark.asyncio
@@ -1682,19 +1695,7 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     visible_prompt.tags = []
     visible_prompt.enabled = True
 
-    hidden_prompt = MagicMock()
-    hidden_prompt.id = "p2"
-    hidden_prompt.name = "hidden-prompt"
-    hidden_prompt.original_name = "hidden-prompt"
-    hidden_prompt.custom_name = "hidden-prompt-custom"
-    hidden_prompt.display_name = "Hidden Prompt"
-    hidden_prompt.template = "hidden"
-    hidden_prompt.description = "hidden"
-    hidden_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
-    hidden_prompt.tags = []
-    hidden_prompt.enabled = True
-
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt, hidden_prompt]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt]
 
     exported = await export_service._export_selected_prompts(
         mock_db,
@@ -1704,6 +1705,46 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     )
     assert len(exported) == 1
     assert exported[0]["name"] == "visible-prompt"
+    assert executed_bound_values(mock_db) == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_scoped_name_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden prompt sharing a name with a visible prompt must not enter the query."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="reader-p", name="shared-name")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_prompts(mock_db, ["shared-name"], user_email="reader@example.com", token_teams=[])
+
+    assert executed_bound_values(mock_db) == ["reader-p"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested", "expected_ids"),
+    [
+        (["p1"], ["p1"]),
+        (["visible-prompt"], ["p1"]),
+        (["p1", "visible-prompt"], ["p1"]),
+        (["p2"], None),
+        (["hidden-prompt"], None),
+        (["p2", "hidden-prompt"], None),
+        (["p1", "hidden-prompt"], ["p1"]),
+        (["visible-prompt", "p2"], ["p1"]),
+    ],
+    ids=["id-only", "name-only", "id-and-name", "hidden-id", "hidden-name", "hidden-id-and-name", "visible-id-hidden-name", "visible-name-hidden-id"],
+)
+async def test_export_selected_prompts_scoped_id_name_lookup_matrix(export_service, mock_db, requested, expected_ids):
+    """Scoped prompt lookup resolves visible prompts by ID or name and never queries hidden ones."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="p1", name="visible-prompt")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_prompts(mock_db, requested, user_email="user@example.com", token_teams=["team-1"])
+
+    if expected_ids is None:
+        mock_db.execute.assert_not_called()
+    else:
+        assert executed_bound_values(mock_db) == expected_ids
 
 
 @pytest.mark.asyncio
@@ -1724,7 +1765,7 @@ async def test_export_selected_prompts_scoped_no_visible_match_returns_empty(exp
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_visibility_filters_non_visible(export_service, mock_db):
     """Ensure selective resource export enforces visibility scoping when context is provided."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r1", uri="file:///visible.txt")])
 
     now = datetime.now(timezone.utc)
     visible_resource = MagicMock()
@@ -1737,16 +1778,7 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     visible_resource.enabled = True
     visible_resource.updated_at = now
 
-    hidden_resource = MagicMock()
-    hidden_resource.uri = "file:///hidden.txt"
-    hidden_resource.name = "hidden"
-    hidden_resource.description = "hidden"
-    hidden_resource.mime_type = "text/plain"
-    hidden_resource.tags = []
-    hidden_resource.enabled = True
-    hidden_resource.updated_at = now
-
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource, hidden_resource]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource]
 
     exported = await export_service._export_selected_resources(
         mock_db,
@@ -1756,12 +1788,24 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     )
     assert len(exported) == 1
     assert exported[0]["uri"] == "file:///visible.txt"
+    assert executed_bound_values(mock_db) == ["r1"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_scoped_uri_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden resource sharing a URI with a visible resource must not enter the query."""
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="reader-r", uri="file:///shared.txt")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_resources(mock_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=[])
+
+    assert executed_bound_values(mock_db) == ["reader-r"]
 
 
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_no_visible_match_returns_empty(export_service, mock_db):
     """When scoped visibility yields no selected resources, export should short-circuit to empty."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible-only.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r9", uri="file:///visible-only.txt")])
 
     exported = await export_service._export_selected_resources(
         mock_db,
@@ -1954,3 +1998,63 @@ async def test_export_selected_servers_filters_deactivated_entities(export_servi
 
     # Verify the database execute was called
     assert mock_db.execute.called, "Database execute should have been called"
+
+
+@pytest.fixture
+def two_owner_db():
+    """Create a SQLite database where two owners share a prompt name and a resource URI."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as seed:
+        seed.add_all([EmailUser(email="reader@example.com", password_hash="x", is_admin=False), EmailUser(email="victim@example.com", password_hash="x", is_admin=False)])
+        for owner, team in (("reader@example.com", "reader-team"), ("victim@example.com", "victim-team")):
+            seed.add(
+                DbPrompt(
+                    id=f"{owner}-prompt",
+                    original_name="shared-prompt",
+                    custom_name="shared-prompt",
+                    custom_name_slug="shared-prompt",
+                    name="shared-prompt",
+                    description=f"{owner} prompt",
+                    template=f"{owner} template",
+                    argument_schema={},
+                    visibility="private",
+                    owner_email=owner,
+                    team_id=team,
+                )
+            )
+            seed.add(Resource(id=f"{owner}-resource", uri="file:///shared.txt", name="shared", description=f"{owner} resource", visibility="private", owner_email=owner, team_id=team))
+        seed.commit()
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_two_owners_sharing_a_name_excludes_other_owner(two_owner_db):
+    """Selecting a name shared by two owners exports only the caller's private prompt."""
+    service = ExportService()
+
+    exported = await service._export_selected_prompts(two_owner_db, ["shared-prompt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert [prompt["description"] for prompt in exported] == ["reader@example.com prompt"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_two_owners_hidden_id_is_not_exported(two_owner_db):
+    """Selecting another owner's prompt by ID exports nothing."""
+    service = ExportService()
+
+    exported = await service._export_selected_prompts(two_owner_db, ["victim@example.com-prompt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert exported == []
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_two_owners_sharing_a_uri_excludes_other_owner(two_owner_db):
+    """Selecting a URI shared by two owners exports only the caller's private resource."""
+    service = ExportService()
+
+    exported = await service._export_selected_resources(two_owner_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert [resource["description"] for resource in exported] == ["reader@example.com resource"]
