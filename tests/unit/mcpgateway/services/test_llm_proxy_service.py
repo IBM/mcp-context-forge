@@ -295,14 +295,37 @@ def test_transform_ollama_response_done(service):
 
 def test_transform_anthropic_stream_chunk(service):
     text_delta = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}}
-    stop_event = {"type": "message_stop"}
+    stop_event = {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
 
     chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model")
     stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model")
 
     assert '"content":"hi"' in chunk
     assert '"finish_reason":"stop"' in stop_chunk
+    # message_stop carries no stop reason; the finish chunk is emitted on message_delta
+    assert service._transform_anthropic_stream_chunk({"type": "message_stop"}, "id", 1, "model") is None
     assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model") is None
+
+
+@pytest.mark.parametrize(
+    "anthropic_reason,expected",
+    [("end_turn", "stop"), ("stop_sequence", "stop"), ("max_tokens", "length"), ("tool_use", "tool_calls"), ("weird", "stop")],
+)
+def test_transform_anthropic_stream_chunk_maps_stop_reason(service, anthropic_reason, expected):
+    event = {"type": "message_delta", "delta": {"stop_reason": anthropic_reason}}
+    chunk = service._transform_anthropic_stream_chunk(event, "id", 1, "model")
+    assert f'"finish_reason":"{expected}"' in chunk
+    # usage-only message_delta without a stop reason emits nothing
+    assert service._transform_anthropic_stream_chunk({"type": "message_delta", "delta": {}}, "id", 1, "model") is None
+
+
+@pytest.mark.parametrize("anthropic_reason,expected", [("end_turn", "stop"), ("max_tokens", "length"), ("tool_use", "tool_calls"), (None, "stop")])
+def test_transform_anthropic_response_maps_stop_reason(service, anthropic_reason, expected):
+    data = {"id": "m1", "content": [{"type": "text", "text": "hi"}], "usage": {"input_tokens": 1, "output_tokens": 1}}
+    if anthropic_reason:
+        data["stop_reason"] = anthropic_reason
+    result = service._transform_anthropic_response(data, "claude")
+    assert result.choices[0].finish_reason == expected
 
 
 def test_transform_ollama_stream_chunk(service):
