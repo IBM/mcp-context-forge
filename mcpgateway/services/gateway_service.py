@@ -8711,7 +8711,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 instructions = raw_instructions
                 logger.debug("Server capabilities: %s", capabilities)
 
-                tools = await get_list_paginated(client, MCPListMethod.TOOLS)
+                # Fetch tools if supported; a prompts-only server rejects tools/list.
+                tools = await get_list_paginated(client, MCPListMethod.TOOLS) if "tools" in capabilities else []
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools, context="oauth")
@@ -8903,7 +8904,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             instructions = raw_instructions
             logger.debug("Server capabilities: %s", capabilities)
 
-            tools = await get_list_paginated(client, MCPListMethod.TOOLS)
+            # Fetch tools if supported; a prompts-only server rejects tools/list.
+            tools = await get_list_paginated(client, MCPListMethod.TOOLS) if "tools" in capabilities else []
             tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
             tools, validation_errors = self._validate_tools(tools)
@@ -9084,7 +9086,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             instructions = raw_instructions
             logger.debug("Server capabilities: %s", capabilities)
 
-            tools = await get_list_paginated(client, MCPListMethod.TOOLS)
+            # Fetch tools if supported; a prompts-only server rejects tools/list.
+            tools = await get_list_paginated(client, MCPListMethod.TOOLS) if "tools" in capabilities else []
             tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
             tools, validation_errors = self._validate_tools(tools)

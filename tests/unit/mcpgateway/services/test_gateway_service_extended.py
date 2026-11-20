@@ -72,7 +72,7 @@ class TestGatewayServiceExtended:
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.server_capabilities = MagicMock()
-            mock_client.server_capabilities.model_dump = MagicMock(return_value={"protocolVersion": "0.1.0"})
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"protocolVersion": "0.1.0", "tools": {}})
 
             mock_tools_response = MagicMock(next_cursor=None)
             mock_tool = MagicMock()
@@ -85,7 +85,7 @@ class TestGatewayServiceExtended:
             capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
-            assert capabilities == {"protocolVersion": "0.1.0"}
+            assert capabilities == {"protocolVersion": "0.1.0", "tools": {}}
             assert len(tools) == 1
             assert isinstance(tools[0], ToolCreate)
             assert resources == []
@@ -109,7 +109,7 @@ class TestGatewayServiceExtended:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             # server_capabilities.model_dump(by_alias=True, exclude_none=True) called in v2
             mock_client.server_capabilities = MagicMock()
-            mock_client.server_capabilities.model_dump = MagicMock(return_value={"protocolVersion": "0.1.0"})
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"protocolVersion": "0.1.0", "tools": {}})
             # list_tools/list_resources return result objects with .tools/.resources attributes
             mock_tools_response = MagicMock(next_cursor=None)
             mock_tool = MagicMock()
@@ -125,7 +125,7 @@ class TestGatewayServiceExtended:
             capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
-            assert capabilities == {"protocolVersion": "0.1.0"}
+            assert capabilities == {"protocolVersion": "0.1.0", "tools": {}}
             assert len(tools) == 1
             assert tools[0].request_type == "STREAMABLEHTTP"
             assert resources == []
