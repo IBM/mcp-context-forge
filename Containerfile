@@ -47,8 +47,8 @@ ARG ENABLE_PROFILING=false
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
 ARG UBI_BASE=registry.access.redhat.com/ubi10:10.3-1794519911
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.3-1793905945
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.3-1794499233
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.3-1795021913
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.3-1795002774
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
