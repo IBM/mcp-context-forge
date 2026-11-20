@@ -71,7 +71,13 @@ def _mint_api_token(base_url: str, email: str, team_id: str, permissions: list[s
 
 
 class _World:
-    """Teams A and B, Alice (A only), Bob (B only), and their API-token clients."""
+    """Teams A and B, Alice (A only), Bob (B only), and their API-token clients.
+
+    Alice and Bob hold the ``owner`` role in their own team. The team-visibility
+    create gate admits only owner-role members and platform admins, so the
+    positive controls need the role. Cross-team denials here come from team
+    membership, not from the role.
+    """
 
     def __init__(self, gateway: _GatewayFixture) -> None:
         """Provision both tenants through the admin API."""
@@ -89,7 +95,7 @@ class _World:
                 expected=(201,),
                 json={"email": email, "password": _PASSWORD, "full_name": email.split("-")[0], "is_admin": False, "is_active": True, "password_change_required": False},
             )
-            _api(self.admin, "POST", f"/teams/{team_id}/members", json={"email": email, "role": "member"})
+            _api(self.admin, "POST", f"/teams/{team_id}/members", json={"email": email, "role": "owner"})
         _grant(self.admin, self.alice, _ALICE_PERMISSIONS, team_id=self.team_a)
         _grant(self.admin, self.bob, _BOB_PERMISSIONS, team_id=self.team_b)
         self.alice_client = _mint_api_token(self.base_url, self.alice, self.team_a, _ALICE_PERMISSIONS)

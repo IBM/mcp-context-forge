@@ -11,7 +11,7 @@ import {
 } from "./servers.js";
 import { getUiHiddenSections, showTab } from "./tabs.js";
 import { fetchWithAuth, performTokenSearch } from "./tokens.js";
-import { getCurrentTeamId, isAdminUser, safeGetElement } from "./utils.js";
+import { getCurrentTeamId, getPickerTeamId, isAdminUser, safeGetElement } from "./utils.js";
 
 const panelSearchReloadTimers = {};
 let globalSearchRequestId = 0;
@@ -598,7 +598,7 @@ export const serverSideSearch = async function (config, searchTerm) {
 
   // Perform search
   try {
-    const selectedTeamId = getCurrentTeamId();
+    const selectedTeamId = getPickerTeamId(container);
     const params = new URLSearchParams();
     params.set("q", searchTerm);
     params.set("limit", "100");

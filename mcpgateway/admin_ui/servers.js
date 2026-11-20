@@ -6,7 +6,7 @@ import { openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
 import { validateInputName, validateUrl } from "./security.js";
-import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
+import { applyVisibilityRestrictions, isTeamScopedView, setFormTeamSelect, showVisibilityCoercionHint } from "./teams.js";
 import {
   safeGetElement,
   fetchWithTimeout,
@@ -708,15 +708,14 @@ export const editServer = async function (serverId) {
     }
 
     // Prepopulate visibility radio buttons based on the server data
+    // When public visibility is disabled and we're in a team-scoped view,
+    // coerce legacy-public records to team.
+    const coerced =
+      window.ALLOW_PUBLIC_VISIBILITY === false &&
+      visibility === "public" &&
+      isTeamScopedView();
     if (visibility) {
-      // When public visibility is disabled and we're in a team-scoped view,
-      // coerce legacy-public records to team.
-      const effectiveVisibility =
-        window.ALLOW_PUBLIC_VISIBILITY === false &&
-        visibility === "public" &&
-        isTeamScopedView()
-          ? "team"
-          : visibility;
+      const effectiveVisibility = coerced ? "team" : visibility;
       if (effectiveVisibility === "public" && publicRadio) {
         publicRadio.checked = true;
       } else if (effectiveVisibility === "team" && teamRadio) {
@@ -725,16 +724,11 @@ export const editServer = async function (serverId) {
         privateRadio.checked = true;
       }
     }
+    showVisibilityCoercionHint("edit-server-visibility", coerced);
 
     const teamId = new URL(window.location.href).searchParams.get("team_id");
 
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    setFormTeamSelect("edit-server-team-id", server.teamId || server.team_id);
 
     // Initialize View Public toggle for Edit Server modal
     if (teamId) {

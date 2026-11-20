@@ -36,6 +36,9 @@ import {
   loadTeamSelectorDropdown,
   initializeAddMembersForm,
   initializeAddMembersForms,
+  populateTeamSelect,
+  resolveFormTeamId,
+  validateTeamVisibilitySelection,
 } from "../../../mcpgateway/admin_ui/teams.js";
 
 import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
@@ -1741,5 +1744,184 @@ describe("initializeAddMembersForms", () => {
     initializeAddMembersForms(document);
 
     expect(form.dataset.initialized).toBe("true");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// populateTeamSelect
+// ---------------------------------------------------------------------------
+describe("populateTeamSelect", () => {
+  beforeEach(() => {
+    window.USER_TEAMS = [
+      { id: "t-owned", name: "Owned", role: "owner" },
+      { id: "t-member", name: "Member", role: "member" },
+    ];
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+    delete window.USER_TEAMS;
+    delete window.IS_ADMIN;
+  });
+
+  function makeSelect() {
+    const select = document.createElement("select");
+    document.body.appendChild(select);
+    return select;
+  }
+
+  test("lists only owner teams for non-admins", () => {
+    const select = makeSelect();
+
+    populateTeamSelect(select);
+
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["", "t-owned"]);
+  });
+
+  test("lists all teams for platform admins", () => {
+    window.IS_ADMIN = true;
+    const select = makeSelect();
+
+    populateTeamSelect(select);
+
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["", "t-owned", "t-member"]);
+  });
+
+  test("preselects the current team when the caller may assign it", () => {
+    const select = makeSelect();
+
+    populateTeamSelect(select, "t-owned");
+
+    expect(select.value).toBe("t-owned");
+  });
+
+  test("keeps the empty placeholder when the current team is not assignable", () => {
+    const select = makeSelect();
+
+    populateTeamSelect(select, "t-member");
+
+    expect(select.value).toBe("");
+  });
+
+  test("placeholder reads Keep current team when a current team exists", () => {
+    const select = makeSelect();
+
+    populateTeamSelect(select, "t-member");
+
+    expect(select.options[0].textContent).toBe("Keep current team");
+  });
+
+  test("placeholder reads Personal team when no current team exists", () => {
+    const select = makeSelect();
+
+    populateTeamSelect(select);
+
+    expect(select.options[0].textContent).toBe("Personal team");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveFormTeamId
+// ---------------------------------------------------------------------------
+describe("resolveFormTeamId", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function makeSelect(attrs = {}, value = "") {
+    const select = document.createElement("select");
+    Object.entries(attrs).forEach(([k, v]) => select.setAttribute(k, v));
+    for (const v of [value, "other-team"]) {
+      const option = document.createElement("option");
+      option.value = v;
+      select.appendChild(option);
+    }
+    select.value = value;
+    document.body.appendChild(select);
+    return select;
+  }
+
+  test("returns the explicit pick when set", () => {
+    const select = makeSelect({}, "other-team");
+
+    expect(resolveFormTeamId(select)).toBe("other-team");
+  });
+
+  test("falls back to the edit select's current team", () => {
+    const select = makeSelect({ "data-current-team-id": "current-team" });
+
+    expect(resolveFormTeamId(select)).toBe("current-team");
+  });
+
+  test("falls back to the create select's scoped team", () => {
+    const select = makeSelect({ "data-scope-team-id": "scoped-team" });
+
+    expect(resolveFormTeamId(select)).toBe("scoped-team");
+  });
+
+  test("prefers the edit current team over the scoped team", () => {
+    const select = makeSelect({
+      "data-current-team-id": "current-team",
+      "data-scope-team-id": "scoped-team",
+    });
+
+    expect(resolveFormTeamId(select)).toBe("current-team");
+  });
+
+  test("returns an empty string when nothing resolves", () => {
+    const select = makeSelect();
+
+    expect(resolveFormTeamId(select)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateTeamVisibilitySelection
+// ---------------------------------------------------------------------------
+describe("validateTeamVisibilitySelection", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function makeForm(visibility, selectHtml) {
+    const form = document.createElement("form");
+    form.innerHTML = `
+      <input type="radio" name="visibility" value="private" ${visibility === "private" ? "checked" : ""} />
+      <input type="radio" name="visibility" value="team" ${visibility === "team" ? "checked" : ""} />
+      ${selectHtml}
+    `;
+    document.body.appendChild(form);
+    return form;
+  }
+
+  test("passes when visibility is not team", () => {
+    const form = makeForm("private", `<select name="team_id"></select>`);
+
+    expect(validateTeamVisibilitySelection(form)).toBeNull();
+  });
+
+  test("passes when team visibility has a resolvable team", () => {
+    const form = makeForm(
+      "team",
+      `<select name="team_id"><option value="t1" selected>Team 1</option></select>`
+    );
+
+    expect(validateTeamVisibilitySelection(form)).toBeNull();
+  });
+
+  test("errors when team visibility has no resolvable team", () => {
+    const form = makeForm("team", `<select name="team_id"></select>`);
+
+    expect(validateTeamVisibilitySelection(form)).toBe(
+      "Select a team before you set visibility to Team."
+    );
+  });
+
+  test("passes when the form has no team select", () => {
+    const form = makeForm("team", "");
+
+    expect(validateTeamVisibilitySelection(form)).toBeNull();
   });
 });
