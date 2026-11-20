@@ -454,7 +454,7 @@ def mock_metrics():
 
 @pytest.mark.parametrize("field", ["oauth_enabled", "oauth_config", "oauth_authorization_server", "oauth_scopes", "oauth_token_endpoint", "oauth_audience", "oauth_controls"])
 @pytest.mark.parametrize("operation", ["create", "update"])
-async def test_server_oauth_form_rejects_explicit_controls(mock_request, mock_db, monkeypatch, field, operation):
+async def test_server_oauth_form_rejects_explicit_controls(mock_request, mock_db, monkeypatch, caplog, field, operation):
     """Reject unauthorized OAuth form controls before normalization or persistence."""
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
     mock_request.form = AsyncMock(return_value=FakeForm({"name": "server", field: ""}))
@@ -465,6 +465,10 @@ async def test_server_oauth_form_rejects_explicit_controls(mock_request, mock_db
             else:
                 await admin_edit_server("server-id", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
     assert error.value.status_code == 403
+    event = next(record for record in caplog.records if getattr(record, "event_type", None) == "server_oauth_authorization_denied")
+    assert event.security_event is True
+    assert event.user_id == "user@example.com"
+    assert event.oauth_fields == [field]
     register.assert_not_awaited()
     update.assert_not_awaited()
 
@@ -480,6 +484,62 @@ async def test_server_oauth_form_ordinary_edit_preserves_oauth(mock_request, moc
     assert result.status_code == 200
     assert not {"oauth_enabled", "oauth_config"}.intersection(update.call_args.args[2].model_fields_set)
     assert update.call_args.kwargs["oauth_authorized"] is False
+
+
+async def test_admin_oauth_form_preserves_unexposed_settings(mock_request, mock_db, monkeypatch):
+    """Pre-filled controls retain learned resource, additional issuers, and legacy scope fields."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+    config = {"authorization_servers": ["https://issuer.example.com", "https://second.example.com"], "scopes": "read write", "resource": "learned", "audience": "audience"}
+    mock_db.get.return_value = SimpleNamespace(oauth_config=config, team_id=None)
+    mock_request.form = AsyncMock(
+        return_value=FakeForm(
+            {
+                "name": "server",
+                "description": "metadata",
+                "visibility": "private",
+                "oauth_controls": "1",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://issuer.example.com",
+                "oauth_scopes": "read write",
+                "oauth_audience": "audience",
+                "oauth_token_endpoint": "",
+            }
+        )
+    )
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: team_service)
+    with patch("mcpgateway.admin.server_service.update_server", new_callable=AsyncMock) as update:
+        response = await admin_edit_server("server-id", mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert update.call_args.args[2].oauth_config == config
+
+
+
+@pytest.mark.parametrize("clear", [False, True])
+def test_admin_oauth_form_changes_preserve_unexposed_settings(clear):
+    """Editable OAuth changes preserve extra issuers and learned audience while supporting explicit clearing."""
+    from mcpgateway.admin import _merge_server_oauth_form_config
+
+    config = {
+        "authorization_servers": ["https://first.example.com", "https://second.example.com"],
+        "scopes": "read", "token_endpoint": "https://first.example.com/token", "audience": "old", "resource": "learned",
+    }
+    submitted = {"authorization_servers": ["https://replacement.example.com"]}
+    if not clear:
+        submitted.update(scopes_supported=["write"], token_endpoint="https://replacement.example.com/token", audience="new")
+    merged = _merge_server_oauth_form_config(config, submitted)
+    assert merged["authorization_servers"] == ["https://replacement.example.com", "https://second.example.com"]
+    assert merged["resource"] == "learned"
+    assert "scopes" not in merged
+    if clear:
+        assert not {"scopes_supported", "token_endpoint", "audience"}.intersection(merged)
+    else:
+        assert merged["scopes_supported"] == ["write"]
+        assert merged["audience"] == "new"
+        assert merged["token_endpoint"] == "https://replacement.example.com/token"
+    assert config["audience"] == "old"
+    assert _merge_server_oauth_form_config({"authorization_server": "https://legacy.example.com"}, submitted)["authorization_servers"] == submitted["authorization_servers"]
 
 
 @pytest.mark.parametrize("version", [None, "", "invalid", "0", "-1"])
@@ -504,10 +564,12 @@ async def test_server_oauth_approval_form_preserves_service_outcomes(mock_reques
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     mock_request.form = AsyncMock(return_value=FakeForm({"version": "2"}))
     failures = {"missing": ServerNotFoundError("missing"), "stale": ServerLockConflictError("stale"), "unconfigured": ServerError("unconfigured")}
-    with patch("mcpgateway.admin.server_service.approve_oauth_config", new_callable=AsyncMock, return_value={"oauth_config_approved": True, "version": 3}, side_effect=failures.get(failure)) as approve:
+    with patch(
+        "mcpgateway.admin.server_service.approve_oauth_config", new_callable=AsyncMock, return_value={"oauth_config_approved": True, "version": 3}, side_effect=failures.get(failure)
+    ) as approve:
         response = await admin_approve_server_oauth(mock_request, "server-id", mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == status
-    approve.assert_awaited_once_with(mock_db, "server-id", 2)
+    approve.assert_awaited_once_with(mock_db, "server-id", 2, user_id="admin@example.com")
     if failure is None:
         assert json.loads(response.body) == {"oauth_config_approved": True, "version": 3}
     else:

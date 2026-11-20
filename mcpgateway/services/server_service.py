@@ -46,7 +46,7 @@ from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterface
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
-from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -751,6 +751,9 @@ class ServerService(BaseService):
                     "associated_resources_count": len(db_server.resources),
                     "associated_prompts_count": len(db_server.prompts),
                     "associated_a2a_agents_count": len(db_server.a2a_agents),
+                    "oauth_enabled": db_server.oauth_enabled,
+                    "oauth_config_approved": db_server.oauth_config_approved,
+                    "oauth_config_generation": db_server.oauth_config_generation,
                 },
                 metadata={
                     "created_from_ip": created_from_ip,
@@ -1468,6 +1471,9 @@ class ServerService(BaseService):
             if server_update.tags is not None:
                 server.tags = server_update.tags
 
+            previous_oauth_enabled = server.oauth_enabled
+            previous_oauth_config = server.oauth_config
+
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment
             oauth_being_disabled = server_update.oauth_enabled is not None and not server_update.oauth_enabled
@@ -1486,9 +1492,15 @@ class ServerService(BaseService):
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
-            if {"oauth_enabled", "oauth_config"}.intersection(getattr(server_update, "model_fields_set", ())):
+            oauth_changed = previous_oauth_enabled != server.oauth_enabled or (
+                previous_oauth_config != server.oauth_config
+                and await decrypt_oauth_config_for_runtime(previous_oauth_config) != await decrypt_oauth_config_for_runtime(server.oauth_config)
+            )
+            if oauth_changed:
                 server.oauth_config_generation = uuid4().hex
                 server.oauth_config_approved = bool(oauth_authorized and server.oauth_enabled and server.oauth_config and resolve_server_oauth_issuers(server.oauth_config))
+            else:
+                server.oauth_config = previous_oauth_config
 
             # NULL means "not set" and "" means "send no instructions", so only a supplied field changes the value
             if "instructions" in getattr(server_update, "model_fields_set", ()):
@@ -1552,6 +1564,10 @@ class ServerService(BaseService):
                 details={
                     "server_name": server.name,
                     "changes": ", ".join(changes) if changes else "metadata only",
+                    "oauth_changed": oauth_changed,
+                    "oauth_enabled": server.oauth_enabled,
+                    "oauth_config_approved": server.oauth_config_approved,
+                    "oauth_config_generation": server.oauth_config_generation,
                     "version": server.version,
                 },
                 metadata={
@@ -1639,13 +1655,14 @@ class ServerService(BaseService):
             )
             raise ServerError(f"Failed to update server: {unexpected_error_detail(e)}")
 
-    async def approve_oauth_config(self, db: Session, server_id: str, expected_version: int) -> dict[str, Any]:
+    async def approve_oauth_config(self, db: Session, server_id: str, expected_version: int, *, user_id: str) -> dict[str, Any]:
         """Approve the OAuth configuration reviewed by an authorized route.
 
         Args:
             db: Active database session.
             server_id: Reviewed virtual-server identifier.
             expected_version: Server version displayed during administrator review.
+            user_id: Authenticated approver identity.
 
         Returns:
             Read-only approval status and the new server version.
@@ -1662,13 +1679,23 @@ class ServerService(BaseService):
             raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
         if not server.oauth_enabled or not server.oauth_config or not resolve_server_oauth_issuers(server.oauth_config):
             raise ServerError("Enabled OAuth with a valid authorization server is required for approval")
+        generation = uuid4().hex
+        team_id = server.team_id
         result = db.execute(
-            update(DbServer).where(DbServer.id == server_id, DbServer.version == expected_version).values(oauth_config_approved=True, oauth_config_generation=uuid4().hex, version=expected_version + 1)
+            update(DbServer).where(DbServer.id == server_id, DbServer.version == expected_version).values(oauth_config_approved=True, oauth_config_generation=generation, version=expected_version + 1)
         )
         if result.rowcount != 1:
             db.rollback()
             raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
         db.commit()
+        self._audit_trail.log_action(
+            user_id=user_id,
+            action="approve_server_oauth",
+            resource_type="server",
+            resource_id=server_id,
+            team_id=team_id,
+            details={"oauth_config_generation": generation, "reviewed_version": expected_version, "version": expected_version + 1},
+        )
         notify_dataplane()
         await _get_registry_cache().invalidate_servers()
         await _get_tool_lookup_cache().invalidate_server(server_id)

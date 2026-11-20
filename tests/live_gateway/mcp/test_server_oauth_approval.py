@@ -19,7 +19,6 @@ import ssl
 import threading
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
-import uuid
 
 # Third-Party
 from cryptography import x509
@@ -152,7 +151,7 @@ def _body(response: httpx.Response):
     return json.loads(next(line[5:].strip() for line in response.text.splitlines() if line.startswith("data:")))
 
 
-def _mcp(client, server_id, token, method, params):
+def _mcp(client, server_id, token, method, params, before_dispatch=None):
     """Authenticate an MCP session before sending a test method."""
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25"}
     path = f"/servers/{server_id}/mcp"
@@ -167,6 +166,8 @@ def _mcp(client, server_id, token, method, params):
     if session:
         headers["Mcp-Session-Id"] = session
     client.post(path, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    if before_dispatch:
+        before_dispatch()
     return client.post(path, headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": method, "params": params})
 
 
@@ -247,6 +248,35 @@ def test_live_server_oauth_authorization_and_reapproval(oauth_gateway):
     trusted = client.post("/servers", json={"server": {"name": "trusted-server", "oauth_enabled": True, "oauth_config": config, "associated_tools": [tool["id"]]}, "visibility": "public"})
     assert trusted.status_code == 201, trusted.text
     server_id = trusted.json()["id"]
+
+    def edit_metadata_without_changing_oauth():
+        """Submit the pre-filled administrator form and preserve the stored trust generation."""
+        before = client.get(f"/servers/{server_id}").json()
+        with sqlite3.connect(db_file) as db:
+            generation = db.execute("SELECT oauth_config_generation FROM servers WHERE id = ?", (server_id,)).fetchone()[0]
+        response = client.post(
+            f"/admin/servers/{server_id}/edit",
+            data={
+                "name": "trusted-server",
+                "description": "metadata only",
+                "visibility": "public",
+                "oauth_controls": "1",
+                "associatedTools": [tool["id"]],
+                "oauth_enabled": "on",
+                "oauth_authorization_server": issuer["issuer"],
+                "oauth_scopes": "",
+                "oauth_token_endpoint": "",
+                "oauth_audience": "",
+            },
+        )
+        assert response.status_code == 200, response.text
+        after = client.get(f"/servers/{server_id}").json()
+        assert after["oauthConfig"] == before["oauthConfig"]
+        assert after["oauthConfigApproved"] is before["oauthConfigApproved"]
+        with sqlite3.connect(db_file) as db:
+            assert db.execute("SELECT oauth_config_generation FROM servers WHERE id = ?", (server_id,)).fetchone()[0] == generation
+
+    edit_metadata_without_changing_oauth()
     forged = jwt.encode(
         {"iss": issuer["issuer"], "sub": "admin@example.com", "email": "admin@example.com", "aud": "approval-test-resource", "exp": now_timestamp() + 600},
         issuer["key"],
@@ -257,6 +287,7 @@ def test_live_server_oauth_authorization_and_reapproval(oauth_gateway):
     # Migration state preserves the issuer but removes every existing approval.
     with sqlite3.connect(db_file) as db:
         db.execute("UPDATE servers SET oauth_config_approved = 0, oauth_config_generation = NULL WHERE id = ?", (server_id,))
+    edit_metadata_without_changing_oauth()
     with httpx.Client(base_url=base_url, follow_redirects=True) as anonymous:
         denied = anonymous.post(f"/servers/{server_id}/mcp", headers={"Accept": "application/json, text/event-stream"}, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         assert denied.status_code == 401, denied.text
@@ -286,7 +317,7 @@ def test_live_server_oauth_authorization_and_reapproval(oauth_gateway):
     assert metadata.json()["authorization_servers"] == [issuer["issuer"]]
     stale = client.post(f"/servers/{server_id}/oauth/approve", json={"version": pending["version"]})
     assert stale.status_code == 409, stale.text
-    permitted = _mcp(client, server_id, forged, "tools/call", {"name": tool["name"], "arguments": {}})
+    permitted = _mcp(client, server_id, forged, "tools/call", {"name": tool["name"], "arguments": {}}, before_dispatch=edit_metadata_without_changing_oauth)
     assert permitted.status_code == 200, permitted.text
     assert "admin-upstream-account" in json.dumps(_body(permitted)), permitted.text
     assert issuer["calls"] == [{"used_admin_token": True}]

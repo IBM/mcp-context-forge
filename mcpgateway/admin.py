@@ -3668,6 +3668,37 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
+def _merge_server_oauth_form_config(existing: Dict[str, Any], submitted: Dict[str, Any]) -> Dict[str, Any]:
+    """Preserve OAuth settings that the edit form does not expose.
+
+    Args:
+        existing: Stored OAuth settings.
+        submitted: OAuth settings parsed from editable controls.
+
+    Returns:
+        Stored settings with changed controls applied.
+    """
+    merged = dict(existing)
+    issuers = existing.get("authorization_servers")
+    if not isinstance(issuers, list) or not issuers:
+        issuers = [existing.get("authorization_server", "")]
+    issuer = submitted["authorization_servers"][0]
+    if issuer != issuers[0]:
+        merged.pop("authorization_server", None)
+        merged["authorization_servers"] = [issuer, *issuers[1:]]
+    for key, alias in (("scopes_supported", "scopes"), ("token_endpoint", "token_endpoint"), ("audience", "audience")):
+        value = submitted.get(key)
+        previous = existing.get(key) or existing.get(alias)
+        if key == "scopes_supported":
+            previous = previous.split() if isinstance(previous, str) else previous
+        if (value or None) != (previous or None):
+            merged.pop(alias, None)
+            merged.pop(key, None)
+            if value:
+                merged[key] = value
+    return merged
+
+
 @admin_router.post("/servers/{server_id}/edit")
 @require_permission("servers.update", allow_admin_bypass=False)
 async def admin_edit_server(
@@ -3788,6 +3819,11 @@ async def admin_edit_server(
             "owner_email": user_email,
         }
         if oauth_authorized:
+            if oauth_config:
+                existing_server = db.get(DbServer, server_id)
+                existing_config = getattr(existing_server, "oauth_config", None)
+                if isinstance(existing_config, dict):
+                    oauth_config = _merge_server_oauth_form_config(existing_config, oauth_config)
             server_kwargs.update(oauth_enabled=oauth_enabled, oauth_config=oauth_config)
         # Only include instructions when the form field was submitted; omitting it leaves the
         # stored override unchanged.  Passing None explicitly would land in model_fields_set
@@ -3859,7 +3895,7 @@ async def admin_approve_server_oauth(request: Request, server_id: str, db: Sessi
         version = int(str(form.get("version", "")))
         if version < 1:
             raise ValueError("Invalid reviewed version")
-        result = await server_service.approve_oauth_config(db, server_id, version)
+        result = await server_service.approve_oauth_config(db, server_id, version, user_id=get_user_id(user))
         return ORJSONResponse(content=result)
     except (TypeError, ValueError):
         return ORJSONResponse(content={"detail": "A positive reviewed version is required"}, status_code=422)

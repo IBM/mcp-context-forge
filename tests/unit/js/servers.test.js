@@ -318,6 +318,9 @@ describe("editServer", () => {
     const tokenEndpointInput = document.createElement("input");
     tokenEndpointInput.id = "edit-server-oauth-token-endpoint";
     form.appendChild(tokenEndpointInput);
+    const audienceInput = document.createElement("input");
+    audienceInput.id = "edit-server-oauth-audience";
+    form.appendChild(audienceInput);
 
     fetchWithTimeout.mockResolvedValue({
       ok: true,
@@ -330,6 +333,7 @@ describe("editServer", () => {
             authorization_servers: ["https://auth.example.com"],
             scopes_supported: ["read", "write"],
             token_endpoint: "https://auth.example.com/token",
+            audience: "reviewed-audience",
           },
         }),
     });
@@ -341,6 +345,11 @@ describe("editServer", () => {
     expect(authServerInput.value).toBe("https://auth.example.com");
     expect(scopesInput.value).toBe("read write");
     expect(tokenEndpointInput.value).toBe("https://auth.example.com/token");
+    expect(audienceInput.value).toBe("reviewed-audience");
+
+    fetchWithTimeout.mockResolvedValue({ ok: true, json: async () => ({ id: "s2", name: "no-oauth" }) });
+    await editServer("s2");
+    expect(audienceInput.value).toBe("");
 
     consoleSpy.mockRestore();
   });

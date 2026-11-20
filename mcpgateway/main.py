@@ -4353,7 +4353,7 @@ async def approve_server_oauth(
     """
     await require_server_oauth_admin(request, user, db, {"oauth_config"})
     try:
-        return await server_service.approve_oauth_config(db, server_id, payload.version)
+        return await server_service.approve_oauth_config(db, server_id, payload.version, user_id=get_user_id(user))
     except ServerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ServerLockConflictError as exc:

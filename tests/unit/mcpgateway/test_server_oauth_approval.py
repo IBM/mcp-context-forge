@@ -52,7 +52,14 @@ def test_issuer_validation_preserves_scheme_and_localhost_policy(monkeypatch, co
     assert resolve_server_oauth_issuers(config) == expected
 
 
-@pytest.mark.parametrize("context,scope", [({"auth_method": "oauth_access_token"}, None), ({"auth_method": "oauth_access_token", "oauth_server_id": 1, "oauth_config_generation": "current"}, None), ({"auth_method": "oauth_access_token", "oauth_server_id": "server", "oauth_config_generation": "current"}, "another-server")])
+@pytest.mark.parametrize(
+    "context,scope",
+    [
+        ({"auth_method": "oauth_access_token"}, None),
+        ({"auth_method": "oauth_access_token", "oauth_server_id": 1, "oauth_config_generation": "current"}, None),
+        ({"auth_method": "oauth_access_token", "oauth_server_id": "server", "oauth_config_generation": "current"}, "another-server"),
+    ],
+)
 def test_missing_or_mismatched_oauth_provenance_fails_without_lookup(context, scope):
     """Legacy and cross-server OAuth identities cannot reach a database lookup or dispatch."""
     db = MagicMock()
@@ -111,20 +118,27 @@ async def test_reapproval_requires_reviewed_version(approval_db, approval_servic
     approval_db.add(server)
     approval_db.commit()
     with pytest.raises(ServerLockConflictError):
-        await approval_service.approve_oauth_config(approval_db, server.id, 2)
+        await approval_service.approve_oauth_config(approval_db, server.id, 2, user_id="reviewer@example.com")
     assert server.oauth_config_approved is False
-    result = await approval_service.approve_oauth_config(approval_db, server.id, 3)
+    approval_service._audit_trail.log_action.assert_not_called()
+    result = await approval_service.approve_oauth_config(approval_db, server.id, 3, user_id="reviewer@example.com")
     approval_db.refresh(server)
     assert result == {"oauth_config_approved": True, "version": 4}
     assert server.oauth_config == CONFIG
     assert server.oauth_config_generation
+    event = approval_service._audit_trail.log_action.call_args.kwargs
+    assert event["user_id"] == "reviewer@example.com"
+    assert event["action"] == "approve_server_oauth"
+    assert event["resource_id"] == server.id
+    assert event["details"] == {"oauth_config_generation": server.oauth_config_generation, "reviewed_version": 3, "version": 4}
+    assert "db" not in event
 
 
 @pytest.mark.asyncio
 async def test_reapproval_rejects_missing_server(approval_db, approval_service):
     """Approval cannot create a server through an unknown identifier."""
     with pytest.raises(ServerNotFoundError):
-        await approval_service.approve_oauth_config(approval_db, "missing", 1)
+        await approval_service.approve_oauth_config(approval_db, "missing", 1, user_id="reviewer@example.com")
 
 
 @pytest.mark.asyncio
@@ -135,9 +149,10 @@ async def test_reapproval_requires_usable_enabled_configuration(approval_db, app
     approval_db.add(server)
     approval_db.commit()
     with pytest.raises(ServerError):
-        await approval_service.approve_oauth_config(approval_db, server.id, 1)
+        await approval_service.approve_oauth_config(approval_db, server.id, 1, user_id="reviewer@example.com")
     assert server.oauth_config_approved is False
     assert server.oauth_config_generation is None
+    approval_service._audit_trail.log_action.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -150,11 +165,128 @@ async def test_reapproval_rolls_back_when_concurrent_update_wins(approval_db, ap
     proxy = MagicMock(wraps=approval_db)
     proxy.execute.return_value = SimpleNamespace(rowcount=0)
     with pytest.raises(ServerLockConflictError):
-        await approval_service.approve_oauth_config(proxy, server.id, 1)
+        await approval_service.approve_oauth_config(proxy, server.id, 1, user_id="reviewer@example.com")
     proxy.rollback.assert_called_once()
     proxy.commit.assert_not_called()
     approval_db.refresh(server)
     assert server.oauth_config_approved is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [False, True])
+@pytest.mark.parametrize("secret_value", ["same-secret", "masked"])
+async def test_unchanged_oauth_save_preserves_trust(approval_db, approval_service, approved, secret_value):
+    """Unchanged settings preserve pending approval and active session generations, including masked secrets."""
+    from mcpgateway.config import settings
+
+    config = {**CONFIG, "resource": "learned", "client_secret": "same-secret"}  # pragma: allowlist secret
+    created = await approval_service.register_server(approval_db, ServerCreate(name="unchanged", oauth_enabled=True, oauth_config=config), oauth_authorized=True)
+    server = approval_db.get(Server, created.id)
+    server.oauth_config_approved = approved
+    approval_db.commit()
+    generation = server.oauth_config_generation
+    encrypted_config = dict(server.oauth_config)
+    context = {"auth_method": "oauth_access_token", "oauth_server_id": server.id, "oauth_config_generation": generation}
+    submitted = {**config, "client_secret": settings.masked_auth_value if secret_value == "masked" else secret_value}
+    await approval_service.update_server(approval_db, server.id, ServerUpdate(description="metadata", oauth_enabled=True, oauth_config=submitted), user_email="", oauth_authorized=True)
+    assert server.oauth_config_approved is approved
+    assert server.oauth_config_generation == generation
+    assert server.oauth_config == encrypted_config
+    assert server_oauth_context_is_current(approval_db, context, server.id) is approved
+    audit = approval_service._audit_trail.log_action.call_args.kwargs
+    assert audit["details"]["oauth_changed"] is False
+    assert "same-secret" not in str(audit)
+    assert "db" not in audit
+
+
+@pytest.mark.asyncio
+async def test_request_validation_cache_tracks_identity_and_scope(approval_db, monkeypatch):
+    """Approval queries repeat only for a new request, identity, scope, generation, or forced validation."""
+    server = Server(name="trusted", oauth_enabled=True, oauth_config=CONFIG, oauth_config_approved=True, oauth_config_generation="current")
+    approval_db.add(server)
+    approval_db.commit()
+    proxy = MagicMock(wraps=approval_db)
+
+    @asynccontextmanager
+    async def get_db():
+        yield proxy
+
+    monkeypatch.setattr(transport, "get_db", get_db)
+    context = {"user_id": "one", "is_authenticated": True, "auth_method": "oauth_access_token", "oauth_server_id": server.id, "oauth_config_generation": "current"}
+    monkeypatch.setattr(transport, "_resolve_request_context", AsyncMock(return_value=(server.id, {}, context)))
+    request_token = transport._oauth_validation_request_var.set(object())
+    cache_token = transport._oauth_validated_context_var.set(None)
+    checked_token = transport._oauth_checked_var.set(True)
+    try:
+        await transport._check_server_oauth_enforcement(server.id, context)
+        await transport._check_server_oauth_enforcement(server.id, context)
+        await transport._get_request_context_or_default()
+        await transport._get_request_context_or_default()
+        assert proxy.execute.call_count == 1
+        await transport._validate_server_oauth_context(server.id, context, fresh=True)
+        assert proxy.execute.call_count == 2
+        await transport._validate_server_oauth_context(server.id, {**context, "user_id": "two"})
+        assert proxy.execute.call_count == 3
+        transport._oauth_validation_request_var.set(object())
+        await transport._validate_server_oauth_context(server.id, context)
+        assert proxy.execute.call_count == 4
+        with pytest.raises(HTTPException):
+            await transport._validate_server_oauth_context("other-server", context)
+        with pytest.raises(HTTPException):
+            await transport._validate_server_oauth_context(server.id, {**context, "oauth_config_generation": "old"})
+        server.oauth_config_approved = False
+        approval_db.commit()
+        transport._oauth_validation_request_var.set(object())
+        with pytest.raises(HTTPException):
+            await transport._validate_server_oauth_context(server.id, context)
+    finally:
+        transport._oauth_validation_request_var.reset(request_token)
+        transport._oauth_validated_context_var.reset(cache_token)
+        transport._oauth_checked_var.reset(checked_token)
+
+
+@pytest.mark.asyncio
+async def test_sdk_scope_validation_does_not_reuse_inherited_request_cache(approval_db, monkeypatch):
+    """SDK requests override inherited task context and require validation for each new scope."""
+    server = Server(name="sdk", oauth_enabled=True, oauth_config=CONFIG, oauth_config_approved=True, oauth_config_generation="current")
+    approval_db.add(server)
+    approval_db.commit()
+    proxy = MagicMock(wraps=approval_db)
+
+    @asynccontextmanager
+    async def get_db():
+        yield proxy
+
+    monkeypatch.setattr(transport, "get_db", get_db)
+    scope = {"mcpgateway.oauth_validation_request": object()}
+    monkeypatch.setattr(transport, "mcp_app", SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(scope=scope))))
+    context = {"auth_method": "oauth_access_token", "oauth_server_id": server.id, "oauth_config_generation": "current"}
+    token = transport._oauth_validated_context_var.set(None)
+    try:
+        await transport._validate_server_oauth_context(server.id, context)
+        await transport._validate_server_oauth_context(server.id, context)
+        assert proxy.execute.call_count == 1
+        scope["mcpgateway.oauth_validation_request"] = object()
+        await transport._validate_server_oauth_context(server.id, context)
+        assert proxy.execute.call_count == 2
+        scope.clear()
+        await transport._validate_server_oauth_context(server.id, context)
+        await transport._validate_server_oauth_context(server.id, context)
+        assert proxy.execute.call_count == 4
+        transport.mcp_app.request_context.request = None
+        await transport._validate_server_oauth_context(server.id, context)
+        await transport._validate_server_oauth_context(server.id, context)
+        assert proxy.execute.call_count == 6
+    finally:
+        transport._oauth_validated_context_var.reset(token)
+
+
+def test_invalid_issuer_warning_omits_url_secrets(caplog):
+    """Rejected issuer warnings cannot expose credentials, query tokens, or injected log lines."""
+    rejected = "ftp://user:password@example.com/path?token=sensitive\nspoofed"  # pragma: allowlist secret
+    assert resolve_server_oauth_issuers({"authorization_servers": [rejected]}) == []
+    assert "Ignoring invalid OAuth authorization server" in caplog.text
+    assert all(value not in caplog.text for value in ("password", "sensitive", "spoofed"))
 
 
 def test_pending_configuration_suppresses_protected_resource_metadata(approval_db, approval_service):
@@ -189,7 +321,7 @@ async def test_config_replacement_and_disable_invalidate_sessions(approval_db, a
     server = approval_db.get(Server, created.id)
     context = {"auth_method": "oauth_access_token", "oauth_server_id": server.id, "oauth_config_generation": server.oauth_config_generation}
     assert server_oauth_context_is_current(approval_db, context, server.id)
-    await approval_service.update_server(approval_db, server.id, ServerUpdate(oauth_config=dict(CONFIG)), user_email="", oauth_authorized=True)
+    await approval_service.update_server(approval_db, server.id, ServerUpdate(oauth_config={**CONFIG, "audience": "replacement"}), user_email="", oauth_authorized=True)
     assert server.oauth_config_approved is True
     assert not server_oauth_context_is_current(approval_db, context, server.id)
     await approval_service.update_server(approval_db, server.id, ServerUpdate(oauth_enabled=False), user_email="", oauth_authorized=True)
@@ -404,7 +536,7 @@ async def test_audience_learning_invalidates_stale_review(approval_db, approval_
     approval_db.refresh(server)
     assert server.version == 2
     with pytest.raises(ServerLockConflictError):
-        await approval_service.approve_oauth_config(approval_db, server.id, 1)
+        await approval_service.approve_oauth_config(approval_db, server.id, 1, user_id="reviewer@example.com")
 
 
 def test_approval_migration_round_trip():

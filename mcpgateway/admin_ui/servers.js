@@ -855,6 +855,7 @@ export const editServer = async function (serverId) {
     const oauthTokenEndpointField = safeGetElement(
       "edit-server-oauth-token-endpoint"
     );
+    const oauthAudienceField = safeGetElement("edit-server-oauth-audience");
 
     if (oauthEnabledCheckbox) {
       oauthEnabledCheckbox.checked = server.oauthEnabled || false;
@@ -898,11 +899,15 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+      if (oauthAudienceField) {
+        oauthAudienceField.value = server.oauthConfig.audience || "";
+      }
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";
       if (oauthScopesField) oauthScopesField.value = "";
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+      if (oauthAudienceField) oauthAudienceField.value = "";
     }
 
     // Store server data for modal population

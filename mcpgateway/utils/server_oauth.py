@@ -8,6 +8,7 @@ Validate virtual-server OAuth trust and approval generations.
 
 # Standard
 import ipaddress
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -18,6 +19,13 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Server
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_rejected_issuer() -> None:
+    """Report invalid issuer configuration without exposing URL secrets."""
+    logger.warning("Ignoring invalid OAuth authorization server: URL scheme, host, or port is not permitted")
 
 
 def resolve_server_oauth_issuers(config: dict[str, Any]) -> list[str]:
@@ -43,8 +51,10 @@ def resolve_server_oauth_issuers(config: dict[str, Any]) -> list[str]:
             hostname = parts.hostname
             _ = parts.port
         except ValueError:
+            _warn_rejected_issuer()
             continue
         if not parts.netloc or not hostname:
+            _warn_rejected_issuer()
             continue
         if parts.scheme.lower() == "https":
             result.append(value)
@@ -56,6 +66,10 @@ def resolve_server_oauth_issuers(config: dict[str, Any]) -> list[str]:
                 local = hostname in {"localhost", "localhost.localdomain"}
             if local:
                 result.append(value)
+            else:
+                _warn_rejected_issuer()
+        else:
+            _warn_rejected_issuer()
     return result
 
 

@@ -534,6 +534,8 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
 
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
+_oauth_validation_request_var: contextvars.ContextVar[Optional[object]] = contextvars.ContextVar("oauth_validation_request", default=None)
+_oauth_validated_context_var: contextvars.ContextVar[Optional[tuple[Any, ...]]] = contextvars.ContextVar("oauth_validated_context", default=None)
 # Server scope of the request being served, as resolved by _get_request_context_or_default();
 # the modern-path list/discover adapters read it to size ttlMs. None when unscoped.
 _request_server_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_server_id", default=None)
@@ -1182,18 +1184,29 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
         logger.warning("Failed to persist learned audience for server %s", server_id, exc_info=True)
 
 
-async def _validate_server_oauth_context(server_id: str | None, context: Optional[dict[str, Any]]) -> None:
+async def _validate_server_oauth_context(server_id: str | None, context: Optional[dict[str, Any]], *, fresh: bool = False) -> None:
     """Reject stale OAuth identities before cached authentication or session dispatch.
 
     Args:
         server_id: Current request server identifier.
         context: Trusted identity recovered from request or session state.
+        fresh: Whether to bypass request-local validation after token verification.
 
     Raises:
         HTTPException: If approval expires or its database lookup fails.
     """
     if not isinstance(context, dict) or context.get("auth_method") != "oauth_access_token":
         return
+    request = _oauth_validation_request_var.get()
+    try:
+        sdk_request = mcp_app.request_context.request
+        request = sdk_request.scope.get("mcpgateway.oauth_validation_request") if sdk_request is not None else None
+    except (LookupError, AttributeError):
+        pass
+    key = (request, context.get("user_id"), context.get("email"), context.get("oauth_server_id"), server_id, context.get("oauth_config_generation"))
+    if not fresh and request is not None and _oauth_validated_context_var.get() == key:
+        return
+    _oauth_validated_context_var.set(None)
     try:
         async with get_db() as db:
             current = server_oauth_context_is_current(db, context, server_id)
@@ -1201,6 +1214,8 @@ async def _validate_server_oauth_context(server_id: str | None, context: Optiona
         raise HTTPException(status_code=503, detail="Unable to verify OAuth approval") from exc
     if not current:
         raise HTTPException(status_code=401, detail="OAuth configuration requires administrator approval or session reauthentication")
+    if request is not None:
+        _oauth_validated_context_var.set(key)
 
 
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
@@ -6501,6 +6516,10 @@ class _StreamableHttpAuthHandler:
         # Reset per-request OAuth enforcement cache so keep-alive connections
         # re-evaluate on every request instead of inheriting a stale True.
         _oauth_checked_var.set(False)
+        request_marker = object()
+        self.scope["mcpgateway.oauth_validation_request"] = request_marker
+        _oauth_validation_request_var.set(request_marker)
+        _oauth_validated_context_var.set(None)
 
         headers = Headers(scope=self.scope)
 
@@ -7139,7 +7158,7 @@ class _StreamableHttpAuthHandler:
             }
         )
         try:
-            await _validate_server_oauth_context(server_id, user_context_var.get())
+            await _validate_server_oauth_context(server_id, user_context_var.get(), fresh=True)
         except HTTPException as exc:
             user_context_var.set({})
             await self._send_error(detail=exc.detail, status_code=exc.status_code)

@@ -1232,12 +1232,15 @@ def test_server_oauth_create_rejects_explicit_fields(test_client, auth_headers, 
         {"oauth_config": {"authorization_servers": ["https://issuer.example.com"]}},
     ],
 )
-def test_server_oauth_update_rejects_explicit_fields(test_client, auth_headers, monkeypatch, fields):
+def test_server_oauth_update_rejects_explicit_fields(test_client, auth_headers, monkeypatch, caplog, fields):
     """Unauthorized callers cannot submit OAuth update fields, including explicit defaults."""
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
     with patch("mcpgateway.main.server_service.update_server", new_callable=AsyncMock) as update:
         response = test_client.put("/servers/server-id", json=fields, headers=auth_headers)
     assert response.status_code == 403
+    event = next(record for record in caplog.records if getattr(record, "event_type", None) == "server_oauth_authorization_denied")
+    assert event.security_event is True
+    assert event.oauth_fields == sorted(fields)
     update.assert_not_awaited()
 
 
@@ -1250,6 +1253,7 @@ def test_server_oauth_approval_requires_unrestricted_admin(test_client, auth_hea
     assert response.status_code == (200 if authorized else 403)
     if authorized:
         approve.assert_awaited_once()
+        assert approve.call_args.kwargs["user_id"]
     else:
         approve.assert_not_awaited()
 

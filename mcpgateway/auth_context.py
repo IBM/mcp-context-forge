@@ -938,6 +938,10 @@ async def require_server_oauth_admin(request: Request, user: Any, db: Session, f
     if not protected.intersection(fields):
         return False
     if not await is_unrestricted_platform_admin(request, user, db):
+        logger.warning(
+            "Virtual-server OAuth configuration denied",
+            extra={"security_event": True, "event_type": "server_oauth_authorization_denied", "user_id": get_user_id(user), "oauth_fields": sorted(protected.intersection(fields))},
+        )
         raise HTTPException(status_code=403, detail="Virtual-server OAuth settings require unrestricted platform-admin authority")
     return True
 
