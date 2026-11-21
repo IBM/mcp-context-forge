@@ -1895,6 +1895,32 @@ class TestAdminToolRoutes:
         assert tool_update.headers == {}
         assert tool_update.input_schema == {"type": "object", "properties": {}}
 
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_empty_url_leaves_url_unchanged(self, mock_update_tool, mock_request, mock_db):
+        """An empty url field (a gateway-delegated tool has no url) reaches update_tool as no change."""
+        mock_request.form = AsyncMock(
+            return_value=FakeForm(
+                {
+                    "name": "Delegated_Tool",
+                    "customName": "Delegated_Tool",
+                    "url": "",
+                    "description": "",
+                    "headers": "",
+                    "input_schema": "",
+                    "jsonpathFilter": "",
+                    "auth_type": "",
+                    "requestType": "GET",
+                    "integrationType": "REST",
+                }
+            )
+        )
+
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+
+        assert result.status_code == 200
+        tool_update = mock_update_tool.call_args[0][2]
+        assert tool_update.url is None
+
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_passes_team_and_owner(self, mock_register_tool, mock_request, mock_db, monkeypatch):
         """admin_add_tool hands the verified team and the caller email to register_tool."""

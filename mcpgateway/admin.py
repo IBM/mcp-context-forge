@@ -12897,7 +12897,7 @@ async def admin_edit_tool(
         "name": form.get("name"),
         "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
-        "url": form.get("url"),
+        "url": form.get("url") or None,
         "description": form.get("description"),
         "headers": headers,
         "input_schema": input_schema,
