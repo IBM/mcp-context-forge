@@ -210,7 +210,8 @@ def resource_namespacing_upstreams():
     container deployments need a gateway-reachable host address or host-gateway
     mapping. No database writes or gateway internals are used by this fixture.
     """
-    host = os.getenv("MCP_NAMESPACING_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_NAMESPACING_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     identifier = uuid.uuid4().hex[:12]
     uri = f"test://namespacing/{identifier}"
     long_name = "a-" * 127 + "a"
@@ -233,9 +234,9 @@ def resource_namespacing_upstreams():
             app.resource(uri, name="Shared Report")(make_reader(content))
             app.resource(f"{uri}/long", name=long_name)(make_reader(content))
             listener = socket.socket()
-            listener.bind(("0.0.0.0", 0))
+            listener.bind((bind_host, 0))
             port = listener.getsockname()[1]
-            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
             thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
             running.append((server, thread, listener))
             thread.start()
@@ -368,7 +369,8 @@ def tool_error_upstream() -> Generator[str, None, None]:
     ``boom`` fails during execution. The gateway must reach this process: set
     MCP_TOOL_ERROR_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
     """
-    host = os.getenv("MCP_TOOL_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_TOOL_ERROR_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     app = MCPServer("tool-error")
 
     @app.tool()
@@ -382,9 +384,9 @@ def tool_error_upstream() -> Generator[str, None, None]:
         raise RuntimeError("upstream exploded")
 
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
     try:
@@ -403,7 +405,8 @@ def tool_error_upstream() -> Generator[str, None, None]:
 def repeating_pagination_upstream(request):
     """Serve overlapping MCP pages with a repeated outgoing cursor."""
     kind = request.param
-    host = os.getenv("MCP_NAMESPACING_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_NAMESPACING_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
 
     async def list_tools(context, params):
         """Return overlapping tool pages."""
@@ -422,11 +425,11 @@ def repeating_pagination_upstream(request):
         options["on_list_prompts"] = list_prompts
     app = Server("repeating-pagination", **options)
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(
         uvicorn.Config(
-            app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True),
+            app.streamable_http_app(host=bind_host, stateless_http=True, json_response=True),
             log_level="error",
         )
     )
@@ -492,7 +495,8 @@ def progress_upstream() -> Generator[str, None, None]:
     Progress needs the SSE response, so this upstream runs with ``json_response=False``. The gateway
     must reach this process: set MCP_PROGRESS_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
     """
-    host = os.getenv("MCP_PROGRESS_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_PROGRESS_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
 
     class ProgressServer(MCPServer):
         """Report resource progress here: the SDK gives a static resource handler no ``Context``."""
@@ -533,9 +537,9 @@ def progress_upstream() -> Generator[str, None, None]:
         return "slow"
 
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=False), log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host=bind_host, stateless_http=True, json_response=False), log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
     try:
@@ -557,7 +561,8 @@ def prompt_error_upstream() -> Generator[str, None, None]:
     The gateway must reach this process: set MCP_PROMPT_ERROR_UPSTREAM_HOST=127.0.0.1
     for a gateway running on the host.
     """
-    host = os.getenv("MCP_PROMPT_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_PROMPT_ERROR_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     app = MCPServer("prompt-error")
 
     @app.prompt()
@@ -571,9 +576,9 @@ def prompt_error_upstream() -> Generator[str, None, None]:
         raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later"})
 
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
     try:
@@ -594,7 +599,8 @@ def array_upstream() -> Generator[str, None, None]:
 
     The gateway must reach this process: set MCP_STRUCTURED_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
     """
-    host = os.getenv("MCP_STRUCTURED_UPSTREAM_HOST", "host.docker.internal")
+    host = gateway_upstream_host("MCP_STRUCTURED_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
 
     async def numbers(_request: Request) -> JSONResponse:
         """Answer a JSON array."""
@@ -602,7 +608,7 @@ def array_upstream() -> Generator[str, None, None]:
 
     app = Starlette(routes=[Route("/numbers", numbers)])
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)

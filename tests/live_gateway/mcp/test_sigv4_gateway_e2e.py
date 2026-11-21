@@ -69,6 +69,7 @@ from mcpgateway.utils.sigv4 import build_sigv4_signer, SigV4HttpxAuth
 
 # Local
 from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway
+from ..helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 from tests.helpers.auth import make_test_jwt
 
 logger = logging.getLogger(__name__)
@@ -76,8 +77,7 @@ logger = logging.getLogger(__name__)
 pytestmark = [pytest.mark.e2e]
 
 _SYNC_DEADLINE = float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30.0"))
-_UPSTREAM_HOST = os.getenv("MCP_SIGV4_UPSTREAM_HOST", "host.docker.internal")
-_BIND_HOST = os.getenv("MCP_SIGV4_STUB_BIND_HOST", "0.0.0.0")  # noqa: S104 - the compose gateway dials the host through host.docker.internal
+_UPSTREAM_HOST = gateway_upstream_host("MCP_SIGV4_UPSTREAM_HOST")
 _ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"  # pragma: allowlist secret
 _SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret - stub upstream fixture, not a real credential
 _WRONG_SECRET_ACCESS_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # pragma: allowlist secret - deliberately wrong fixture value
@@ -187,7 +187,8 @@ def _free_port() -> int:
 
 def _serve_uvicorn(app: Any, port: int, tag: str) -> tuple[uvicorn.Server, threading.Thread]:
     """Start ``app`` on ``port`` in a daemon thread and wait until ready."""
-    config = uvicorn.Config(app, host=_BIND_HOST, port=port, log_level="error")
+    bind_host = os.getenv("MCP_SIGV4_STUB_BIND_HOST") or upstream_bind_host(_UPSTREAM_HOST)
+    config = uvicorn.Config(app, host=bind_host, port=port, log_level="error")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True, name=f"stub-{tag}")
     thread.start()
