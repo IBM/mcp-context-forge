@@ -23,6 +23,7 @@ import warnings
 DEFAULT_UPSTREAM_HOST = "host.docker.internal"
 SHARED_UPSTREAM_HOST_ENV = "MCP_UPSTREAM_HOST"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+_warned_hosts: set[str] = set()
 
 
 def gateway_upstream_host(env_var: str) -> str:
@@ -42,7 +43,8 @@ def upstream_bind_host(gateway_host: str, *, stacklevel: int = 2) -> str:
 
     A container reaches the host only through a non-loopback interface, so any
     non-loopback ``gateway_host`` binds all interfaces and warns, because the
-    fixture servers have no authentication.
+    fixture servers have no authentication. The warning fires once per process
+    for each ``gateway_host``.
 
     Args:
         gateway_host: Host name from ``gateway_upstream_host()``.
@@ -53,9 +55,11 @@ def upstream_bind_host(gateway_host: str, *, stacklevel: int = 2) -> str:
     """
     if gateway_host in _LOOPBACK_HOSTS:
         return "127.0.0.1"
-    warnings.warn(
-        f"An unauthenticated test upstream is binding all interfaces for gateway host {gateway_host!r}. Run it only in an isolated test environment.",
-        RuntimeWarning,
-        stacklevel=stacklevel + 1,
-    )
+    if gateway_host not in _warned_hosts:
+        _warned_hosts.add(gateway_host)
+        warnings.warn(
+            f"An unauthenticated test upstream is binding all interfaces for gateway host {gateway_host!r}. Run it only in an isolated test environment.",
+            RuntimeWarning,
+            stacklevel=stacklevel + 1,
+        )
     return "0.0.0.0"  # noqa: S104  # nosec B104 - a containerized gateway reaches the host only through a non-loopback interface

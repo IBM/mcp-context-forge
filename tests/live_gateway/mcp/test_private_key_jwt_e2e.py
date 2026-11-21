@@ -16,8 +16,10 @@ The test drives the full runtime path end to end:
 3. A gateway row is registered through the live ``POST /gateways`` API. Its
    ``oauth_config`` uses ``token_endpoint_auth_method=private_key_jwt`` and a
    runtime-generated RSA key pair. The ``token_url`` and gateway ``url`` point
-   at ``host.docker.internal`` ports, which the compose gateway reaches
-   (compose maps ``host.docker.internal`` to the host under ``extra_hosts``).
+   at ``host.docker.internal`` ports by default, which the compose gateway
+   reaches (compose maps it to the host under ``extra_hosts``). Set
+   ``MCP_PRIVATE_KEY_JWT_UPSTREAM_HOST`` or ``MCP_UPSTREAM_HOST`` when the
+   gateway reaches the host under another name.
 4. The test calls the gateway's tool through the hub MCP endpoint
    (``{BASE_URL}/mcp/``). ``tool_service`` fetches a client_credentials token
    first, so the gateway signs a client assertion with the private key and
@@ -75,12 +77,14 @@ import uvicorn
 
 # Local
 from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway
+from ..helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 from tests.helpers.auth import make_test_jwt
 
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
+_UPSTREAM_HOST = gateway_upstream_host("MCP_PRIVATE_KEY_JWT_UPSTREAM_HOST")
 _SYNC_DEADLINE = float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30.0"))
 _STUB_CLIENT_ID = "private-key-jwt-e2e-client"
 _STUB_ACCESS_TOKEN = "e2e-stub-access-token-value"  # pragma: allowlist secret - stub AS fixture, not a real credential
@@ -108,8 +112,8 @@ def _free_port() -> int:
 
 
 def _serve_uvicorn(app: Any, port: int, tag: str) -> tuple[uvicorn.Server, threading.Thread]:
-    """Start ``app`` on ``0.0.0.0:port`` in a daemon thread and wait until ready."""
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
+    """Start ``app`` on ``port`` in a daemon thread and wait until ready."""
+    config = uvicorn.Config(app, host=upstream_bind_host(_UPSTREAM_HOST), port=port, log_level="error")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True, name=f"stub-{tag}")
     thread.start()
@@ -319,14 +323,14 @@ def stub_stack(rsa_keypair: dict[str, str]) -> Generator[dict[str, Any], None, N
     token_port = _free_port()
     mcp_port = _free_port()
     # The gateway sets aud to the configured token_url, so the stub must expect
-    # that exact string, including the host.docker.internal hostname it dials.
-    expected_audience = f"http://host.docker.internal:{token_port}/token"
+    # that exact string, including the hostname it dials.
+    expected_audience = f"http://{_UPSTREAM_HOST}:{token_port}/token"
     token_server, token_thread = _serve_uvicorn(_make_token_endpoint_app(token_store, rsa_keypair["public"], expected_audience), token_port, "as")
     mcp_server, mcp_thread = _serve_uvicorn(_make_upstream_mcp_app(mcp_store), mcp_port, "upstream")
     try:
         yield {
             "token_url": expected_audience,
-            "mcp_url": f"http://host.docker.internal:{mcp_port}/mcp",
+            "mcp_url": f"http://{_UPSTREAM_HOST}:{mcp_port}/mcp",
             "public_pem": rsa_keypair["public"],
             "token_store": token_store,
             "mcp_store": mcp_store,
@@ -665,9 +669,7 @@ class TestStubAuthorizationServerRejections:
         Returns:
             httpx.Response: The stub's response.
         """
-        # The stub binds 0.0.0.0 on the test host; reach it over loopback rather
-        # than the host.docker.internal name the compose gateway uses.
-        local_url = token_url.replace("host.docker.internal", "127.0.0.1")
+        local_url = token_url.replace(_UPSTREAM_HOST, "127.0.0.1")
         with httpx.Client(timeout=15.0) as client:
             return client.post(
                 local_url,

@@ -18,9 +18,16 @@ import warnings
 import pytest
 
 # First-Party
+from tests.live_gateway.helpers import upstream_host
 from tests.live_gateway.helpers.upstream_host import DEFAULT_UPSTREAM_HOST, gateway_upstream_host, SHARED_UPSTREAM_HOST_ENV, upstream_bind_host
 
 FIXTURE_ENV = "MCP_EXAMPLE_UPSTREAM_HOST"
+
+
+@pytest.fixture(autouse=True)
+def _forget_warned_hosts(monkeypatch):
+    """Start each test with no host already warned about."""
+    monkeypatch.setattr(upstream_host, "_warned_hosts", set())
 
 
 def test_default_host_is_reachable_from_compose_gateway(monkeypatch):
@@ -64,3 +71,14 @@ def test_containerized_gateway_binds_all_interfaces_with_warning(host):
     """A container reaches the host only through a non-loopback interface."""
     with pytest.warns(RuntimeWarning, match="binding all interfaces"):
         assert upstream_bind_host(host) == "0.0.0.0"
+
+
+def test_all_interfaces_warning_fires_once_per_host():
+    """Repeated fixtures for one gateway host report the exposure once."""
+    with pytest.warns(RuntimeWarning, match="binding all interfaces"):
+        upstream_bind_host("host.docker.internal")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert upstream_bind_host("host.docker.internal") == "0.0.0.0"
+    with pytest.warns(RuntimeWarning, match="host.lima.internal"):
+        upstream_bind_host("host.lima.internal")

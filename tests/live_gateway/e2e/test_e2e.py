@@ -5074,7 +5074,8 @@ class TestGatewayLifecycle:
     """Register an MCP gateway, wait for tool sync, then delete it."""
 
     @pytest.fixture(scope="class", autouse=True)
-    def _displace_url_for_lifecycle_class(self, admin_api: APIRequestContext) -> Generator[None, None, None]:
+    @classmethod
+    def _displace_url_for_lifecycle_class(cls, admin_api: APIRequestContext) -> Generator[None, None, None]:
         """Displace gateways at the fast_time URL once for the whole class.
 
         Removes any existing public gateway at ``_GATEWAY_UPSTREAM_URL``
@@ -5498,7 +5499,6 @@ async def test_downstream_catalog_pagination(jwt_token: str, method: str, result
                 assert response.status_code in (200, 204, 404), response.text
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("method,result_key", [("tools/list", "tools"), ("resources/list", "resources")])
 @_runs_in_worker_thread
 async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, result_key: str) -> None:

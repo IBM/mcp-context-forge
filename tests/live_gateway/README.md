@@ -73,6 +73,7 @@ export MCP_TEMPLATE_GATEWAY_COMMIT="commit-used-to-build-the-gateway"
 # Container access binds the unauthenticated fixture to 0.0.0.0 and prints a warning.
 # Set 127.0.0.1 for a gateway that runs on the host, or host.lima.internal for Colima.
 # MCP_UPSTREAM_HOST sets the same default for every fixture that hosts an upstream.
+# The bind-all-interfaces warning fires once per test process.
 # export MCP_TEMPLATE_UPSTREAM_HOST=127.0.0.1
 make test-e2e K=resource_template
 ```
