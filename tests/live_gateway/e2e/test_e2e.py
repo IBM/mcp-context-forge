@@ -95,6 +95,7 @@ from ..helpers.mcp_test_helpers import (
     TEST_PASSWORD,
     TOKEN_EXPIRY,
 )
+from ..helpers.gateway_features import gateway_accepts_modern_inbound, gateway_advertises_mcp_apps
 from ..helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_playwright_api_context, make_test_jwt
@@ -134,14 +135,12 @@ def mcp_url() -> str:
 # fails fast (~5s) instead of hanging on MCP SDK defaults. Override via
 # MCP_E2E_CLIENT_TIMEOUT for slow CI.
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
-_MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 skip_no_mcp_apps = pytest.mark.skipif(
-    not _MCP_APPS_E2E_ENABLED,
+    not gateway_advertises_mcp_apps(),
     reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
 )
-_MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
 skip_no_modern_inbound = pytest.mark.skipif(
-    not _MODERN_INBOUND_E2E_ENABLED,
+    not gateway_accepts_modern_inbound(),
     reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto",
 )
 
