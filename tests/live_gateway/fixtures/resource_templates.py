@@ -15,17 +15,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
-import os
 import socket
 import threading
 import time
 import uuid
-import warnings
 
 # Third-Party
 from mcp.server.mcpserver import MCPServer
 from mcp.types import Resource, ResourceTemplate
 import uvicorn
+
+# First-Party
+from tests.live_gateway.helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 
 
 @dataclass
@@ -128,14 +129,8 @@ def template_upstreams(variant: str = "standard") -> Iterator[list[TemplatePeer]
     Yields:
         Two peers with distinct URI patterns and the same original template name.
     """
-    host = os.getenv("MCP_TEMPLATE_UPSTREAM_HOST", "127.0.0.1")
-    bind_host = "127.0.0.1" if host in {"127.0.0.1", "localhost"} else "0.0.0.0"
-    if bind_host == "0.0.0.0":
-        warnings.warn(
-            f"The unauthenticated resource-template fixture is binding all interfaces for gateway host {host!r}. Run it only in an isolated test environment.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    host = gateway_upstream_host("MCP_TEMPLATE_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     run_id = uuid.uuid4().hex[:12]
     peers = []
     running = []

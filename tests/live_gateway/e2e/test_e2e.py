@@ -95,6 +95,7 @@ from ..helpers.mcp_test_helpers import (
     TEST_PASSWORD,
     TOKEN_EXPIRY,
 )
+from ..helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
@@ -2353,7 +2354,7 @@ async def _assert_template_read(session: ClientSession, peer: TemplatePeer, othe
     result = await session.read_resource(uri)
     assert len(result.contents) == 1, result
     assert result.contents[0].text == peer.content(item_id), result
-    assert str(result.contents[0].uri) in (uri, peer.template), result
+    assert str(result.contents[0].uri) == uri, result
     assert peer.reads[previous:] == [uri], peer.reads
     assert len(other.reads) == other_previous, other.reads
     print(json.dumps({"method": "resources/read", "uri": uri, "result": result.model_dump(mode="json"), "upstream": peer.label}))
@@ -2577,7 +2578,7 @@ async def test_resource_template_edge_probe(admin_token: str, variant: str, reco
                         content = result.contents[0]
                         actual = content.text if hasattr(content, "text") else base64.b64decode(content.blob).decode()
                         assert actual == peer.content("edge-probe"), result
-                        assert str(content.uri) in (uri, peer.template), result
+                        assert str(content.uri) == uri, result
                         assert peer.reads[before:] == [uri], peer.reads
                         observation["result"] = result.model_dump(mode="json")
                     else:
@@ -5526,8 +5527,8 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
 
     upstream._lowlevel_server.add_request_handler(method, mcp_types.PaginatedRequestParams, catalog_page)
     listener = socket.socket()
-    host = os.getenv("MCP_TEMPLATE_UPSTREAM_HOST", "127.0.0.1")
-    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    host = gateway_upstream_host("MCP_TEMPLATE_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     worker = uvicorn.Server(uvicorn.Config(upstream.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
