@@ -30,7 +30,7 @@ import ssl
 import time
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
 import uuid
 
 # Third-Party
@@ -1029,6 +1029,108 @@ def _substitute_url_template(tool_url: str, payload: dict[str, Any]) -> str:
     return final_url
 
 
+_INHERITABLE_GATEWAY_AUTH_TYPES = frozenset({"basic", "bearer", "authheaders", "oauth"})
+_INHERITABLE_OAUTH_GRANT_TYPES = frozenset({"client_credentials", "password"})
+
+
+def gateway_supports_credential_inheritance(auth_type: Optional[str], oauth_config: Optional[dict]) -> bool:
+    """Tell whether a REST tool can inherit the credential of a gateway.
+
+    A tool inherits a static header credential or an OAuth token that the gateway fetches
+    without a user. Query-parameter, SigV4, token-exchange and authorization-code
+    credentials are not inheritable.
+
+    Args:
+        auth_type: Authentication type of the gateway.
+        oauth_config: OAuth configuration of the gateway.
+
+    Returns:
+        True when the gateway credential can serve a REST tool.
+
+    Examples:
+        >>> gateway_supports_credential_inheritance("bearer", None)
+        True
+        >>> gateway_supports_credential_inheritance("oauth", {"grant_type": "client_credentials"})
+        True
+        >>> gateway_supports_credential_inheritance("oauth", {})
+        True
+        >>> gateway_supports_credential_inheritance("oauth", {"grant_type": "authorization_code"})
+        False
+        >>> gateway_supports_credential_inheritance("sigv4", None)
+        False
+        >>> gateway_supports_credential_inheritance(None, None)
+        False
+    """
+    if auth_type not in _INHERITABLE_GATEWAY_AUTH_TYPES:
+        return False
+    if auth_type == "oauth":
+        grant_type = oauth_config.get("grant_type", "client_credentials") if isinstance(oauth_config, dict) else "client_credentials"
+        return grant_type in _INHERITABLE_OAUTH_GRANT_TYPES
+    return True
+
+
+def _resolve_gateway_endpoint(gateway_url: Optional[str], endpoint: str) -> str:
+    """Join a gateway-relative tool endpoint to the gateway URL.
+
+    The gateway path stays as a prefix. The endpoint query stays on the result.
+
+    Args:
+        gateway_url: URL of the gateway that owns the tool.
+        endpoint: Validated endpoint path, with an optional query.
+
+    Returns:
+        The absolute tool URL.
+
+    Raises:
+        ToolInvocationError: If the gateway URL is missing, relative, or holds a query or fragment.
+
+    Examples:
+        >>> _resolve_gateway_endpoint("https://api.example.com", "/v1/items/{id}")
+        'https://api.example.com/v1/items/{id}'
+        >>> _resolve_gateway_endpoint("https://api.example.com/base/", "/v1/items?expand=true")
+        'https://api.example.com/base/v1/items?expand=true'
+        >>> _resolve_gateway_endpoint("https://api.example.com/?k=v", "/v1")
+        Traceback (most recent call last):
+            ...
+        mcpgateway.services.tool_service.ToolInvocationError: The gateway URL must not hold a query or fragment when a tool uses an endpoint
+        >>> _resolve_gateway_endpoint(None, "/v1")
+        Traceback (most recent call last):
+            ...
+        mcpgateway.services.tool_service.ToolInvocationError: The gateway has no URL to resolve the tool endpoint against
+    """
+    if not gateway_url:
+        raise ToolInvocationError("The gateway has no URL to resolve the tool endpoint against")
+    base = urlsplit(gateway_url)
+    if not base.scheme or not base.netloc:
+        raise ToolInvocationError("The gateway URL is not absolute")
+    if base.query or base.fragment:
+        raise ToolInvocationError("The gateway URL must not hold a query or fragment when a tool uses an endpoint")
+    endpoint_path, _, endpoint_query = endpoint.partition("?")
+    return urlunsplit((base.scheme, base.netloc, base.path.rstrip("/") + endpoint_path, endpoint_query, ""))
+
+
+def _declared_endpoint(tool: Any) -> Optional[str]:
+    """Return the gateway-relative endpoint that a tool payload declares.
+
+    Args:
+        tool: Tool create or update payload.
+
+    Returns:
+        The endpoint when it is a string, otherwise None.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> _declared_endpoint(SimpleNamespace(endpoint="/v1/items"))
+        '/v1/items'
+        >>> _declared_endpoint(SimpleNamespace(endpoint=None)) is None
+        True
+        >>> _declared_endpoint(object()) is None
+        True
+    """
+    endpoint = getattr(tool, "endpoint", None)
+    return endpoint if isinstance(endpoint, str) else None
+
+
 def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) -> None:
     """Validate that header mapping target names are safe and well-formed.
 
@@ -1473,6 +1575,7 @@ class ToolService(BaseService):
             "name": tool.name,
             "original_name": tool.original_name,
             "url": tool.url,
+            "endpoint": getattr(tool, "endpoint", None),
             "description": tool.description,
             "original_description": tool.original_description,
             "integration_type": tool.integration_type,
@@ -1829,6 +1932,8 @@ class ToolService(BaseService):
         # Only decode auth if include_auth=True AND we have encrypted credentials
         if has_sigv4_auth:
             tool_dict["auth"] = {"auth_type": "sigv4"}
+        elif tool.auth_type == "inherit":
+            tool_dict["auth"] = {"auth_type": "inherit"}
         elif include_auth and has_encrypted_auth:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
@@ -2405,6 +2510,40 @@ class ToolService(BaseService):
         policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return policy if isinstance(policy, str) else None
 
+    @staticmethod
+    async def _load_accessible_gateway(
+        db: Session,
+        gateway_id: str,
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]],
+        missing_identity_message: str,
+        no_access_message: str,
+    ) -> DbGateway:
+        """Load a gateway the requester can see.
+
+        An unknown gateway and a hidden gateway raise the same error.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway to load.
+            requester_email: Identity that creates or changes the tool. Without one, the check fails closed.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
+            missing_identity_message: Error text when the requester is unknown.
+            no_access_message: Error text when the gateway is unknown or hidden.
+
+        Returns:
+            DbGateway: The gateway row.
+
+        Raises:
+            PermissionError: If the requester is unknown or cannot access the gateway.
+        """
+        if not requester_email:
+            raise PermissionError(missing_identity_message)
+        gateway = db.get(DbGateway, gateway_id)
+        if gateway is None or not await check_gateway_access(db, gateway, requester_email, token_teams):
+            raise PermissionError(no_access_message)
+        return gateway
+
     async def _require_inherited_gateway_access(
         self,
         db: Session,
@@ -2431,18 +2570,157 @@ class ToolService(BaseService):
         """
         if not gateway_id:
             return
-        if not requester_email:
-            raise PermissionError("A requester identity is required to use the SigV4 credential of a gateway")
-        gateway = db.get(DbGateway, gateway_id)
-        if gateway is None or not await check_gateway_access(db, gateway, requester_email, token_teams):
-            raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
+        gateway = await self._load_accessible_gateway(
+            db,
+            gateway_id,
+            requester_email,
+            token_teams,
+            "A requester identity is required to use the SigV4 credential of a gateway",
+            "No access to the gateway whose SigV4 credential the tool would use",
+        )
         if gateway.auth_type != "sigv4":
             raise ToolError("The gateway does not use SigV4 authentication")
+        await self._require_gateway_owner(db, gateway, requester_email, "Only the owner of the gateway can use its SigV4 credential")
+
+    @staticmethod
+    async def _require_gateway_owner(db: Session, gateway: DbGateway, requester_email: Optional[str], message: str) -> None:
+        """Require that the requester owns the gateway, holds its team owner role, or is a platform admin.
+
+        Args:
+            db: Database session.
+            gateway: Gateway row to check.
+            requester_email: Identity that creates or changes the tool.
+            message: Error text when the requester does not own the gateway.
+
+        Raises:
+            PermissionError: If the requester does not own the gateway.
+        """
         # First-Party
         from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
         if not await PermissionService(db).check_resource_ownership(requester_email, gateway):
-            raise PermissionError("Only the owner of the gateway can use its SigV4 credential")
+            raise PermissionError(message)
+
+    async def _require_inherited_gateway_credentials(
+        self,
+        db: Session,
+        gateway_id: Optional[str],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Reject a REST tool that would inherit the credential of a gateway the requester cannot use.
+
+        The tool sends the gateway credential to any URL the tool names. The requester must
+        own the gateway, hold the team owner role for it, or be a platform admin. The gateway
+        must use an authentication type that supports inheritance.
+        An unknown gateway and a hidden gateway return the same error.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway the tool belongs to.
+            requester_email: Identity that creates or changes the tool. Without one, the check fails closed.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
+
+        Raises:
+            ToolError: If the gateway has no credential that a tool can inherit.
+            PermissionError: If the requester is unknown, cannot access the gateway, or does not own it.
+        """
+        if not gateway_id:
+            raise ToolError("A tool must belong to a gateway to inherit its credential")
+        gateway = await self._load_accessible_gateway(
+            db,
+            gateway_id,
+            requester_email,
+            token_teams,
+            "A requester identity is required to use the credential of a gateway",
+            "No access to the gateway whose credential the tool would use",
+        )
+        if not gateway_supports_credential_inheritance(gateway.auth_type, gateway.oauth_config):
+            raise ToolError("The gateway does not use an authentication type that tools can inherit")
+        await self._require_gateway_owner(db, gateway, requester_email, "Only the owner of the gateway can use its credential")
+
+    async def _require_gateway_endpoint_access(
+        self,
+        db: Session,
+        gateway_id: Optional[str],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Reject a tool endpoint that resolves against a gateway the requester cannot see.
+
+        An endpoint sends no gateway credential unless the tool also inherits it, so
+        visibility of the gateway is enough. An unknown gateway and a hidden gateway return the same error.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway the endpoint resolves against.
+            requester_email: Identity that creates or changes the tool. Without one, the check fails closed.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
+
+        Raises:
+            ToolError: If the tool has no gateway.
+            PermissionError: If the requester is unknown or cannot access the gateway.
+        """
+        if not gateway_id:
+            raise ToolError("A tool must belong to a gateway to use an endpoint")
+        gateway = await self._load_accessible_gateway(
+            db,
+            gateway_id,
+            requester_email,
+            token_teams,
+            "A requester identity is required to use the endpoint of a gateway",
+            "No access to the gateway that the tool endpoint resolves against",
+        )
+        if not gateway.url:
+            raise ToolError("The gateway has no URL to resolve the tool endpoint against")
+
+    async def _build_inherited_gateway_auth_headers(
+        self,
+        *,
+        has_gateway: bool,
+        gateway_name: Optional[str],
+        gateway_auth_type: Optional[str],
+        gateway_auth_value: Optional[str],
+        gateway_oauth_config: Optional[dict],
+        gateway_ca_cert: Optional[str],
+        gateway_client_cert: Optional[str],
+        gateway_client_key: Optional[str],
+    ) -> Dict[str, str]:
+        """Build the request headers of a REST tool that inherits the credential of its gateway.
+
+        Args:
+            has_gateway: Whether the tool belongs to a gateway.
+            gateway_name: Gateway name, for error text.
+            gateway_auth_type: Authentication type of the gateway.
+            gateway_auth_value: Encoded credential of the gateway.
+            gateway_oauth_config: OAuth configuration of the gateway.
+            gateway_ca_cert: CA certificate of the gateway.
+            gateway_client_cert: Client certificate of the gateway.
+            gateway_client_key: Client key of the gateway.
+
+        Returns:
+            Headers that carry the gateway credential.
+
+        Raises:
+            ToolInvocationError: If the gateway has no credential that a tool can inherit, or the OAuth token request fails.
+        """
+        if not has_gateway or not gateway_supports_credential_inheritance(gateway_auth_type, gateway_oauth_config):
+            raise ToolInvocationError("The tool cannot inherit a credential from its gateway")
+        if gateway_auth_type == "oauth":
+            try:
+                access_token = await self.oauth_manager.get_access_token(
+                    gateway_oauth_config,
+                    ca_certificate=gateway_ca_cert,
+                    client_cert=gateway_client_cert,
+                    client_key=gateway_client_key,
+                )
+            except Exception as e:
+                logger.error("Failed to obtain OAuth access token from gateway %s for an inheriting tool: %s", SecurityValidator.sanitize_log_message(gateway_name or ""), e)
+                raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
+            return {"Authorization": f"Bearer {access_token}"}
+        credentials = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+        credentials = {k: SecurityValidator.sanitize_credential_value(v) for k, v in credentials.items()}
+        return {k: v for k, v in credentials.items() if k and v}
 
     async def register_tool(
         self,
@@ -2475,7 +2753,7 @@ class ToolService(BaseService):
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
-            token_teams: Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
+            token_teams: Token team scope of the requester, used when the tool inherits a gateway credential or uses a gateway endpoint. None means admin bypass, [] means public-only.
 
         Returns:
             Created tool information.
@@ -2519,6 +2797,11 @@ class ToolService(BaseService):
             tool_sigv4_config = protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" and tool.sigv4_config else None
             if auth_type == "sigv4" and not tool_sigv4_config:
                 await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by, token_teams)
+            tool_endpoint = _declared_endpoint(tool)
+            if auth_type == "inherit":
+                await self._require_inherited_gateway_credentials(db, tool.gateway_id, owner_email or created_by, token_teams)
+            if tool_endpoint:
+                await self._require_gateway_endpoint_access(db, tool.gateway_id, owner_email or created_by, token_teams)
 
             if visibility is None:
                 visibility = tool.visibility or "public"
@@ -2590,7 +2873,8 @@ class ToolService(BaseService):
                 custom_name_slug=slugify(tool.name),
                 display_name=tool.displayName or tool.name,
                 title=tool.title,
-                url=str(tool.url),
+                url=str(tool.url) if tool.url is not None else None,
+                endpoint=tool_endpoint,
                 description=tool.description,
                 original_description=tool.description,
                 integration_type=tool.integration_type,
@@ -2805,7 +3089,7 @@ class ToolService(BaseService):
                 an existing tool only when this caller owns it. Without it, no existing
                 tool is modified.
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
-            token_teams: Token team scope of the requester, used when a tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
+            token_teams: Token team scope of the requester, used when the tool inherits a gateway credential or uses a gateway endpoint. None means admin bypass, [] means public-only.
 
         Returns:
             Dict with statistics:
@@ -2847,7 +3131,7 @@ class ToolService(BaseService):
         chunk_size = 500
 
         for chunk_start in range(0, len(tools), chunk_size):
-            chunk, denied_errors = await self._drop_unauthorized_sigv4_inheritance(db, tools[chunk_start : chunk_start + chunk_size], user_email or owner_email or created_by, token_teams)
+            chunk, denied_errors = await self._drop_unauthorized_gateway_delegation(db, tools[chunk_start : chunk_start + chunk_size], user_email or owner_email or created_by, token_teams)
             stats["failed"] += len(denied_errors)
             stats["errors"].extend(denied_errors)
             if not chunk:
@@ -2901,7 +3185,7 @@ class ToolService(BaseService):
 
         return stats
 
-    async def _drop_unauthorized_sigv4_inheritance(
+    async def _drop_unauthorized_gateway_delegation(
         self,
         db: Session,
         chunk: List[ToolCreate],
@@ -2910,12 +3194,14 @@ class ToolService(BaseService):
     ) -> tuple:
         """Split a bulk chunk into tools the requester may register and error messages for the rest.
 
-        A tool with ``auth_type`` sigv4, a ``gateway_id`` and no ``sigv4_config`` inherits the gateway credential.
+        A tool with ``auth_type`` sigv4, a ``gateway_id`` and no ``sigv4_config`` inherits the gateway
+        SigV4 credential. A tool with ``auth_type`` inherit uses the gateway credential. A tool with an
+        ``endpoint`` resolves against the gateway URL.
 
         Args:
             db: Database session.
             chunk: Tools to register.
-            requester_email: Identity of the requester. Without one, every inheriting tool is dropped.
+            requester_email: Identity of the requester. Without one, every delegating tool is dropped.
             token_teams: Token team scope of the requester.
 
         Returns:
@@ -2924,12 +3210,20 @@ class ToolService(BaseService):
         allowed: List[ToolCreate] = []
         errors: List[str] = []
         for tool in chunk:
-            inherits = tool.auth is not None and tool.auth.auth_type == "sigv4" and not tool.sigv4_config and bool(tool.gateway_id)
-            if not inherits:
+            auth_type = tool.auth.auth_type if tool.auth is not None else None
+            inherits_sigv4 = auth_type == "sigv4" and not tool.sigv4_config and bool(tool.gateway_id)
+            inherits_credential = auth_type == "inherit"
+            tool_endpoint = _declared_endpoint(tool)
+            if not (inherits_sigv4 or inherits_credential or tool_endpoint):
                 allowed.append(tool)
                 continue
             try:
-                await self._require_inherited_gateway_access(db, tool.gateway_id, requester_email, token_teams)
+                if inherits_sigv4:
+                    await self._require_inherited_gateway_access(db, tool.gateway_id, requester_email, token_teams)
+                if inherits_credential:
+                    await self._require_inherited_gateway_credentials(db, tool.gateway_id, requester_email, token_teams)
+                if tool_endpoint:
+                    await self._require_gateway_endpoint_access(db, tool.gateway_id, requester_email, token_teams)
                 allowed.append(tool)
             except (PermissionError, ToolError) as exc:
                 errors.append(f"Tool {tool.name!r}: {exc}")
@@ -3266,11 +3560,14 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     if tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
+                    if (auth_type == "inherit" or _declared_endpoint(tool)) and existing_tool.gateway_id != tool.gateway_id:
+                        return {"status": "fail", "error": f"Tool {tool.name!r} belongs to a different gateway than the imported tool"}
                     previous_sigv4_config = getattr(existing_tool, "sigv4_config", None)
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title
-                    existing_tool.url = str(tool.url)
+                    existing_tool.url = str(tool.url) if tool.url is not None else None
+                    existing_tool.endpoint = _declared_endpoint(tool)
                     existing_tool.description = tool.description
                     if getattr(existing_tool, "original_description", None) is None:
                         existing_tool.original_description = tool.description
@@ -3395,7 +3692,8 @@ class ToolService(BaseService):
             custom_name_slug=slugify(name),
             display_name=tool.displayName or name,
             title=tool.title,
-            url=str(tool.url),
+            url=str(tool.url) if tool.url is not None else None,
+            endpoint=_declared_endpoint(tool),
             description=tool.description,
             original_description=tool.description,
             integration_type=tool.integration_type,
@@ -5753,6 +6051,7 @@ class ToolService(BaseService):
         tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
         tool_name_computed = tool_payload.get("name") or name
         tool_url = tool_payload.get("url")
+        tool_endpoint = tool_payload.get("endpoint")
         tool_integration_type = tool_payload.get("integration_type")
         tool_request_type = tool_payload.get("request_type")
         tool_headers = _decrypt_tool_headers_for_runtime(tool_payload.get("headers") or {})
@@ -5859,6 +6158,9 @@ class ToolService(BaseService):
                             hydrated_gateway_sigv4_config = getattr(tool_auth_row.gateway, "sigv4_config", None)
                             if isinstance(hydrated_gateway_sigv4_config, dict):
                                 gateway_sigv4_config = hydrated_gateway_sigv4_config
+
+        if tool_integration_type == "REST" and not tool_url and tool_endpoint:
+            tool_url = _resolve_gateway_endpoint(gateway_url if has_gateway else None, tool_endpoint)
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -6098,8 +6400,21 @@ class ToolService(BaseService):
                     gateway_grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                 if tool_integration_type == "REST":
+                    if tool_auth_type == "inherit":
+                        headers.update(
+                            await self._build_inherited_gateway_auth_headers(
+                                has_gateway=has_gateway,
+                                gateway_name=gateway_name,
+                                gateway_auth_type=gateway_auth_type,
+                                gateway_auth_value=gateway_auth_value,
+                                gateway_oauth_config=gateway_oauth_config,
+                                gateway_ca_cert=gateway_ca_cert,
+                                gateway_client_cert=gateway_client_cert,
+                                gateway_client_key=gateway_client_key,
+                            )
+                        )
                     # Handle OAuth authentication for REST tools
-                    if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
+                    elif tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
                             # REST invoke path: gateway ORM object is still attached to the
                             # active session, so attribute access is safe here.
@@ -6125,13 +6440,17 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
-                        # Pass tool_auth_type so X-Upstream-Authorization cannot override
+                        # Pass the effective auth type so X-Upstream-Authorization cannot override
                         # a credential already set in headers for managed auth types.
+                        if tool_auth_type == "inherit":
+                            passthrough_auth_type = gateway_auth_type
+                        else:
+                            passthrough_auth_type = "sigv4" if rest_sigv4_auth is not None else tool_auth_type
                         headers = compute_passthrough_headers_cached(
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type="sigv4" if rest_sigv4_auth is not None else tool_auth_type,
+                            gateway_auth_type=passthrough_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -8022,7 +8341,7 @@ class ToolService(BaseService):
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
             user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
-            token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
+            token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a gateway credential or uses a gateway endpoint. None means admin bypass, [] means public-only.
 
         Returns:
             The updated ToolRead object.
@@ -8152,6 +8471,15 @@ class ToolService(BaseService):
             url_is_changing = tool_update.url is not None and str(tool_update.url) != tool.url
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
+                tool.endpoint = None
+            update_endpoint = _declared_endpoint(tool_update)
+            endpoint_is_changing = update_endpoint is not None and update_endpoint != tool.endpoint
+            if update_endpoint is not None:
+                if tool.integration_type != "REST":
+                    raise PublicValidationError("endpoint requires a REST tool")
+                await self._require_gateway_endpoint_access(db, tool.gateway_id, user_email or modified_by, token_teams)
+                tool.endpoint = update_endpoint
+                tool.url = None
             if tool_update.description is not None:
                 tool.description = tool_update.description
             old_policy = tool.tool_validation_policy
@@ -8193,7 +8521,7 @@ class ToolService(BaseService):
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
-                if tool.auth_type == "sigv4":
+                if tool.auth_type in ("sigv4", "inherit"):
                     tool.auth_value = None
             update_sigv4_config = getattr(tool_update, "sigv4_config", None)
             if isinstance(update_sigv4_config, dict):
@@ -8206,6 +8534,11 @@ class ToolService(BaseService):
                 raise PublicValidationError("A presigned URL cannot be combined with auth_type 'sigv4'")
             if tool.auth_type == "sigv4" and not tool.sigv4_config and (tool_update.auth is not None or url_is_changing):
                 await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by, token_teams)
+            if tool.auth_type == "inherit":
+                if tool.integration_type != "REST":
+                    raise PublicValidationError("auth_type 'inherit' requires a REST tool")
+                if tool_update.auth is not None or url_is_changing or endpoint_is_changing:
+                    await self._require_inherited_gateway_credentials(db, tool.gateway_id, user_email or modified_by, token_teams)
 
             # Update tags if provided
             if tool_update.tags is not None:

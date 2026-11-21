@@ -9926,6 +9926,7 @@ class TestToolServiceHelpers:
             name="tool-name",
             original_name="tool-name",
             url="https://example.com/tool",
+            endpoint=None,
             description="desc",
             original_description="desc",
             integration_type="http",
@@ -9982,6 +9983,7 @@ class TestToolServiceHelpers:
         payload = service._build_tool_cache_payload(tool, gateway)
 
         assert payload["status"] == "active"
+        assert payload["tool"]["endpoint"] is None
         assert payload["tool"]["headers"] == {}
         assert payload["tool"]["input_schema"]["type"] == "object"
         assert payload["tool"]["query_mapping"] == {}
