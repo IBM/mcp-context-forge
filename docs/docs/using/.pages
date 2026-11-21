@@ -5,6 +5,7 @@ nav:
   - multi-auth-headers.md
   - query-param-auth.md
   - sigv4-gateway-auth.md
+  - rest-tool-gateway-delegation.md
   - tool-annotations.md
   - rest-passthrough.md
   - "gRPC Services (Experimental)": grpc-services.md

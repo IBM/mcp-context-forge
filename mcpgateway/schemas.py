@@ -840,7 +840,7 @@ class AuthenticationValues(BaseModelWithConfigDict):
     Provides the authentication values for different types of authentication.
     """
 
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, sigv4, inherit or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
     @field_validator("auth_type")
@@ -938,6 +938,69 @@ def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[D
     if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
         raise ValueError(f"invalid x-mcp-header annotation: {reason}")
     return schema
+
+
+_TOOL_ENDPOINT_MAX_LENGTH = 767
+_TOOL_ENDPOINT_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f\\@#]")
+_TOOL_ENDPOINT_ENCODED_SEPARATOR_RE = re.compile(r"%(?:2e|2f|5c)", re.IGNORECASE)
+
+
+def _validate_tool_endpoint(v: Optional[str]) -> Optional[str]:
+    """Validate the gateway-relative ``endpoint`` of a REST tool.
+
+    The value joins the gateway URL at invocation time. It must stay a path on the
+    gateway host: one leading slash, no authority, no traversal and no control characters.
+
+    Args:
+        v: The endpoint value, or None.
+
+    Returns:
+        The endpoint unchanged, or None.
+
+    Raises:
+        ValueError: If the value is not a safe gateway-relative path.
+
+    Examples:
+        >>> _validate_tool_endpoint("/v1/items/{item_id}?expand=true")
+        '/v1/items/{item_id}?expand=true'
+        >>> _validate_tool_endpoint(None) is None
+        True
+        >>> _validate_tool_endpoint("v1/items")
+        Traceback (most recent call last):
+            ...
+        ValueError: endpoint must be a path that starts with a single '/'
+        >>> _validate_tool_endpoint("//evil.example/x")
+        Traceback (most recent call last):
+            ...
+        ValueError: endpoint must be a path that starts with a single '/'
+        >>> _validate_tool_endpoint("/a/../b")
+        Traceback (most recent call last):
+            ...
+        ValueError: endpoint must not contain '.' or '..' path segments
+        >>> _validate_tool_endpoint("/a/%2e%2e/b")
+        Traceback (most recent call last):
+            ...
+        ValueError: endpoint must not contain encoded path separators or dots
+        >>> _validate_tool_endpoint("/a@b")
+        Traceback (most recent call last):
+            ...
+        ValueError: endpoint contains a forbidden character
+    """
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("endpoint must be a string")
+    if not v.startswith("/") or v.startswith("//"):
+        raise ValueError("endpoint must be a path that starts with a single '/'")
+    if len(v) > _TOOL_ENDPOINT_MAX_LENGTH:
+        raise ValueError(f"endpoint must not exceed {_TOOL_ENDPOINT_MAX_LENGTH} characters")
+    if _TOOL_ENDPOINT_FORBIDDEN_RE.search(v):
+        raise ValueError("endpoint contains a forbidden character")
+    if _TOOL_ENDPOINT_ENCODED_SEPARATOR_RE.search(v):
+        raise ValueError("endpoint must not contain encoded path separators or dots")
+    if any(segment in (".", "..") for segment in v.split("?", 1)[0].split("/")):
+        raise ValueError("endpoint must not contain '.' or '..' path segments")
+    return v
 
 
 def _extract_rest_url_components(values: dict) -> dict:
@@ -1223,6 +1286,10 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
+    endpoint: Optional[str] = Field(
+        None,
+        description="Path on the gateway host for a REST tool with a gateway_id, for example '/v1/items/{id}'. The gateway URL supplies the scheme and host. Exclusive with url.",
+    )
     description: Optional[str] = Field(None, description="Tool description")
     tool_validation_policy: Optional[str] = Field(
         None,
@@ -1277,6 +1344,56 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
             The validated configuration, or None.
         """
         return _validate_sigv4_config_input(v)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the gateway-relative endpoint path.
+
+        Args:
+            v: The endpoint value.
+
+        Returns:
+            The validated endpoint, or None.
+        """
+        return _validate_tool_endpoint(v)
+
+    @model_validator(mode="after")
+    def validate_gateway_delegation(self) -> "ToolCreate":
+        """Tie ``endpoint`` and ``auth_type`` 'inherit' to a REST tool with a gateway.
+
+        Returns:
+            ToolCreate: The validated tool.
+
+        Raises:
+            ValueError: If the delegation settings are incomplete or conflict.
+
+        Examples:
+            >>> ToolCreate(name="t", endpoint="/v1/x", integration_type="REST", request_type="GET", gateway_id="g1").endpoint
+            '/v1/x'
+            >>> ToolCreate(name="t", endpoint="/v1/x", integration_type="REST", request_type="GET")
+            Traceback (most recent call last):
+                ...
+            pydantic_core._pydantic_core.ValidationError: ...
+            >>> ToolCreate(name="t", url="https://a.example/x", endpoint="/v1/x", integration_type="REST", request_type="GET", gateway_id="g1")
+            Traceback (most recent call last):
+                ...
+            pydantic_core._pydantic_core.ValidationError: ...
+            >>> ToolCreate(name="t", url="https://a.example/x", integration_type="REST", request_type="GET", auth_type="inherit")
+            Traceback (most recent call last):
+                ...
+            pydantic_core._pydantic_core.ValidationError: ...
+        """
+        inherits = self.auth is not None and (self.auth.auth_type or "").lower() == "inherit"
+        if not (inherits or self.endpoint):
+            return self
+        if self.integration_type != "REST":
+            raise ValueError("endpoint and auth_type 'inherit' are only valid for integration_type 'REST'")
+        if not self.gateway_id:
+            raise ValueError("endpoint and auth_type 'inherit' require a gateway_id")
+        if self.endpoint and self.url:
+            raise ValueError("endpoint and url are mutually exclusive")
+        return self
 
     @model_validator(mode="after")
     def validate_sigv4_auth(self) -> "ToolCreate":
@@ -1675,6 +1792,9 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
             elif auth_type.lower() == "sigv4":
                 # SigV4 signs each request; credentials live in sigv4_config, never in auth_value.
                 values["auth"] = {"auth_type": "sigv4", "auth_value": None}
+            elif auth_type.lower() == "inherit":
+                # The gateway supplies the credentials at invocation time; the tool stores none.
+                values["auth"] = {"auth_type": "inherit", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -1893,6 +2013,10 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
+    endpoint: Optional[str] = Field(
+        None,
+        description="Path on the gateway host for a REST tool with a gateway_id. Setting it clears the stored url. Exclusive with url.",
+    )
     description: Optional[str] = Field(None, description="Tool description")
     tool_validation_policy: Optional[str] = Field(
         None,
@@ -1930,6 +2054,41 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
             The validated configuration, or None.
         """
         return _validate_sigv4_config_input(v)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the gateway-relative endpoint path.
+
+        Args:
+            v: The endpoint value.
+
+        Returns:
+            The validated endpoint, or None.
+        """
+        return _validate_tool_endpoint(v)
+
+    @model_validator(mode="after")
+    def validate_gateway_delegation(self) -> "ToolUpdate":
+        """Reject conflicting delegation settings in one update.
+
+        Returns:
+            ToolUpdate: The validated update.
+
+        Raises:
+            ValueError: If ``endpoint`` and ``url`` arrive together.
+
+        Examples:
+            >>> ToolUpdate(endpoint="/v1/x").endpoint
+            '/v1/x'
+            >>> ToolUpdate(url="https://a.example/x", endpoint="/v1/x")
+            Traceback (most recent call last):
+                ...
+            pydantic_core._pydantic_core.ValidationError: ...
+        """
+        if self.endpoint and self.url:
+            raise ValueError("endpoint and url are mutually exclusive")
+        return self
 
     @model_validator(mode="after")
     def validate_sigv4_auth(self) -> "ToolUpdate":
@@ -2195,6 +2354,8 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
             elif auth_type.lower() == "sigv4":
                 # SigV4 signs each request; credentials live in sigv4_config, never in auth_value.
                 values["auth"] = {"auth_type": "sigv4", "auth_value": None}
+            elif auth_type.lower() == "inherit":
+                values["auth"] = {"auth_type": "inherit", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -2415,6 +2576,7 @@ class ToolRead(McpServerIdResponseMixin):
     id: str
     original_name: str
     url: Optional[str]
+    endpoint: Optional[str] = Field(None, description="Path on the gateway host that replaces url for a REST tool with a gateway")
     description: Optional[str]
     tool_validation_policy: Optional[str] = Field(None, description="CEL tool-validation policy; null inherits")
     validation_refusal: Optional[str] = Field(None, description="Why the validation policy disabled this tool; null when it was not refused")

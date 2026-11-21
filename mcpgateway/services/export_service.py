@@ -469,6 +469,9 @@ class ExportService:
             if getattr(getattr(tool, "auth", None), "auth_type", None) == "sigv4":
                 logger.warning("Tool %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", tool.id)
                 continue
+            if getattr(getattr(tool, "auth", None), "auth_type", None) == "inherit" or isinstance(getattr(tool, "endpoint", None), str):
+                logger.warning("Tool %s delegates its endpoint or credential to a gateway and is not exported: an import file cannot name the gateway", tool.id)
+                continue
             tool_data = {
                 "name": tool.original_name,  # Use original name, not the slugified version
                 "displayName": tool.displayName,  # Export displayName field from ToolRead
@@ -912,6 +915,9 @@ class ExportService:
                 continue
             if db_tool.auth_type == "sigv4":
                 logger.warning("Tool %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", db_tool.id)
+                continue
+            if db_tool.auth_type == "inherit" or isinstance(getattr(db_tool, "endpoint", None), str):
+                logger.warning("Tool %s delegates its endpoint or credential to a gateway and is not exported: an import file cannot name the gateway", db_tool.id)
                 continue
 
             tool_data = {

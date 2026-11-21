@@ -3336,6 +3336,9 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
+    endpoint: Mapped[Optional[str]] = mapped_column(
+        String(767), nullable=True, comment="Gateway-relative path of a REST tool. The gateway URL and this path form the upstream URL. NULL means the tool stores an absolute url."
+    )
     original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
