@@ -332,7 +332,8 @@ export const resetImportFile = function () {
 export const previewImport = async function () {
   console.log("🔍 Generating import preview...");
 
-  if (!window.currentImportData) {
+  const importData = window.Admin?.currentImportData;
+  if (!importData) {
     showNotification("❌ Please select an import file first", "error");
     return;
   }
@@ -345,7 +346,12 @@ export const previewImport = async function () {
       {
         method: "POST",
         headers: await getAuthHeaders(true),
-        body: JSON.stringify({ data: window.currentImportData }),
+        body: JSON.stringify({
+          data: importData,
+          conflict_strategy:
+            safeGetElement("import-conflict-strategy")?.value || "update",
+          team_name: safeGetElement("import-team-name")?.value.trim() || null,
+        }),
       },
     );
 
@@ -374,7 +380,8 @@ export const previewImport = async function () {
 export const handleImport = async function (dryRun = false) {
   console.log(`🔄 Starting import (dry_run=${dryRun})`);
 
-  if (!window.currentImportData) {
+  const importData = window.Admin?.currentImportData;
+  if (!importData) {
     showNotification("❌ Please select an import file first", "error");
     return;
   }
@@ -384,13 +391,13 @@ export const handleImport = async function (dryRun = false) {
 
     const conflictStrategy =
       safeGetElement("import-conflict-strategy")?.value || "update";
-    const rekeySecret = safeGetElement("import-rekey-secret")?.value || null;
+    const teamName = safeGetElement("import-team-name")?.value.trim() || null;
 
     const requestData = {
-      import_data: window.currentImportData,
+      import_data: importData,
       conflict_strategy: conflictStrategy,
       dry_run: dryRun,
-      rekey_secret: rekeySecret,
+      team_name: teamName,
     };
 
     const response = await fetch(

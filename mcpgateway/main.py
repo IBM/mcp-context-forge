@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Awaitable, Callable, cast, Dict, List, Optional, Tuple, TypeAlias, Union
+from typing import Annotated, Any, AsyncIterator, Awaitable, Callable, cast, Dict, List, Optional, Tuple, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -77,6 +77,7 @@ from mcpgateway.auth_context import (
     configuration_export_includes_roots,
     decode_internal_mcp_auth_context,
     encode_internal_mcp_auth_context,
+    get_import_request_scope,
     get_internal_mcp_auth_context,
     get_request_identity,
     get_rpc_filter_context,
@@ -217,7 +218,7 @@ from mcpgateway.services.gateway_service import (
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
+from mcpgateway.services.import_service import import_service, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -328,7 +329,6 @@ completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 tag_service = TagService()
 export_service = ExportService()
-import_service = ImportService()
 # Created only when A2A is enabled. A2A routes reach handlers only after require_a2a_enabled, so handlers treat it as present.
 a2a_service = cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 
@@ -10849,10 +10849,11 @@ async def export_selective_configuration(
 async def import_configuration(
     request: Request = None,
     import_data: Dict[str, Any] = Body(...),
-    conflict_strategy: str = Body("update"),
-    dry_run: bool = Body(False),
-    rekey_secret: Optional[str] = Body(None),
-    selected_entities: Optional[Dict[str, List[str]]] = Body(None),
+    conflict_strategy: Annotated[str, Body()] = "update",
+    dry_run: Annotated[bool, Body()] = False,
+    rekey_secret: Annotated[Any, Body(deprecated=True)] = None,
+    selected_entities: Annotated[Optional[Dict[str, List[str]]], Body()] = None,
+    team_name: Annotated[Optional[str], Body()] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -10864,8 +10865,9 @@ async def import_configuration(
         import_data: The configuration data to import
         conflict_strategy: How to handle conflicts: skip, update, rename, fail
         dry_run: If true, validate but don't make changes
-        rekey_secret: New encryption secret for cross-environment imports
+        rekey_secret: Deprecated option. Import rejects it.
         selected_entities: Dict of entity types to specific entity names/ids to import
+        team_name: Destination team name. Defaults to the requester's personal team.
         db: Database session
         user: Authenticated user
 
@@ -10881,8 +10883,11 @@ async def import_configuration(
 
         logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
 
-        if import_envelope_includes_roots(import_data, selected_entities):
+        if import_envelope_includes_roots(import_data):
             await _require_unrestricted_root_admin(request, user, db)
+
+        if rekey_secret is not None or (request is not None and "rekey_secret" in await request.json()):
+            raise HTTPException(status_code=400, detail="Import does not support rekey_secret. Use scripts/migrate_enc_secret.py to rotate the encryption secret.")
 
         # Validate conflict strategy
         try:
@@ -10890,45 +10895,49 @@ async def import_configuration(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in list(ConflictStrategy)]}")
 
-        # Extract username from user (which is now an EmailUser object)
-        if hasattr(user, "email"):
-            username = getattr(user, "email", None)
-        elif isinstance(user, dict):
-            username = user.get("email", None)
-        else:
-            username = None
-
-        # Perform import
+        imported_by, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
         import_status = await import_service.import_configuration(
-            db=db, import_data=import_data, conflict_strategy=strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username or "unknown", selected_entities=selected_entities
+            db=db,
+            import_data=import_data,
+            conflict_strategy=strategy,
+            dry_run=dry_run,
+            imported_by=imported_by,
+            selected_entities=selected_entities,
+            team_name=team_name,
+            token_teams=token_teams,
+            unrestricted_admin=unrestricted_admin,
         )
 
         return import_status.to_dict()
 
     except HTTPException:
         raise
-    except ImportValidationError as e:
-        logger.error(f"Import validation failed for user {safe_log_user(user)}: {str(e)}")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG) from None
+    except ImportValidationError:
+        logger.error("Import validation failed for user %s", safe_log_user(user))
         raise HTTPException(status_code=422, detail="Import validation failed")
-    except ImportConflictError as e:
-        logger.error(f"Import conflict for user {safe_log_user(user)}: {str(e)}")
+    except ImportConflictError:
+        logger.error("Import conflict for user %s", safe_log_user(user))
         raise HTTPException(status_code=409, detail="Import conflict detected")
-    except ImportServiceError as e:
-        logger.error(f"Import failed for user {safe_log_user(user)}: {str(e)}")
+    except ImportServiceError:
+        logger.error("Import failed for user %s", safe_log_user(user))
         raise HTTPException(status_code=400, detail="Import failed")
     except Exception as e:
-        logger.error(f"Unexpected import error for user {safe_log_user(user)}: {str(e)}")
+        logger.error("Unexpected import error for user %s: %s", safe_log_user(user), type(e).__name__)
         raise HTTPException(status_code=500, detail="Import failed")
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
 @require_permission("admin.import", global_only=True)
-async def get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def get_import_status(import_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Get the status of an import operation.
 
     Args:
         import_id: The import operation ID
+        request: Current request object.
+        db: Database session for authorization.
         user: Authenticated user
 
     Returns:
@@ -10939,7 +10948,8 @@ async def get_import_status(import_id: str, user=Depends(get_current_user_with_p
     """
     logger.debug(f"User {safe_log_user(user)} requested import status for {import_id}")
 
-    import_status = import_service.get_import_status(import_id)
+    imported_by, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+    import_status = import_service.get_import_status(import_id, imported_by=imported_by, token_teams=token_teams, unrestricted_admin=unrestricted_admin)
     if not import_status:
         raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
 
@@ -10948,11 +10958,13 @@ async def get_import_status(import_id: str, user=Depends(get_current_user_with_p
 
 @export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
 @require_permission("admin.import", global_only=True)
-async def list_import_statuses(user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
+async def list_import_statuses(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List all import operation statuses.
 
     Args:
+        request: Current request object.
+        db: Database session for authorization.
         user: Authenticated user
 
     Returns:
@@ -10960,18 +10972,21 @@ async def list_import_statuses(user=Depends(get_current_user_with_permissions)) 
     """
     logger.debug(f"User {safe_log_user(user)} requested all import statuses")
 
-    statuses = import_service.list_import_statuses()
+    imported_by, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+    statuses = import_service.list_import_statuses(imported_by=imported_by, token_teams=token_teams, unrestricted_admin=unrestricted_admin)
     return [status.to_dict() for status in statuses]
 
 
 @export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
 @require_permission("admin.import", global_only=True)
-async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def cleanup_import_statuses(request: Request, max_age_hours: int = 24, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Clean up completed import statuses older than specified age.
 
     Args:
+        request: Current request object.
         max_age_hours: Maximum age in hours for keeping completed imports
+        db: Database session for authorization.
         user: Authenticated user
 
     Returns:
@@ -10979,7 +10994,8 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
     """
     logger.info(f"User {safe_log_user(user)} requested import status cleanup (max_age_hours={max_age_hours})")
 
-    removed_count = import_service.cleanup_completed_imports(max_age_hours)
+    imported_by, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+    removed_count = import_service.cleanup_completed_imports(max_age_hours, imported_by=imported_by, token_teams=token_teams, unrestricted_admin=unrestricted_admin)
     return {"status": "success", "message": f"Cleaned up {removed_count} completed import statuses", "removed_count": removed_count}
 
 

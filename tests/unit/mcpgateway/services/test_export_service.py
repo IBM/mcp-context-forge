@@ -434,8 +434,9 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
 
     # Should get raw auth value from database via batch query
     assert len(tools) == 1
-    assert tools[0]["auth_type"] == "bearer"
-    assert tools[0]["auth_value"] == "encrypted_raw_auth_value"
+    assert tools[0]["credentials_required"] is True
+    assert "auth_type" not in tools[0]
+    assert "auth_value" not in tools[0]
 
 
 @pytest.mark.asyncio
@@ -588,8 +589,9 @@ async def test_export_tools_with_non_masked_auth(export_service, mock_db):
 
     # Should use auth value directly (not masked)
     assert len(tools) == 1
-    assert tools[0]["auth_type"] == "bearer"
-    assert tools[0]["auth_value"] == "encrypted_auth_value"
+    assert tools[0]["credentials_required"] is True
+    assert "auth_type" not in tools[0]
+    assert "auth_value" not in tools[0]
 
 
 @pytest.mark.asyncio
@@ -621,7 +623,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         passthrough_headers=None,
     )
 
-    gateway_without_matching_tags = GatewayRead(
+    _gateway_without_matching_tags = GatewayRead(
         id="gw2",
         name="gateway_no_tags",
         url="https://gateway2.example.com",
@@ -702,8 +704,9 @@ async def test_export_gateways_with_masked_auth(export_service, mock_db):
 
     # Should get raw auth value from database via batch query
     assert len(gateways) == 1
-    assert gateways[0]["auth_type"] == "bearer"
-    assert gateways[0]["auth_value"] == "encrypted_raw_gateway_auth"
+    assert gateways[0]["credentials_required"] is True
+    assert "auth_type" not in gateways[0]
+    assert "auth_value" not in gateways[0]
 
 
 @pytest.mark.asyncio
@@ -744,8 +747,9 @@ async def test_export_gateways_with_non_masked_auth(export_service, mock_db):
 
     # Should use auth value directly
     assert len(gateways) == 1
-    assert gateways[0]["auth_type"] == "bearer"
-    assert gateways[0]["auth_value"] == "encrypted_auth_value"
+    assert gateways[0]["credentials_required"] is True
+    assert "auth_type" not in gateways[0]
+    assert "auth_value" not in gateways[0]
 
 
 @pytest.mark.asyncio
@@ -764,6 +768,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     export_service.server_service.list_servers.return_value = ([mock_server], None)
 
     # Execute export
+    mock_db.execute.return_value.__iter__.return_value = [("server1", "tool1", "first", None, None, None, None), ("server1", "tool2", "second", None, None, None, None)]
     servers = await export_service._export_servers(mock_db, None, False)
 
     # Verify server data structure
@@ -1409,8 +1414,9 @@ async def test_export_selected_tools_success_and_empty_list(export_service, mock
     assert len(exported) == 1
     assert exported[0]["name"] == "local_tool"
     assert exported[0]["displayName"] == "Local Tool"
-    assert exported[0]["auth_type"] == "bearer"
-    assert exported[0]["auth_value"] == "secret"
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
 
 
 @pytest.mark.asyncio
@@ -1435,9 +1441,10 @@ async def test_export_selected_gateways_success_and_empty_list(export_service, m
     mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
 
     exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
-    assert exported[0]["auth_type"] == "query_param"
-    assert exported[0]["auth_value"] == "secret"
-    assert exported[0]["auth_query_params"] == {"api_key": "k"}
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
+    assert "auth_query_params" not in exported[0]
 
 
 @pytest.mark.asyncio
@@ -1460,6 +1467,7 @@ async def test_export_selected_servers_success_and_empty_list(export_service, mo
 
     mock_db.execute.return_value.scalars.return_value.all.return_value = [db_server]
 
+    mock_db.execute.return_value.__iter__.return_value = [(db_server.id, "tool1", "first", None, None, None, None), (db_server.id, "tool2", "second", None, None, None, None)]
     exported = await export_service._export_selected_servers(mock_db, ["server1"], root_path="/api")
     assert exported[0]["tool_ids"] == ["tool1", "tool2"]
     assert exported[0]["sse_endpoint"] == "/api/servers/server1/sse"
@@ -1769,6 +1777,7 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
 
     now = datetime.now(timezone.utc)
     visible_resource = MagicMock()
+    visible_resource.id = "r1"
     visible_resource.uri = "file:///visible.txt"
     visible_resource.name = "visible"
     visible_resource.gateway_id = None
@@ -1818,11 +1827,10 @@ async def test_export_selected_resources_scoped_no_visible_match_returns_empty(e
 
 
 @pytest.mark.asyncio
-async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_service, mock_db):
+async def test_export_gateways_masked_auth_omits_dict_auth_value(export_service, mock_db):
     """Batch-fetched auth_value that is a dict (authheaders) must be encoded before export."""
     # First-Party
     from mcpgateway.config import settings
-    from mcpgateway.utils.services_auth import decode_auth
 
     auth_dict = {"X-Custom-Auth": "my-token", "X-Org-ID": "org-42"}  # pragma: allowlist secret
 
@@ -1858,17 +1866,16 @@ async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_servic
     exported = await export_service._export_gateways(mock_db, None, False)
 
     assert len(exported) == 1
-    assert exported[0]["auth_type"] == "authheaders"
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
     # auth_value must be an encoded string, not the raw dict
-    assert isinstance(exported[0]["auth_value"], str)
-    assert decode_auth(exported[0]["auth_value"]) == auth_dict
+    assert "auth_value" not in exported[0]
 
 
 @pytest.mark.asyncio
-async def test_export_selected_gateways_encodes_dict_auth_value(export_service, mock_db):
+async def test_export_selected_gateways_omits_dict_auth_value(export_service, mock_db):
     """_export_selected_gateways must encode dict auth_value (authheaders) before export."""
     # First-Party
-    from mcpgateway.utils.services_auth import decode_auth
 
     auth_dict = {"X-Custom-Auth": "my-token"}  # pragma: allowlist secret
 
@@ -1891,9 +1898,9 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
     exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
 
     assert len(exported) == 1
-    assert exported[0]["auth_type"] == "authheaders"
-    assert isinstance(exported[0]["auth_value"], str)
-    assert decode_auth(exported[0]["auth_value"]) == auth_dict
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
 
 
 @pytest.mark.asyncio
@@ -1982,6 +1989,7 @@ async def test_export_selected_servers_filters_deactivated_entities(export_servi
     mock_scalars.all.return_value = [mock_server]
     mock_result = MagicMock()
     mock_result.scalars.return_value = mock_scalars
+    mock_result.__iter__.return_value = [("server-1", "tool-1", "enabled_tool", None, None, None, None)]
     mock_db.execute.return_value = mock_result
 
     # Call _export_selected_servers

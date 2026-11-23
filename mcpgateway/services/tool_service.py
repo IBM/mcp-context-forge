@@ -101,6 +101,7 @@ from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_d
 from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_isolated_http_client
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
@@ -123,7 +124,7 @@ from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slu
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
-from mcpgateway.utils.header_filtering import filter_sensitive_headers
+from mcpgateway.utils.header_filtering import filter_sensitive_headers, is_sensitive_tool_header_name, is_tool_credential_header_name
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.cel_runner import CelBusy, CelError, CelSyntaxError, CelTimeout, evaluate_value
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -320,27 +321,6 @@ SYSTEM_ACTOR = "system"
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
 _TOOL_HEADER_LEGACY_VALUE_KEY = "value"
-_SENSITIVE_TOOL_HEADER_PATTERNS = (
-    re.compile(r"^authorization$", re.IGNORECASE),
-    re.compile(r"^proxy-authorization$", re.IGNORECASE),
-    re.compile(r"^x-api-key$", re.IGNORECASE),
-    re.compile(r"^api-key$", re.IGNORECASE),
-    re.compile(r"^apikey$", re.IGNORECASE),
-    # Keep broad-enough auth matching while avoiding operational noise from
-    # non-secret tracing/idempotency headers (e.g. X-Correlation-Token).
-    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
-    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
-    # Protocol-level and credential-bearing headers that must not be set via mapping.
-    re.compile(r"^cookie$", re.IGNORECASE),
-    re.compile(r"^set-cookie$", re.IGNORECASE),
-    re.compile(r"^host$", re.IGNORECASE),
-    re.compile(r"^transfer-encoding$", re.IGNORECASE),
-    re.compile(r"^content-length$", re.IGNORECASE),
-    re.compile(r"^connection$", re.IGNORECASE),
-    re.compile(r"^upgrade$", re.IGNORECASE),
-    # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
-    re.compile(r"^content-type$", re.IGNORECASE),
-)
 
 
 def _mapping_keys(value: Any) -> Optional[list[str]]:
@@ -427,19 +407,6 @@ def _identity_signing_failure(audience: Any, exc: IdentitySigningError) -> "Tool
     return ToolInvocationError("Identity claim signing is misconfigured for the tool gateway")
 
 
-def _is_sensitive_tool_header_name(name: str) -> bool:
-    """Return whether a tool header name should be treated as sensitive.
-
-    Args:
-        name: Header name to evaluate.
-
-    Returns:
-        ``True`` when header value should be protected.
-    """
-    normalized_name = str(name).strip().lower()
-    return any(pattern.match(normalized_name) for pattern in _SENSITIVE_TOOL_HEADER_PATTERNS)
-
-
 def _is_encrypted_tool_header_value(value: Any) -> bool:
     """Return whether a header value uses encrypted envelope format.
 
@@ -501,7 +468,7 @@ def _protect_tool_headers_for_storage(headers: Optional[Dict[str, Any]], existin
 
     protected: Dict[str, Any] = {}
     for key, value in headers.items():
-        if _is_sensitive_tool_header_name(key):
+        if is_sensitive_tool_header_name(key):
             existing_value = existing_by_lower.get(str(key).strip().lower())
             protected[key] = _encrypt_tool_header_value(value, existing_value)
         else:
@@ -1057,7 +1024,7 @@ def _validate_header_mapping_targets(mapping: dict[str, str], tool_name: str) ->
         ToolInvocationError: If any target header name is sensitive or malformed.
     """
     for target_header in mapping.values():
-        if _is_sensitive_tool_header_name(target_header):
+        if is_sensitive_tool_header_name(target_header):
             raise ToolInvocationError(f"header_mapping for tool '{tool_name}' targets sensitive header {repr(target_header[:64])}")
         if not _VALID_HTTP_HEADER_NAME.match(target_header):
             raise ToolInvocationError(f"header_mapping for tool '{tool_name}' contains invalid header name {repr(target_header[:64])}")
@@ -2654,10 +2621,11 @@ class ToolService(BaseService):
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
-            notify_dataplane()
-            await self._notify_tool_added(db_tool)
+            after_import_commit_sync(notify_dataplane)
+            await after_import_commit(self._notify_tool_added, db_tool)
             if db_tool.tool_validation_policy:
-                record_policy_change(
+                after_import_commit_sync(
+                    record_policy_change,
                     resource_type="tool",
                     resource_id=db_tool.id,
                     resource_name=db_tool.name,
@@ -2668,7 +2636,8 @@ class ToolService(BaseService):
                 )
 
             # Structured logging: Audit trail for tool creation
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=user_id or created_by or SYSTEM_ACTOR,
                 action="create_tool",
                 resource_type="tool",
@@ -2715,14 +2684,14 @@ class ToolService(BaseService):
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
-            await cache.invalidate_tools()
+            await after_import_commit(cache.invalidate_tools)
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(db_tool.name, gateway_id=str(db_tool.gateway_id) if db_tool.gateway_id else None)
+            await after_import_commit(tool_lookup_cache.invalidate, db_tool.name, gateway_id=str(db_tool.gateway_id) if db_tool.gateway_id else None)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
             return self.convert_tool_to_read(db_tool, requesting_user_email=getattr(db_tool, "owner_email", None))
         except IntegrityError as ie:
@@ -8035,6 +8004,8 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         user_id: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        import_clear_credentials: bool = False,
+        import_platform_admin: bool = False,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -8050,6 +8021,8 @@ class ToolService(BaseService):
             user_email (Optional[str]): Email of user performing update (for ownership check).
             user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
             token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
+            import_platform_admin: Verified unrestricted administrator for this import update.
+            import_clear_credentials: Clear credentials tied to the previous origin.
 
         Returns:
             The updated ToolRead object.
@@ -8092,7 +8065,7 @@ class ToolService(BaseService):
             affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, old_gateway_id)
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -8195,6 +8168,12 @@ class ToolService(BaseService):
                 tool.integration_type = tool_update.integration_type
             if tool_update.request_type is not None:
                 tool.request_type = tool_update.request_type
+            original_sigv4_config = tool.sigv4_config
+            if import_clear_credentials:
+                tool.auth_type = None
+                tool.auth_value = None
+                tool.sigv4_config = None
+                tool.headers = {key: value for key, value in (tool.headers or {}).items() if not is_tool_credential_header_name(key)}
             if tool_update.headers is not None:
                 tool.headers = _protect_tool_headers_for_storage(tool_update.headers, existing_headers=tool.headers)
             if tool_update.input_schema is not None:
@@ -8212,7 +8191,6 @@ class ToolService(BaseService):
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
 
-            original_sigv4_config = tool.sigv4_config
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
                     if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
@@ -8258,12 +8236,19 @@ class ToolService(BaseService):
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(tool)
-            notify_dataplane()
-            await self._notify_tool_updated(tool)
+            after_import_commit_sync(notify_dataplane)
+            await after_import_commit(self._notify_tool_updated, tool)
             logger.info("Updated tool: %s", tool.name)
             if policy_was_changed:
-                record_policy_change(
-                    resource_type="tool", resource_id=tool.id, resource_name=tool.name, team_id=tool.team_id, user_email=user_email or modified_by, old=old_policy, new=tool.tool_validation_policy
+                after_import_commit_sync(
+                    record_policy_change,
+                    resource_type="tool",
+                    resource_id=tool.id,
+                    resource_name=tool.name,
+                    team_id=tool.team_id,
+                    user_email=user_email or modified_by,
+                    old=old_policy,
+                    new=tool.tool_validation_policy,
                 )
 
             # Structured logging: Audit trail for tool update
@@ -8275,7 +8260,8 @@ class ToolService(BaseService):
             if tool_update.description:
                 changes.append("description updated")
 
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=user_id or user_email or modified_by or SYSTEM_ACTOR,
                 action="update_tool",
                 resource_type="tool",
@@ -8316,15 +8302,15 @@ class ToolService(BaseService):
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_tools()
+            await after_import_commit(cache.invalidate_tools)
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None, affected_server_ids=affected_server_ids)
-            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None, affected_server_ids=affected_server_ids)
+            await after_import_commit(tool_lookup_cache.invalidate, old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None, affected_server_ids=affected_server_ids)
+            await after_import_commit(tool_lookup_cache.invalidate, tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
             return self.convert_tool_to_read(tool, requesting_user_email=getattr(tool, "owner_email", None))
         except PermissionError as pe:

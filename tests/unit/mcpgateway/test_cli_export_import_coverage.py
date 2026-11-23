@@ -148,12 +148,12 @@ def test_parser_all_export_options():
 def test_parser_all_import_options():
     """Test all import command options."""
     parser = create_parser()
-    args = parser.parse_args(["import", "data.json", "--conflict-strategy", "rename", "--dry-run", "--rekey-secret", "new-secret", "--include", "tools:tool1,tool2;servers:server1", "--verbose"])
+    args = parser.parse_args(["import", "data.json", "--conflict-strategy", "rename", "--dry-run", "--team-name", "Operations", "--include", "tools:tool1,tool2;servers:server1", "--verbose"])
 
     assert args.input_file == "data.json"
     assert args.conflict_strategy == "rename"
     assert args.dry_run == True
-    assert args.rekey_secret == "new-secret"
+    assert args.team_name == "Operations"
     assert args.include == "tools:tool1,tool2;servers:server1"
     assert args.verbose == True
 
@@ -640,7 +640,7 @@ async def test_import_command_success_dry_run():
         args.input_file = temp_file
         args.conflict_strategy = "update"
         args.dry_run = True
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = True
 
@@ -684,7 +684,7 @@ async def test_import_command_with_include_parameter():
         args.input_file = temp_file
         args.conflict_strategy = "rename"
         args.dry_run = False
-        args.rekey_secret = "new-secret"  # pragma: allowlist secret
+        args.team_name = "Operations"
         args.include = "tools:tool1,tool2;servers:server1"
         args.verbose = False
 
@@ -696,7 +696,7 @@ async def test_import_command_with_include_parameter():
             request_data = call_args[1]["json_data"]
             expected_entities = {"tools": ["tool1", "tool2"], "servers": ["server1"]}
             assert request_data["selected_entities"] == expected_entities
-            assert request_data["rekey_secret"] == "new-secret"
+            assert request_data["team_name"] == "Operations"
     finally:
         os.unlink(temp_file)
 
@@ -727,7 +727,7 @@ async def test_import_command_with_errors_and_failures():
         args.input_file = temp_file
         args.conflict_strategy = "fail"
         args.dry_run = False
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = False
 
@@ -766,7 +766,7 @@ async def test_import_command_json_parse_error():
         args.input_file = temp_file
         args.conflict_strategy = "update"
         args.dry_run = False
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = False
 

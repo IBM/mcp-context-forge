@@ -853,9 +853,11 @@ class TestMetricsSetup:
 
         metrics_module.setup_metrics(app)
 
-        http_client_service.SharedHttpClient._instance = SimpleNamespace(_initialized=True, get_pool_stats=MagicMock(side_effect=RuntimeError("boom")))
+        get_pool_stats = MagicMock(side_effect=RuntimeError("boom"))
+        monkeypatch.setattr(http_client_service.SharedHttpClient, "_instance", SimpleNamespace(_initialized=True, get_pool_stats=get_pool_stats))
 
         app.state.update_http_pool_metrics()
+        get_pool_stats.assert_called_once_with()
 
 
 # --------------------------------------------------------------------------- #

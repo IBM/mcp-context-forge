@@ -37,8 +37,8 @@ mcpgateway import backup.json --dry-run
 # Skip conflicts
 mcpgateway import backup.json --conflict-strategy skip
 
-# Cross-environment with key rotation
-mcpgateway import backup.json --rekey-secret $NEW_SECRET
+# Cross-environment import
+mcpgateway import backup.json
 
 # Selective import
 mcpgateway import backup.json --include "tools:api_tool;servers:ai_server"
@@ -205,10 +205,9 @@ jq 'has("version") and has("entities")' export.json
 ### "Encryption/Decryption Failed"
 ```bash
 # Ensure consistent encryption key
-echo $AUTH_ENCRYPTION_SECRET
 
-# Use same key for export and import environments
-mcpgateway import backup.json --rekey-secret $AUTH_ENCRYPTION_SECRET
+# Preview the import in the destination environment
+mcpgateway import backup.json --dry-run
 ```
 
 ---
@@ -228,8 +227,8 @@ echo "✅ Backup created: backup-$DATE.json"
 #!/bin/bash
 # Sync staging to production
 mcpgateway export --tags production --out staging-config.json
-mcpgateway import staging-config.json --rekey-secret $PROD_SECRET --dry-run
-mcpgateway import staging-config.json --rekey-secret $PROD_SECRET
+mcpgateway import staging-config.json --dry-run
+mcpgateway import staging-config.json
 ```
 
 ### Selective Migration

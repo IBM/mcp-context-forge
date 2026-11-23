@@ -49,7 +49,7 @@ restores upstream names for federated resources and discards manual base overrid
 
 ## 🔐 Security Features
 
-- **Encrypted Authentication**: All sensitive auth data (passwords, tokens, API keys) is encrypted using AES-256-GCM
+- **Credential handling**: Exports omit recognized credentials. Imports ignore those values in older files. Unrecognized header names and query keys keep their values.
 - **Cross-Environment Support**: Key rotation capabilities for moving configs between environments
 - **Validation**: Complete JSON schema validation for import data integrity
 - **Conflict Resolution**: Multiple strategies for handling naming conflicts during import
@@ -129,8 +129,8 @@ mcpgateway import backup.json --conflict-strategy update
 # Dry run to preview changes
 mcpgateway import backup.json --dry-run
 
-# Cross-environment import with key rotation
-mcpgateway import prod-export.json --rekey-secret $NEW_ENV_SECRET
+# Cross-environment import
+mcpgateway import prod-export.json
 
 # Selective import of specific entities
 mcpgateway import backup.json --include "tools:weather_api,translate;servers:ai-server"
@@ -146,10 +146,14 @@ mcpgateway import backup.json --conflict-strategy fail    # Fail on conflicts
 | Option | Description | Values | Default |
 |--------|-------------|--------|---------|
 | `--conflict-strategy` | How to handle conflicts | `skip`, `update`, `rename`, `fail` | `update` |
-| `--dry-run` | Validate without changes | - | `false` |
-| `--rekey-secret` | New encryption secret | String | - |
+| `--dry-run` | Preview local outcomes without writes or upstream connections | - | `false` |
+| `--team-name` | Destination team name | String | Personal team |
 | `--include` | Selective import filter | `type:name1,name2;type2:name3` | - |
 | `--verbose, -v` | Verbose output | - | `false` |
+
+Without `--team-name`, new entities go into your personal team. With `--team-name`, the import targets that team. Imported entities keep explicit visibility from the file where the operation permits it. When you supply a selection, the import processes only the entity types in that selection. A selected gateway can still discover its own upstream tools, resources, and prompts.
+
+An export can omit server tool bindings that are outside its visibility or activity filters. Import reports those omissions and preserves the destination server's existing bindings. Import also preserves existing bindings if any reference in the file cannot resolve.
 
 ### REST API Import
 
@@ -167,7 +171,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
        "import_data": {...},
        "conflict_strategy": "update",
        "dry_run": false,
-       "rekey_secret": "new-secret"
+       "team_name": "Operations"
      }' \
      "http://localhost:4444/import"
 
@@ -235,8 +239,8 @@ When moving configurations between environments with different encryption keys:
 # Export from source environment
 mcpgateway export --out staging-config.json
 
-# Import to target environment with new key
-mcpgateway import staging-config.json --rekey-secret $PROD_ENCRYPTION_SECRET
+# Import into the target environment
+mcpgateway import staging-config.json
 ```
 
 ### Environment Variables
@@ -265,6 +269,7 @@ Exports follow a standardized JSON schema:
 ```json
 {
   "version": "2025-03-26",
+  "contextforge_version": "1.1.1",
   "exported_at": "2025-01-15T10:30:00Z",
   "exported_by": "admin",
   "source_gateway": "https://gateway.example.com:4444",
@@ -286,7 +291,6 @@ Exports follow a standardized JSON schema:
         "name": "production-east",
         "url": "https://prod-east.gateway.com:4444",
         "auth_type": "basic",
-        "auth_value": "encrypted_credentials_here",
         "transport": "SSE"
       }
     ],
@@ -350,6 +354,8 @@ Import data is validated for:
 ---
 
 ## 📊 Import Progress Tracking
+
+Import status is local to the worker that processed the request. The import response includes the outcome counts, unresolved reference warnings, and any entities listed in `credentials_required`.
 
 ### Real-time Status
 
@@ -442,9 +448,8 @@ jobs:
 # Export from staging
 mcpgateway export --types tools,servers --tags production --out prod-config.json
 
-# Import to production with new encryption key
+# Import to production
 mcpgateway import prod-config.json \
-  --rekey-secret $PROD_ENCRYPTION_SECRET \
   --conflict-strategy update \
   --verbose
 ```
@@ -490,14 +495,11 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/gateways
 mcpgateway export --include-inactive --types tools
 ```
 
-#### Import Fails with "Invalid authentication data"
-```bash
-# Try re-keying with current environment's secret
-mcpgateway import backup.json --rekey-secret $AUTH_ENCRYPTION_SECRET
+#### Import reports credentials required
 
-# Or check the source environment's encryption key
-echo "Source AUTH_ENCRYPTION_SECRET may differ from target environment"
-```
+Configure credentials on the destination for the entities listed in `credentials_required`. A gateway that needs credentials remains pending and unreachable until you configure them. Imports keep destination credentials for same-origin updates. A change to a different URL origin clears the old credentials.
+
+Use `scripts/migrate_enc_secret.py` to rotate the encryption secret.
 
 #### Import Conflicts Not Resolving
 ```bash
@@ -565,7 +567,7 @@ mcpgateway import backup.json --types servers
   "import_data": { /* export data */ },
   "conflict_strategy": "update",
   "dry_run": false,
-  "rekey_secret": "optional-new-secret",
+  "team_name": "Operations",
   "selected_entities": {
     "tools": ["tool1", "tool2"],
     "servers": ["server1"]
@@ -613,8 +615,8 @@ mcpgateway import /backups/daily-2025-01-15.json --conflict-strategy update
 mcpgateway export --tags production --out staging-to-prod.json
 
 # 2. Import to production
-mcpgateway import staging-to-prod.json --rekey-secret $PROD_SECRET --dry-run
-mcpgateway import staging-to-prod.json --rekey-secret $PROD_SECRET
+mcpgateway import staging-to-prod.json --dry-run
+mcpgateway import staging-to-prod.json
 ```
 
 ### Configuration Versioning
@@ -638,13 +640,13 @@ mcpgateway import config-v1.2.3.json --conflict-strategy update
 mcpgateway export --tags staging-ready --out dev-to-staging.json
 
 # Import to staging
-mcpgateway import dev-to-staging.json --rekey-secret $STAGING_SECRET
+mcpgateway import dev-to-staging.json
 
 # Export from staging (filtered for production)
 mcpgateway export --tags production-ready --out staging-to-prod.json
 
 # Import to production
-mcpgateway import staging-to-prod.json --rekey-secret $PROD_SECRET
+mcpgateway import staging-to-prod.json
 ```
 
 ---

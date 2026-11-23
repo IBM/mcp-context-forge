@@ -71,6 +71,7 @@ from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.auth_context import (
     configuration_export_includes_roots,
     extract_token_team_ids,
+    get_import_request_scope,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
@@ -194,9 +195,9 @@ from mcpgateway.services.gateway_service import (
     GatewayToolNameConflictError,
     test_gateway_connectivity,
 )
-from mcpgateway.services.import_service import ConflictStrategy
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
+from mcpgateway.services.import_service import import_service, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
@@ -206,7 +207,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
-from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
+from mcpgateway.services.root_service import root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -888,9 +889,7 @@ tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
 gateway_service: GatewayService = GatewayService()
 resource_service: ResourceService = ResourceService()
-root_service: RootService = RootService()
 export_service: ExportService = ExportService()
-import_service: ImportService = ImportService()
 # Created only when A2A is enabled. A2A admin handlers call raise_if_a2a_disabled() first, so they treat it as present.
 a2a_service: A2AAgentService = typing_cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 # Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
@@ -16671,171 +16670,183 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=500, detail="Export failed")
 
 
+def _admin_import_options(body: Dict[str, Any]) -> tuple[ConflictStrategy, Optional[str], Optional[Dict[str, List[str]]]]:
+    """Validate options shared by Admin import and preview.
+
+    Args:
+        body: Import or preview request body.
+
+    Returns:
+        Conflict strategy, destination team name, and selection.
+
+    Raises:
+        HTTPException: If an import option is invalid.
+    """
+    if "rekey_secret" in body:
+        raise HTTPException(status_code=400, detail="Import does not support rekey_secret. Use scripts/migrate_enc_secret.py to rotate the encryption secret.")
+    try:
+        strategy = ConflictStrategy(body.get("conflict_strategy", "update").lower())
+    except (AttributeError, ValueError):
+        allowed = [strategy.value for strategy in ConflictStrategy]
+        raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {allowed}") from None
+    team_name = body.get("team_name")
+    if team_name is not None and not isinstance(team_name, str):
+        raise HTTPException(status_code=400, detail="team_name must be a string")
+    selected = body.get("selected_entities")
+    if selected is not None and (not isinstance(selected, dict) or any(not isinstance(items, list) or any(not isinstance(item, str) for item in items) for items in selected.values())):
+        raise HTTPException(status_code=400, detail="selected_entities must map entity types to lists of names or IDs")
+    return strategy, team_name, selected
+
+
 @admin_router.post("/import/preview")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """
-    Preview import file to show available items for selective import.
+    """Preview import outcomes for the supplied configuration and options.
 
     Args:
-        request: FastAPI request object with import file data
-        db: Database session
-        user: Authenticated user
+        request: Request with file content in "data" and optional import options.
+        db: Database session.
+        user: Authenticated user.
 
     Returns:
-        JSON response with categorized import preview data
+        Categorized preview data.
 
     Raises:
-        HTTPException: 400 for invalid JSON or missing data field, validation errors;
-                      500 for unexpected preview failures
-
-    Expects JSON body:
-    {
-        "data": { ... }  // The import file content
-    }
+        HTTPException: If the request, authorization, or preview fails.
     """
     try:
-        LOGGER.info(f"Admin import preview requested by user: {user}")
-
-        # Parse request data
         try:
-            data = await _read_request_json(request)
+            body = await _read_request_json(request)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
-
-        # Extract import data
-        import_data = data.get("data")
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body") from None
+        import_data = body.get("data") if isinstance(body, dict) else None
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
-
         if import_envelope_includes_roots(import_data):
             await _require_unrestricted_root_admin(request, user, db)
 
-        # Validate user permissions for import preview
-        username = user if isinstance(user, str) else user.get("username", "unknown")
-        LOGGER.info(f"Processing import preview for user: {username}")
-
-        # Generate preview
-        preview_data = await import_service.preview_import(db=db, import_data=import_data)
-
-        return ORJSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
-
-    except ImportValidationError as e:
-        LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid import data")
+        strategy, team_name, selected = _admin_import_options(body)
+        actor, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+        preview = await import_service.preview_import(
+            db=db,
+            import_data=import_data,
+            conflict_strategy=strategy,
+            imported_by=actor,
+            selected_entities=selected,
+            team_name=team_name,
+            token_teams=token_teams,
+            unrestricted_admin=unrestricted_admin,
+        )
+        return ORJSONResponse(content={"success": True, "preview": preview, "message": f"Import preview generated. Found {preview['summary']['total_items']} total items."})
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG) from None
+    except ImportConflictError:
+        raise HTTPException(status_code=409, detail="Import conflict detected") from None
+    except ImportValidationError:
+        raise HTTPException(status_code=400, detail="Invalid import data") from None
     except HTTPException:
         raise
     except Exception as e:
-        LOGGER.error(f"Import preview failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Preview failed")
+        LOGGER.error("Admin import preview failed: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Preview failed") from None
 
 
 @admin_router.post("/import/configuration")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """
-    Import configuration via Admin UI.
+    """Import configuration or run a preview without writing.
 
     Args:
-        request: FastAPI request object
-        db: Database session
-        user: Authenticated user
+        request: Request with file content in "import_data" and optional import options.
+        db: Database session.
+        user: Authenticated user.
 
     Returns:
-        JSON response with import status
+        Import status.
 
     Raises:
-        HTTPException: If import fails
-
-    Expects JSON body with import data and options:
-    {
-        "import_data": { ... },
-        "conflict_strategy": "update",
-        "dry_run": false,
-        "rekey_secret": "optional-new-secret",  # pragma: allowlist secret
-        "selected_entities": { ... }
-    }
+        HTTPException: If the request, authorization, or import fails.
     """
     try:
-        LOGGER.info(f"Admin user {user} requested configuration import")
-
-        body = await _read_request_json(request)
-        import_data = body.get("import_data")
+        try:
+            body = await _read_request_json(request)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body") from None
+        import_data = body.get("import_data") if isinstance(body, dict) else None
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing import_data in request body")
-
-        conflict_strategy_str = body.get("conflict_strategy", "update")
-        dry_run = body.get("dry_run", False)
-        rekey_secret = body.get("rekey_secret")
-        selected_entities = body.get("selected_entities")
-
-        if import_envelope_includes_roots(import_data, selected_entities):
+        if import_envelope_includes_roots(import_data):
             await _require_unrestricted_root_admin(request, user, db)
 
-        # Validate conflict strategy
-        try:
-            conflict_strategy = ConflictStrategy(conflict_strategy_str.lower())
-        except ValueError:
-            allowed = [s.value for s in ConflictStrategy.__members__.values()]
-            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {allowed}")
-
-        # Perform import
+        strategy, team_name, selected = _admin_import_options(body)
+        dry_run = body.get("dry_run", False)
+        if not isinstance(dry_run, bool):
+            raise HTTPException(status_code=400, detail="dry_run must be a boolean")
+        actor, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
         status = await import_service.import_configuration(
-            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=get_user_email(user), selected_entities=selected_entities
+            db=db,
+            import_data=import_data,
+            conflict_strategy=strategy,
+            dry_run=dry_run,
+            imported_by=actor,
+            selected_entities=selected,
+            team_name=team_name,
+            token_teams=token_teams,
+            unrestricted_admin=unrestricted_admin,
         )
-
         return ORJSONResponse(content=status.to_dict())
-
-    except ImportServiceError as e:
-        LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail="Import failed")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG) from None
+    except ImportConflictError:
+        raise HTTPException(status_code=409, detail="Import conflict detected") from None
+    except ImportServiceError:
+        raise HTTPException(status_code=400, detail="Import failed") from None
     except HTTPException:
         raise
     except Exception as e:
-        LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Import failed")
+        LOGGER.error("Unexpected Admin import error: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Import failed") from None
 
 
 @admin_router.get("/import/status/{import_id}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
-    """Get import status via Admin UI.
+async def admin_get_import_status(import_id: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Get a visible import status via Admin UI.
 
     Args:
-        import_id: Import operation ID
-        user: Authenticated user
-        _db: Database session for permission checks.
+        import_id: Import operation ID.
+        request: Current request.
+        user: Authenticated user.
+        db: Database session for permission checks.
 
     Returns:
-        JSON response with import status
+        Import status.
 
     Raises:
-        HTTPException: If import not found
+        HTTPException: If the import is outside scope or does not exist.
     """
-    LOGGER.debug(f"Admin user {user} requested import status for {import_id}")
-
-    status = import_service.get_import_status(import_id)
+    actor, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+    status = import_service.get_import_status(import_id, imported_by=actor, token_teams=token_teams, unrestricted_admin=unrestricted_admin)
     if not status:
         raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
-
     return ORJSONResponse(content=status.to_dict())
 
 
 @admin_router.get("/import/status")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
-    """List all import statuses via Admin UI.
+async def admin_list_import_statuses(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """List visible import statuses via Admin UI.
 
     Args:
-        user: Authenticated user
-        _db: Database session for permission checks.
+        request: Current request.
+        user: Authenticated user.
+        db: Database session for permission checks.
 
     Returns:
-        JSON response with list of import statuses
+        Visible import statuses.
     """
-    LOGGER.debug(f"Admin user {user} requested all import statuses")
-
-    statuses = import_service.list_import_statuses()
+    actor, token_teams, unrestricted_admin = await get_import_request_scope(request, user, db)
+    statuses = import_service.list_import_statuses(imported_by=actor, token_teams=token_teams, unrestricted_admin=unrestricted_admin)
     return ORJSONResponse(content=[status.to_dict() for status in statuses])
 
 

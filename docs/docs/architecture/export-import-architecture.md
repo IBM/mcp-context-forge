@@ -98,16 +98,14 @@ graph TB
 
 - Import data validation and schema compliance
 - Entity creation and updates with conflict resolution
-- Authentication data decryption and re-encryption
+- Credential filtering and pending gateway registration
 - Progress tracking and status reporting
-- Cross-environment key rotation support
 
 **Key Methods:**
 
 - `import_configuration()` - Main import orchestration
 - `validate_import_data()` - Schema validation
 - `_process_entities()` - Entity processing pipeline
-- `_rekey_auth_data()` - Authentication re-encryption
 - `get_import_status()` - Progress tracking
 
 ### CLI Interface (`mcpgateway.cli_export_import`)
@@ -130,51 +128,13 @@ graph TB
 
 ## 🔒 Security Architecture
 
-### Authentication Data Handling
+### Authentication data handling
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant ExportSvc
-    participant CryptoUtil
-    participant ImportSvc
-    participant Database
+Full and selective exports omit recognized credentials. Imports discard recognized credential fields and keys from older files before validating or applying entity changes. Unrecognized header names and query keys keep their values. Logs identify ignored fields by key only.
 
-    Note over Client,Database: Export Flow
-    Client->>ExportSvc: export_configuration()
-    ExportSvc->>Database: Fetch entities with encrypted auth
-    Database-->>ExportSvc: Entities (auth_value encrypted)
-    ExportSvc->>Client: Export JSON (auth still encrypted)
+An update can keep destination credentials when the URL origin stays the same. An origin change clears the old credentials before any request to the new origin. A gateway that requires credentials stays pending and unreachable until an authorized user configures them. The import result lists those entities in `credentials_required`.
 
-    Note over Client,Database: Import Flow
-    Client->>ImportSvc: import_configuration()
-    ImportSvc->>CryptoUtil: decode_auth(old_encrypted)
-    CryptoUtil-->>ImportSvc: Decrypted auth data
-    ImportSvc->>CryptoUtil: encode_auth(data, new_key)
-    CryptoUtil-->>ImportSvc: Re-encrypted with new key
-    ImportSvc->>Database: Store with new encryption
-```
-
-### Encryption Flow
-
-1. **Export**: Authentication data remains encrypted with source environment's key
-2. **Transport**: Export files contain encrypted auth values (safe to store/transmit)
-3. **Import**: Auth data is decrypted with source key, re-encrypted with target key
-4. **Storage**: Database stores auth data encrypted with target environment's key
-
-### Key Rotation Process
-
-```python
-# During import with --rekey-secret
-old_secret = settings.auth_encryption_secret  # Source environment key
-new_secret = rekey_secret                     # Target environment key
-
-# Decrypt with old key
-decrypted_auth = decode_auth(auth_value, key=old_secret)
-
-# Re-encrypt with new key
-new_auth_value = encode_auth(decrypted_auth, key=new_secret)
-```
+Use `scripts/migrate_enc_secret.py` to rotate the encryption secret for an instance.
 
 ---
 
@@ -225,9 +185,8 @@ graph LR
     end
 
     subgraph "Processing"
-        Security --> Decrypt[Auth Decryption]
-        Decrypt --> Rekey[Key Rotation - optional]
-        Rekey --> Order[Dependency Ordering]
+        Security --> Filter[Ignore File Credentials]
+        Filter --> Order[Dependency Ordering]
         Order --> Process[Entity Processing]
     end
 

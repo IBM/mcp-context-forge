@@ -189,13 +189,11 @@ mcpgateway export --tags production-ready --out staging-to-prod.json
 # On production environment
 # First, validate with dry-run
 mcpgateway import staging-to-prod.json \
-  --rekey-secret prod-secret-xyz \
   --conflict-strategy update \
   --dry-run
 
 # If validation passes, perform actual import
 mcpgateway import staging-to-prod.json \
-  --rekey-secret prod-secret-xyz \
   --conflict-strategy update
 ```
 
@@ -299,7 +297,6 @@ fi
 set -e
 
 STAGING_CONFIG="staging-export.json"
-PROD_SECRET="${PROD_ENCRYPTION_SECRET:-prod-secret-key}"
 
 echo "🚀 Promoting staging configuration to production"
 
@@ -314,7 +311,6 @@ echo "📊 Exported $ENTITY_COUNT entities from staging"
 # Dry run import to production
 echo "🔍 Validating import to production..."
 mcpgateway import "$STAGING_CONFIG" \
-  --rekey-secret "$PROD_SECRET" \
   --conflict-strategy update \
   --dry-run
 
@@ -324,7 +320,6 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "📥 Importing to production..."
     mcpgateway import "$STAGING_CONFIG" \
-      --rekey-secret "$PROD_SECRET" \
       --conflict-strategy update \
       --verbose
     echo "✅ Production promotion completed!"

@@ -91,11 +91,15 @@ async def test_admin_import_preview_missing_data():
 
 @pytest.mark.asyncio
 async def test_admin_import_preview_success():
-    request = _make_json_request({"data": {"tools": []}})
-    with patch.object(admin, "import_service") as mock_import:
+    selection = {"tools": ["local-tool"]}
+    request = _make_json_request({"data": {"entities": {"tools": []}}, "team_name": "Operations", "selected_entities": selection, "conflict_strategy": "skip"})
+    with patch.object(admin, "import_service") as mock_import, patch.object(admin, "get_import_request_scope", AsyncMock(return_value=("admin@example.com", ["team-ops"], False))):
         mock_import.preview_import = AsyncMock(return_value={"summary": {"total_items": 0}})
         response = await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
         assert b"preview" in response.body
+        options = mock_import.preview_import.await_args.kwargs
+        assert (options["team_name"], options["selected_entities"], options["conflict_strategy"]) == ("Operations", selection, admin.ConflictStrategy.SKIP)
+        assert (options["imported_by"], options["token_teams"], options["unrestricted_admin"]) == ("admin@example.com", ["team-ops"], False)
 
 
 @pytest.mark.asyncio
@@ -151,7 +155,7 @@ async def test_admin_import_configuration_success():
 @pytest.mark.parametrize("dry_run", [True, False])
 async def test_admin_import_configuration_denies_root_payload_before_service(monkeypatch, dry_run):
     request = _make_json_request(
-        {"import_data": {"entities": {"roots": [{"uri": "https://example.com/root"}]}}, "conflict_strategy": "update", "dry_run": dry_run}
+        {"import_data": {"entities": {"roots": [{"uri": "https://example.com/root"}]}}, "conflict_strategy": "update", "dry_run": dry_run, "selected_entities": {"tools": []}}
     )
     import_service = MagicMock(import_configuration=AsyncMock())
     monkeypatch.setattr(admin, "import_service", import_service)
@@ -191,3 +195,34 @@ async def test_admin_import_configuration_error():
         with pytest.raises(HTTPException) as exc:
             await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
         assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("handler", "field"), [(admin.admin_import_configuration, "import_data"), (admin.admin_import_preview, "data")])
+async def test_admin_import_rejects_rekey_option(handler, field, monkeypatch):
+    """Reject the retired option even when its value is null."""
+    service = MagicMock(import_configuration=AsyncMock(), preview_import=AsyncMock())
+    monkeypatch.setattr(admin, "import_service", service)
+    request = _make_json_request({field: {"entities": {"tools": []}}, "rekey_secret": None})
+
+    with pytest.raises(HTTPException) as exc:
+        await handler(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert exc.value.status_code == 400
+    assert "migrate_enc_secret.py" in exc.value.detail
+    service.import_configuration.assert_not_awaited()
+    service.preview_import.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_import_fail_conflict_returns_409(monkeypatch):
+    """Return a conflict for an aborted import."""
+    service = MagicMock(import_configuration=AsyncMock(side_effect=admin.ImportConflictError("conflict")))
+    monkeypatch.setattr(admin, "import_service", service)
+    monkeypatch.setattr(admin, "get_import_request_scope", AsyncMock(return_value=("admin@example.com", [], False)))
+    request = _make_json_request({"import_data": {"entities": {"tools": []}}, "conflict_strategy": "fail"})
+
+    with pytest.raises(HTTPException) as exc:
+        await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert exc.value.status_code == 409
