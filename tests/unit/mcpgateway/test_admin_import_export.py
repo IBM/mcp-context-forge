@@ -18,6 +18,7 @@ import pytest
 # First-Party
 from mcpgateway import admin
 from mcpgateway.services.import_service import ImportError as ImportServiceError
+from mcpgateway.services.import_service import ImportConflictError, ImportValidationError
 from mcpgateway.services.permission_service import PermissionService
 
 
@@ -226,3 +227,73 @@ async def test_admin_import_fail_conflict_returns_409(monkeypatch):
         await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", [admin.admin_import_configuration, admin.admin_import_preview])
+async def test_admin_import_rejects_malformed_json(handler, monkeypatch):
+    """Reject malformed JSON before starting an import or a preview."""
+    service = MagicMock(import_configuration=AsyncMock(), preview_import=AsyncMock())
+    monkeypatch.setattr(admin, "import_service", service)
+    request = _make_json_request({})
+    request.body.return_value = b'{"import_data":'
+
+    with pytest.raises(HTTPException) as exc:
+        await handler(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert (exc.value.status_code, exc.value.detail) == (400, "Invalid JSON in request body")
+    service.import_configuration.assert_not_awaited()
+    service.preview_import.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "detail"),
+    [
+        ({"team_name": []}, "team_name must be a string"),
+        ({"selected_entities": {"tools": [3]}}, "selected_entities must map entity types to lists of names or IDs"),
+        ({"dry_run": "false"}, "dry_run must be a boolean"),
+    ],
+)
+async def test_admin_import_rejects_invalid_options(options, detail, monkeypatch):
+    """Reject malformed options before they can reach the write path."""
+    service = AsyncMock()
+    monkeypatch.setattr(admin.import_service, "import_configuration", service)
+    request = _make_json_request({"import_data": {"entities": {"tools": []}}, **options})
+
+    with pytest.raises(HTTPException) as exc:
+        await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert (exc.value.status_code, exc.value.detail) == (400, detail)
+    service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "error", "expected"),
+    [
+        ("preview", PermissionError, (403, admin._ACCESS_DENIED_MSG)),
+        ("preview", ImportConflictError, (409, "Import conflict detected")),
+        ("preview", ImportValidationError, (400, "Invalid import data")),
+        ("preview", RuntimeError, (500, "Preview failed")),
+        ("apply", PermissionError, (403, admin._ACCESS_DENIED_MSG)),
+        ("apply", RuntimeError, (500, "Import failed")),
+    ],
+)
+async def test_admin_import_errors_do_not_disclose_internal_details(operation, error, expected, caplog, monkeypatch):
+    """Report the public error and omit the internal service message from logs."""
+    handler, service_method, field = (
+        (admin.admin_import_preview, "preview_import", "data") if operation == "preview" else (admin.admin_import_configuration, "import_configuration", "import_data")
+    )
+    internal_detail = "internal downstream diagnostic"
+    service = AsyncMock(side_effect=error(internal_detail))
+    monkeypatch.setattr(admin.import_service, service_method, service)
+    monkeypatch.setattr(admin, "get_import_request_scope", AsyncMock(return_value=("admin@example.com", ["team-ops"], False)))
+    request = _make_json_request({field: {"entities": {"tools": []}}})
+
+    with pytest.raises(HTTPException) as exc:
+        await handler(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    service.assert_awaited_once()
+    assert (exc.value.status_code, exc.value.detail) == expected
+    assert internal_detail not in caplog.text

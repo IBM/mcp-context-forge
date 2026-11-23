@@ -412,6 +412,32 @@ async def test_root_notifications_and_other_entity_strategies(registry, importer
 
 
 @pytest.mark.asyncio
+async def test_notification_failures_preserve_committed_import(registry, importer, monkeypatch):
+    """Report delivery failures without losing the root and tool committed by import."""
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+
+    def fail_dataplane_notification():
+        raise RuntimeError("data plane unavailable")
+
+    async def fail_root_notification(_event):
+        raise RuntimeError("root subscriber unavailable")
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.notify_dataplane", fail_dataplane_notification)
+    monkeypatch.setattr(importer.root_service, "notify_import_root", fail_root_notification)
+    config = envelope(roots=[{"name": "published", "uri": "https://example.com/root"}], tools=[tool("committed")])
+
+    result = await importer.import_configuration(registry, config, imported_by=ACTOR)
+
+    assert result.status == "completed"
+    assert (result.created_entities, result.failed_entities) == (2, 0)
+    assert "Registry notification or cache update failed after commit" in result.warnings
+    assert "Root change notification failed after commit" in result.warnings
+    assert [root.name for root in await importer.root_service.list_roots()] == ["published"]
+    with Session(registry.get_bind()) as reader:
+        assert reader.scalars(select(Tool.original_name)).all() == ["committed"]
+
+
+@pytest.mark.asyncio
 async def test_federated_reference_resolves_only_the_intended_gateway(registry, importer, monkeypatch):
     """Match a portable reference through discovery rather than a repeated tool name."""
 
