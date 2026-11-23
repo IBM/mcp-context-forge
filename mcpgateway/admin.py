@@ -3062,11 +3062,18 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
-def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
-    """Redact full URL that could contain user secrets."""
+def _redact_connection_url(url: Optional[str]) -> Optional[str]:
+    """Hide a connection URL, because any part of it can carry a credential.
+
+    Args:
+        url: Connection URL, or None.
+
+    Returns:
+        The input when it is empty. Otherwise the configured mask value.
+    """
     if not url:
         return url
-    return "[REDACTED]"
+    return settings.masked_auth_value
 
 
 @admin_router.get("/config/settings")
@@ -3149,9 +3156,9 @@ async def get_configuration_settings(
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
-            "database_url": _redact_url_userinfo(settings.database_url),
+            "database_url": _redact_connection_url(settings.database_url),
             "cache_type": settings.cache_type,
-            "redis_url": _redact_url_userinfo(settings.redis_url),
+            "redis_url": _redact_connection_url(settings.redis_url),
             "db_pool_size": settings.db_pool_size,
             "db_max_overflow": settings.db_max_overflow,
         },

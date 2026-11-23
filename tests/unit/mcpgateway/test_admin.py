@@ -264,7 +264,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
-from mcpgateway.admin import _redact_url_userinfo
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
@@ -13297,17 +13296,23 @@ async def test_get_configuration_settings_does_not_mask_empty_sensitive_values(m
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == ""
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("url", "expected"),
+    ("database_url", "redis_url", "expected_redis"),
     [
-        ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "[REDACTED]"),  # pragma: allowlist secret
-        ("redis://host/0#secret", "[REDACTED]"),
-        (None, None),
-        ("", ""),
+        ("postgresql://u:dbpw@db/mcp?sslpassword=qpw", "redis://:rpw@r:6379/0", settings.masked_auth_value),  # pragma: allowlist secret
+        ("postgresql://u:pa/ss@db/mcp", None, None),  # pragma: allowlist secret
     ],
 )
-def test_redact_url_userinfo(url, expected):
-    assert _redact_url_userinfo(url) == expected
+async def test_get_configuration_settings_redacts_connection_urls(monkeypatch, mock_db, allow_permission, database_url, redis_url, expected_redis):
+    """Connection URLs never reach the response (#7051)."""
+    monkeypatch.setattr(settings, "database_url", database_url)
+    monkeypatch.setattr(settings, "redis_url", redis_url)
+    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    group = result["groups"]["Database & Cache"]
+    assert group["database_url"] == settings.masked_auth_value
+    assert group["redis_url"] == expected_redis
+    assert not any(secret in json.dumps(result) for secret in ("dbpw", "qpw", "rpw", "pa/ss"))
 
 
 @pytest.mark.asyncio
