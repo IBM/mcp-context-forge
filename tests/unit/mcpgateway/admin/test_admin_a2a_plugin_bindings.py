@@ -97,6 +97,13 @@ def _patch_get_plugin_service():
         yield
 
 
+@pytest.fixture(autouse=True)
+def binding_invalidation():
+    """Capture cache invalidation after admin binding writes."""
+    with patch("mcpgateway.admin.invalidate_a2a_plugin_bindings", new_callable=AsyncMock) as invalidate:
+        yield invalidate
+
+
 class TestA2APluginBindingsAdmin:
     @pytest.fixture(autouse=True)
     def setup_rbac_mocks(self):
@@ -193,7 +200,7 @@ class TestA2APluginBindingsAdmin:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_create_success(self, mock_request, user_ctx, db_session):
+    async def test_create_success(self, mock_request, user_ctx, db_session, binding_invalidation):
         mock_request.form = AsyncMock(
             return_value={
                 "team_id": "team-a",
@@ -210,6 +217,8 @@ class TestA2APluginBindingsAdmin:
             db=db_session,
             user=user_ctx,
         )
+        binding_invalidation.assert_awaited_once()
+        assert binding_invalidation.await_args.args[0][0].agent_name == "agent_x"
         assert response.status_code == 200
         assert response.template_name == "a2a_agent_plugin_bindings_partial.html"
 
@@ -341,7 +350,7 @@ class TestA2APluginBindingsAdmin:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_delete_success(self, mock_request, user_ctx, db_session):
+    async def test_delete_success(self, mock_request, user_ctx, db_session, binding_invalidation):
         svc = A2AAgentPluginBindingService()
         svc.upsert_binding(
             db=db_session,
@@ -363,6 +372,8 @@ class TestA2APluginBindingsAdmin:
             db=db_session,
             user=user_ctx,
         )
+        binding_invalidation.assert_awaited_once()
+        assert binding_invalidation.await_args.args[0][0].id == binding.id
         assert response.status_code == 200
         assert response.template_name == "a2a_agent_plugin_bindings_partial.html"
 

@@ -126,6 +126,7 @@ from mcpgateway.middleware.rbac import (
     require_permission,
     require_team_scope,
 )
+from mcpgateway.routers.a2a_agent_plugin_bindings import invalidate_a2a_plugin_bindings
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -18225,7 +18226,7 @@ async def admin_create_a2a_plugin_binding(
 
         caller_email = get_user_email(user)
         service = A2AAgentPluginBindingService()
-        service.upsert_binding(
+        binding = service.upsert_binding(
             db=db,
             team_id=team_id,
             agent_name=agent_name,
@@ -18237,6 +18238,7 @@ async def admin_create_a2a_plugin_binding(
             caller_email=caller_email,
         )
         db.commit()
+        await invalidate_a2a_plugin_bindings([binding])
 
     except Exception as e:
         LOGGER.error(f"Error creating A2A plugin binding: {e}")
@@ -18278,8 +18280,9 @@ async def admin_delete_a2a_plugin_binding(
         allowed_teams = None if (is_admin and token_teams is None) else set(token_teams or [])
 
         service = A2AAgentPluginBindingService()
-        service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
+        binding = service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
         db.commit()
+        await invalidate_a2a_plugin_bindings([binding])
 
     except A2AAgentPluginBindingNotFoundError as e:
         return HTMLResponse(

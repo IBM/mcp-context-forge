@@ -49,27 +49,26 @@ def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
     return None if (is_admin and token_teams is None) else set(token_teams or [])
 
 
-async def _invalidate_and_broadcast(bindings: List[A2AAgentPluginBindingResponse]) -> None:
+async def invalidate_a2a_plugin_bindings(bindings: List[A2AAgentPluginBindingResponse]) -> None:
     """Evict local caches and broadcast pub/sub frames for a batch of bindings.
 
-    Wildcard bindings (``agent_name == "*"``) affect every cached context for
-    the team, so they go through the team-wide channel; specific bindings only
-    evict the one context.
+    Wildcard bindings reload agent contexts for the team. Specific bindings
+    reload one agent context. Both changes propagate to peer workers.
     """
     wildcard_teams = {b.team_id for b in bindings if b.agent_name == "*"}
     specific_ctx_ids = {make_context_id(b.team_id, b.agent_name) for b in bindings if b.agent_name != "*"}
 
     for ctx_id in specific_ctx_ids:
-        await reload_plugin_context(ctx_id)
-        await publish_binding_change(ctx_id)
+        await reload_plugin_context(ctx_id, kind="agent")
+        await publish_binding_change(ctx_id, kind="agent")
 
     if wildcard_teams:
         factory = get_plugin_manager_factory()
         if factory is not None:
             for team_id in wildcard_teams:
-                await factory.invalidate_team(team_id, CONTEXT_ID_SEPARATOR)
+                await factory.invalidate_team(team_id, CONTEXT_ID_SEPARATOR, kind="agent")
         for team_id in wildcard_teams:
-            await publish_team_binding_change(team_id)
+            await publish_team_binding_change(team_id, kind="agent")
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +130,7 @@ async def upsert_a2a_agent_plugin_binding(
             caller_email=caller_email,
         )
         db.commit()
-        await _invalidate_and_broadcast([binding])
+        await invalidate_a2a_plugin_bindings([binding])
         return binding
     except ValueError as exc:
         logger.error("Failed to upsert A2A agent plugin binding: %s", exc)
@@ -151,11 +150,13 @@ async def list_a2a_agent_plugin_bindings(
     offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    agent_name: Optional[str] = None,
 ) -> A2AAgentPluginBindingListResponse:
     """List all A2A agent plugin bindings across all teams.
 
     Args:
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        agent_name: Optional exact agent name to filter.
         limit: Maximum number of results to return.
         offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
@@ -172,7 +173,7 @@ async def list_a2a_agent_plugin_bindings(
     limit_val = limit if isinstance(limit, int) else 100
     offset_val = offset if isinstance(offset, int) else 0
     allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
-    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
+    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, agent_name=agent_name, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
     return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
@@ -190,12 +191,14 @@ async def list_a2a_agent_plugin_bindings_for_team(
     offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    agent_name: Optional[str] = None,
 ) -> A2AAgentPluginBindingListResponse:
     """List all A2A agent plugin bindings for a specific team.
 
     Args:
         team_id: Team identifier to filter by.
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        agent_name: Optional exact agent name to filter.
         limit: Maximum number of results to return.
         offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
@@ -212,7 +215,7 @@ async def list_a2a_agent_plugin_bindings_for_team(
     allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
     limit_val = limit if isinstance(limit, int) else 100
     offset_val = offset if isinstance(offset, int) else 0
-    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
+    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, agent_name=agent_name, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
     return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
@@ -255,7 +258,7 @@ async def delete_a2a_agent_plugin_bindings_by_reference(
     allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
     deleted: List[A2AAgentPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id, allowed_teams=allowed_teams)
     db.commit()
-    await _invalidate_and_broadcast(deleted)
+    await invalidate_a2a_plugin_bindings(deleted)
     return A2AAgentPluginBindingListResponse(bindings=deleted, total=len(deleted))
 
 
@@ -297,7 +300,7 @@ async def delete_a2a_agent_plugin_binding(
         allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
         deleted = _service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
         db.commit()
-        await _invalidate_and_broadcast([deleted])
+        await invalidate_a2a_plugin_bindings([deleted])
         return deleted
     except A2AAgentPluginBindingNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

@@ -220,8 +220,9 @@ class A2AAgentPluginBindingService:
         limit: Optional[int] = None,
         offset: int = 0,
         allowed_teams: Optional[set[str]] = None,
+        agent_name: Optional[str] = None,
     ) -> tuple[List[A2AAgentPluginBindingResponse], int]:
-        """Return all bindings, optionally filtered by team or binding_reference_id.
+        """Return bindings filtered by team, reference, agent name, and visibility scope.
 
         When ``binding_reference_id`` is provided it takes precedence and
         ``team_id`` is ignored — a reference ID is globally unique so scoping
@@ -235,6 +236,7 @@ class A2AAgentPluginBindingService:
                 reference ID (``team_id`` is ignored).
             limit: Maximum number of results to return (None = no limit).
             offset: Number of results to skip.
+            agent_name: Optional exact agent name to filter.
             allowed_teams: When non-None, only bindings whose ``team_id`` is in
                 this set are returned. Pass ``None`` for admin callers (unrestricted).
                 This enforces multi-tenant isolation at the data layer.
@@ -252,6 +254,8 @@ class A2AAgentPluginBindingService:
             query = query.filter(A2AAgentPluginBinding.binding_reference_id == binding_reference_id)
         elif team_id:
             query = query.filter(A2AAgentPluginBinding.team_id == team_id)
+        if agent_name is not None:
+            query = query.filter(A2AAgentPluginBinding.agent_name == agent_name)
         total = query.count()
         # TODO: For tables with >10K bindings, consider:  # pylint: disable=fixme
         # 1. Caching total count with Redis + TTL

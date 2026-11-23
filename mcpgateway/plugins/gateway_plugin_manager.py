@@ -15,20 +15,16 @@ gateway-specific features:
 - CF-owned ``PluginConfigOverride`` with ``on_error`` field
 - Optional DB wiring for per-tool plugin bindings
 
-Context ID convention: ``"<team_id>::<tool_name>"``
-
-Tools of one team that have no tool-specific ``ToolPluginBinding`` rows resolve
-to the same configuration. They share one manager cached under
-``"<team_id>::*"``. ``*`` cannot be a tool name, so the shared key never
-collides with a real tool. ``_aliases`` maps each such ``context_id`` to the
-shared key. Tools with tool-specific rows keep their own slot.
+Context IDs use ``"<team_id>::<name>"``. Internal cache keys also include
+resource type, which isolates tool and agent policies with identical names.
+Resources without specific bindings share a manager within their type and team.
 """
 
 # Standard
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 # Third-Party
 from cpex.framework import ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
@@ -40,12 +36,15 @@ from sqlalchemy.orm import Session
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 from mcpgateway.plugins._state import active_local_mode_overrides, prune_expired_local_overrides
 from mcpgateway.plugins.metadata import enrich_config_plugin_metadata
+from mcpgateway.services.a2a_agent_plugin_binding_service import get_bindings_for_agent
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
 SHARED_TOOL_KEY = "*"
+ContextKind = Literal["tool", "agent"]
+CacheKey = tuple[ContextKind, str]
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -71,11 +70,10 @@ class TenantPluginManagerFactory:
     Redis mode overrides, invalidate_all/invalidate_team,
     on_error support, and optional DB wiring for per-tool plugin bindings.
 
-    When *db_factory* is provided, ``get_config_from_db`` reads
-    ``ToolPluginBinding`` rows for the context.  Without it the method
-    returns ``None`` and the base YAML config is used as-is.
+    When *db_factory* is provided, binding lookup uses the resource type.
+    Without it, the factory uses the base YAML configuration.
 
-    Context IDs must follow the ``"<team_id>::<tool_name>"`` convention.
+    Context IDs must follow the ``"<team_id>::<name>"`` convention.
     Call sites should use :func:`make_context_id` to construct them.
     """
 
@@ -94,9 +92,9 @@ class TenantPluginManagerFactory:
         self._timeout = timeout
         self._observability = observability
         self._hook_policies = hook_policies
-        self._managers: dict[str, TenantPluginManager] = {}
-        self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
-        self._aliases: dict[str, str] = {}  # context_id -> shared cache key
+        self._managers: dict[CacheKey, TenantPluginManager] = {}
+        self._inflight: dict[CacheKey, asyncio.Task[TenantPluginManager]] = {}
+        self._aliases: dict[CacheKey, CacheKey] = {}
         self._lock = asyncio.Lock()
         self._db_factory = db_factory
 
@@ -117,61 +115,62 @@ class TenantPluginManagerFactory:
             return []
         return [plugin.name for plugin in self._base_config.plugins]
 
-    def _cached_manager(self, context_id: str) -> Optional[TenantPluginManager]:
+    def _cached_manager(self, context_id: str, kind: ContextKind = "tool") -> Optional[TenantPluginManager]:
         """Return the live cached manager for *context_id*, directly or through its alias."""
-        manager = self._managers.get(context_id)
+        manager = self._managers.get((kind, context_id))
         if manager is not None:
             return manager
-        shared_key = self._aliases.get(context_id)
+        shared_key = self._aliases.get((kind, context_id))
         if shared_key is not None:
             return self._managers.get(shared_key)
         return None
 
-    async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
+    async def get_manager(self, context_id: Optional[str] = None, *, kind: ContextKind = "tool") -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
+        key = (kind, context_id)
 
-        cached = self._cached_manager(context_id)
+        cached = self._cached_manager(context_id, kind)
         if cached is not None:
             return cached
 
         async with self._lock:
-            cached = self._cached_manager(context_id)
+            cached = self._cached_manager(context_id, kind)
             if cached is not None:
                 return cached
 
-            inflight = self._inflight.get(context_id)
+            inflight = self._inflight.get(key)
             if inflight is None:
-                inflight = asyncio.create_task(self._build_manager(context_id))
-                self._inflight[context_id] = inflight
+                inflight = asyncio.create_task(self._build_manager(context_id, kind))
+                self._inflight[key] = inflight
 
         try:
             manager = await inflight
             async with self._lock:
-                entry = self._managers.get(context_id)
+                entry = self._managers.get(key)
                 if entry is not None:
                     return entry
                 return manager
         finally:
             async with self._lock:
-                if self._inflight.get(context_id) is inflight:
-                    self._inflight.pop(context_id, None)
+                if self._inflight.get(key) is inflight:
+                    self._inflight.pop(key, None)
 
     @staticmethod
-    def _resolve_cache_key(context_id: str, bindings: list[Any]) -> str:
+    def _resolve_cache_key(context_id: str, bindings: list[Any], kind: ContextKind = "tool") -> str:
         """Return the cache key for *context_id* given its resolved bindings.
 
-        A tool without tool-specific rows (wildcard rows only, or none) uses
-        the team's shared key. Any other context keeps its own key.
+        A resource without specific rows uses its resource type's shared team key.
         """
         if CONTEXT_ID_SEPARATOR not in context_id:
             return context_id
-        team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
-        if any(b.tool_name == tool_name for b in bindings):
+        team_id, resource_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+        name_attribute = "agent_name" if kind == "agent" else "tool_name"
+        if any(getattr(binding, name_attribute) == resource_name for binding in bindings):
             return context_id
         return f"{team_id}{CONTEXT_ID_SEPARATOR}{SHARED_TOOL_KEY}"
 
-    async def _build_manager(self, context_id: str) -> TenantPluginManager:
+    async def _build_manager(self, context_id: str, kind: ContextKind = "tool") -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*.
 
         When *context_id* resolves to the team's shared key and a live manager
@@ -181,15 +180,17 @@ class TenantPluginManagerFactory:
         """
         manager = None
         try:
-            bindings = await self._fetch_bindings(context_id)
-            cache_key = self._resolve_cache_key(context_id, bindings)
-            shares_slot = cache_key != context_id
+            bindings = await self._fetch_bindings(context_id, kind)
+            resolved_id = self._resolve_cache_key(context_id, bindings, kind)
+            cache_key = (kind, resolved_id)
+            context_key = (kind, context_id)
+            shares_slot = resolved_id != context_id
 
             if shares_slot:
                 async with self._lock:
                     existing = self._managers.get(cache_key)
                     if existing is not None:
-                        self._aliases[context_id] = cache_key
+                        self._aliases[context_key] = cache_key
                         return existing
 
             config = self._merge_tenant_config(self._bindings_to_overrides(bindings))
@@ -206,7 +207,7 @@ class TenantPluginManagerFactory:
             async with self._lock:
                 existing = self._managers.get(cache_key)
                 if shares_slot:
-                    self._aliases[context_id] = cache_key
+                    self._aliases[context_key] = cache_key
                 if shares_slot and existing is not None:
                     winner, discarded = existing, manager
                 else:
@@ -330,19 +331,20 @@ class TenantPluginManagerFactory:
             return config.model_copy(update={"plugins": updated_plugins}, deep=True)
         return config
 
-    async def reload_tenant(self, context_id: str) -> TenantPluginManager:
+    async def reload_tenant(self, context_id: str, *, kind: ContextKind = "tool") -> TenantPluginManager:
         """Evict and rebuild the cached manager for *context_id*."""
+        key = (kind, context_id)
         async with self._lock:
-            old = self._managers.pop(context_id, None)
-            self._aliases.pop(context_id, None)
+            old = self._managers.pop(key, None)
+            self._aliases.pop(key, None)
 
-            inflight = self._inflight.get(context_id)
+            inflight = self._inflight.get(key)
             if inflight is not None:
                 inflight.cancel()
-                self._inflight.pop(context_id, None)
+                self._inflight.pop(key, None)
 
-            inflight = asyncio.create_task(self._build_manager(context_id))
-            self._inflight[context_id] = inflight
+            inflight = asyncio.create_task(self._build_manager(context_id, kind))
+            self._inflight[key] = inflight
         if old is not None:
             try:
                 await old.shutdown()
@@ -353,8 +355,8 @@ class TenantPluginManagerFactory:
             return await inflight
         finally:
             async with self._lock:
-                if self._inflight.get(context_id) is inflight:
-                    self._inflight.pop(context_id, None)
+                if self._inflight.get(key) is inflight:
+                    self._inflight.pop(key, None)
 
     async def shutdown(self) -> None:
         """Shut down all cached managers and cancel in-flight build tasks."""
@@ -377,8 +379,8 @@ class TenantPluginManagerFactory:
             except Exception:
                 logger.exception("Failed to shutdown plugin manager")
 
-    async def _fetch_bindings(self, context_id: str) -> list[Any]:
-        """Return the ``ToolPluginBinding`` rows that apply to *context_id*.
+    async def _fetch_bindings(self, context_id: str, kind: ContextKind = "tool") -> list[Any]:
+        """Return binding rows for the specified resource type and context.
 
         Returns an empty list when no *db_factory* is configured or the
         context ID has no ``"<team_id>::<tool_name>"`` shape.
@@ -390,12 +392,13 @@ class TenantPluginManagerFactory:
             logger.debug("get_config_from_db: unrecognised context_id format %r, skipping", context_id)
             return []
 
-        team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+        team_id, resource_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
         try:
             db: Session = self._db_factory()
             try:
-                return list(get_bindings_for_tool(db, team_id, tool_name))
+                resolver = get_bindings_for_agent if kind == "agent" else get_bindings_for_tool
+                return list(resolver(db, team_id, resource_name))
             finally:
                 db.close()
         except Exception:
@@ -406,12 +409,12 @@ class TenantPluginManagerFactory:
             )
             raise
 
-    async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
-        """Fetch per-tool plugin overrides from the DB for *context_id*.
+    async def get_config_from_db(self, context_id: str, *, kind: ContextKind = "tool") -> Optional[list[PluginConfigOverride]]:
+        """Fetch plugin overrides for the specified resource type and context.
 
         Returns ``None`` when no *db_factory* is configured or no bindings exist.
         """
-        return self._bindings_to_overrides(await self._fetch_bindings(context_id))
+        return self._bindings_to_overrides(await self._fetch_bindings(context_id, kind))
 
     @staticmethod
     def _bindings_to_overrides(bindings: list[Any]) -> Optional[list[PluginConfigOverride]]:
@@ -449,9 +452,9 @@ class TenantPluginManagerFactory:
     async def invalidate_all(self) -> None:
         """Reload every cached manager concurrently, logging failures."""
         async with self._lock:
-            context_ids = list(self._managers.keys())
+            context_ids = list(self._managers.keys() | self._inflight.keys())
         results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+            *(self.reload_tenant(ctx_id, kind=kind) for kind, ctx_id in context_ids),
             return_exceptions=True,
         )
         for ctx_id, result in zip(context_ids, results):
@@ -459,14 +462,14 @@ class TenantPluginManagerFactory:
                 logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, result)
         logger.debug("invalidate_all: rebuilt %d managers (%d failures)", len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
-    async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
-        """Reload every cached manager whose context_id starts with team_id plus separator."""
+    async def invalidate_team(self, team_id: str, separator: Optional[str] = None, *, kind: ContextKind = "tool") -> None:
+        """Reload cached and pending managers for the specified resource type and team."""
         sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
         prefix = f"{team_id}{sep}"
         async with self._lock:
-            context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
+            context_ids = [key for key in self._managers.keys() | self._inflight.keys() if key[0] == kind and key[1].startswith(prefix)]
         results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+            *(self.reload_tenant(ctx_id, kind=kind) for kind, ctx_id in context_ids),
             return_exceptions=True,
         )
         for ctx_id, result in zip(context_ids, results):
@@ -474,9 +477,9 @@ class TenantPluginManagerFactory:
                 logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, result)
         logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
-    def iter_context_ids(self) -> list[str]:
+    def iter_context_ids(self, *, kind: ContextKind = "tool") -> list[str]:
         """Return a snapshot of the cached context IDs."""
-        return list(self._managers.keys())
+        return [context_id for cached_kind, context_id in self._managers if cached_kind == kind]
 
 
 # Deprecated: use TenantPluginManagerFactory directly. Remove after v1.1.0.

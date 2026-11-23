@@ -87,6 +87,7 @@ class _BindingChangeMsg(BaseModel):
 
     type: Literal["binding_change"]
     context_id: str
+    kind: Literal["tool", "agent"] = "tool"
 
 
 class _TeamBindingChangeMsg(BaseModel):
@@ -94,9 +95,26 @@ class _TeamBindingChangeMsg(BaseModel):
 
     type: Literal["team_binding_change"]
     team_id: str
+    kind: Literal["tool", "agent"] = "tool"
 
 
-_InvalidationMsg = Union[_GlobalToggleMsg, _ModeChangeMsg, _BindingChangeMsg, _TeamBindingChangeMsg]
+class _AgentBindingChangeMsg(BaseModel):
+    """Identify agent changes with a frame type that older workers reject."""
+
+    type: Literal["agent_binding_change"]
+    context_id: str
+    kind: Literal["agent"] = "agent"
+
+
+class _AgentTeamBindingChangeMsg(BaseModel):
+    """Identify wildcard agent changes for compatible worker dispatch."""
+
+    type: Literal["agent_team_binding_change"]
+    team_id: str
+    kind: Literal["agent"] = "agent"
+
+
+_InvalidationMsg = Union[_GlobalToggleMsg, _ModeChangeMsg, _BindingChangeMsg, _TeamBindingChangeMsg, _AgentBindingChangeMsg, _AgentTeamBindingChangeMsg]
 _invalidation_adapter: TypeAdapter[_InvalidationMsg] = TypeAdapter(_InvalidationMsg)
 
 
@@ -291,14 +309,16 @@ async def publish_plugin_mode_change(plugin_name: str, mode: str) -> bool:
     return True
 
 
-async def publish_binding_change(context_id: str) -> bool:
+async def publish_binding_change(context_id: str, *, kind: Literal["tool", "agent"] = "tool") -> bool:
     """Broadcast a per-context binding change so remote workers evict the cached manager."""
-    return await _publish_invalidation({"type": "binding_change", "context_id": context_id})
+    message_type = "agent_binding_change" if kind == "agent" else "binding_change"
+    return await _publish_invalidation({"type": message_type, "context_id": context_id, "kind": kind})
 
 
-async def publish_team_binding_change(team_id: str) -> bool:
+async def publish_team_binding_change(team_id: str, *, kind: Literal["tool", "agent"] = "tool") -> bool:
     """Broadcast a wildcard binding change — every worker evicts every cached context for the team."""
-    return await _publish_invalidation({"type": "team_binding_change", "team_id": team_id})
+    message_type = "agent_team_binding_change" if kind == "agent" else "team_binding_change"
+    return await _publish_invalidation({"type": message_type, "team_id": team_id, "kind": kind})
 
 
 def init_plugin_manager_factory(
@@ -324,14 +344,14 @@ def init_plugin_manager_factory(
     )
 
 
-async def get_plugin_manager(server_id: str = DEFAULT_SERVER_ID) -> Optional[TenantPluginManager]:
+async def get_plugin_manager(server_id: str = DEFAULT_SERVER_ID, *, kind: Literal["tool", "agent"] = "tool") -> Optional[TenantPluginManager]:
     """Return the context-scoped manager, reading the shared toggle so runtime enable/disable propagates."""
     if not await are_plugins_enabled_shared():
         return None
     if _plugin_manager_factory is None:
         _warn_factory_init_degraded_once()
         return None
-    return await _plugin_manager_factory.get_manager(server_id)
+    return await _plugin_manager_factory.get_manager(server_id, kind=kind)
 
 
 def mark_factory_init_degraded() -> None:
@@ -421,11 +441,11 @@ async def invalidate_all_plugin_managers() -> None:
     await factory.invalidate_all()
 
 
-async def reload_plugin_context(context_id: str) -> None:
+async def reload_plugin_context(context_id: str, *, kind: Literal["tool", "agent"] = "tool") -> None:
     """Evict and rebuild the cached manager for ``context_id``."""
     if _plugin_manager_factory is None:
         return
-    await _plugin_manager_factory.reload_tenant(context_id)
+    await _plugin_manager_factory.reload_tenant(context_id, kind=kind)
 
 
 async def _handle_invalidation_message(message: dict[str, Any]) -> None:
@@ -467,16 +487,16 @@ async def _handle_invalidation_message(message: dict[str, Any]) -> None:
             await invalidate_all_plugin_managers()
             _logger.debug("Pub/sub: mode change for %s, all managers invalidated", plugin)
 
-        case _TeamBindingChangeMsg(team_id=team_id) if _plugin_manager_factory is not None:
+        case _TeamBindingChangeMsg(team_id=team_id, kind=kind) | _AgentTeamBindingChangeMsg(team_id=team_id, kind=kind) if _plugin_manager_factory is not None:
             try:
-                await _plugin_manager_factory.invalidate_team(team_id)
+                await _plugin_manager_factory.invalidate_team(team_id, kind=kind)
                 _logger.debug("Pub/sub: team_binding_change, invalidated team %s", team_id)
             except Exception as exc:
                 _logger.warning("Pub/sub team_binding_change failed for %s (%s)", team_id, exc)
 
-        case _BindingChangeMsg(context_id=context_id) if _plugin_manager_factory is not None:
+        case _BindingChangeMsg(context_id=context_id, kind=kind) | _AgentBindingChangeMsg(context_id=context_id, kind=kind) if _plugin_manager_factory is not None:
             try:
-                await _plugin_manager_factory.reload_tenant(context_id)
+                await _plugin_manager_factory.reload_tenant(context_id, kind=kind)
                 _logger.debug("Pub/sub: binding change, reloaded context %s", context_id)
             except Exception as exc:
                 _logger.warning("Pub/sub binding_change reload failed for %s (%s)", context_id, exc)
