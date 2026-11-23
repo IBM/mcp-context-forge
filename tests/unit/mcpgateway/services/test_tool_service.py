@@ -6151,6 +6151,56 @@ class TestToolService:
 
         resolve.assert_awaited_once_with("agent-1", "agent-one", "http://agent.example/a2a", oauth_config)
 
+    async def test_invoke_tool_a2a_passes_protocol_binding(self, tool_service, test_db):
+        """The A2A tool path hands the agent's stored protocol_binding to prepare_a2a_invocation."""
+        # First-Party
+        from mcpgateway.services.tool_service import ResolvedTool
+
+        tool_payload = {
+            "id": "a2a-tool",
+            "name": "a2a-tool",
+            "original_name": "a2a-tool",
+            "url": "",
+            "integration_type": "A2A",
+            "request_type": "POST",
+            "headers": {},
+            "input_schema": {"type": "object"},
+            "annotations": {"a2a_agent_id": "agent-1"},
+            "enabled": True,
+            "reachable": True,
+            "gateway_id": None,
+        }
+        resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
+        agent = SimpleNamespace(
+            enabled=True,
+            name="agent-one",
+            endpoint_url="http://agent.example/a2a/",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            protocol_binding="http_json",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            passthrough_headers=[],
+        )
+        agent_query = MagicMock()
+        agent_query.scalar_one_or_none.return_value = agent
+        test_db.execute = MagicMock(return_value=agent_query)
+        prepare = MagicMock(side_effect=RuntimeError("stop here"))
+
+        with (
+            patch.object(tool_service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch("mcpgateway.services.tool_service.prepare_a2a_invocation", prepare),
+        ):
+            with pytest.raises(Exception):
+                await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None)
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
     async def test_invoke_tool_post_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Post-invoke policy denials flush a denied control result before raising."""
         # Third-Party
