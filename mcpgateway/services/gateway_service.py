@@ -4625,6 +4625,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         invalidate_passthrough_header_caches()
 
         self._active_gateways.discard(gateway_url)
+        await self._purge_vault_oauth_tokens(gateway_id, gateway_url)
         await self._notify_gateway_deleted(gateway_info)
 
         logger.info("Permanently deleted gateway: %s", gateway_name)
@@ -4657,6 +4658,36 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 "gateway_url": gateway_info["url"],
             },
         )
+
+    async def _purge_vault_oauth_tokens(self, gateway_id: str, gateway_url: str) -> None:
+        """Delete the Vault OAuth token records of a permanently deleted gateway.
+
+        The database backend needs no cleanup, because ``oauth_tokens`` rows cascade with the
+        gateway row. Legacy URL-keyed records are deleted only when no remaining gateway has
+        the same URL, because gateways with one URL share those records.
+
+        A Vault failure does not fail the deletion. The method logs the failure instead.
+
+        Args:
+            gateway_id: ID of the deleted gateway
+            gateway_url: URL of the deleted gateway
+        """
+        if settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
+            return
+
+        # First-Party
+        from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend  # pylint: disable=import-outside-toplevel
+
+        try:
+            with fresh_db_session() as db:
+                url_still_registered = db.execute(select(DbGateway.id).where(DbGateway.url == gateway_url).limit(1)).first() is not None
+                await VaultTokenBackend(db, settings).delete_gateway_tokens(gateway_id, gateway_url, include_legacy=not url_still_registered)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Failed to delete Vault OAuth tokens for deleted gateway %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                type(exc).__name__,
+            )
 
     async def _process_gateway_lifecycle_once(self, db: Session, gateway_id: str) -> bool:
         """Process one async lifecycle step for a single gateway.
