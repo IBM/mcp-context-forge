@@ -4923,6 +4923,18 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 201
         mock_service.register_agent.assert_called_once()
 
+    @patch("mcpgateway.main.a2a_service")
+    def test_create_a2a_agent_rejects_endpoint_url_above_the_limit(self, mock_service, test_client, auth_headers):
+        """A URL longer than the validator allows is a 422 and never reaches the service or the database."""
+        mock_service.register_agent = AsyncMock(return_value=_make_a2a_agent_read())
+        payload = _a2a_create_payload()
+        payload["agent"]["endpoint_url"] = "https://example.com/" + "a" * 2048
+
+        response = test_client.post("/a2a", json=payload, headers=auth_headers)
+
+        assert response.status_code == 422
+        mock_service.register_agent.assert_not_called()
+
     @pytest.mark.parametrize(
         "exc,status_code",
         [
