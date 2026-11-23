@@ -63,6 +63,7 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
+    (re.compile(r"/a2a/([a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})(?:/|$)"), "a2a_agent"),
 ]
 
 
@@ -991,7 +992,7 @@ class TokenScopingMiddleware:
 
         # Import database models
         # First-Party
-        from mcpgateway.db import Gateway, get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import A2AAgent, Gateway, get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
         # Track if we own the session (and thus must clean it up)
         owns_session = db is None
@@ -1269,6 +1270,53 @@ class TokenScopingMiddleware:
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(gateway_visibility)}")
+                return ResourceOwnershipResult.DENIED
+
+            # CHECK A2A AGENTS
+            if resource_type == "a2a_agent":
+                agent = db.execute(select(A2AAgent).where(A2AAgent.id == resource_id)).scalar_one_or_none()
+
+                if not agent:
+                    logger.warning(f"A2A agent {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
+                    return ResourceOwnershipResult.NOT_FOUND
+
+                agent_visibility = getattr(agent, "visibility", "team")
+
+                if agent_visibility == "public":
+                    logger.debug(f"Access granted: A2A agent {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
+                    return ResourceOwnershipResult.ALLOWED
+
+                if is_public_token:
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(agent_visibility)} A2A agent {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
+                    return ResourceOwnershipResult.DENIED
+
+                if agent_visibility == "team":
+                    agent_team_id = getattr(agent, "team_id", None)
+                    if agent_team_id and agent_team_id in token_team_ids:
+                        logger.debug(
+                            f"Access granted: Team A2A agent {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(agent_team_id))}"
+                        )
+                        return ResourceOwnershipResult.ALLOWED
+
+                    logger.warning(
+                        f"Access denied: A2A agent {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(agent_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
+                    return ResourceOwnershipResult.DENIED
+
+                if agent_visibility in ["private", "user"]:
+                    agent_owner = getattr(agent, "owner_email", None)
+                    if agent_owner and agent_owner == _user_email:
+                        logger.debug(f"Access granted: Private A2A agent {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
+                        return ResourceOwnershipResult.ALLOWED
+
+                    logger.warning(
+                        f"Access denied: A2A agent {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(agent_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(agent_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
+                    return ResourceOwnershipResult.DENIED
+
+                logger.warning(f"Access denied: A2A agent {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(agent_visibility)}")
                 return ResourceOwnershipResult.DENIED
 
             # UNKNOWN RESOURCE TYPE

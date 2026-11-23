@@ -4965,6 +4965,34 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
 
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"]))
+    @patch("mcpgateway.main.a2a_service")
+    def test_a2a_mutations_forward_token_teams(self, mock_service, _mock_scope, test_client, auth_headers):
+        """Update, state and delete pass the token's team scope to the service."""
+        mock_service.update_agent = AsyncMock(return_value=_make_a2a_agent_read(name="agent-1"))
+        mock_service.set_agent_state = AsyncMock(return_value=_make_a2a_agent_read(enabled=False))
+        mock_service.delete_agent = AsyncMock(return_value=None)
+
+        assert test_client.put("/a2a/agent-1", json={"description": "d"}, headers=auth_headers).status_code == 200
+        assert test_client.post("/a2a/agent-1/state?activate=false", headers=auth_headers).status_code == 200
+        assert test_client.delete("/a2a/agent-1", headers=auth_headers).status_code == 200
+
+        assert mock_service.update_agent.call_args.kwargs["token_teams"] == ["team-a"]
+        assert all(call.kwargs["token_teams"] == ["team-a"] for call in mock_service.set_agent_state.call_args_list)
+        assert mock_service.delete_agent.call_args.kwargs["token_teams"] == ["team-a"]
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"]))
+    @patch("mcpgateway.main.a2a_service")
+    def test_a2a_mutations_return_403_outside_token_team_scope(self, mock_service, _mock_scope, test_client, auth_headers):
+        """A service PermissionError from the token team check maps to 403."""
+        mock_service.update_agent = AsyncMock(side_effect=PermissionError("Agent is outside the token's team scope"))
+        mock_service.set_agent_state = AsyncMock(side_effect=PermissionError("Agent is outside the token's team scope"))
+        mock_service.delete_agent = AsyncMock(side_effect=PermissionError("Agent is outside the token's team scope"))
+
+        assert test_client.put("/a2a/agent-1", json={"description": "d"}, headers=auth_headers).status_code == 403
+        assert test_client.post("/a2a/agent-1/state?activate=false", headers=auth_headers).status_code == 403
+        assert test_client.delete("/a2a/agent-1", headers=auth_headers).status_code == 403
+
     @patch("mcpgateway.main.a2a_service")
     def test_test_a2a_agent_success(self, mock_service, test_client, auth_headers):
         """POST /a2a/{agent_id}/test returns the success envelope."""

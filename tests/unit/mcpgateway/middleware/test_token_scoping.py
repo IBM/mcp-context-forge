@@ -2425,6 +2425,105 @@ def test_check_resource_team_ownership_exception_returns_denied():
     assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
+A2A_AGENT_ID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/a2a/{A2A_AGENT_ID}",
+        f"/a2a/{A2A_AGENT_ID}/state",
+        f"/a2a/{A2A_AGENT_ID}/toggle",
+        f"/a2a/{A2A_AGENT_ID}/tasks/task-1/cancel",
+        "/a2a/a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90",
+    ],
+)
+def test_check_resource_team_ownership_a2a_team_agent_denies_other_team(path):
+    """A token scoped to Team A must not reach a Team B A2A agent."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+    agent = MagicMock()
+    agent.visibility = "team"
+    agent.team_id = "team-b"
+    db.execute.return_value.scalar_one_or_none.return_value = agent
+
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
+    assert middleware._check_resource_team_ownership(path, ["team-b"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
+
+
+def test_check_resource_team_ownership_a2a_agent_visibility_branches():
+    """Cover public, public-only token, private, unknown visibility and missing A2A agents."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+    path = f"/a2a/{A2A_AGENT_ID}"
+    agent = MagicMock()
+    agent.team_id = "team-b"
+    agent.owner_email = "owner@example.com"
+    db.execute.return_value.scalar_one_or_none.return_value = agent
+
+    agent.visibility = "public"
+    assert middleware._check_resource_team_ownership(path, [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
+
+    agent.visibility = "team"
+    assert middleware._check_resource_team_ownership(path, [], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
+
+    agent.visibility = "private"
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
+
+    agent.visibility = "mystery"
+    assert middleware._check_resource_team_ownership(path, ["team-b"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
+
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.NOT_FOUND
+
+
+@pytest.mark.parametrize("action", ["edit", "state", "delete", "test"])
+def test_check_resource_team_ownership_admin_a2a_routes_deny_other_team(action):
+    """Admin A2A mutation routes are confined to the token's teams."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+    agent = MagicMock()
+    agent.visibility = "team"
+    agent.team_id = "team-b"
+    db.execute.return_value.scalar_one_or_none.return_value = agent
+
+    path = f"/admin/a2a/{A2A_AGENT_ID}/{action}"
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
+
+
+@pytest.mark.parametrize("path", ["/a2a/metrics", "/a2a/my-agent/invoke", "/a2a/invoke", "/a2a/fetch-card", "/a2a"])
+def test_check_resource_team_ownership_a2a_non_id_paths_skip_lookup(path):
+    """Name-addressed and fixed A2A routes carry no agent ID and skip the ID lookup."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    assert middleware._check_resource_team_ownership(path, ["team-a"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
+    db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a2a_update_with_team_a_token_for_team_b_agent_returns_403():
+    """PUT /a2a/{id} with a Team-A-only token must return 403 for a Team B agent."""
+    middleware = TokenScopingMiddleware()
+    request = _make_request(f"/a2a/{A2A_AGENT_ID}")
+    request.method = "PUT"
+    request.headers = {"Authorization": "Bearer token"}
+    payload = {"sub": "owner@example.com", "teams": ["team-a"], "scopes": {"permissions": ["a2a.update"]}}
+    call_next = AsyncMock()
+
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
+        patch("mcpgateway.db.get_db", return_value=iter([MagicMock()])),
+    ):
+        response = await middleware(request, call_next)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    call_next.assert_not_called()
+
+
 def _make_request(path: str = "/servers/server-123") -> MagicMock:
     request = MagicMock(spec=Request)
     request.url.path = path

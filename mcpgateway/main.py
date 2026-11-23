@@ -5265,6 +5265,7 @@ async def update_a2a_agent(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = get_user_email(user)
+        _, token_teams = get_scoped_resource_access_context(request, user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -5274,6 +5275,7 @@ async def update_a2a_agent(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            token_teams=token_teams,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -5295,6 +5297,7 @@ async def update_a2a_agent(
 @require_permission("a2a.update")
 async def set_a2a_agent_state(
     agent_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5304,6 +5307,7 @@ async def set_a2a_agent_state(
 
     Args:
         agent_id (str): The ID of the agent to update.
+        request (Request): The FastAPI request object for token scope retrieval.
         activate (bool): Whether to activate or deactivate the agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -5316,8 +5320,9 @@ async def set_a2a_agent_state(
     """
     try:
         user_email = get_user_email(user)
+        _, token_teams = get_scoped_resource_access_context(request, user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
-        return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
+        return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email, token_teams=token_teams)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -5330,6 +5335,7 @@ async def set_a2a_agent_state(
 @require_permission("a2a.update")
 async def toggle_a2a_agent_status(
     agent_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5340,6 +5346,7 @@ async def toggle_a2a_agent_status(
 
     Args:
         agent_id: The A2A agent ID.
+        request: The FastAPI request object for token scope retrieval.
         activate: Whether to activate (True) or deactivate (False) the agent.
         db: Database session.
         user: Authenticated user context.
@@ -5349,13 +5356,14 @@ async def toggle_a2a_agent_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_a2a_agent_state(agent_id, activate, db, user)
+    return await set_a2a_agent_state(agent_id, request=request, activate=activate, db=db, user=user)
 
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
 async def delete_a2a_agent(
     agent_id: str,
+    request: Request,
     purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5365,6 +5373,7 @@ async def delete_a2a_agent(
 
     Args:
         agent_id (str): The ID of the agent to delete.
+        request (Request): The FastAPI request object for token scope retrieval.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -5378,7 +5387,8 @@ async def delete_a2a_agent(
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
         user_email = get_user_email(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics, token_teams=token_teams)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",

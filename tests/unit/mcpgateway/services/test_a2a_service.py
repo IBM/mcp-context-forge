@@ -780,6 +780,59 @@ class TestA2AAgentService:
         mock_db.delete.assert_called_once_with(sample_db_agent)
         mock_db.commit.assert_called_once()
 
+    @pytest.mark.parametrize("operation", ["update", "state", "delete"])
+    async def test_mutation_denied_when_agent_outside_token_team_scope(self, service, mock_db, sample_db_agent, operation):
+        """A token scoped to Team A must not mutate a Team B agent, even for its owner."""
+        sample_db_agent.visibility = "team"
+        sample_db_agent.team_id = "team-b"
+        sample_db_agent.owner_email = "owner@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            with pytest.raises(PermissionError, match="token's team scope"):
+                if operation == "update":
+                    await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(visibility="public"), user_email="owner@example.com", token_teams=["team-a"])
+                elif operation == "state":
+                    await service.set_agent_state(mock_db, sample_db_agent.id, False, user_email="owner@example.com", token_teams=["team-a"])
+                else:
+                    await service.delete_agent(mock_db, sample_db_agent.id, user_email="owner@example.com", token_teams=["team-a"])
+
+        mock_db.commit.assert_not_called()
+        mock_db.delete.assert_not_called()
+        assert sample_db_agent.visibility == "team"
+        assert sample_db_agent.enabled is True
+
+    @pytest.mark.parametrize("operation", ["update", "state", "delete"])
+    async def test_mutation_denied_for_public_only_token_on_team_agent(self, service, mock_db, sample_db_agent, operation):
+        """A public-only token (empty teams) must not mutate a non-public agent."""
+        sample_db_agent.visibility = "team"
+        sample_db_agent.team_id = "team-b"
+        sample_db_agent.owner_email = "owner@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            with pytest.raises(PermissionError, match="token's team scope"):
+                if operation == "update":
+                    await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="x"), user_email="owner@example.com", token_teams=[])
+                elif operation == "state":
+                    await service.set_agent_state(mock_db, sample_db_agent.id, False, user_email="owner@example.com", token_teams=[])
+                else:
+                    await service.delete_agent(mock_db, sample_db_agent.id, user_email="owner@example.com", token_teams=[])
+
+    async def test_mutation_allowed_when_agent_inside_token_team_scope(self, service, mock_db, sample_db_agent):
+        """A token scoped to the agent's team passes the token team check."""
+        sample_db_agent.visibility = "team"
+        sample_db_agent.team_id = "team-b"
+        sample_db_agent.owner_email = "owner@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await service.delete_agent(mock_db, sample_db_agent.id, user_email="owner@example.com", token_teams=["team-b"])
+
+        mock_db.delete.assert_called_once_with(sample_db_agent)
+
     async def test_delete_agent_evicts_cached_oauth_token(self, service, mock_db, sample_db_agent):
         """Deleting an agent removes its cached OAuth token."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
