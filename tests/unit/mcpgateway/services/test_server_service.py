@@ -127,6 +127,8 @@ class TestValidateServerTeamAssignment:
 
     def _build_db(self, team_exists: bool, membership_exists: bool) -> MagicMock:
         db = MagicMock()
+        # The admin-check memoization treats ``db.info`` as a plain dict.
+        db.info = {}
         first_values = [MagicMock() if team_exists else None, MagicMock() if membership_exists else None]
 
         def _query_side_effect(_model):
@@ -141,6 +143,7 @@ class TestValidateServerTeamAssignment:
 
     def test_requires_team_id(self):
         db = MagicMock()
+        db.info = {}
         with pytest.raises(ValueError, match="without a team_id"):
             _validate_server_team_assignment(db, "owner@example.com", None)
 
@@ -161,6 +164,13 @@ class TestValidateServerTeamAssignment:
     def test_accepts_owner_membership(self):
         db = self._build_db(team_exists=True, membership_exists=True)
         _validate_server_team_assignment(db, "owner@example.com", "team-1")
+
+    def test_forwards_token_teams_to_shared_gate(self):
+        """The delegate forwards the derived token scope to validate_team_assignment."""
+        db = MagicMock()
+        with patch("mcpgateway.services.server_service.validate_team_assignment") as gate:
+            _validate_server_team_assignment(db, "owner@example.com", "team-1", ["team-in-scope"])
+        gate.assert_called_once_with(db, "owner@example.com", "team-1", ["team-in-scope"])
 
 
 OTHER_TEAM_ID = "00000000-0000-4000-8000-000000000001"
@@ -1482,7 +1492,7 @@ class TestServerService:
         mock_scalar.scalar_one_or_none.return_value = None
         mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=existing_server))
         # Sequence of execute() results: 1) get_for_update -> existing_server,
-        # 2) _is_user_admin -> None, 3) name-conflict check -> None
+        # 2) is_user_admin -> None, 3) name-conflict check -> None
         test_db.execute = Mock(side_effect=[mock_result_get_server, Mock(scalar_one_or_none=Mock(return_value=None)), mock_scalar])
 
         test_db.commit = Mock()

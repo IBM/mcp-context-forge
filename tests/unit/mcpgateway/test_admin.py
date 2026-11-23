@@ -17,7 +17,7 @@ from pathlib import Path
 import socket
 from types import SimpleNamespace
 import copy
-from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
 
 # Third-Party
@@ -332,7 +332,11 @@ def setup_team_service(monkeypatch, team_ids):
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
-    return MagicMock(spec=Session)
+    db = MagicMock(spec=Session)
+    # The admin-check memoization treats ``db.info`` as a plain dict; a real
+    # dict keeps the cache path behaving as it does in production.
+    db.info = {}
+    return db
 
 
 @pytest.fixture
@@ -617,6 +621,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -661,6 +666,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -708,6 +714,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -746,6 +753,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -867,6 +875,7 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -1039,6 +1048,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1083,6 +1093,7 @@ class TestAdminServerRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1110,6 +1121,7 @@ class TestAdminServerRoutes:
         server_id = "00000000-0000-0000-0000-000000000012"
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1140,6 +1152,7 @@ class TestAdminServerRoutes:
         server_id = "00000000-0000-0000-0000-000000000013"
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1181,7 +1194,8 @@ class TestAdminServerRoutes:
 
         # Mock verify_team_for_user to return whatever team_id is passed
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1195,8 +1209,8 @@ class TestAdminServerRoutes:
         result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert result.status_code == 200
-        # verify_team_for_user should have been called with the EXISTING team_id, not None
-        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        # verify_team_for_user_strict should have been called with the EXISTING team_id, not None
+        team_service.verify_team_for_user_strict.assert_called_once_with("test-user", existing_team_id, ANY)
         # ServerUpdate should have the existing team_id
         call_args = mock_update_server.call_args
         server_update = call_args[0][2]
@@ -1223,7 +1237,8 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
 
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -1239,7 +1254,7 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
         # db.get should NOT have been called — the form-provided team_id takes precedence
         mock_db.get.assert_not_called()
-        team_service.verify_team_for_user.assert_called_once_with("test-user", explicit_team_id)
+        team_service.verify_team_for_user_strict.assert_called_once_with("test-user", explicit_team_id, ANY)
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_activate(self, mock_set_state, mock_request, mock_db):
@@ -1617,6 +1632,7 @@ class TestAdminToolRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2883,6 +2899,7 @@ class TestAdminResourceRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2903,6 +2920,7 @@ class TestAdminResourceRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2917,6 +2935,7 @@ class TestAdminResourceRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2937,6 +2956,7 @@ class TestAdminResourceRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2960,6 +2980,7 @@ class TestAdminResourceRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -2985,6 +3006,7 @@ class TestAdminResourceRoutes:
         """Postgres URI-constraint IntegrityError must yield the specific message, not the generic fallback (issue #4991)."""
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -3035,7 +3057,7 @@ class TestAdminResourceUriConflictMessage:
     def _stub_admin_deps(self, monkeypatch):
         """Stub team resolution, metadata capture and resource notifications."""
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda _email, team_id: team_id or "team-1")
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda _email, team_id, token_teams=None: team_id or "team-1")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -3145,6 +3167,7 @@ class TestAdminResourceUriConflictMessage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -3169,6 +3192,7 @@ class TestAdminResourceUriConflictMessage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -3259,6 +3283,7 @@ class TestAdminPromptRoutes:
         """A missing prompt name or template is returned as validation, not a server error."""
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         form = {"name": "Required Field Prompt", "template": "Hello", "arguments": "[]"}
@@ -3450,6 +3475,7 @@ class TestAdminPromptRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -3572,6 +3598,7 @@ class TestAdminPromptRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -3836,6 +3863,7 @@ class TestAdminGatewayRoutes:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -3869,7 +3897,8 @@ class TestAdminGatewayRoutes:
         mock_db.get.return_value = mock_existing_gw
 
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -3880,7 +3909,7 @@ class TestAdminGatewayRoutes:
         result = await admin_edit_gateway(gateway_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert result.status_code == 200
-        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id, ANY)
         call_args = mock_update_gateway.call_args
         gateway_update = call_args[1].get("gateway") or call_args[0][2]
         assert gateway_update.team_id == existing_team_id
@@ -3908,7 +3937,8 @@ class TestAdminGatewayRoutes:
         mock_db.get.return_value = mock_existing_gw
 
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7275,6 +7305,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7370,6 +7401,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7406,6 +7438,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
@@ -7459,6 +7492,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
@@ -7505,6 +7539,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7544,6 +7579,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7575,6 +7611,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7619,6 +7656,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
@@ -7660,6 +7698,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
@@ -7695,6 +7734,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7727,6 +7767,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7756,6 +7797,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7789,6 +7831,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -7848,6 +7891,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -7879,6 +7923,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7908,6 +7953,7 @@ class TestOAuthFunctionality:
         mock_request.form = AsyncMock(return_value=FakeForm({"name": "Gateway", "url": "https://example.com", "oauth_config": "None"}))
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -7942,6 +7988,7 @@ class TestOAuthFunctionality:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         with (
             patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
             patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
@@ -9013,6 +9060,7 @@ class TestErrorHandlingPaths:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
 
         with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
             result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -16430,6 +16478,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -16462,6 +16511,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         form = {"name": "Agent One", "endpoint_url": "http://example.com/agent"}
@@ -16482,6 +16532,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -16514,6 +16565,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -16545,6 +16597,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         monkeypatch.setattr(
             "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
@@ -16567,6 +16620,7 @@ class TestAdminAdditionalCoverage:
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
+        team_service.verify_team_for_user_strict = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         encryption = MagicMock()
@@ -16603,7 +16657,8 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
 
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=lambda email, team_id, token_teams=None: team_id)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         encryption = MagicMock()
@@ -16631,7 +16686,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent(agent_id, mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
 
         assert response.status_code == 200
-        team_service.verify_team_for_user.assert_called_once_with("user@example.com", existing_team_id)
+        team_service.verify_team_for_user.assert_called_once_with("user@example.com", existing_team_id, ANY)
         call_args = mock_service.update_agent.call_args
         agent_update = call_args[1].get("agent_data") or call_args[0][2]
         # UUID is normalized (dashes removed) by schema validation
@@ -28900,7 +28955,7 @@ class TestTeamVisibilityDenyPaths:
         """A member without the owner role cannot set team visibility."""
         mock_request.form = AsyncMock(return_value=self._edit_form())
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=PermissionError("User membership in team not sufficient for this update."))
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=PermissionError("User membership in team not sufficient for this update."))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
@@ -28914,7 +28969,7 @@ class TestTeamVisibilityDenyPaths:
         """A PermissionError raised by the service team gate maps to 403."""
         mock_request.form = AsyncMock(return_value=self._edit_form())
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        team_service.verify_team_for_user_strict = AsyncMock(return_value="team-1")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         mock_update_server.side_effect = PermissionError("User membership in team not sufficient for this update.")
 
@@ -28929,7 +28984,7 @@ class TestTeamVisibilityDenyPaths:
         """A PublicValidationError from team verification maps to 400."""
         mock_request.form = AsyncMock(return_value=self._edit_form())
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(side_effect=PublicValidationError("Unable to verify team membership for the requested team."))
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=PublicValidationError("Unable to verify team membership for the requested team."))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
@@ -28943,7 +28998,7 @@ class TestTeamVisibilityDenyPaths:
         """A PublicValidationError raised by the service team gate maps to 400."""
         mock_request.form = AsyncMock(return_value=self._edit_form())
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        team_service.verify_team_for_user_strict = AsyncMock(return_value="team-1")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         mock_update_server.side_effect = PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
@@ -28959,14 +29014,14 @@ class TestTeamVisibilityDenyPaths:
         monkeypatch.setattr(settings, "allow_public_visibility", False)
         mock_request.form = AsyncMock(return_value=self._edit_form(visibility="public"))
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock()
+        team_service.verify_team_for_user_strict = AsyncMock()
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         with pytest.raises(HTTPException) as excinfo:
             await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "member@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 422
-        team_service.verify_team_for_user.assert_not_called()
+        team_service.verify_team_for_user_strict.assert_not_called()
         mock_update_server.assert_not_called()
 
     @patch.object(ServerService, "update_server")
@@ -28974,7 +29029,7 @@ class TestTeamVisibilityDenyPaths:
         """An active owner-role member can set team visibility."""
         mock_request.form = AsyncMock(return_value=self._edit_form())
         team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        team_service.verify_team_for_user_strict = AsyncMock(return_value="team-1")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         mock_server_read = MagicMock()
         mock_server_read.model_dump.return_value = {"id": _GATE_SERVER_ID, "name": "Team Server", "team_id": "team-1", "visibility": "team"}
@@ -28986,6 +29041,23 @@ class TestTeamVisibilityDenyPaths:
         server_update = mock_update_server.call_args[0][2]
         assert server_update.team_id == "team-1"
         assert server_update.visibility == "team"
+
+    @patch.object(ServerService, "update_server")
+    async def test_narrowed_admin_token_reaches_gate_and_maps_to_403(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """A narrowed admin token is threaded to the gate, and the gate denial maps to 403."""
+        mock_request.form = AsyncMock(return_value=self._edit_form())
+        team_service = MagicMock()
+        team_service.verify_team_for_user_strict = AsyncMock(side_effect=PermissionError("User membership in team not sufficient for this update."))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@example.com", ["team-in-scope"])))
+
+        result = await admin_edit_server(_GATE_SERVER_ID, mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 403
+        # The derived token scope reaches the gate; the service denies the
+        # narrowed admin because the target team is outside that scope.
+        team_service.verify_team_for_user_strict.assert_called_once_with("admin@example.com", "team-1", ["team-in-scope"])
+        mock_update_server.assert_not_called()
 
 
 class TestTeamVisibilityRouteErrorMapping:
@@ -29035,18 +29107,24 @@ class TestTeamVisibilityRouteErrorMapping:
     def _stub_team_service(monkeypatch, result):
         """Install a TeamManagementService stub whose verification returns or raises.
 
+        Both verification entry points are stubbed: ``verify_team_for_user_strict``
+        (server handlers) and ``verify_team_for_user`` (tool, resource, and
+        prompt handlers).
+
         Args:
             monkeypatch: Pytest monkeypatch fixture.
-            result: Return value, or the exception to raise, from verify_team_for_user.
+            result: Return value, or the exception to raise, from the verification methods.
 
         Returns:
             MagicMock: The stub service instance.
         """
         team_service = MagicMock()
         if isinstance(result, Exception):
-            team_service.verify_team_for_user = AsyncMock(side_effect=result)
+            mocked = AsyncMock(side_effect=result)
         else:
-            team_service.verify_team_for_user = AsyncMock(return_value=result)
+            mocked = AsyncMock(return_value=result)
+        team_service.verify_team_for_user = mocked
+        team_service.verify_team_for_user_strict = mocked
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
         return team_service
 
@@ -29116,6 +29194,24 @@ class TestTeamVisibilityRouteErrorMapping:
 
         assert result.status_code == 400
         assert "Unable to verify team membership" in json.loads(result.body)["message"]
+        mock_register_tool.assert_not_called()
+
+    @patch.object(ToolService, "register_tool")
+    async def test_add_tool_admin_unknown_team_maps_to_400(self, mock_register_tool, mock_request, mock_db, monkeypatch):
+        """An admin-bypass caller naming an unknown team gets 400 through the real gate."""
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        mock_request.form = AsyncMock(return_value=self._form(team_id="team-ghost"))
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: True)
+        mock_db.get.return_value = None  # team-ghost resolves to no EmailTeam row
+        real_service = TeamManagementService(mock_db)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: real_service)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 400
+        assert "Team team-ghost not found" in json.loads(result.body)["message"]
         mock_register_tool.assert_not_called()
 
     # ------------------------------------------------------------------ #

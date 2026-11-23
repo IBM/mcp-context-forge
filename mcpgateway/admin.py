@@ -3624,8 +3624,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
     try:
         user_email = get_user_email(user)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user_strict(user_email, team_id, token_teams)
 
         # Extract metadata for server creation
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -3641,6 +3642,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             created_user_agent=creation_metadata["created_user_agent"],
             team_id=team_id_cast,
             visibility=visibility,
+            token_teams=token_teams,
         )
         return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -3730,7 +3732,8 @@ async def admin_edit_server(
                 team_id = existing_team
 
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
+        team_id = await team_service.verify_team_for_user_strict(user_email, team_id, token_teams)
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
@@ -3802,6 +3805,7 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            token_teams=token_teams,
         )
 
         return ORJSONResponse(
@@ -12610,9 +12614,10 @@ async def admin_add_tool(
             request_type = "GET"
 
     user_email = get_user_email(user)
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -12787,9 +12792,10 @@ async def admin_edit_tool(
 
     user_email = get_user_email(user)
     LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -13372,9 +13378,15 @@ async def admin_add_gateway(
         return ORJSONResponse(content={"success": False, "message": message, "reason_code": reason_code}, status_code=500)
 
     user_email = get_user_email(user)
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
 
     team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+    try:
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
     try:
         _require_token_exchange_client_secret(gateway.oauth_config)
@@ -13427,11 +13439,7 @@ async def admin_add_gateway(
     except GatewayConnectionError as ex:
         LOGGER.warning("Gateway registration rejected: reason_code=%s", getattr(ex, "reason_code", "gateway_connection_failed"))
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-    except GatewayDuplicateConflictError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except GatewayNameConflictError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except GatewayToolNameConflictError as ex:
+    except (GatewayDuplicateConflictError, GatewayNameConflictError, GatewayToolNameConflictError) as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except RuntimeError as ex:
         LOGGER.exception("Unexpected error in admin_add_gateway")
@@ -13532,8 +13540,14 @@ async def admin_update_gateway_rest(
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
 
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+        except PublicValidationError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
         # Set team_id (but not owner_email, which was preserved above)
         data["team_id"] = team_id
@@ -13799,8 +13813,14 @@ async def admin_edit_gateway(
                 oauth_config = _merge_token_exchange_edit(oauth_config, existing_oauth, form)
                 _require_token_exchange_client_secret(oauth_config, existing_oauth)
 
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+        except PublicValidationError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
@@ -14080,9 +14100,10 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     visibility = str(form.get("visibility", "public"))
     _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -14230,9 +14251,10 @@ async def admin_edit_resource(
         if isinstance(existing_team, str) and existing_team:
             team_id = existing_team
 
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -14496,9 +14518,10 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -14640,9 +14663,10 @@ async def admin_edit_prompt(
         if isinstance(existing_team, str) and existing_team:
             team_id = existing_team
 
+    _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     team_service = TeamManagementService(db)
     try:
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except PublicValidationError as ex:
@@ -16925,8 +16949,14 @@ async def admin_add_a2a_agent(
         _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
         user_email = get_user_email(user)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+        except PublicValidationError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
         # Process tags
         ts_val = form.get("tags", "")
@@ -17204,8 +17234,14 @@ async def admin_edit_a2a_agent(
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
 
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        try:
+            team_id = await team_service.verify_team_for_user(user_email, team_id, token_teams)
+        except PermissionError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+        except PublicValidationError as ex:
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
         # Extract UAID generation fields - allow adding UAID to agents that don't have one
         # UAID is immutable: once generated, it cannot be changed
@@ -17561,14 +17597,17 @@ async def admin_create_grpc_service(
         _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
         requested_team_id = getattr(service, "team_id", None)
         if requested_team_id:
             try:
-                await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id)
+                verified_team_id = await TeamManagementService(db).verify_team_for_user(user_email, requested_team_id, token_teams)
             except PermissionError:
                 raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
             except PublicValidationError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            if verified_team_id != requested_team_id:
+                raise HTTPException(status_code=403, detail="Access issue: the caller is not a member of the requested team.")
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:

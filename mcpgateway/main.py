@@ -4227,6 +4227,7 @@ async def create_server(
 
         # Get user email and handle team assignment
         user_email = get_user_email(user)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
 
         try:
             team_id, visibility = await _resolve_create_scope(request, user, db, "servers.create", server, team_id, visibility)
@@ -4244,6 +4245,7 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
@@ -4295,6 +4297,7 @@ async def update_server(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email: str = get_user_email(user)
+        _scoped_email, token_teams = get_scoped_resource_access_context(request, user)
 
         result = await server_service.update_server(
             db,
@@ -4305,6 +4308,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            token_teams=token_teams,
         )
         db.commit()
         db.close()

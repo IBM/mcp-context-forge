@@ -137,23 +137,25 @@ def _get_tool_lookup_cache() -> Any:
     return _TOOL_LOOKUP_CACHE
 
 
-def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str], token_teams: Optional[List[str]] = None) -> None:
     """Validate team assignment and ownership requirements for server updates.
 
     Delegates to ``validate_team_assignment`` — the shared team-authorization
-    policy point (platform-admin bypass plus owner-role membership).
+    policy point (scoped admin bypass plus owner-role membership).
 
     Args:
         db: Database session used for membership checks.
         user_email: Requesting user email. When omitted, ownership checks are skipped
             for system/internal update paths.
         target_team_id: Team identifier to validate.
+        token_teams: Token team scope. ``None`` means unscoped; narrowed values
+            (``[]`` or a list) never grant admin bypass.
 
     Raises:
         ValueError: If team ID is missing or the team does not exist.
-        PermissionError: If caller is not a platform admin or active team owner.
+        PermissionError: If caller is not an unscoped platform admin or active team owner.
     """
-    validate_team_assignment(db, user_email, target_team_id)
+    validate_team_assignment(db, user_email, target_team_id, token_teams)
 
 
 # Initialize logging service first
@@ -576,6 +578,7 @@ class ServerService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        token_teams: Optional[List[str]] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -601,6 +604,8 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            token_teams (Optional[List[str]]): Token team scope. ``None`` means
+                unscoped; narrowed values (``[]`` or a list) never grant admin bypass.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -608,7 +613,7 @@ class ServerService(BaseService):
         Raises:
             IntegrityError: If a database integrity error occurs.
             PublicValidationError: If visibility is "team" without a resolvable team_id, or the team does not exist.
-            PermissionError: If visibility is "team" and the caller is neither a platform admin nor an active team owner.
+            PermissionError: If visibility is "team" and the caller is neither an unscoped platform admin nor an active team owner.
             ServerNameConflictError: If a server name conflict occurs (public or team visibility).
             ServerError: If any associated tool, resource, or prompt does not exist, or if any other registration error occurs.
 
@@ -636,7 +641,7 @@ class ServerService(BaseService):
         # The API has visibility as a separate Body param that should override schema default
         effective_visibility = visibility or getattr(server_in, "visibility", None) or "public"
         if effective_visibility == "team":
-            validate_team_assignment(db, owner_email or created_by, team_id)
+            validate_team_assignment(db, owner_email or created_by, team_id, token_teams)
         try:
             logger.info("Registering server: %s", server_in.name)
             oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
@@ -1303,6 +1308,7 @@ class ServerService(BaseService):
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1315,6 +1321,8 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            token_teams: Token team scope. ``None`` means unscoped; narrowed
+                values (``[]`` or a list) never grant admin bypass.
 
         Returns:
             The updated ServerRead object.
@@ -1389,7 +1397,7 @@ class ServerService(BaseService):
 
             # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
             if server_update.team_id is not None and server_update.team_id != server.team_id:
-                _validate_server_team_assignment(db, user_email, server_update.team_id)
+                _validate_server_team_assignment(db, user_email, server_update.team_id, token_teams)
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
@@ -1432,7 +1440,7 @@ class ServerService(BaseService):
                 # reassignment gate above covers team changes (#5791).
                 if new_visibility == "team" and server.visibility != "team":
                     target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
-                    _validate_server_team_assignment(db, user_email, target_team_id)
+                    _validate_server_team_assignment(db, user_email, target_team_id, token_teams)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
