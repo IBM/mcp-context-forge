@@ -11,6 +11,7 @@
 
 ### Breaking Changes
 
+- **Admin config endpoint masks all connection URLs** - `GET /admin/config/settings` now returns `settings.masked_auth_value` (`*****`) for any non-empty `database_url` or `redis_url`. Previously, URLs without credentials (such as default `sqlite:///./mcp.db` or `redis://localhost:6379/0`) appeared in cleartext. Clients and operators can no longer inspect backend hostnames or database types through this endpoint.
 - **Virtual-server OAuth requires administrator approval** - Only unrestricted platform administrators can submit
   `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
   or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.

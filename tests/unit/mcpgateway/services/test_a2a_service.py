@@ -3671,6 +3671,34 @@ class TestInvokeAgentEdgeCases:
         with pytest.raises(A2AAgentError, match="Failed to prepare A2A invocation"):
             await service.invoke_agent(mock_db, "ag", {})
 
+    async def test_invoke_passes_protocol_binding_to_prepare(self, service, mock_db, monkeypatch):
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+            protocol_binding="http_json",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        prepare = MagicMock(side_effect=ValueError("stop here"))
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.prepare_a2a_invocation", prepare)
+
+        with pytest.raises(A2AAgentError):
+            await service.invoke_agent(mock_db, "ag", {})
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
 
 class TestA2AInvalidationBestEffort:
     @pytest.fixture

@@ -2970,6 +2970,26 @@ class TestCallA2AAgent:
     """Tests for _call_a2a_agent method."""
 
     @pytest.mark.asyncio
+    async def test_call_a2a_agent_passes_protocol_binding(self, tool_service):
+        """The stored protocol_binding is handed to prepare_a2a_invocation."""
+        agent = MagicMock()
+        agent.name = "binding-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.protocol_binding = "http_json"
+
+        prepare = MagicMock(side_effect=RuntimeError("stop here"))
+        with patch("mcpgateway.services.tool_service.prepare_a2a_invocation", prepare):
+            with pytest.raises(RuntimeError, match="stop here"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
+    @pytest.mark.asyncio
     async def test_call_a2a_jsonrpc_agent_with_query(self, tool_service):
         """Should build JSONRPC request for generic agent."""
         agent = MagicMock()
