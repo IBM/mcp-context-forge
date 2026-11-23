@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 Add checked_at to a2a_agent_cards.
 
 Revision ID: b9d2f4a6c8e1
-Revises: 7a3a6305ddb6
+Revises: b7e291a4c630
 
 The column holds the time of the last re-fetch that found the card unchanged.
 NULL means no re-fetch has checked the card since it was stored.
@@ -21,7 +21,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "b9d2f4a6c8e1"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "7a3a6305ddb6"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b7e291a4c630"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
