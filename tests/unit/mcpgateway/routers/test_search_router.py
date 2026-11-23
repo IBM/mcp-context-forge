@@ -337,3 +337,32 @@ async def test_limit_used_when_no_limit_per_type(mock_db, patched_search):
     )
     assert result["limit_per_type"] == 5
     assert patched_search["tools"].await_args.kwargs["limit"] == 5
+
+
+def _http_client(mock_db):
+    app = FastAPI()
+    app.include_router(search_router)
+    app.dependency_overrides[get_current_user_with_permissions] = lambda: USER
+    app.dependency_overrides[get_db] = lambda: mock_db
+    return TestClient(app)
+
+
+def test_mcp_server_id_query_alias_forwards_gateway_id(mock_db, patched_search):
+    """GET /search?mcp_server_id=g1 reaches the entity searches as gateway_id=g1."""
+    resp = _http_client(mock_db).get("/search", params={"q": "core", "entity_types": "tools", "mcp_server_id": "g1"})
+    assert resp.status_code == 200
+    assert patched_search["tools"].await_args.kwargs["gateway_id"] == "g1"
+
+
+def test_gateway_id_and_mcp_server_id_equal_values_accepted(mock_db, patched_search):
+    """Both spellings with the same value resolve to that value."""
+    resp = _http_client(mock_db).get("/search", params={"q": "core", "entity_types": "tools", "gateway_id": "g1", "mcp_server_id": "g1"})
+    assert resp.status_code == 200
+    assert patched_search["tools"].await_args.kwargs["gateway_id"] == "g1"
+
+
+def test_gateway_id_and_mcp_server_id_conflict_returns_422(mock_db, patched_search):
+    """Both spellings with different values are rejected before any search runs."""
+    resp = _http_client(mock_db).get("/search", params={"q": "core", "entity_types": "tools", "gateway_id": "g1", "mcp_server_id": "g2"})
+    assert resp.status_code == 422
+    patched_search["tools"].assert_not_awaited()

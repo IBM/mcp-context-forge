@@ -46,17 +46,15 @@ logger = logging.getLogger(__name__)
 # outbound cross-gateway or local-agent invocation stamps `HOP_HEADER: N+1`;
 # every inbound reads it and rejects at `uaid_max_federation_hops`.
 #
-# The parser is deliberately STRICT and identical across Python and Rust:
-# ASCII digits only, no leading sign, no whitespace, saturating on overflow.
-# A lenient parser creates a split-brain where an attacker-controlled
-# intermediate can pad values with whitespace to reset the counter on one
-# runtime's side but not the other's.
+# The parser is deliberately STRICT: ASCII digits only, no leading sign,
+# no whitespace, saturating on overflow.  A lenient parser lets an
+# attacker-controlled intermediate pad values with whitespace to reset
+# the counter.
 
 HOP_HEADER = "X-Contextforge-UAID-Hop"
 
 # Ceiling at which we treat a parsed value as "definitely at the limit".
-# Clamped to int32 so the value fits the Rust `u32` counterpart without
-# surprise on the wire.
+# Clamped to int32 so the value stays portable on the wire.
 _HOP_MAX = 2**31 - 1
 
 
@@ -65,11 +63,9 @@ def _parse_single_hop_piece(piece: str) -> int:
 
     `str.isdigit()` alone is too permissive: it returns True for
     fullwidth digits (U+FF10–FF19), Arabic-Indic digits (U+0660–0669),
-    Kaktovik numerals, etc., and `int()` happily parses them.  Rust's
-    counterpart uses `bytes().all(|b| b.is_ascii_digit())` which
-    rejects them outright, so without the `isascii()` gate an attacker
-    could send `"１"` and have Python count it as hop 1 while Rust
-    treats it as 0 — defeating the federation guard by split-brain.
+    Kaktovik numerals, etc., and `int()` happily parses them.  Without
+    the `isascii()` gate an attacker could send `"１"` and have it
+    counted as hop 1, defeating the strict-parse contract.
 
     Args:
         piece: A single hop-count substring (the full header value
@@ -101,7 +97,7 @@ def _parse_single_hop_piece(piece: str) -> int:
 def parse_hop_count(raw: Optional[str]) -> int:
     """Parse a `HOP_HEADER` value into a non-negative hop count.
 
-    Rules (must match `parse_hop_count` in `crates/a2a_runtime/src/server.rs`):
+    Rules:
       - Missing or `None` header → 0.
       - Single value: strict ASCII digits (`[0-9]+`), no whitespace,
         no sign, no hex; saturate at `_HOP_MAX`.
@@ -254,10 +250,8 @@ def parse_uaid(uaid: str) -> UaidComponents:
     # turn UAIDs into log-injection vectors because this module's callers
     # frequently interpolate the raw string into log lines, structured-
     # log metadata, and error messages.  Out-of-spec per HCS-14 anyway
-    # (which expects printable structured fields).  Rust's parse_uaid
-    # enforces the same contract via `uaid.bytes().any(|b| b < 0x20 || b == 0x7F)`
-    # (crates/a2a_runtime/src/uaid.rs), so reject wholesale here so the
-    # rejection happens before any downstream formatting or logging.
+    # (which expects printable structured fields).  Reject wholesale here so
+    # the rejection happens before any downstream formatting or logging.
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in uaid):
         raise ValueError("UAID contains ASCII control characters and cannot be parsed")
 
@@ -282,10 +276,6 @@ def parse_uaid(uaid: str) -> UaidComponents:
         raise ValueError(f"Invalid UAID format: expected hash/did and parameters separated by ';', got: {uaid!r}")
 
     hash_or_did = segments[0]
-    # Empty `hash_or_did` (e.g. `uaid:aid:;uid=0;...`) is rejected by
-    # the Rust counterpart via `MissingParams`; rejecting here too
-    # keeps the cross-runtime contract airtight so a mixed Python↔Rust
-    # federation chain never disagrees on whether a UAID is valid.
     if not hash_or_did:
         raise ValueError("Invalid UAID: empty hash or DID segment")
 

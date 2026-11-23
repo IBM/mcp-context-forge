@@ -20,53 +20,50 @@ Examples:
 """
 
 # Standard
-import contextvars
 import asyncio
 import base64
 import binascii
+import contextvars
 from datetime import datetime, timezone
 from functools import lru_cache
 import mimetypes
-import os
 import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
 import httpx2
 from mcp import ClientSession
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
 import parse
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent
+from mcpgateway.common.validators import SecurityValidator, without_progress_token
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session, get_for_update, ResourceMetric, ResourceMetricsHourly, server_resource_association
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
-from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import apply_resource_meta, optional_extension_metadata, validate_ui_resource
@@ -76,16 +73,19 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.prompt_service import _sanitize_error_data, _upstream_root_cause
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.token_exchange_actor import invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
-from mcpgateway.utils.identity_propagation import build_identity_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
@@ -93,7 +93,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -105,8 +104,43 @@ except ImportError:
     PLUGINS_AVAILABLE = False
 
 
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget
+
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+
+# Each honored URI holds one upstream stream; bound what one listen request can open.
+MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN = 64
+
+
+def _standing_stream_can_reach(gateway: DbGateway) -> bool:
+    """Return whether a standing upstream stream reaches ``gateway`` with its stored headers alone.
+
+    SSE is legacy-only. OAuth needs a per-user token. SigV4 needs a per-request signature.
+    Query-parameter auth, a private CA, and mTLS need connection setup that the relay client
+    does not perform.
+
+    Args:
+        gateway: Registered upstream server row.
+
+    Returns:
+        bool: True when the resource subscription relay can watch this upstream.
+
+    Examples:
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="bearer"))
+        True
+        >>> _standing_stream_can_reach(DbGateway(transport="SSE"))
+        False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", client_cert="pem"))
+        False
+        >>> _standing_stream_can_reach(DbGateway(transport="STREAMABLEHTTP", auth_type="sigv4"))
+        False
+    """
+    if (gateway.transport or "").upper() == "SSE" or gateway.auth_type in ("oauth", "query_param", "sigv4"):
+        return False
+    return not (gateway.ca_certificate or gateway.client_cert)
 
 
 def _get_registry_cache():
@@ -134,10 +168,25 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadResourceRequest":
-    """Build a ReadResourceRequest that carries _meta."""
-    _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
-    _rp_dict["_meta"] = meta_data
+#: Upstream ``resources/read`` answers: the contents, or a 2026 MRTR request for input.
+_READ_RESOURCE_RESULT_ADAPTER: TypeAdapter = TypeAdapter(types.ReadResourceResult | types.InputRequiredResult)
+
+
+def _build_read_resource_request(uri: Any, meta_data: Optional[Dict[str, Any]], input_responses: Optional[Any] = None, request_state: Optional[str] = None) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta and any MRTR retry fields.
+
+    Args:
+        uri: The resource URI to read.
+        meta_data: Metadata to place in the request ``_meta``, or ``None``.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
+
+    Returns:
+        The request to send upstream.
+    """
+    _rp_dict = ReadResourceRequestParams(uri=uri, input_responses=input_responses, request_state=request_state).model_dump(by_alias=True)
+    if meta_data:
+        _rp_dict["_meta"] = meta_data
     return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
@@ -162,18 +211,86 @@ def set_upstream_cache_directive(result: Any) -> None:
     upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
-async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
-    """Dispatch read_resource and inject _meta when metadata is provided."""
-    if meta_data:
+async def _read_resource_with_meta(
+    session: "ClientSession",
+    uri: Any,
+    meta_data: Optional[Dict[str, Any]],
+    progress_callback: ProgressFnT | None = None,
+    input_responses: Optional[Any] = None,
+    request_state: Optional[str] = None,
+) -> Any:
+    """Dispatch read_resource, injecting _meta, relaying upstream progress, and carrying any MRTR retry fields.
+
+    The client's progress token never goes upstream. When a callback is set, the SDK stamps its own token.
+
+    Args:
+        session: The upstream client session.
+        uri: The resource URI to read.
+        meta_data: Metadata to place in the request ``_meta``, or ``None``.
+        progress_callback: Optional callback that receives upstream progress notifications.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
+
+    Returns:
+        The raw upstream result: a ``ReadResourceResult`` or an ``InputRequiredResult``.
+    """
+    meta_data = without_progress_token(meta_data)
+    if meta_data or progress_callback or input_responses or request_state:
         return await session.send_request(
-            _build_read_resource_request(uri, meta_data),
-            types.ReadResourceResult,
+            _build_read_resource_request(uri, meta_data, input_responses, request_state),
+            _READ_RESOURCE_RESULT_ADAPTER,
+            progress_callback=progress_callback,
         )
-    return await session.read_resource(uri=uri)
+    return await session.read_resource(uri=uri, allow_input_required=True)
+
+
+def _raise_if_input_required(remote_result: Any) -> None:
+    """Turn an upstream input-required answer into the ``ResourceInputRequired`` signal.
+
+    Args:
+        remote_result: The raw upstream result.
+
+    Raises:
+        ResourceInputRequired: If the upstream asks for input before serving the resource.
+
+    Examples:
+        >>> _raise_if_input_required(types.ReadResourceResult(contents=[]))
+    """
+    if isinstance(remote_result, types.InputRequiredResult):
+        raise ResourceInputRequired(remote_result)
+
+
+def _upstream_resource_content(result: types.ReadResourceResult) -> str | types.BlobResourceContents:
+    """Extract text or preserve the upstream binary resource contents.
+
+    Args:
+        result: The upstream resource read result.
+
+    Returns:
+        The first resource's text or binary contents.
+    """
+    content = result.contents[0]
+    return content if isinstance(content, types.BlobResourceContents) else content.text
 
 
 class ResourceError(Exception):
     """Base class for resource-related errors."""
+
+
+class ResourceInputRequired(ResourceError):
+    """Control-flow signal: the upstream answered ``resources/read`` with an input-required result (2026 MRTR).
+
+    The caller decides whether to relay the result to a modern client or refuse it for a legacy one.
+    """
+
+    def __init__(self, result: "types.InputRequiredResult") -> None:
+        """Keep the upstream result for the caller.
+
+        Args:
+            result: The ``InputRequiredResult`` the upstream returned.
+        """
+        super().__init__("Input required by the upstream resource")
+        self.result = result
 
 
 class ResourceUpstreamError(ResourceError):
@@ -212,6 +329,7 @@ def _raise_unresolved_gateway_resource(exc: BaseException, auth_query_params: Op
 
 UNRESOLVED_GATEWAY_RESOURCE_MESSAGE = "Gateway resource content could not be resolved"
 DIRECT_PROXY_RESOURCE_ERROR_MESSAGE = "Direct proxy resource read failed"
+IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE = "Identity claim signing is misconfigured for the resource gateway"
 
 
 def _has_authoritative_cached_content(resource: Optional[DbResource]) -> bool:
@@ -314,7 +432,7 @@ class ResourceService(BaseService):
         """Initialize the resource service."""
         self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
-        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self.oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
 
         # Register MIME types for resource content detection
         # This runs in __init__ rather than initialize() because:
@@ -700,6 +818,9 @@ class ResourceService(BaseService):
             db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
+            notify_dataplane()
+
+            await _get_registry_cache().invalidate_resources()
 
             # Notify subscribers
             await self._notify_resource_added(db_resource)
@@ -944,6 +1065,8 @@ class ResourceService(BaseService):
         # Process in chunks to avoid memory issues and SQLite parameter limits
         chunk_size = 500
 
+        catalog_changed = False
+
         for chunk_start in range(0, len(resources), chunk_size):
             chunk = resources[chunk_start : chunk_start + chunk_size]
 
@@ -1124,8 +1247,16 @@ class ResourceService(BaseService):
                 if resources_to_add:
                     db.add_all(resources_to_add)
 
+                audit_counts: dict[str | None, dict[str, int]] = {}
+                for operation, db_resources in (("created", resources_to_add), ("updated", resources_to_update)):
+                    for db_resource in db_resources:
+                        counts = audit_counts.setdefault(db_resource.team_id, {"created": 0, "updated": 0})
+                        counts[operation] += 1
+
                 # Commit the chunk
                 db.commit()
+                notify_dataplane()
+                catalog_changed = catalog_changed or bool(resources_to_add or resources_to_update)
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
@@ -1133,21 +1264,20 @@ class ResourceService(BaseService):
                     # Notify subscribers
                     await self._notify_resource_added(db_resource)
 
-                # Log bulk audit trail entry
-                if resources_to_add or resources_to_update:
+                for audit_team_id, counts in audit_counts.items():
                     audit_trail.log_action(
                         user_id=created_by or "system",
-                        action="bulk_create_resources" if resources_to_add else "bulk_update_resources",
+                        action="bulk_create_resources" if counts["created"] else "bulk_update_resources",
                         resource_type="resource",
                         resource_id=import_batch_id or "bulk_operation",
-                        resource_name=f"Bulk operation: {len(resources_to_add)} created, {len(resources_to_update)} updated",
+                        resource_name=f"Bulk operation: {counts['created']} created, {counts['updated']} updated",
                         user_email=owner_email,
-                        team_id=team_id,
+                        team_id=audit_team_id,
                         client_ip=created_from_ip,
                         user_agent=created_user_agent,
                         new_values={
-                            "resources_created": len(resources_to_add),
-                            "resources_updated": len(resources_to_update),
+                            "resources_created": counts["created"],
+                            "resources_updated": counts["updated"],
                             "visibility": visibility,
                         },
                         context={
@@ -1166,6 +1296,9 @@ class ResourceService(BaseService):
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
+
+        if catalog_changed:
+            await _get_registry_cache().invalidate_resources()
 
         # Final structured logging
         structured_logger.log(
@@ -1765,6 +1898,9 @@ class ResourceService(BaseService):
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1808,6 +1944,12 @@ class ResourceService(BaseService):
             request_headers (Optional[Dict[str, str]]):
                 Inbound request headers. Required for token-exchange gateways to resolve
                 the RFC 8693 subject_token from the caller's Authorization bearer.
+            progress_callback (ProgressFnT | None):
+                Optional callback that receives upstream progress notifications for the read.
+            input_responses (Optional[Any]):
+                Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state (Optional[str]):
+                Opaque state from a prior input-required result, echoed to the upstream on the retry.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` when
@@ -2019,7 +2161,12 @@ class ResourceService(BaseService):
                         gateway_auth_value = gateway.auth_value
                         gateway_oauth_config = gateway.oauth_config
                         gateway_name = gateway.name
+                        gateway_audience = str(gateway.id)
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
+                        try:
+                            gateway_sigv4_auth = build_gateway_sigv4_auth(gateway_auth_type, getattr(gateway, "sigv4_config", None))
+                        except SigV4ConfigError as sigv4_exc:
+                            raise ResourceError("Stored SigV4 credentials could not be loaded for the resource gateway") from sigv4_exc
 
                         # Apply query param auth to URL if applicable
                         auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -2054,7 +2201,7 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None
@@ -2103,21 +2250,34 @@ class ResourceService(BaseService):
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Token exchange requires an authenticated user JWT")
-                                else:
-                                    try:
-                                        access_token = await self.oauth_manager.get_access_token(
-                                            gateway_oauth_config,
-                                            ca_certificate=gateway.ca_certificate,
-                                            client_cert=gateway.client_cert,
-                                            client_key=gateway.client_key,
-                                            subject_token=subject_token,
-                                        )
-                                        headers["Authorization"] = f"Bearer {access_token}"
-                                    except Exception as e:
-                                        logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
-                                        if span:
-                                            set_span_attribute(span, "health.status", "unhealthy")
-                                            set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+                                try:
+                                    # No negative cache here: an actor acquisition failure fails the read (fail closed).
+                                    actor_token, actor_token_type = await resolve_actor_token(
+                                        self.oauth_manager,
+                                        gateway_oauth_config,
+                                        gateway_id=gateway_id,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                    )
+                                    access_token = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key,
+                                        subject_token=subject_token,
+                                        actor_token=actor_token,
+                                        actor_token_type=actor_token_type,
+                                    )
+                                except Exception as e:
+                                    logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
+                                    await invalidate_actor_token(gateway_id, gateway_oauth_config, e)
+                                    if span:
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Token exchange failed")
+                                    raise ResourceError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+                                headers["Authorization"] = f"Bearer {access_token}"
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
@@ -2145,16 +2305,24 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity))
+                                try:
+                                    headers.update(build_identity_headers(user_identity, gateway, audience=gateway_audience))
+                                    meta_data = build_identity_meta(user_identity, meta_data, gateway, audience=gateway_audience)
+                                except IdentitySigningError as signing_exc:
+                                    logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_audience, signing_exc)
+                                    raise ResourceError(IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE) from signing_exc
 
-                        async def _read_resource_text_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str:
+                        async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
                             max_read_attempts = 2
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
-                                    resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data, progress_callback if attempt == 1 else None, input_responses, request_state)
+                                    _raise_if_input_required(resource_response)
                                     set_upstream_cache_directive(resource_response)
-                                    return getattr(getattr(resource_response, "contents")[0], "text")
+                                    return _upstream_resource_content(resource_response)
+                                except ResourceInputRequired:
+                                    raise
                                 except Exception as exc:
                                     if attempt == max_read_attempts:
                                         raise
@@ -2170,22 +2338,18 @@ class ResourceService(BaseService):
                                     await asyncio.sleep(0.05)
                             raise RuntimeError("Resource read retry loop exhausted")
 
-                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | types.BlobResourceContents | None:
                             """
-                            Connect to an SSE-based gateway and retrieve the text content of a resource.
+                            Connect to an SSE-based gateway and retrieve the content of a resource.
 
                             This helper establishes an SSE (Server-Sent Events) session with the remote
                             gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                            given URI, and returns the textual content from the first item in the
+                            given URI, and returns the content from the first item in the
                             response's `contents` list.
 
                             If any error occurs before content is received (network failure,
                             unexpected response format, session initialization failure, etc.),
                             the method logs sanitized detail and raises ``ResourceError``.
-
-                            Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2198,19 +2362,13 @@ class ResourceService(BaseService):
                                     dictionary when not provided.
 
                             Returns:
-                                str | None:
-                                    The text content returned by the remote resource.
+                                str | types.BlobResourceContents | None:
+                                    The content returned by the remote resource.
 
-                            Notes:
-                                - This function assumes the SSE client context manager yields:
-                                    ``(read_stream, write_stream, get_session_id)``.
-                                - The expected response object from `session.read_resource()` must have a
-                                `contents` attribute containing a list, where the first element has a
-                                `text` attribute.
                             """
                             if authentication is None:
                                 authentication = {}
-                            resource_text: Optional[str] = None
+                            resource_content: str | types.BlobResourceContents | None = None
                             resource_received = False
                             try:
                                 # #4205: Registry path is taken when the caller has a downstream
@@ -2232,9 +2390,9 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.SSE,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as upstream:
-                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "SSE")
+                                        resource_content = await _read_resource_content_with_retry(upstream.session, uri, "SSE")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2242,37 +2400,38 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         timeout=settings.health_check_timeout,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                         transport="sse",
                                     ) as client:
-                                        resource_text = await _read_resource_text_with_retry(client.session, uri, "SSE")
+                                        resource_content = await _read_resource_content_with_retry(client.session, uri, "SSE")
                                         resource_received = True
+                            except ResourceInputRequired:
+                                raise
                             except Exception as e:
+                                wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                                if isinstance(wrapped, ResourceInputRequired):
+                                    raise wrapped from e
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
                                     logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
-                                    return resource_text
+                                    return resource_content
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
-                            return resource_text
+                            return resource_content
 
-                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | types.BlobResourceContents | None:
                             """
-                            Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+                            Connect to a StreamableHTTP gateway and retrieve the content of a resource.
 
                             This helper establishes a StreamableHTTP client session with the specified
                             gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                            given URI, and returns the textual content from the first element in the
+                            given URI, and returns the content from the first element in the
                             response's `contents` list.
 
                             If any exception occurs before content is received during connection,
                             session initialization, or resource reading, the function logs sanitized
                             detail and raises ``ResourceError``.
-
-                            Note:
-                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
-                                When the SDK adds support, meta_data can be added back here.
 
                             Args:
                                 server_url (str):
@@ -2284,19 +2443,13 @@ class ResourceService(BaseService):
                                     Bearer tokens). Defaults to an empty dictionary when not provided.
 
                             Returns:
-                                str | None:
-                                    The text content returned by the StreamableHTTP resource.
+                                str | types.BlobResourceContents | None:
+                                    The content returned by the StreamableHTTP resource.
 
-                            Notes:
-                                - The `streamable_http_client` context manager must yield a tuple:
-                                ``(read_stream, write_stream, get_session_id)``.
-                                - The expected `resource_response` returned by ``session.read_resource()``
-                                must contain a `contents` list, whose first element exposes a `text`
-                                attribute.
                             """
                             if authentication is None:
                                 authentication = {}
-                            resource_text: Optional[str] = None
+                            resource_content: str | types.BlobResourceContents | None = None
                             resource_received = False
                             try:
                                 # #4205: see SSE path above; same 1:1 binding rationale.
@@ -2316,9 +2469,9 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         transport_type=TransportType.STREAMABLE_HTTP,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as upstream:
-                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "StreamableHTTP")
+                                        resource_content = await _read_resource_content_with_retry(upstream.session, uri, "StreamableHTTP")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2326,33 +2479,43 @@ class ResourceService(BaseService):
                                         url=server_url,
                                         headers=authentication,
                                         timeout=settings.health_check_timeout,
-                                        httpx_client_factory=_get_httpx_client_factory,
+                                        httpx_client_factory=with_sigv4_auth(_get_httpx_client_factory, gateway_sigv4_auth),
                                     ) as client:
-                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback, input_responses, request_state)
+                                        _raise_if_input_required(resource_response)
                                         set_upstream_cache_directive(resource_response)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        return _upstream_resource_content(resource_response)
+                            except ResourceInputRequired:
+                                raise
                             except Exception as e:
+                                wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                                if isinstance(wrapped, ResourceInputRequired):
+                                    raise wrapped from e
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
                                     logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
-                                    return resource_text
+                                    return resource_content
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 _raise_unresolved_gateway_resource(e, auth_query_params_decrypted)
-                            return resource_text
+                            return resource_content
 
                         if span:
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
                         if (gateway_transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
+                            resource_content = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
-                        if span and resource_text is not None and is_output_capture_enabled("resource.read"):
-                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
+                            resource_content = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
+                        if span and resource_content is not None and not isinstance(resource_content, types.BlobResourceContents) and is_output_capture_enabled("resource.read"):
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_content}))
                         success = True  # Mark as successful before returning
-                        return resource_text
+                        return resource_content
+                    except ResourceInputRequired:
+                        # An upstream question is one round of a successful read, not a failure.
+                        success = True
+                        raise
                     except Exception as e:
                         success = False
                         error_message = str(e)
@@ -2390,6 +2553,9 @@ class ResourceService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
@@ -2407,7 +2573,10 @@ class ResourceService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
             request_headers: Optional inbound request headers, forwarded to invoke_resource()
+            input_responses: Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state: Opaque state from a prior input-required result, echoed to the upstream on the retry.
                 so token-exchange gateways can resolve the RFC 8693 subject_token.
+            progress_callback: Optional callback that receives upstream progress notifications, forwarded to invoke_resource().
 
         Returns:
             Resource content object
@@ -2662,9 +2831,11 @@ class ResourceService(BaseService):
                                 url=gateway.url,
                                 headers=headers,
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
+                                httpx_client_factory=sigv4_client_factory(build_gateway_sigv4_auth(gateway.auth_type, getattr(gateway, "sigv4_config", None))),
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
-                                result = await _read_resource_with_meta(client.session, uri, meta_data)
+                                result = await _read_resource_with_meta(client.session, uri, meta_data, progress_callback, input_responses, request_state)
+                                _raise_if_input_required(result)
                                 set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
@@ -2696,7 +2867,15 @@ class ResourceService(BaseService):
                                 )
                                 # Skip the rest of the DB lookup logic
 
+                        except ResourceInputRequired:
+                            raise
+                        except IdentitySigningError as e:
+                            logger.error("Identity claim signing is misconfigured for gateway %s: %s", resource_db.gateway.id, e)
+                            raise ResourceError(IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE) from e
                         except Exception as e:
+                            wrapped = _upstream_root_cause(e, ResourceInputRequired)
+                            if isinstance(wrapped, ResourceInputRequired):
+                                raise wrapped from e
                             sanitized_error = sanitize_exception_message(str(e))
                             logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, sanitized_error)
                             raise ResourceError(DIRECT_PROXY_RESOURCE_ERROR_MESSAGE) from e
@@ -2821,6 +3000,10 @@ class ResourceService(BaseService):
 
                 def _set_gateway_content(content_obj: Any, attr_name: str, resource_response: Any) -> None:
                     """Apply gateway content or keep a valid cached fallback."""
+                    nonlocal content
+                    if isinstance(resource_response, types.BlobResourceContents):
+                        content = BlobResourceContents.model_validate(resource_response.model_dump(by_alias=True, exclude_none=True))
+                        return
                     if resource_response is not None:
                         setattr(content_obj, attr_name, resource_response)
                         return
@@ -2874,7 +3057,12 @@ class ResourceService(BaseService):
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
                             request_headers=request_headers,
+                            progress_callback=progress_callback,
+                            input_responses=input_responses,
+                            request_state=request_state,
                         )
+                    except ResourceInputRequired:
+                        raise
                     except ResourceError:
                         if has_valid_cached_fallback:
                             logger.warning("Gateway resource refresh failed; serving cached content for resource '%s'", getattr(resource_db, "id", None))
@@ -2921,7 +3109,7 @@ class ResourceService(BaseService):
                     if meta_payload.get("_meta"):
                         content.meta = meta_payload["_meta"]
 
-                if span and content is not None and is_output_capture_enabled("resource.read"):
+                if span and content is not None and not isinstance(content, BlobResourceContents) and is_output_capture_enabled("resource.read"):
                     set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
                 # Set success attributes on span only after gateway resolution, hooks,
@@ -2930,10 +3118,14 @@ class ResourceService(BaseService):
                     set_span_attribute(span, "success", True)
                     set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
                     if content is not None:
-                        set_span_attribute(span, "content.size", len(str(content)))
+                        set_span_attribute(span, "content.size", len(content.blob) if isinstance(content, BlobResourceContents) else len(str(content)))
 
                 success = True
                 return content
+            except ResourceInputRequired:
+                # An upstream question is one round of a successful read, not a failure.
+                success = True
+                raise
             except Exception as e:
                 success = False
                 error_message = str(e)
@@ -3046,6 +3238,7 @@ class ResourceService(BaseService):
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -3187,6 +3380,54 @@ class ResourceService(BaseService):
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
+
+    async def resolve_subscription_targets(
+        self,
+        db: Session,
+        uris: Sequence[str],
+        *,
+        server_id: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, List["UpstreamResourceTarget"]]:
+        """Resolve which requested resource URIs a ``subscriptions/listen`` caller may watch.
+
+        A URI is honored when an enabled resource with that URI passes the caller's visibility check.
+        On a server-scoped path the resource must belong to that virtual server.
+        The resource must come from an enabled upstream server that a standing stream reaches with its stored headers alone.
+        Only the first ``MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN`` distinct requested URIs are considered.
+
+        Args:
+            db: Database session.
+            uris: Resource URIs from ``resourceSubscriptions``.
+            server_id: Virtual server ID for ``/servers/{id}/mcp``, or ``None``.
+            user_email: Requester email used for visibility checks.
+            token_teams: Token team scope used for visibility checks.
+
+        Returns:
+            Dict[str, List[UpstreamResourceTarget]]: Upstream targets per honored URI.
+        """
+        # First-Party
+        from mcpgateway.services.modern_listener_service import gateway_listen_headers  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.resource_subscription_relay import UpstreamResourceTarget  # pylint: disable=import-outside-toplevel
+
+        wanted = list(dict.fromkeys(uris))[:MAX_RESOURCE_SUBSCRIPTIONS_PER_LISTEN]
+        if not wanted:
+            return {}
+        query = select(DbResource).where(DbResource.uri.in_(wanted), DbResource.enabled.is_(True), DbResource.gateway_id.is_not(None))
+        if server_id:
+            query = query.join(server_resource_association, server_resource_association.c.resource_id == DbResource.id).where(server_resource_association.c.server_id == server_id)
+
+        targets: Dict[str, List[UpstreamResourceTarget]] = {}
+        for resource in db.execute(query).scalars().all():
+            gateway = resource.gateway
+            if gateway is None or not gateway.enabled or not _standing_stream_can_reach(gateway):
+                continue
+            if not await self._check_resource_access(db, resource, user_email=user_email, token_teams=token_teams):
+                continue
+            headers = tuple(gateway_listen_headers(gateway).items())
+            targets.setdefault(resource.uri, []).append(UpstreamResourceTarget(gateway_id=gateway.id, url=gateway.url, uri=resource.uri, headers=headers))
+        return {uri: targets[uri] for uri in wanted if uri in targets}
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """
@@ -3469,6 +3710,7 @@ class ResourceService(BaseService):
                 resource.version = 1
             db.commit()
             db.refresh(resource)
+            notify_dataplane()
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -3734,6 +3976,7 @@ class ResourceService(BaseService):
 
             db.delete(resource)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()

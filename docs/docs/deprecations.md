@@ -30,6 +30,9 @@ endpoint, feature, environment, Python.
 
 {{ read_yaml('tables/deprecations-removed.yaml') }}
 
+The Rust runtime removal is recorded in
+[ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md).
+
 ## Documentation gaps
 
 - The `deprecated` lifecycle flag on tools (#4829) and LLM models has no

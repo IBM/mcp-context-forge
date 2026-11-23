@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from mcpgateway.config import get_settings
+from mcpgateway.services.token_backends.base import ValidationToken
 
 # Import backends
 from mcpgateway.services.token_backends import (
@@ -29,6 +30,7 @@ from mcpgateway.services.token_backends import (
 # For backward compatibility with tests that patch get_encryption_service
 # Import it so it's accessible as a module attribute
 from mcpgateway.services.token_backends.db_backend import get_encryption_service  # noqa: F401  # pylint: disable=unused-import
+from mcpgateway.services.token_backends.base import AccessTokenDetails
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +306,31 @@ class TokenStorageService:
             app_user_email=app_user_email,
             threshold_seconds=threshold_seconds,
         )
+
+    async def read_validation_token(self, gateway_id: str, app_user_email: str) -> ValidationToken | None:
+        """Read the caller's gateway-bound token without refresh or persistence.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            app_user_email: Authenticated caller identity.
+
+        Returns:
+            Token status and valid access token, or None when authorization is absent.
+        """
+        return await self._backend.read_validation_token(gateway_id, self._get_team_id(gateway_id, app_user_email), app_user_email)
+
+    async def get_user_token_details(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
+        """Return the caller's token and metadata with explicit failure reasons.
+
+        Args:
+            gateway_id: Gateway identifier.
+            app_user_email: Authenticated caller's email.
+            threshold_seconds: Refresh window in seconds.
+
+        Returns:
+            Access token details, or None when no token exists.
+        """
+        return await self._backend.get_user_token_details(gateway_id, self._get_team_id(gateway_id, app_user_email), app_user_email, threshold_seconds)
 
     # REMOVED: get_any_valid_token() - This was a security vulnerability
     # All OAuth tokens MUST be user-specific to prevent cross-user token access

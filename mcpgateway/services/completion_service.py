@@ -24,12 +24,14 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 # Third-Party
 import httpx2
 from mcp import MCPError as McpError, types
+from mcp.shared.dispatcher import ProgressFnT
 from mcp.types import PromptReference, ResourceTemplateReference
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.models import CompleteResult
+from mcpgateway.common.validators import without_progress_token
 from mcpgateway.config import settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -44,6 +46,7 @@ from mcpgateway.services.upstream_session_registry import (
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory, with_sigv4_auth
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.url_auth import apply_query_param_auth
 
@@ -207,6 +210,11 @@ class CompletionService:
             ``.protocol_version``, and ``.complete(...)``.
         """
         gateway_url, headers, _auth_query_params = self._gateway_connection(gateway)
+        try:
+            signing_auth = build_gateway_sigv4_auth(getattr(gateway, "auth_type", None), getattr(gateway, "sigv4_config", None))
+        except SigV4ConfigError as exc:
+            raise CompletionInternalError(f"Stored SigV4 credentials could not be loaded for gateway '{getattr(gateway, 'id', '')}'") from exc
+        sigv4_factory = sigv4_client_factory(signing_auth)
 
         gateway_id = str(getattr(gateway, "id", ""))
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
@@ -227,6 +235,7 @@ class CompletionService:
                 url=gateway_url,
                 headers=headers,
                 transport_type=registry_transport_type,
+                httpx_client_factory=sigv4_factory,
             ) as upstream:
                 yield upstream.session
         else:
@@ -255,7 +264,7 @@ class CompletionService:
                 url=gateway_url,
                 headers=headers,
                 timeout=settings.health_check_timeout,
-                httpx_client_factory=get_httpx_client_factory,
+                httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth),
                 transport="sse" if transport == "sse" else "streamablehttp",
             ) as client:
                 yield client.session
@@ -310,6 +319,7 @@ class CompletionService:
         argument: Dict[str, str],
         context: Optional[Dict[str, Any]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> CompleteResult:
         """Forward a completion/complete request to the owning upstream server.
 
@@ -318,7 +328,8 @@ class CompletionService:
             ref: The MCP ``ref/prompt`` or ``ref/resource`` reference.
             argument: ``{"name": ..., "value": ...}`` argument being completed.
             context: Optional completion context (``{"arguments": {...}}``).
-            meta: Optional MCP request metadata.
+            meta: Optional MCP request metadata. The client's progress token never goes upstream.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             The upstream's completion result, translated to this gateway's
@@ -343,6 +354,7 @@ class CompletionService:
         if context_arguments is not None and not isinstance(context_arguments, dict):
             raise CompletionInvalidParamsError("Completion context arguments must be an object")
 
+        meta = without_progress_token(meta)
         auth_query_params: Optional[Dict[str, str]] = None
 
         try:
@@ -352,7 +364,7 @@ class CompletionService:
                 if capabilities is None or getattr(capabilities, "completions", None) is None:
                     raise CompletionNotSupportedError(f"Upstream gateway '{gateway_id}' does not support completions")
 
-                if meta is None:
+                if not meta and not progress_callback:
                     remote_result = await session.complete(ref, argument, context_arguments)
                 else:
                     remote_result = await session.send_request(
@@ -365,6 +377,7 @@ class CompletionService:
                             )
                         ),
                         types.CompleteResult,
+                        progress_callback=progress_callback,
                     )
         except BaseException as exc:  # noqa: BLE001 - anyio wraps handler errors in ExceptionGroup
             root = self._unwrap_exception(exc)
@@ -406,6 +419,7 @@ class CompletionService:
         request: Dict[str, Any],
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> CompleteResult:
         """Handle completion request.
 
@@ -414,6 +428,7 @@ class CompletionService:
             request: Completion request
             user_email: Caller email used for owner/team visibility checks
             token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
+            progress_callback: Optional callback that receives upstream progress notifications, forwarded to federated completions
 
         Returns:
             Completion result with suggestions
@@ -450,9 +465,13 @@ class CompletionService:
 
             # Handle different reference types
             if ref_type == "ref/prompt":
-                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams, context=context, meta=meta)
+                result = await self._complete_prompt_argument(
+                    db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams, context=context, meta=meta, progress_callback=progress_callback
+                )
             elif ref_type == "ref/resource":
-                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams, arg_name=arg_name, context=context, meta=meta)
+                result = await self._complete_resource_uri(
+                    db, ref, arg_value, user_email=user_email, token_teams=token_teams, arg_name=arg_name, context=context, meta=meta, progress_callback=progress_callback
+                )
             else:
                 raise CompletionInvalidParamsError(f"Invalid reference type: {ref_type}")
 
@@ -536,6 +555,7 @@ class CompletionService:
         token_teams: Optional[List[str]] = None,
         context: Optional[Dict[str, Any]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> CompleteResult:
         """Complete prompt argument value.
 
@@ -554,6 +574,7 @@ class CompletionService:
             context: Optional completion context (``{"arguments": {...}}``)
                 forwarded to a federated prompt's upstream.
             meta: Optional MCP request metadata forwarded to the upstream.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             Completion suggestions
@@ -612,9 +633,7 @@ class CompletionService:
                 {"name": arg_name, "value": arg_value},
                 context,
             )
-            if meta is not None:
-                return await self._forward_completion_upstream(*forward_args, meta=meta)
-            return await self._forward_completion_upstream(*forward_args)
+            return await self._forward_completion_upstream(*forward_args, meta=meta, progress_callback=progress_callback)
 
         # Find argument in schema
         arg_schema = None
@@ -661,6 +680,7 @@ class CompletionService:
         arg_name: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        progress_callback: ProgressFnT | None = None,
     ) -> CompleteResult:
         """Complete resource URI.
 
@@ -680,6 +700,7 @@ class CompletionService:
             context: Optional completion context (``{"arguments": {...}}``)
                 forwarded to a federated resource template's upstream.
             meta: Optional MCP request metadata forwarded to the upstream.
+            progress_callback: Optional callback that receives upstream progress notifications.
 
         Returns:
             URI completion suggestions
@@ -739,9 +760,7 @@ class CompletionService:
                 {"name": arg_name or "uri", "value": arg_value},
                 context,
             )
-            if meta is not None:
-                return await self._forward_completion_upstream(*forward_args, meta=meta)
-            return await self._forward_completion_upstream(*forward_args)
+            return await self._forward_completion_upstream(*forward_args, meta=meta, progress_callback=progress_callback)
 
         # List matching resources visible to caller
         stmt = select(DbResource).where(DbResource.enabled)

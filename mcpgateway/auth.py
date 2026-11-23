@@ -83,7 +83,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
-from mcpgateway.auth_context import normalize_token_teams
+from mcpgateway.auth_context import get_user_id, normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
@@ -253,7 +253,8 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
     Matches the behavior of user.get_teams() which returns all active memberships.
 
     Args:
-        email: User email address
+        email: Canonical user_id for the membership query. Phase-1 value =
+            e-mail, so the ``EmailTeamMember.user_email`` query is unchanged.
 
     Returns:
         List of team ID strings
@@ -594,7 +595,9 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     For non-admin users, returns the full list of team IDs from DB/cache.
 
     Args:
-        email: User email address
+        email: Canonical user_id for the DB/cache lookup. Phase-1 value =
+            e-mail, so the ``EmailTeamMember.user_email`` queries are
+            unchanged.
         user_info: User dict or EmailUser instance
 
     Returns:
@@ -684,11 +687,27 @@ async def resolve_session_teams(
             from a batched query), pass them here to skip the DB call.
             Pass ``None`` to indicate admin bypass was already determined.
 
+    The identity passed to the DB layer comes from ``get_user_id(payload)``
+    (canonical user_id; phase-1 value = e-mail). A UUID session subject is
+    an opaque reference, not an identity: like a missing identity, it falls
+    back to the *email* argument.
+
     Returns:
         None (admin bypass), [] (public-only), or list of team ID strings.
     """
     if not email:
         return []  # No identity — public-only; never admin bypass
+
+    # Canonical identity for team resolution (phase-1 value = e-mail).
+    identity = get_user_id(payload)
+    try:
+        uuid.UUID(identity)
+        identity = "unknown"  # UUID session subject — take the identity from the email argument
+    except ValueError:
+        pass  # Non-UUID identity
+    identity_from_email = identity == "unknown"
+    if identity_from_email:
+        identity = email
 
     # If sub is a UUID (new token format), resolve to email for DB lookups
     try:
@@ -696,13 +715,15 @@ async def resolve_session_teams(
         resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
         if resolved:
             email = resolved
+            if identity_from_email:
+                identity = resolved
     except ValueError:
         pass  # Already an email string
 
     if preresolved_db_teams is not _UNSET:
         db_teams: Optional[List[str]] = preresolved_db_teams
     else:
-        db_teams = await _resolve_teams_from_db(email, user_info)
+        db_teams = await _resolve_teams_from_db(identity, user_info)
 
     return _narrow_by_jwt_teams(payload, db_teams)
 
@@ -1095,6 +1116,7 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 email_verified_at=user.email_verified_at,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
+                password_changed_at=user.password_changed_at,
             )
         return None
 
@@ -1159,7 +1181,41 @@ def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Option
     )
 
 
-def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
+def session_predates_password_change(payload: Dict[str, Any], password_changed_at: Optional[datetime]) -> bool:
+    """Tell whether a session token was issued before the user's last password change.
+
+    ``iat`` has whole-second resolution, so the comparison uses whole seconds.
+    A token issued in the same second as the change stays valid.
+    Only ``token_use=session`` tokens are affected. API tokens use ``EmailApiToken`` revocation.
+
+    Args:
+        payload: Verified JWT payload.
+        password_changed_at: ``EmailUser.password_changed_at``. SQLite returns it naive.
+
+    Returns:
+        True when the token must be rejected.
+
+    Examples:
+        >>> changed = datetime(2026, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+        >>> before = int(changed.timestamp()) - 1
+        >>> session_predates_password_change({"token_use": "session", "iat": before}, changed)
+        True
+        >>> session_predates_password_change({"token_use": "session", "iat": before + 1}, changed)
+        False
+        >>> session_predates_password_change({"token_use": "api", "iat": before}, changed)
+        False
+        >>> session_predates_password_change({"token_use": "session", "iat": before}, None)
+        False
+    """
+    iat = payload.get("iat")
+    if not settings.password_reset_invalidate_sessions or password_changed_at is None or iat is None or payload.get("token_use") != "session":  # nosec B105 - JWT claim, not a password
+        return False
+    if password_changed_at.tzinfo is None:
+        password_changed_at = password_changed_at.replace(tzinfo=timezone.utc)
+    return iat < int(password_changed_at.timestamp())
+
+
+def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Batched auth context lookup in a single DB session.
 
     Combines what were 3 separate asyncio.to_thread calls into 1:
@@ -1173,6 +1229,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
     Args:
         email: User email address
         jti: JWT ID for revocation check (optional)
+        payload: Verified JWT payload. When given, a session token issued before the
+            user's last password change is reported as revoked (optional)
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
@@ -1202,6 +1260,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         if user:
             # Detach user data as dict (session will close)
             result["user"] = {
+                "user_id": user.email,  # canonical user_id, phase-1 value = e-mail
                 "email": user.email,
                 "password_hash": user.password_hash,
                 "full_name": user.full_name,
@@ -1214,6 +1273,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
+            if payload is not None and session_predates_password_change(payload, user.password_changed_at):
+                result["is_token_revoked"] = True
 
             # Query 2: Get personal team (only if user exists)
             team_result = db.execute(
@@ -1275,7 +1336,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         # Query 3: Check token revocation (if JTI provided)
         if jti:
             revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
-            result["is_token_revoked"] = revoke_result.scalar_one_or_none() is not None
+            result["is_token_revoked"] = result["is_token_revoked"] or revoke_result.scalar_one_or_none() is not None
 
         return result
 
@@ -1289,7 +1350,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
     Returns:
         EmailUser instance (detached from any session)
     """
-    return EmailUser(
+    user = EmailUser(
         email=user_dict["email"],
         password_hash=user_dict.get("password_hash", ""),
         full_name=user_dict.get("full_name"),
@@ -1302,6 +1363,9 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
         updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
     )
+    # Transient instance attribute (NOT a column): canonical user_id, phase-1 value = e-mail.
+    user.user_id = user_dict.get("user_id") or user_dict["email"]
+    return user
 
 
 class TokenValidationError(Exception):
@@ -1372,7 +1436,7 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
     address, since session tokens no longer embed the is_admin claim.
     """
 
-    return EmailUser(
+    user = EmailUser(
         email=email,
         password_hash="",  # nosec B106 - not used for JWT authentication
         full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
@@ -1385,6 +1449,10 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
+    # Transient instance attribute (NOT a column): canonical user_id, phase-1 value = e-mail.
+    # Not persisted and not surviving ORM serialization; the bootstrap user is synthetic and never cached.
+    user.user_id = email
+    return user
 
 
 async def get_current_user(
@@ -1689,6 +1757,7 @@ async def get_current_user(
 
     logger.debug("Attempting authentication with bearer credentials")
     email = None
+    payload: Dict[str, Any] = {}
 
     try:
         # Dispatch to the shared verifier, which tries a trusted external-IdP
@@ -1729,13 +1798,27 @@ async def get_current_user(
         # Extract JTI for revocation check
         jti = payload.get("jti")
 
+        # Canonical identity for auth cache keys (phase-1 value = e-mail).
+        # The JWT "user" metadata may carry no identity keys, and a UUID
+        # session subject is an opaque reference, not an identity: both
+        # cases fall back to the resolved e-mail so phase-1 keys keep
+        # today's value.
+        user_id = get_user_id(payload.get("user") or {"email": email})
+        try:
+            uuid.UUID(user_id)
+            user_id = "unknown"  # UUID subject — take the identity from the resolved e-mail
+        except ValueError:
+            pass  # Non-UUID identity
+        if user_id == "unknown":
+            user_id = email
+
         # === AUTH CACHING: Check cache before DB queries ===
         if settings.auth_cache_enabled:
             try:
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # pylint: disable=import-outside-toplevel
 
-                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                cached_ctx = await auth_cache.get_auth_context(user_id, jti)
                 if cached_ctx:
                     logger.debug(f"Auth cache hit for {email}")
 
@@ -1821,7 +1904,7 @@ async def get_current_user(
         # === BATCHED QUERIES: Single DB call for user + team + revocation ===
         if settings.auth_cache_batch_queries:
             try:
-                auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti, payload)
 
                 # Check revocation
                 if auth_ctx.get("is_token_revoked"):
@@ -1862,7 +1945,7 @@ async def get_current_user(
                         from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # noqa: F811 pylint: disable=import-outside-toplevel
 
                         await auth_cache.set_auth_context(
-                            email,
+                            user_id,
                             jti,
                             CachedAuthContext(
                                 user=auth_ctx.get("user"),
@@ -1876,7 +1959,7 @@ async def get_current_user(
                         # intersection (teams), so that other sessions for the same
                         # user see the full membership and can narrow independently.
                         if token_use == "session" and batch_teams is not None:  # nosec B105
-                            await auth_cache.set_user_teams(f"{email}:True", batch_teams)
+                            await auth_cache.set_user_teams(f"{user_id}:True", batch_teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 
@@ -2157,6 +2240,14 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Individual-query fallback: the batched path reports this as a revoked token.
+    if session_predates_password_change(payload, user.password_changed_at):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     _inject_userinfo_instate(request, user)
     _propagate_tenant_id(request)
 
@@ -2236,7 +2327,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         team_id = getattr(request.state, "team_id", None) if request and hasattr(request, "state") else None
 
         global_context.user_context = UserContext(
-            user_id=user.email,
+            user_id=get_user_id(user),
             email=user.email,
             full_name=user.full_name,
             is_admin=user.is_admin,

@@ -19,9 +19,17 @@ from sqlalchemy.exc import IntegrityError, StatementError
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayToolNameConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayToolNameConflictError
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
+
+
+_TE_MISSING_AUDIENCE = {"grant_type": "token-exchange", "client_id": "cf", "client_secret": "s", "token_url": "https://as.example.com/token"}  # pragma: allowlist secret
+
+
+def _reject_token_exchange_config(*_args, **_kwargs):
+    """Raise the real token-exchange validation error for a config without target_audience."""
+    GatewayService._validate_token_exchange_config(dict(_TE_MISSING_AUDIENCE))
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +189,16 @@ class TestGatewayCreateErrorHandlers:
             assert response.status_code == 400
             assert "Unable to process input" in response.json()["message"]
 
+    def test_register_gateway_public_validation_error(self, test_client, auth_headers):
+        """A PublicValidationError from register_gateway returns 400 with its specific message."""
+        with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
+            mock_register.side_effect = _reject_token_exchange_config
+
+            gateway_data = {"name": "te-gateway", "url": "http://localhost:9000", "auth_type": "oauth", "oauth_config": dict(_TE_MISSING_AUDIENCE)}
+            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == "target_audience is required for token-exchange grant type"
+
     def test_register_gateway_name_conflict_error(self, test_client, auth_headers):
         """Test GatewayNameConflictError handling in register_gateway."""
         with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
@@ -291,6 +309,16 @@ class TestGatewayUpdateErrorHandlers:
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 403
+
+    def test_update_gateway_public_validation_error(self, test_client, auth_headers):
+        """A PublicValidationError from update_gateway returns 400 with its specific message."""
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = _reject_token_exchange_config
+
+            gateway_data = {"auth_type": "oauth", "oauth_config": dict(_TE_MISSING_AUDIENCE)}
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == "target_audience is required for token-exchange grant type"
 
     def test_update_gateway_not_found_error(self, test_client, auth_headers):
         """Test GatewayNotFoundError handling in update_gateway."""
@@ -915,111 +943,3 @@ class TestAdminTemplateValidationErrorHandlers:
 # --------------------------------------------------------------------------- #
 # Internal MCP Plugin Exception Tests (Issue #4103)                           #
 # --------------------------------------------------------------------------- #
-
-
-class TestInternalMcpPluginExceptions:
-    """Test plugin exception handling in internal MCP endpoints.
-
-    These tests verify the fix for Issue #4103, ensuring that plugin exceptions
-    return proper JSON-RPC format instead of being re-raised, which caused the
-    Rust runtime to fall back to Python execution.
-    """
-
-    @pytest.fixture
-    def mock_internal_auth(self):
-        """Mock internal MCP authentication helpers."""
-        with (
-            patch("mcpgateway.main._build_internal_mcp_forwarded_user") as mock_user,
-            patch("mcpgateway.main.get_internal_mcp_auth_context") as mock_auth,
-            patch("mcpgateway.main.get_rpc_filter_context") as mock_filter,
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()) as mock_perm,
-            patch("mcpgateway.main._enforce_internal_mcp_server_scope") as mock_scope,
-        ):
-            mock_user.return_value = MagicMock(email="test@example.com")
-            mock_auth.return_value = {"is_authenticated": True}
-            mock_filter.return_value = ("test@example.com", [], False)
-            mock_scope.return_value = None
-            yield
-
-
-
-    def test_call_plugin_violation_returns_jsonrpc_format(self, test_client, mock_internal_auth):
-        """Tools/call endpoint returns proper JSON-RPC format for PluginViolationError."""
-        # First-Party
-        from cpex.framework.errors import PluginViolationError
-        from cpex.framework.models import PluginViolation
-
-        violation = PluginViolation(
-            reason="Rate limit exceeded",
-            description="Too many requests",
-            code="RATE_LIMIT",
-            mcp_error_code=-32000,
-        )
-
-        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
-            mock_invoke.side_effect = PluginViolationError("Rate limited", violation=violation)
-
-            response = test_client.post(
-                "/_internal/mcp/tools/call",
-                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 4},
-            )
-
-            content = response.json()
-
-            # Verify JSON-RPC format (returns dict, not ORJSONResponse)
-            assert content["jsonrpc"] == "2.0"
-            assert "error" in content
-            assert content["error"]["code"] == -32000
-            assert content["id"] == 4
-
-    def test_call_plugin_error_returns_jsonrpc_format(self, test_client, mock_internal_auth):
-        """Tools/call endpoint returns proper JSON-RPC format for PluginError."""
-        # First-Party
-        from cpex.framework.errors import PluginError
-        from cpex.framework.models import PluginErrorModel
-
-        error = PluginErrorModel(
-            message="Plugin crashed",
-            plugin_name="test_plugin",
-            code="CRASH",
-            mcp_error_code=-32603,
-        )
-
-        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
-            mock_invoke.side_effect = PluginError(error=error)
-
-            response = test_client.post(
-                "/_internal/mcp/tools/call",
-                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 5},
-            )
-
-            content = response.json()
-
-            # Verify JSON-RPC format (returns dict, not ORJSONResponse)
-            assert content["jsonrpc"] == "2.0"
-            assert "error" in content
-            assert content["error"]["code"] == -32603
-            assert content["id"] == 5
-
-
-
-
-    def test_call_defaults_when_plugin_error_has_no_code(self, test_client, mock_internal_auth):
-        """Tools/call endpoint uses default JSON-RPC code when PluginError lacks mcp_error_code."""
-        from cpex.framework.errors import PluginError
-        from cpex.framework.models import PluginErrorModel
-
-        error = PluginErrorModel(message="Generic failure", plugin_name="test_plugin")
-        error.mcp_error_code = None  # Force handler fallback branch
-
-        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
-            mock_invoke.side_effect = PluginError(error=error)
-
-            response = test_client.post(
-                "/_internal/mcp/tools/call",
-                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 12},
-            )
-
-            content = response.json()
-            assert content["error"]["code"] == -32603  # Default internal error
-            assert content["id"] == 12

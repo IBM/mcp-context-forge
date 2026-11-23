@@ -57,6 +57,23 @@ ContextForge will send multiple `resource` parameters in the OAuth request. Duri
 !!! note "Resource URIs containing commas"
     URI paths and query components can legitimately contain unescaped commas (RFC 3986 pchar). The parser splits on `[,\s]+` **only when every resulting piece parses as an absolute URI**; if any piece would fail that check (no scheme), the whole input is stored as a single-URI resource. In practice: a single resource URI with commas in its query string is preserved intact.
 
+## A2A Agents
+
+An A2A agent with `auth_type: oauth` uses one agent-level token from the `client_credentials` grant. The gateway does not store a token per user for A2A agents, so there is no learned audience. Other grant types fail at invocation with an error.
+
+On each token request the gateway sends the `resource` parameter. The value is `oauth_config.resource` if set, else the origin of the agent endpoint URL. The gateway caches the token per agent. It serves the cached token until `expires_in` minus a skew of up to 300 seconds, at most half the lifetime. A token without `expires_in` stays cached for 60 seconds. The gateway does not retry after a `401` from the agent, so a token revoked at the IdP stays in use until its cache entry ends. Change the agent's OAuth configuration, or disable the agent, to drop it at once. All callers of one agent share that token. The gateway removes the cached token when the agent is deleted, disabled, or enabled, and a change to `resource`, `audience`, or the client credentials selects a new cache entry. After a failed token request the gateway fails every call for that agent for 10 seconds without a new request.
+
+The agent create and update APIs accept only `grant_type: client_credentials` and check `token_url` against the outbound URL policy. They return `422` otherwise. An update that changes `token_url` and keeps the masked client secret returns `400`. Send the secret again with the new URL.
+
+Before the gateway forwards the token to the agent, it validates the token claims with the same rules as gateways:
+
+| Precedence | Source | Severity |
+|---|---|---|
+| 1 (highest) | `oauth_config.resource` — admin-configured | Authoritative (blocking on mismatch) |
+| 2 (fallback) | Agent endpoint origin — auto-derived | Advisory, unless `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true` |
+
+Scope and issuer mismatches are blocking. Set the **Resource** field on the A2A agent form, or `oauth_config.resource` through the API, to force an audience.
+
 ## Forcing a Re-learn
 
 Two scenarios, two workflows:

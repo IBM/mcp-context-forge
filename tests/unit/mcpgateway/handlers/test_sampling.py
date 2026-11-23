@@ -177,7 +177,7 @@ async def test_auth_all_ok(monkeypatch):
         assert token == "good-token"
         return {"ok": True}
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     messages = []
 
@@ -195,7 +195,7 @@ async def test_auth_all_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
-    """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
+    """When verify_credentials_cached raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
     # Third-Party
     from fastapi import HTTPException  # noqa: E402
@@ -203,7 +203,7 @@ async def test_auth_failure(monkeypatch):
     async def fake_verify(_):  # noqa: D401 - stub that always fails
         raise HTTPException(status_code=401, detail="bad token")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
@@ -227,12 +227,12 @@ async def test_auth_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_valid_token(monkeypatch):
-    # Simulate verify_credentials always succeeding
+    # Simulate verify_credentials_cached always succeeding
     async def fake_verify(token):
         assert token == "good-token"
         return {"ok": True}
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
 
     messages = []
 
@@ -246,14 +246,14 @@ async def test_auth_valid_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_invalid_token_raises(monkeypatch):
-    # Simulate verify_credentials raising (invalid token scenario)
+    # Simulate verify_credentials_cached raising (invalid token scenario)
     # Third-Party
     from fastapi import HTTPException  # noqa: E402
 
     async def fake_verify(token):
         raise HTTPException(status_code=401, detail="bad token")
 
-    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 

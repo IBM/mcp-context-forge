@@ -56,6 +56,10 @@ See the flow details and security model in the architecture docs.
 OAUTH_REQUEST_TIMEOUT=30      # Seconds
 OAUTH_MAX_RETRIES=3           # Retries for transient failures
 
+# Retrieval of the caller's stored access token
+OAUTH_TOKEN_RETRIEVAL_ENABLED=false
+OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS=600  # Seconds, range 0–3600
+
 # Secret encryption for stored OAuth client secrets (and tokens if enabled)
 AUTH_ENCRYPTION_SECRET=<strong-random-key>
 ```
@@ -64,6 +68,68 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
     Always run ContextForge over HTTPS when using OAuth. Never transmit client secrets or authorization codes over insecure channels.
 
 ---
+
+## Retrieve Your Stored Access Token
+
+Enable `OAUTH_TOKEN_RETRIEVAL_ENABLED=true` to expose `GET /oauth/token/{gateway_id}`.
+The endpoint supports gateways configured for the Authorization Code flow.
+Complete `/oauth/authorize/{gateway_id}` before requesting a stored token.
+
+The caller must authenticate, have visibility of the gateway, and hold `gateways.token_read`.
+An explicitly scoped API token must also grant `gateways.token_read` (directly or through a wildcard).
+`GET /oauth/status/{gateway_id}` and `GET /oauth/status` require `gateways.read` instead.
+Token retrieval requires the token permission because it discloses a live bearer token, rather than status metadata.
+The built-in `developer` and `team_admin` roles receive this permission.
+`platform_admin` retains access through its wildcard grant. Viewer roles do not receive this permission.
+The endpoint always resolves the authenticated caller's stored token.
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  "https://gateway.example.com/oauth/token/${GATEWAY_ID}"
+```
+
+The response contains `gateway_id`, `access_token`, `token_type`, `expires_at`, and `scopes`.
+`token_type` is the stored token type. The endpoint refuses a stored token that is not a Bearer token.
+`expires_at` and `scopes` can be `null` when unavailable. The response excludes `refresh_token`.
+The gateway marks the response non-cacheable with `Cache-Control: no-store, private`, `Pragma: no-cache`, and `Expires: 0`.
+Treat the returned access token as a secret. A leaked API token that holds `gateways.token_read` yields a provider token
+that works outside ContextForge governance, so grant that permission sparingly.
+
+Operators set `OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS` to a value from `0` through `3600` seconds.
+The default is `600` seconds. This is a server setting; there is no `threshold_seconds` query parameter.
+A threshold at or above the provider's token lifetime refreshes the token on every call.
+The endpoint refreshes a token within this expiry window when a refresh token exists.
+A transient refresh failure preserves a still-valid access token. An invalid refresh grant requires reauthorization.
+The endpoint never returns an expired token.
+
+!!! warning "A GET request can change stored tokens"
+    A retrieval inside the refresh window calls the provider and stores the new tokens.
+    When the provider answers `invalid_grant`, the database backend deletes the stored grant
+    and the Vault backend revokes it. The caller must then authorize again.
+
+The audit trail records every retrieval outcome after the feature check as `gateway.oauth_token_issuance`.
+A refused request carries a reason code in `error_message`. The audit entry and the logs never contain token values.
+
+`/oauth/*` is in the `HIGH` rate-limit tier of `RateLimitMiddleware`.
+The tier applies when `RATE_LIMITING_ENABLED=true`. Enable rate limiting before you enable token retrieval.
+
+Concurrent retrievals for the same gateway and user are serialized within one event loop.
+The database backend also locks the stored token row with `SELECT ... FOR UPDATE` on databases that support it,
+such as PostgreSQL. SQLite ignores the row lock.
+The Vault backend has no cross-process lock. Concurrent refreshes across workers or gateway instances can reuse a
+rotating refresh token. Some providers then revoke the grant and the user must authorize again.
+Other token refresh paths do not use this retrieval lock.
+
+| HTTP status | Meaning |
+|-------------|---------|
+| `400` | The gateway lacks Authorization Code OAuth configuration. |
+| `401` | The caller is unauthenticated or has no usable identity. |
+| `403` | The caller lacks gateway access or the required permission. |
+| `404` | Retrieval is disabled, or the gateway or the caller's stored OAuth token does not exist. |
+| `409` | OAuth reauthorization is required, or the stored token is not a Bearer token. |
+| `502` | The provider cannot refresh an expired access token. |
+| `503` | Token storage is unavailable or holds an unreadable token. |
 
 ## Configure a Gateway (Admin UI)
 
@@ -115,6 +181,49 @@ Example OAuth-enabled gateway record:
 ```
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
+
+---
+
+## Client Registration Methods
+
+When connecting to upstream authorization servers where you have not pre-registered a static Client ID and Client Secret, ContextForge supports zero-touch client registration. The registration strategy is set per gateway via `oauth_config.registration_method` (defaults to `auto`).
+
+### Supported Registration Methods
+
+1. **Client ID Metadata Documents (CIMD) (`cimd`)**:
+   - Instead of exchanging credentials statically, the gateway acts as a public client identified by the URL of a metadata document it publishes.
+   - When the authorization server metadata advertises `client_id_metadata_document_supported: true` (or when `registration_method` is explicitly set to `"cimd"`), the gateway uses its published document URL (`/oauth/client-metadata.json`) as the `client_id` directly, completely avoiding any registration API calls.
+   - **Important**: The published document URL **must be reachable** from the authorization server, as the server will fetch this URL dynamically to validate the gateway's client identity.
+
+2. **Dynamic Client Registration (DCR) (`dcr`)**:
+   - Deprecated path. Registers the gateway dynamically via the RFC 7591 `/register` API of the authorization server, yielding a generated `client_id` and `client_secret` saved in the database.
+   - Triggers a deprecation warning indicating that the upstream server does not support CIMD.
+
+3. **Automatic Selection (`auto`)**:
+   - The default mode. ContextForge queries the authorization server's `.well-known` configuration. If CIMD is supported, it uses CIMD. Otherwise, it falls back to Dynamic Client Registration (DCR).
+
+!!! warning "Upgrade behavior"
+    `CIMD_ENABLED` defaults to `true`. A gateway that has an issuer but no `client_id` and no stored registration switches from DCR to CIMD on upgrade when the authorization server advertises support. Set `CIMD_ENABLED=false`, or set `registration_method` to `dcr` on one gateway, to keep DCR. Gateways with configured credentials or a stored DCR registration are unchanged.
+
+The registration method is visible as `registration_method` in the gateway read API and on the gateway OAuth panel in the Admin UI.
+
+### CIMD Behind Reverse Proxies
+
+By default, ContextForge derives the metadata document URL dynamically. If your gateway runs behind a reverse proxy, load balancer, or Kubernetes ingress, the auto-derived URL might reflect internal hostnames.
+
+The gateway resolves the reverse-proxy root path from the request, so the redirect URI follows the public path. Configure `CIMD_CLIENT_METADATA_URL` to the exact public-facing URL where the document is served (e.g., `https://my-gateway.example.com/oauth/client-metadata.json`) to guarantee the authorization server can reach and validate the gateway. The value must end with `/oauth/client-metadata.json`, the only path the gateway serves; other paths are rejected at startup. The redirect URI and JWKS URL derive from the part before that path.
+
+### CIMD with Private-Key JWT (Confidential Client)
+
+To run as a confidential client using CIMD without any shared secrets:
+- Set `CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt`
+- Set `CIMD_PRIVATE_KEY_PATH` to a dedicated PEM private key. Startup fails without it. `JWT_ALGORITHM` (default `HS256`) is not used, so the default needs no change; the JWKS publishes only the CIMD key. It must not be the gateway JWT signing key (`JWT_PRIVATE_KEY_PATH`); the gateway never falls back to the JWT key and rejects an identical key.
+- The published document will automatically include a `jwks_uri` pointing to `/oauth/client-metadata/jwks.json`.
+- The gateway serves the public key derived from the CIMD key at `/oauth/client-metadata/jwks.json`, with `kid` `CIMD_KEY_ID` (default `cimd-1`).
+- To rotate the key, set `CIMD_KEY_ID` to a new value, point `CIMD_PRIVATE_KEY_PATH` at the new key, set `CIMD_PREVIOUS_PUBLIC_KEY_PATH` to the old public key, and set `CIMD_PREVIOUS_KEY_ID` to the old `CIMD_KEY_ID`. The JWKS then publishes both keys under their own `kid`, so authorization servers with a cached key set still verify old assertions. Reusing the same `CIMD_KEY_ID` for a new key can fail until the authorization server refreshes its cache.
+- All outbound token requests automatically sign and send a JWT bearer client assertion (using the document URL as both `iss` and `sub`).
+
+---
 
 ### Token Endpoint Authentication
 
@@ -263,6 +372,18 @@ OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
   blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
 
 ---
+
+## MCP 2026-07-28 Authorization Profile
+
+What the gateway does as an OAuth client toward upstream servers, per the `2026-07-28` authorization specification:
+
+- **Issuer validation (RFC 9207).** When the authorization server sends `iss` on the callback, it must equal the `issuer` of that server's validated metadata, compared as plain strings. A server that advertises `authorization_response_iss_parameter_supported` and then omits `iss` is refused. A mismatch is refused before the code is redeemed and before any provider error text is shown, and raises a security event. When metadata discovery fails, the configured issuer is compared instead, without its trailing slash, and a warning names the gateway. A metadata issuer that is a template, such as a multi-tenant placeholder, cannot be validated and is skipped with a warning. Gateways configured with only `authorization_url` and `token_url` have nothing to compare against.
+- **Dynamic Client Registration.** Requests carry `application_type`: `native` for a loopback redirect URI and `web` otherwise, or the value of `DCR_APPLICATION_TYPE`. The specification deprecates DCR in favour of Client ID Metadata Documents but keeps it for authorization servers without that support.
+- **Credentials bound to their issuer.** Dynamically registered clients are stored and looked up per gateway and issuer. A static `client_id` carried over an issuer change is flagged in the log and as a security event, because the new authorization server did not issue it.
+- **Client ID Metadata Documents.** Not implemented. The gateway registers dynamically or uses pre-registered credentials.
+- **Client tokens toward upstreams.** An upstream with its own credentials never receives the caller's token. An upstream registered with auth type `none` receives the caller's `Authorization` header, which deployments rely on when the upstream validates the same token as the gateway. `X-Upstream-Authorization` always carries a credential the caller chose for the upstream.
+
+Protected resource metadata (RFC 9728), the `resource` parameter (RFC 8707) and audience checks on inbound tokens were already in place; see the sections above and [OAuth Resource Configuration](oauth-resource-configuration.md).
 
 ## Redirect URI and Callback
 

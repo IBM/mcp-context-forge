@@ -52,6 +52,7 @@ _V1_TO_LEGACY_METHODS = {value: key for key, value in _LEGACY_TO_V1_METHODS.item
 _V1_TO_LEGACY_METHODS["GetExtendedAgentCard"] = "agent/getAuthenticatedExtendedCard"
 _LEGACY_ROLE_TO_V1 = {"user": "ROLE_USER", "agent": "ROLE_AGENT", "system": "ROLE_SYSTEM"}
 _V1_ROLE_TO_LEGACY = {value: key for key, value in _LEGACY_ROLE_TO_V1.items()}
+# v0.3 spells these states with hyphens; underscore forms are also accepted on input for peers that send them.
 _LEGACY_TASK_STATE_TO_V1 = {
     "submitted": "TASK_STATE_SUBMITTED",
     "working": "TASK_STATE_WORKING",
@@ -68,13 +69,21 @@ _LEGACY_TASK_STATE_TO_V1 = {
 _V1_TASK_STATE_TO_LEGACY = {
     "TASK_STATE_SUBMITTED": "submitted",
     "TASK_STATE_WORKING": "working",
-    "TASK_STATE_INPUT_REQUIRED": "input_required",
+    "TASK_STATE_INPUT_REQUIRED": "input-required",
     "TASK_STATE_COMPLETED": "completed",
     "TASK_STATE_CANCELED": "canceled",
     "TASK_STATE_FAILED": "failed",
-    "TASK_STATE_AUTH_REQUIRED": "auth_required",
+    "TASK_STATE_AUTH_REQUIRED": "auth-required",
     "TASK_STATE_REJECTED": "rejected",
 }
+
+_TERMINAL_TASK_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
+
+
+def is_terminal_task_state(state: Any) -> bool:
+    """Return True when ``state`` is a terminal A2A task state in the 0.3 or 1.0 spelling."""
+    normalized = str(state or "").strip().lower().removeprefix("task_state_").replace("-", "_")
+    return normalized.replace("cancelled", "canceled") in _TERMINAL_TASK_STATES
 
 
 @dataclass(frozen=True)
@@ -249,8 +258,21 @@ def normalize_a2a_version_header(protocol_version: Optional[str]) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str]) -> bool:
-    """Return whether the registered agent should be invoked as JSON-RPC A2A."""
+def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str], protocol_binding: Optional[str] = None) -> bool:
+    """Return whether the registered agent should be invoked as JSON-RPC A2A.
+
+    A stored ``protocol_binding`` decides. Agents without one fall back to the ``agent_type`` and trailing slash heuristic.
+
+    Args:
+        agent_type: Registered agent type.
+        endpoint_url: Registered endpoint URL.
+        protocol_binding: Stored binding, ``jsonrpc`` or ``http_json``, or ``None`` when not set.
+
+    Returns:
+        bool: True when the agent is invoked with a JSON-RPC body.
+    """
+    if protocol_binding in {"jsonrpc", "http_json"}:
+        return protocol_binding == "jsonrpc"
     return str(agent_type or "").lower() in {"generic", "jsonrpc"} or str(endpoint_url or "").endswith("/")
 
 
@@ -474,10 +496,12 @@ def prepare_a2a_invocation(
     auth_type: Optional[str] = None,
     auth_value: Any = None,
     auth_query_params: Optional[Dict[str, str]] = None,
+    oauth_headers: Optional[Mapping[str, str]] = None,
     base_headers: Optional[Mapping[str, str]] = None,
     plugin_input_headers: Optional[Mapping[str, str]] = None,
     plugin_output_headers: Optional[Mapping[str, str]] = None,
     correlation_id: Optional[str] = None,
+    protocol_binding: Optional[str] = None,
 ) -> PreparedA2AInvocation:
     """Prepare endpoint, headers, and request body for an outbound A2A invocation."""
     caller_headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
@@ -515,6 +539,9 @@ def prepare_a2a_invocation(
             else:
                 configured_headers.update({str(key): str(value) for key, value in auth_value.items()})
 
+    if oauth_headers:
+        configured_headers.update({str(key): str(value) for key, value in oauth_headers.items()})
+
     auth_query_params_decrypted: Dict[str, str] = {}
     target_endpoint_url = endpoint_url
     if auth_type == "query_param" and auth_query_params:
@@ -533,7 +560,7 @@ def prepare_a2a_invocation(
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)
 
-    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url)
+    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url, protocol_binding)
     protocol_version_header = normalize_a2a_version_header(protocol_version)
     headers = resolve_a2a_headers(
         caller_headers=caller_headers,
@@ -569,3 +596,56 @@ def prepare_a2a_invocation(
         configured_headers=configured_headers,
         correlation_id=correlation_id,
     )
+
+
+def dump_agent_skills(skills: Any) -> list[Dict[str, Any]]:
+    """Serialize validated skill models into the dicts stored on the agent row.
+
+    Args:
+        skills: Iterable of ``A2AAgentSkill`` models.
+
+    Returns:
+        list[Dict[str, Any]]: One dict per skill, including extra fields.
+
+    Examples:
+        >>> from mcpgateway.schemas import A2AAgentSkill
+        >>> dump_agent_skills([A2AAgentSkill(id="a", name="n", description="d", tags=[])])
+        [{'id': 'a', 'name': 'n', 'description': 'd', 'tags': []}]
+    """
+    return [skill.model_dump() for skill in skills]
+
+
+def get_agent_skills(agent: Any) -> list[Dict[str, Any]]:
+    """Return the skills an agent publishes.
+
+    Reads the ``skills`` column first. Agents created before the column existed
+    keep their skills in ``capabilities["skills"]``, which serves as the fallback.
+    An explicit empty ``skills`` list is authoritative: the agent publishes no
+    skills and the fallback does not apply. A non-list value logs a warning and
+    yields an empty list.
+
+    Args:
+        agent: Agent row with ``skills`` and ``capabilities`` attributes.
+
+    Returns:
+        list[Dict[str, Any]]: Skill entries in ``A2AAgentSkill`` shape, or an empty list when none are declared.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> get_agent_skills(SimpleNamespace(skills=[{"id": "a"}], capabilities={"skills": [{"id": "b"}]}))
+        [{'id': 'a'}]
+        >>> get_agent_skills(SimpleNamespace(skills=None, capabilities={"skills": [{"id": "b"}]}))
+        [{'id': 'b'}]
+        >>> get_agent_skills(SimpleNamespace(skills=None, capabilities=None))
+        []
+    """
+    skills = getattr(agent, "skills", None)
+    if isinstance(skills, list):
+        return skills
+    capabilities = getattr(agent, "capabilities", None)
+    legacy = capabilities.get("skills") if isinstance(capabilities, dict) else None
+    if isinstance(legacy, list):
+        return legacy
+    if skills is not None or legacy is not None:
+        logger.warning("Ignoring malformed skills value for A2A agent %s", getattr(agent, "id", None))
+    return []

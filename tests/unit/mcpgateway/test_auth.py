@@ -12,6 +12,7 @@ and error handling scenarios.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -163,6 +164,40 @@ class TestGetCurrentUser:
                         assert user.email == "external@example.com"
 
     @pytest.mark.asyncio
+    async def test_user_context_identity_uses_get_user_id(self, monkeypatch):
+        """UserContext identity comes from get_user_id(user): an explicit user_id wins over the e-mail (issue #5888)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": "e@x.test", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="e@x.test",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        mock_user.user_id = "u-1"  # diverges from the e-mail on purpose
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                    with patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None):
+                        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                            with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                                await get_current_user(credentials=credentials, request=request)
+
+        global_context = request.state.plugin_global_context
+        assert global_context.user_context.user_id == "u-1"
+        assert global_context.user_context.email == "e@x.test"
+
+    @pytest.mark.asyncio
     async def test_auth_method_set_on_cache_hit(self, monkeypatch):
         """Ensure auth_method is set when auth cache returns early."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
@@ -273,6 +308,47 @@ class TestGetCurrentUser:
                             user = await get_current_user(credentials=credentials)
 
         assert user.email == "resolved@example.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("iat_offset, rejected", [(-60, True), (60, False)])
+    async def test_session_token_issued_before_password_change_is_rejected_without_batch(self, monkeypatch, iat_offset, rejected):
+        """The individual-query path rejects a session token older than password_changed_at."""
+        changed_at = datetime.now(timezone.utc)
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="stale_session_token")  # pragma: allowlist secret
+        jwt_payload = {
+            "sub": "stale@example.com",
+            "token_use": "session",
+            "iat": int(changed_at.timestamp()) + iat_offset,
+            "exp": (changed_at + timedelta(hours=1)).timestamp(),
+        }
+        mock_user = EmailUser(
+            email="stale@example.com",
+            password_hash="hash",
+            full_name="Stale User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=changed_at,
+            created_at=changed_at,
+            updated_at=changed_at,
+            password_changed_at=changed_at,
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        monkeypatch.setattr(settings, "password_reset_invalidate_sessions", True)
+
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[])):
+                            if rejected:
+                                with pytest.raises(HTTPException) as exc_info:
+                                    await get_current_user(credentials=credentials)
+                                assert exc_info.value.status_code == 401
+                                assert exc_info.value.detail == "Token has been revoked"
+                            else:
+                                user = await get_current_user(credentials=credentials)
+                                assert user.email == "stale@example.com"
 
     @pytest.mark.asyncio
     async def test_jwt_uuid_sub_with_signed_email_uses_email_metadata(self, monkeypatch):
@@ -5455,7 +5531,7 @@ class TestVerifyOauthAccessToken:
         assert result is not None
         assert result["sub"] == "user@example.com"
         # The constructor was called exactly once with the discovered JWKS URI.
-        mock_ctor.assert_called_once_with(self.JWKS_URI)
+        mock_ctor.assert_called_once_with(self.JWKS_URI, ssl_context=None)
         assert self.JWKS_URI in vc._oauth_jwks_client_cache  # pylint: disable=protected-access
 
 
@@ -5545,6 +5621,9 @@ class TestTryOAuthAccessTokenDbErrors:
     def oauth_server_row(self):
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [self._OAUTH_TEST_ISSUER], "client_id": "test-client"}
         return server
 
@@ -5641,6 +5720,9 @@ class TestTryOAuthAccessTokenDbErrors:
         handler, _responses = handler_and_responses
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_server": "https://single.example/"}
         token = self._make_token("https://single.example/")
 
@@ -5732,6 +5814,17 @@ def _make_handler_unknown_host():
 def _patched_get_db(server_row):
     db_mock = MagicMock()
     db_mock.execute.return_value.scalar_one_or_none.return_value = server_row
+    result = db_mock.execute.return_value
+
+    def execute(statement):
+        """Apply persisted configuration values to the test row."""
+        if getattr(statement, "is_update", False):
+            values = statement.compile().params
+            if "oauth_config" in values:
+                server_row.oauth_config = values["oauth_config"]
+        return result
+
+    db_mock.execute.side_effect = execute
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=db_mock)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -5791,6 +5884,9 @@ class TestOAuthAudienceEnforcement:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
 
         captured: dict = {}
@@ -5814,6 +5910,9 @@ class TestOAuthAudienceEnforcement:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "client_id": "my-client-id"}
 
         captured: dict = {}
@@ -5838,6 +5937,9 @@ class TestOAuthAudienceEnforcement:
         handler, responses = _make_handler_unknown_host()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
 
         verify_mock = AsyncMock(return_value={"sub": "user", "aud": "anything"})
@@ -5866,6 +5968,9 @@ class TestOAuthAudienceEnforcement:
         handler, _responses = _make_handler_unknown_host()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "client_id": "my-client-id"}
 
         captured: dict = {}
@@ -5896,6 +6001,9 @@ class TestOAuthAudienceEnforcement:
         handler, responses = _make_handler_unknown_host()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "client_id": client_id_value}
 
         verify_mock = AsyncMock(return_value={"sub": "user", "aud": "anything"})
@@ -5917,6 +6025,9 @@ class TestOAuthAudienceEnforcement:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {
             "authorization_servers": [IDP_ISSUER],
             "resource": "https://api.example.com",
@@ -5942,6 +6053,9 @@ class TestOAuthAudienceEnforcement:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {
             "authorization_servers": [IDP_ISSUER],
             "resource": ["https://api-a.example.com", "https://api-b.example.com"],
@@ -5968,6 +6082,9 @@ class TestOAuthAudienceEnforcement:
         handler, responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "resource": "https://api.example.com"}
 
         captured: dict = {}
@@ -6025,6 +6142,9 @@ class TestOAuthAudienceEnforcement:
 
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "resource": "https://api.example.com"}
 
         captured: dict = {}
@@ -6085,6 +6205,9 @@ class TestOAuthAudienceEnforcement:
 
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "resource": "https://api.example.com"}
 
         captured: dict = {}
@@ -6116,6 +6239,9 @@ class TestPersistLearnedServerAudience:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
 
         verified_claims = {"sub": "user@example.com", "email": "user@example.com", "aud": "my-client-id"}
@@ -6150,6 +6276,9 @@ class TestPersistLearnedServerAudience:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER], "resource": "https://api.example.com"}
 
         verified_claims = {"sub": "user@example.com", "email": "user@example.com", "aud": "https://api.example.com"}
@@ -6181,6 +6310,9 @@ class TestPersistLearnedServerAudience:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
 
         verified_claims = {"sub": "user@example.com", "email": "user@example.com", "aud": "my-client-id"}
@@ -6213,6 +6345,9 @@ class TestPersistLearnedServerAudience:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": [IDP_ISSUER]})
 
         verified_claims = {"sub": "user@example.com", "email": "user@example.com", "aud": EXPECTED_RESOURCE_URL}
@@ -6250,6 +6385,9 @@ class TestPersistLearnedServerAudience:
         handler, _responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": [IDP_ISSUER]})
 
         async def fake_verify(token, authorization_servers, *, expected_audience=None):
@@ -6281,15 +6419,19 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"]})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
-        assert server.oauth_config["resource"] == "my-client-id"
-        db_mock.flush.assert_called_once()
+        assert db_mock.execute.call_args.args[0].compile().params["oauth_config"]["resource"] == "my-client-id"
+        db_mock.commit.assert_called_once()
 
     def test_persists_list_aud_single_element(self):
         """A single-element ``aud`` list is persisted as-is (not collapsed to scalar)."""
@@ -6297,14 +6439,18 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"]})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": ["my-client-id"], "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": ["my-client-id"], "sub": "user"}, db_mock, generation="approved-generation")
 
-        assert server.oauth_config["resource"] == ["my-client-id"]
+        assert db_mock.execute.call_args.args[0].compile().params["oauth_config"]["resource"] == ["my-client-id"]
 
     def test_persists_list_aud_multiple_elements(self):
         """A multi-element ``aud`` list is persisted as a list."""
@@ -6312,14 +6458,18 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"]})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": ["aud-a", "aud-b"], "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": ["aud-a", "aud-b"], "sub": "user"}, db_mock, generation="approved-generation")
 
-        assert server.oauth_config["resource"] == ["aud-a", "aud-b"]
+        assert db_mock.execute.call_args.args[0].compile().params["oauth_config"]["resource"] == ["aud-a", "aud-b"]
 
     def test_skips_when_aud_missing(self):
         """No ``aud`` claim → no-op, DB is not touched."""
@@ -6328,10 +6478,10 @@ class TestPersistLearnedServerAudienceUnit:
 
         db_mock = MagicMock()
 
-        _persist_learned_server_audience("srv-1", {"sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"sub": "user"}, db_mock, generation="approved-generation")
 
         db_mock.execute.assert_not_called()
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     def test_skips_when_aud_matches_existing_resource(self):
         """If ``resource`` already matches the token's ``aud``, skip (no-op)."""
@@ -6339,15 +6489,19 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"], "resource": "my-client-id"})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
         # Aud matches existing resource — flush should NOT be called.
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     def test_preserves_existing_resource_when_aud_differs(self):
         """If ``resource`` is already set, the helper preserves it (learn-once policy).
@@ -6360,15 +6514,19 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"], "resource": "old-client-id"})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "new-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "new-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
         assert server.oauth_config["resource"] == "old-client-id"
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     def test_preserves_existing_list_resource(self):
         """A list-valued ``resource`` is never collapsed to a scalar (B3)."""
@@ -6376,6 +6534,10 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict(
             {
                 "authorization_servers": ["https://idp.example.com"],
@@ -6386,10 +6548,10 @@ class TestPersistLearnedServerAudienceUnit:
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "aud-a", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "aud-a", "sub": "user"}, db_mock, generation="approved-generation")
 
         assert server.oauth_config["resource"] == ["aud-a", "aud-b"]
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     @pytest.mark.parametrize(
         "falsy_resource",
@@ -6402,6 +6564,10 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict(
             {
                 "authorization_servers": ["https://idp.example.com"],
@@ -6412,10 +6578,10 @@ class TestPersistLearnedServerAudienceUnit:
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "learned-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "learned-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
-        assert server.oauth_config["resource"] == "learned-client-id"
-        db_mock.flush.assert_called_once()
+        assert db_mock.execute.call_args.args[0].compile().params["oauth_config"]["resource"] == "learned-client-id"
+        db_mock.commit.assert_called_once()
 
     @pytest.mark.parametrize(
         "bad_aud",
@@ -6450,10 +6616,10 @@ class TestPersistLearnedServerAudienceUnit:
         db_mock = MagicMock()
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
-            _persist_learned_server_audience("srv-1", {"aud": bad_aud, "sub": "user"}, db_mock)
+            _persist_learned_server_audience("srv-1", {"aud": bad_aud, "sub": "user"}, db_mock, generation="approved-generation")
 
         db_mock.execute.assert_not_called()
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
         assert "Refusing to persist malformed aud claim" in caplog.text
         assert "srv-1" in caplog.text
 
@@ -6463,14 +6629,18 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = None
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     def test_skips_when_oauth_config_is_empty_dict(self):
         """``server.oauth_config`` being an empty dict is handled gracefully (B5)."""
@@ -6478,14 +6648,18 @@ class TestPersistLearnedServerAudienceUnit:
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {}
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
 
-        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
     def test_skips_when_server_row_is_none(self):
         """``db.execute(...).scalar_one_or_none()`` returning None is handled gracefully (B4)."""
@@ -6495,24 +6669,28 @@ class TestPersistLearnedServerAudienceUnit:
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = None
 
-        _persist_learned_server_audience("srv-missing", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        _persist_learned_server_audience("srv-missing", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
-        db_mock.flush.assert_not_called()
+        db_mock.commit.assert_not_called()
 
-    def test_flush_error_is_swallowed_and_logged(self, caplog):
-        """``db.flush()`` raising is caught by the outer except and logged (B12)."""
+    def test_commit_error_is_swallowed_and_logged(self, caplog):
+        """``db.commit()`` raising is caught by the outer except and logged (B12)."""
         # First-Party
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"]})
 
         db_mock = MagicMock()
         db_mock.execute.return_value.scalar_one_or_none.return_value = server
-        db_mock.flush.side_effect = RuntimeError("constraint violation")
+        db_mock.commit.side_effect = RuntimeError("constraint violation")
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
-            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
         assert "Failed to persist learned audience for server srv-1" in caplog.text
 
@@ -6525,7 +6703,7 @@ class TestPersistLearnedServerAudienceUnit:
         db_mock.execute.side_effect = RuntimeError("connection refused")
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
-            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock, generation="approved-generation")
 
         assert "Failed to persist learned audience for server srv-1" in caplog.text
 
@@ -6583,6 +6761,9 @@ class TestOAuthServerMisconfigurationRejected:
         handler, responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         # Truthy dict so we pass the `not server.oauth_config` guard, but the
         # allowlist is empty — the misconfiguration we want to reject.
         server.oauth_config = {"authorization_servers": []}
@@ -6612,6 +6793,9 @@ class TestLegacyJwtOnOauthEnabledServer:
     def _oauth_server(self):
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
         return server
 
@@ -6689,7 +6873,7 @@ class TestLegacyJwtOnOauthEnabledServer:
         with _patched_get_db(self._oauth_server()):
             result = await handler._route_idp_issued_token(token)
 
-        # ``None`` means "continue with internal verify_credentials" — the
+        # ``None`` means "continue with verify_credentials_cached" — the
         # caller will validate signature + claims against the internal
         # signing key, which is exactly the legacy path we must preserve.
         assert result is None
@@ -6704,9 +6888,10 @@ class TestRouteIdpIssuedToken:
     does not match, routing to the OAuth path must run regardless of the
     ``jwt_issuer_verification`` toggle — that toggle governs how
     ContextForge's *own* JWTs are checked, not whether externally-issued
-    tokens are eligible for OAuth validation. Legacy fall-through to
-    internal JWT verification is preserved only for non-OAuth servers when
-    issuer verification is disabled.
+    tokens are eligible for OAuth validation. When the OAuth path does not
+    apply, the router never sends a response: ``verify_credentials_cached()``
+    decides, so trusted external-IdP tokens are accepted and other foreign
+    issuers are rejected.
     """
 
     @pytest.mark.asyncio
@@ -6758,7 +6943,7 @@ class TestRouteIdpIssuedToken:
 
         assert result is None
         assert called is False
-        assert responses == []  # Downstream verify_credentials produces the 401.
+        assert responses == []  # Downstream verify_credentials_cached produces the 401.
 
     @pytest.mark.asyncio
     async def test_idp_token_routes_to_oauth_even_when_issuer_verification_disabled(self, monkeypatch):
@@ -6808,8 +6993,8 @@ class TestRouteIdpIssuedToken:
         assert responses == []  # No 401 sent yet.
 
     @pytest.mark.asyncio
-    async def test_non_oauth_server_rejects_when_issuer_verification_enabled(self, monkeypatch):
-        """When issuer verification is on, a mismatched ``iss`` on a non-OAuth server is a 401."""
+    async def test_non_oauth_server_falls_through_when_issuer_verification_enabled(self, monkeypatch):
+        """With issuer verification on, a non-OAuth server defers the decision to ``verify_credentials_cached``."""
         handler, responses = _make_handler()
         monkeypatch.setattr(settings, "jwt_issuer_verification", True)
         monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
@@ -6824,9 +7009,8 @@ class TestRouteIdpIssuedToken:
         ):
             result = await handler._route_idp_issued_token(token)
 
-        assert result is False
-        start = next(m for m in responses if m["type"] == "http.response.start")
-        assert start["status"] == 401
+        assert result is None
+        assert responses == []
 
     @pytest.mark.asyncio
     async def test_idp_token_failed_returns_false_and_does_not_double_send(self, monkeypatch):
@@ -6933,6 +7117,9 @@ class TestRouteIdpIssuedToken:
         handler, responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
 
         for bad_iss in (123, ["https://idp.example.com/"], {"nested": "dict"}, None):
@@ -6957,6 +7144,9 @@ class TestTryOauthAccessTokenErrorBranches:
     def oauth_server_row(self):
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
         return server
 
@@ -7024,6 +7214,9 @@ class TestTryOauthAccessTokenErrorBranches:
         handler, responses = _make_handler()
         server = MagicMock()
         server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
         server.oauth_config = {}
 
         with _patched_get_db(server):
@@ -7172,7 +7365,7 @@ class TestBuildServerResourceUrlAppDomainError:
 
 
 class TestAuthJwtRoutingReturn:
-    """``_auth_jwt`` returns the outcome of ``_route_idp_issued_token`` without reaching verify_credentials."""
+    """``_auth_jwt`` returns the outcome of ``_route_idp_issued_token`` without reaching verify_credentials_cached."""
 
     @pytest.mark.asyncio
     async def test_auth_jwt_returns_true_when_route_succeeds(self, monkeypatch):
@@ -7183,8 +7376,8 @@ class TestAuthJwtRoutingReturn:
 
         monkeypatch.setattr(_StreamableHttpAuthHandler, "_route_idp_issued_token", fake_route)
 
-        # verify_credentials should never be called on this path.
-        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", side_effect=AssertionError("must not be called")):
+        # verify_credentials_cached should never be called on this path.
+        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", side_effect=AssertionError("must not be called")):
             result = await handler._auth_jwt(token="unused")
 
         assert result is True
@@ -7198,10 +7391,139 @@ class TestAuthJwtRoutingReturn:
 
         monkeypatch.setattr(_StreamableHttpAuthHandler, "_route_idp_issued_token", fake_route)
 
-        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", side_effect=AssertionError("must not be called")):
+        with patch("mcpgateway.transports.streamablehttp_transport.verify_credentials_cached", side_effect=AssertionError("must not be called")):
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestAuthJwtExternalIdp:
+    """``_auth_jwt`` accepts trusted external-IdP tokens on ``/mcp`` exactly as ``/rpc`` does."""
+
+    SERVICE_EMAIL = "svc-svc-client@keycloak.service.local"
+
+    @staticmethod
+    def _setup(monkeypatch, *, sso_enabled=True, stub_oauth=True):
+        """Configure settings and, unless ``stub_oauth`` is false, the OAuth router stub for a foreign-issuer token."""
+        monkeypatch.setattr(settings, "jwt_issuer", INTERNAL_JWT_ISSUER)
+        monkeypatch.setattr(settings, "jwt_issuer_verification", True)
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", sso_enabled)
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
+
+        if not stub_oauth:
+            return
+
+        async def fake_try_oauth(self, tok, unverified=None):  # pylint: disable=unused-argument
+            return OAuthAuthResult.NOT_APPLICABLE
+
+        monkeypatch.setattr(_StreamableHttpAuthHandler, "_try_oauth_access_token", fake_try_oauth)
+
+    @pytest.mark.asyncio
+    async def test_trusted_external_token_accepted_on_mcp(self, monkeypatch):
+        """A trusted Keycloak service-account token passes ``/mcp`` auth and populates the user context."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import user_context_var  # pylint: disable=import-outside-toplevel
+
+        self._setup(monkeypatch)
+        handler, responses = _make_handler()
+        tok = _make_idp_token()
+        claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
+        identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
+        verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        resolve_teams = AsyncMock(return_value=[])
+
+        with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.utils.verify_credentials.build_external_identity", AsyncMock(return_value=identity)),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+            patch("mcpgateway.auth.resolve_session_teams", resolve_teams),
+        ):
+            result = await handler._auth_jwt(token=tok)
+
+        assert result is True
+        verify_external.assert_awaited_once()
+        resolve_teams.assert_awaited_once()
+        assert self.SERVICE_EMAIL in resolve_teams.await_args.args
+        assert user_context_var.get()["email"] == self.SERVICE_EMAIL
+        assert not any(m["type"] == "http.response.start" for m in responses)
+
+    @pytest.mark.asyncio
+    async def test_oauth_server_out_of_allowlist_trusted_issuer_accepted(self, monkeypatch):
+        """On an ``oauth_enabled`` server whose allowlist excludes the issuer, a trusted-provider token is accepted."""
+        self._setup(monkeypatch, stub_oauth=False)
+        handler, responses = _make_handler()
+        tok = _make_idp_token()
+        claims = {"iss": IDP_ISSUER, "azp": "svc-client", "client_id": "svc-client", "preferred_username": "service-account-svc-client"}
+        identity = {"sub": self.SERVICE_EMAIL, "email": self.SERVICE_EMAIL, "token_use": "session", "is_admin": False, "token": tok}
+        verify_external = AsyncMock(return_value=(claims, MagicMock()))
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config_approved = True
+        server.oauth_config_generation = "approved-generation"
+        server.version = 1
+        server.oauth_config = {"authorization_servers": ["https://other-idp.example.com"]}
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server
+        db_cm = MagicMock()
+        db_cm.__aenter__ = AsyncMock(return_value=db_mock)
+        db_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=db_cm),
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_put", AsyncMock()),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.utils.verify_credentials.build_external_identity", AsyncMock(return_value=identity)),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+            patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[])),
+        ):
+            result = await handler._auth_jwt(token=tok)
+
+        assert result is True
+        verify_external.assert_awaited_once()
+        assert not any(m["type"] == "http.response.start" for m in responses)
+
+    @pytest.mark.asyncio
+    async def test_untrusted_issuer_real_dispatch_rejected(self, monkeypatch):
+        """A foreign issuer that no trusted provider verifies yields a canonical 401 through the real dispatch."""
+        self._setup(monkeypatch)
+        handler, responses = _make_handler()
+        verify_external = AsyncMock(return_value=(None, None))
+
+        with (
+            patch("mcpgateway.utils.verify_credentials._has_trusted_providers", return_value=True),
+            patch("mcpgateway.utils.verify_credentials._external_identity_cache_get", AsyncMock(return_value=None)),
+            patch("mcpgateway.utils.verify_credentials.verify_external_idp_token", verify_external),
+            patch("mcpgateway.db.SessionLocal", MagicMock()),
+        ):
+            result = await handler._auth_jwt(token=_make_idp_token())
+
+        assert result is False
+        verify_external.assert_awaited_once()
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+        assert (b"www-authenticate", b"Bearer") in start["headers"]
+        assert json.loads(_response_body(responses)) == {"detail": "Invalid authentication credentials"}
+
+    @pytest.mark.asyncio
+    async def test_external_dispatch_disabled_rejects_foreign_token(self, monkeypatch):
+        """With ``SSO_API_TOKEN_AUTH_ENABLED`` off, a foreign-issuer token is rejected on ``/mcp``."""
+        self._setup(monkeypatch, sso_enabled=False)
+        handler, responses = _make_handler()
+
+        result = await handler._auth_jwt(token=_make_idp_token())
+
+        assert result is False
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
 
 
 class TestUserFromCachedDictFullShape:
@@ -7259,3 +7581,81 @@ class TestUserFromCachedDictFullShape:
         # contract that writers must not rely on these defaults for existing fields.
         assert user.auth_provider == "local", "default masks real provider"
         assert user.password_change_required is False, "default skips forced change"
+
+
+class TestPrincipalCarriesUserId:
+    """Contract: every principal construction site emits user_id equal to the e-mail (issue #5887)."""
+
+    def test_bootstrap_platform_admin_user_carries_user_id(self):
+        """The synthesized platform-admin principal carries user_id equal to its e-mail."""
+        # First-Party
+        from mcpgateway.auth import _bootstrap_platform_admin_user  # pylint: disable=import-outside-toplevel
+
+        user = _bootstrap_platform_admin_user("admin@x.test")
+
+        assert user.email == "admin@x.test"
+        assert getattr(user, "user_id", None) == "admin@x.test"
+
+    def test_user_from_cached_dict_carries_user_id(self):
+        """The cache-rebuilt principal carries user_id, with e-mail fallback."""
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        user = _user_from_cached_dict({"email": "a@x.test", "user_id": "a@x.test", "is_admin": False, "is_active": True})
+        assert user.user_id == "a@x.test"
+
+        fallback_user = _user_from_cached_dict({"email": "a@x.test", "is_admin": False, "is_active": True})
+        assert fallback_user.user_id == "a@x.test"
+
+    def test_batched_auth_context_user_dict_carries_user_id(self, monkeypatch):
+        """The batched auth-context user dict carries user_id equal to its e-mail."""
+        # Standard
+        from contextlib import contextmanager
+
+        results = [
+            SimpleNamespace(  # user
+                email="user@example.com",
+                password_hash="h",
+                password_hash_type="argon2id",
+                full_name="U",
+                is_admin=False,
+                is_active=True,
+                auth_provider="local",
+                password_change_required=False,
+                email_verified_at=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            ),
+            None,  # no personal team
+            [],  # no team memberships (query 4: team_ids)
+        ]
+
+        class DummyResult:
+            def __init__(self, val):
+                self._val = val
+
+            def scalar_one_or_none(self):
+                return self._val
+
+            def all(self):
+                return self._val if isinstance(self._val, list) else []
+
+        class DummySession:
+            def __init__(self):
+                self._idx = 0
+
+            def execute(self, _q):
+                val = results[self._idx] if self._idx < len(results) else None
+                self._idx += 1
+                return DummyResult(val)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
+        from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+        result = _get_auth_context_batched_sync("user@example.com")
+        assert result["user"]["user_id"] == result["user"]["email"]

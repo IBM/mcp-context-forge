@@ -82,7 +82,7 @@ class TestGatewayServiceExtended:
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -122,7 +122,7 @@ class TestGatewayServiceExtended:
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -741,7 +741,7 @@ class TestGatewayServiceExtended:
         mock_tool.headers = {"Content-Type": "application/json"}
         mock_tool.input_schema = {"type": "object"}
         mock_tool.annotations = {"updated": True}
-        mock_tool.jsonpath_filter = "$.result"
+        mock_tool.jsonpath_filter = "response.result"
         mock_tool.visibility = None  # no override; pre-propagation handles inherited changes
 
         tools = [mock_tool]
@@ -759,7 +759,7 @@ class TestGatewayServiceExtended:
         assert existing_tool.request_type == "POST"
         assert existing_tool.headers == {"Content-Type": "application/json"}
         assert existing_tool.input_schema == {"type": "object"}
-        assert existing_tool.jsonpath_filter == "$.result"
+        assert existing_tool.jsonpath_filter == "response.result"
         assert existing_tool.url == "http://new-url.com"
         assert existing_tool.auth_type == "bearer"
         assert existing_tool.auth_value == "new-token"
@@ -1827,7 +1827,7 @@ class TestGatewayServiceExtended:
                 patch.object(
                     service,
                     "_connect_to_sse_server_without_validation",
-                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [])),
+                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [], None)),
                 ),
                 patch.object(service, "_update_or_create_tools", return_value=[]),
                 patch.object(service, "_update_or_create_resources", return_value=[]),

@@ -14,44 +14,51 @@ It also publishes event notifications for server changes.
 import asyncio
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
+from uuid import uuid4
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, union, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 
 # First-Party
+from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Base
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import ServerMetric, ServerMetricsHourly
+from mcpgateway.db import server_a2a_association, server_prompt_association, server_resource_association, server_tool_association
+from mcpgateway.db import ServerInterface as DbServerInterface
+from mcpgateway.db import ServerMetric, ServerMetricsHourly, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
+from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_oauth import resolve_server_oauth_issuers, server_oauth_is_approved
 from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # ---------------------------------------------------------------------------
 # Server-associable entity registry
@@ -267,6 +274,34 @@ def _associate_server_entities(db: Session, db_server: DbServer, server_in: Serv
                 logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
 
 
+def _apply_server_interfaces(server: DbServer, interfaces: Optional[List[ServerInterfaceInput]]) -> None:
+    """Replace the interfaces published by a server.
+
+    A ``None`` value leaves the stored interfaces untouched. Entries that match an
+    existing protocol and binding pair update that row in place so its ``id`` and
+    ``config`` survive. Existing rows missing from the input are deleted.
+
+    Args:
+        server: Server ORM instance to modify.
+        interfaces: Interfaces declared by the caller, or None to keep the current ones.
+    """
+    if interfaces is None:
+        return
+    existing = {interface_identity(i.protocol, i.binding): i for i in server.interfaces}
+    kept: List[DbServerInterface] = []
+    for item in interfaces:
+        row = existing.get(interface_identity(item.protocol, item.binding))
+        if row is None:
+            row = DbServerInterface(protocol=item.protocol, binding=item.binding)
+        row.protocol = item.protocol
+        row.binding = item.binding
+        row.version = item.version
+        row.tenant = item.tenant
+        row.enabled = item.enabled
+        kept.append(row)
+    server.interfaces = kept
+
+
 def _update_server_associations(db: Session, server: DbServer, server_update: ServerUpdate) -> None:
     """Replace tool/resource/prompt/a2a_agent associations during server update.
 
@@ -464,6 +499,8 @@ class ServerService(BaseService):
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            "oauth_config_approved": getattr(server, "oauth_config_approved", False) is True,
+            "instructions": getattr(server, "instructions", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -489,6 +526,7 @@ class ServerService(BaseService):
         server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        server_dict["interfaces"] = list(getattr(server, "interfaces", None) or [])
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -557,6 +595,8 @@ class ServerService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        *,
+        oauth_authorized: bool = False,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -582,6 +622,7 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            oauth_authorized: Whether the route authorizes explicit OAuth configuration.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -630,6 +671,9 @@ class ServerService(BaseService):
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
+                oauth_config_approved=bool(oauth_authorized and server_in.oauth_enabled and oauth_config and resolve_server_oauth_issuers(oauth_config)),
+                oauth_config_generation=uuid4().hex,
+                instructions=getattr(server_in, "instructions", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -662,10 +706,16 @@ class ServerService(BaseService):
             db.add(db_server)
 
             _associate_server_entities(db, db_server, server_in)
+            _apply_server_interfaces(db_server, getattr(server_in, "interfaces", None))
 
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
+            notify_dataplane()
+
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
@@ -692,14 +742,18 @@ class ServerService(BaseService):
                 action="create_server",
                 resource_type="server",
                 resource_id=db_server.id,
+                team_id=db_server.team_id,
                 details={
                     "server_name": db_server.name,
                     "visibility": visibility,
-                    "team_id": team_id,
+                    "team_id": db_server.team_id,
                     "associated_tools_count": len(db_server.tools),
                     "associated_resources_count": len(db_server.resources),
                     "associated_prompts_count": len(db_server.prompts),
                     "associated_a2a_agents_count": len(db_server.a2a_agents),
+                    "oauth_enabled": db_server.oauth_enabled,
+                    "oauth_config_approved": db_server.oauth_config_approved,
+                    "oauth_config_generation": db_server.oauth_config_generation,
                 },
                 metadata={
                     "created_from_ip": created_from_ip,
@@ -852,6 +906,7 @@ class ServerService(BaseService):
                 with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
                 with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+                selectinload(DbServer.interfaces),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -968,6 +1023,7 @@ class ServerService(BaseService):
             with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
             with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+            selectinload(DbServer.interfaces),
             joinedload(DbServer.email_team),
         )
 
@@ -1190,6 +1246,7 @@ class ServerService(BaseService):
                 with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
                 with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+                selectinload(DbServer.interfaces),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)
@@ -1269,6 +1326,8 @@ class ServerService(BaseService):
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        *,
+        oauth_authorized: bool = False,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1281,6 +1340,7 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            oauth_authorized: Whether the route authorizes explicit OAuth configuration.
 
         Returns:
             The updated ServerRead object.
@@ -1332,6 +1392,7 @@ class ServerService(BaseService):
                 server_id,
                 options=[
                     *SERVER_ASSOCIATION_SELECTINLOADS,
+                    selectinload(DbServer.interfaces),
                     selectinload(DbServer.email_team),
                 ],
             )
@@ -1404,10 +1465,14 @@ class ServerService(BaseService):
                 server.team_id = server_update.team_id
 
             _update_server_associations(db, server, server_update)
+            _apply_server_interfaces(server, server_update.interfaces)
 
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            previous_oauth_enabled = server.oauth_enabled
+            previous_oauth_config = server.oauth_config
 
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment
@@ -1427,6 +1492,19 @@ class ServerService(BaseService):
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
+            oauth_changed = previous_oauth_enabled != server.oauth_enabled or (
+                previous_oauth_config != server.oauth_config and await decrypt_oauth_config_for_runtime(previous_oauth_config) != await decrypt_oauth_config_for_runtime(server.oauth_config)
+            )
+            if oauth_changed:
+                server.oauth_config_generation = uuid4().hex
+                server.oauth_config_approved = bool(oauth_authorized and server.oauth_enabled and server.oauth_config and resolve_server_oauth_issuers(server.oauth_config))
+            else:
+                server.oauth_config = previous_oauth_config
+
+            # NULL means "not set" and "" means "send no instructions", so only a supplied field changes the value
+            if "instructions" in getattr(server_update, "model_fields_set", ()):
+                server.instructions = server_update.instructions
+
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
             if modified_by:
@@ -1444,6 +1522,7 @@ class ServerService(BaseService):
 
             db.commit()
             db.refresh(server)
+            notify_dataplane()
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
@@ -1472,15 +1551,22 @@ class ServerService(BaseService):
                 changes.append(f"visibility: {server_update.visibility}")
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
+            if server_update.interfaces is not None:
+                changes.append(f"interfaces: {len(server_update.interfaces)}")
 
             self._audit_trail.log_action(
                 user_id=user_email or "system",
                 action="update_server",
                 resource_type="server",
                 resource_id=server.id,
+                team_id=server.team_id,
                 details={
                     "server_name": server.name,
                     "changes": ", ".join(changes) if changes else "metadata only",
+                    "oauth_changed": oauth_changed,
+                    "oauth_enabled": server.oauth_enabled,
+                    "oauth_config_approved": server.oauth_config_approved,
+                    "oauth_config_generation": server.oauth_config_generation,
                     "version": server.version,
                 },
                 metadata={
@@ -1568,6 +1654,52 @@ class ServerService(BaseService):
             )
             raise ServerError(f"Failed to update server: {unexpected_error_detail(e)}")
 
+    async def approve_oauth_config(self, db: Session, server_id: str, expected_version: int, *, user_id: str) -> dict[str, Any]:
+        """Approve the OAuth configuration reviewed by an authorized route.
+
+        Args:
+            db: Active database session.
+            server_id: Reviewed virtual-server identifier.
+            expected_version: Server version displayed during administrator review.
+            user_id: Authenticated approver identity.
+
+        Returns:
+            Read-only approval status and the new server version.
+
+        Raises:
+            ServerNotFoundError: If the server does not exist.
+            ServerLockConflictError: If the reviewed version is stale.
+            ServerError: If OAuth lacks usable issuer configuration.
+        """
+        server = get_for_update(db, DbServer, server_id)
+        if server is None:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        if server.version != expected_version:
+            raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
+        if not server.oauth_enabled or not server.oauth_config or not resolve_server_oauth_issuers(server.oauth_config):
+            raise ServerError("Enabled OAuth with a valid authorization server is required for approval")
+        generation = uuid4().hex
+        team_id = server.team_id
+        result = db.execute(
+            update(DbServer).where(DbServer.id == server_id, DbServer.version == expected_version).values(oauth_config_approved=True, oauth_config_generation=generation, version=expected_version + 1)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise ServerLockConflictError("Server changed. Review its OAuth configuration again.")
+        db.commit()
+        self._audit_trail.log_action(
+            user_id=user_id,
+            action="approve_server_oauth",
+            resource_type="server",
+            resource_id=server_id,
+            team_id=team_id,
+            details={"oauth_config_generation": generation, "reviewed_version": expected_version, "version": expected_version + 1},
+        )
+        notify_dataplane()
+        await _get_registry_cache().invalidate_servers()
+        await _get_tool_lookup_cache().invalidate_server(server_id)
+        return {"oauth_config_approved": True, "version": expected_version + 1}
+
     async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Set the activation status of a server.
 
@@ -1639,6 +1771,7 @@ class ServerService(BaseService):
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
+                notify_dataplane()
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -1657,6 +1790,7 @@ class ServerService(BaseService):
                     action="activate_server" if activate else "deactivate_server",
                     resource_type="server",
                     resource_id=server.id,
+                    team_id=server.team_id,
                     details={
                         "server_name": server.name,
                         "new_status": "active" if activate else "inactive",
@@ -1754,12 +1888,14 @@ class ServerService(BaseService):
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
+            server_team_id = server.team_id
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
                     delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
                     delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
             db.delete(server)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
@@ -1785,6 +1921,7 @@ class ServerService(BaseService):
                 action="delete_server",
                 resource_type="server",
                 resource_id=server_info["id"],
+                team_id=server_team_id,
                 details={
                     "server_name": server_info["name"],
                 },
@@ -2040,6 +2177,132 @@ class ServerService(BaseService):
         metrics_cache.invalidate("servers")
         metrics_cache.invalidate_prefix("top_servers:")
 
+    @staticmethod
+    def _instructions_visible(db: Session, visibility: str, team_id: Optional[str], owner_email: Optional[str], user_email: Optional[str], token_teams: Optional[Sequence[str]]) -> bool:
+        """Apply the Layer-1 visibility rule of ``_check_server_access`` to a server or gateway row.
+
+        Admin bypass comes from ``is_admin_bypass_granted()``. A caller with
+        ``token_teams=None`` who is not an admin gets no team access, because the
+        resolver does not look up team membership.
+
+        Args:
+            db: Database session, used to resolve admin status.
+            visibility: Row visibility (``public``, ``team`` or ``private``).
+            team_id: Team that owns the row.
+            owner_email: Owner of the row.
+            user_email: Authenticated caller, or None.
+            token_teams: ``None`` is admin bypass, ``[]`` is public-only, a list is team-scoped.
+
+        Returns:
+            bool: True when the caller can see the row.
+        """
+        if visibility == "public":
+            return True
+        if is_admin_bypass_granted(db, user_email, list(token_teams) if token_teams is not None else None):
+            if visibility == "private":
+                return bool(user_email) and owner_email == user_email
+            return True
+        if not user_email or not token_teams:
+            return False
+        if visibility == "private":
+            return owner_email == user_email
+        return bool(team_id) and team_id in token_teams
+
+    @staticmethod
+    def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
+        """Choose the ``instructions`` text for a virtual server (blocking database read).
+
+        An operator override wins when it is not NULL. An empty override sends nothing.
+        Without an override, a virtual server is single-upstream when every tool,
+        resource and prompt has the same non-null ``gateway_id`` and the server has
+        no A2A agent. Such a server sends the text of that upstream server, or the
+        default text when the upstream has no text. Every other server sends the
+        default text.
+
+        A server that the caller cannot see returns the default text instead of
+        leaking operator or upstream text (CWE-639 / CWE-200). The upstream text
+        needs the same check on the upstream gateway, as ``tools/list`` does for
+        tools. The visibility rule matches ``_check_server_access``. Admin bypass
+        sees public rows, team rows and the caller's own private rows, never
+        another user's private row. ``token_teams=[]`` sees public rows only.
+        A caller that passes no scope gets the public-only rule.
+
+        Args:
+            server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass.
+
+        Returns:
+            Optional[str]: The text to send, or None when the server sends no ``instructions``.
+        """
+        db: Session = SessionLocal()
+        try:
+            row = db.execute(select(DbServer.visibility, DbServer.team_id, DbServer.owner_email).where(DbServer.id == server_id)).one_or_none()
+            if row is None or not ServerService._instructions_visible(db, row.visibility, row.team_id, row.owner_email, user_email, token_teams):
+                logger.debug("Server %s not visible to caller; sending default instructions", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+
+            override = db.execute(select(DbServer.instructions).where(DbServer.id == server_id)).scalar_one_or_none()
+            if override is not None:
+                # Empty string override: suppress instructions entirely.
+                winning_rule = "override"
+                result = override or None
+                logger.debug("Instructions for server %s: rule=%s", server_id, winning_rule)
+                return result
+            gateway_ids = (
+                db.execute(
+                    union(
+                        select(DbTool.gateway_id).join(server_tool_association, server_tool_association.c.tool_id == DbTool.id).where(server_tool_association.c.server_id == server_id),
+                        select(DbResource.gateway_id)
+                        .join(server_resource_association, server_resource_association.c.resource_id == DbResource.id)
+                        .where(server_resource_association.c.server_id == server_id),
+                        select(DbPrompt.gateway_id).join(server_prompt_association, server_prompt_association.c.prompt_id == DbPrompt.id).where(server_prompt_association.c.server_id == server_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(gateway_ids) != 1 or gateway_ids[0] is None:
+                logger.debug("Instructions for server %s: rule=default (multi-upstream or no items)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            has_a2a_agent = db.execute(select(server_a2a_association.c.a2a_agent_id).where(server_a2a_association.c.server_id == server_id).limit(1)).first() is not None
+            if has_a2a_agent:
+                logger.debug("Instructions for server %s: rule=default (a2a agent present)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            gateway_row = db.execute(select(DbGateway.visibility, DbGateway.team_id, DbGateway.owner_email, DbGateway.upstream_instructions).where(DbGateway.id == gateway_ids[0])).one_or_none()
+            if gateway_row is not None and not ServerService._instructions_visible(db, gateway_row.visibility, gateway_row.team_id, gateway_row.owner_email, user_email, token_teams):
+                logger.debug("Instructions for server %s: rule=default (upstream gateway not visible to caller)", server_id)
+                return DEFAULT_SERVER_INSTRUCTIONS
+            upstream_instructions = gateway_row.upstream_instructions if gateway_row is not None else None
+            if upstream_instructions:
+                logger.debug("Instructions for server %s: rule=upstream", server_id)
+                return upstream_instructions
+            # Single upstream with no text: return the default so clients keep the hint.
+            logger.debug("Instructions for server %s: rule=default (upstream has no text)", server_id)
+            return DEFAULT_SERVER_INSTRUCTIONS
+        finally:
+            db.close()
+
+    async def resolve_instructions(self, server_id: str, user_email: Optional[str] = None, token_teams: Optional[Sequence[str]] = ()) -> Optional[str]:
+        """Choose the ``instructions`` text for a virtual server.
+
+        Call this only after the request passed server authorization.
+
+        Args:
+            server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller.
+            token_teams: Team IDs from the caller's token. ``None`` is admin bypass; the default is public-only.
+
+        Returns:
+            Optional[str]: The text to send, or None when the server sends no ``instructions``.
+            A lookup failure returns the default text.
+        """
+        try:
+            return await asyncio.to_thread(self._resolve_instructions_sync, server_id, user_email, token_teams)
+        except Exception:  # noqa: BLE001 — instructions are advisory; never fail a handshake over them
+            logger.warning("Could not resolve instructions for server %s; sending the default text", server_id, exc_info=True)
+            return DEFAULT_SERVER_INSTRUCTIONS
+
     def get_oauth_protected_resource_metadata(self, db: Session, server_id: str, resource_base_url: str) -> Dict[str, Any]:
         """
         Get RFC 9728 OAuth 2.0 Protected Resource Metadata for a server.
@@ -2087,6 +2350,9 @@ class ServerService(BaseService):
         # Check OAuth configuration
         if not getattr(server, "oauth_enabled", False):
             raise ServerError(f"OAuth not enabled for server: {server_id}")
+
+        if not server_oauth_is_approved(server):
+            raise ServerError(f"OAuth configuration requires administrator approval for server: {server_id}")
 
         oauth_config = getattr(server, "oauth_config", None)
         if not oauth_config:

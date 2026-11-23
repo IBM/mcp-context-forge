@@ -64,8 +64,7 @@ class InMemoryRedisClient:
         message_json: bytes,
         ttl: int,
         max_events: int,
-        index_prefix: str,
-        stream_id: str,
+        *_notify: object,
     ) -> int:
         async with self._lock:
             self._purge_expired_key(meta_key)
@@ -87,10 +86,6 @@ class InMemoryRedisClient:
             events.append((seq_num, event_id))
             messages[event_id] = bytes(message_json)
 
-            index_key = f"{index_prefix}{event_id}"
-            self._kv[index_key] = orjson.dumps({"stream_id": stream_id, "seq_num": seq_num})
-            self._set_expiry(index_key, int(ttl))
-
             if count > int(max_events):
                 to_evict = count - int(max_events)
                 evicted = events[:to_evict]
@@ -98,9 +93,6 @@ class InMemoryRedisClient:
 
                 for _, evicted_id in evicted:
                     messages.pop(evicted_id, None)
-                    evicted_index_key = f"{index_prefix}{evicted_id}"
-                    self._kv.pop(evicted_index_key, None)
-                    self._expires_at.pop(evicted_index_key, None)
 
                 meta["count"] = int(max_events)
                 if events:
@@ -112,6 +104,13 @@ class InMemoryRedisClient:
             self._set_expiry(events_key, int(ttl))
             self._set_expiry(messages_key, int(ttl))
             return seq_num
+
+    async def set(self, key: str, value: bytes, ex: int | None = None) -> bool:
+        async with self._lock:
+            self._kv[key] = bytes(value)
+            if ex is not None:
+                self._set_expiry(key, int(ex))
+            return True
 
     async def get(self, key: str):
         async with self._lock:
@@ -225,6 +224,16 @@ class TestRedisEventStore:
         assert replayed[1] == messages[3]
         assert replayed[2] == messages[4]
 
+    async def test_stream_keys_share_cluster_hash_tag(self, redis_event_store):
+        """Stream keys carry the same {stream_id} hash tag so Lua scripts stay in one cluster slot."""
+        stream_id = "test-stream-slot"
+        keys = [
+            redis_event_store._get_stream_meta_key(stream_id),
+            redis_event_store._get_stream_events_key(stream_id),
+            redis_event_store._get_stream_messages_key(stream_id),
+        ]
+        assert all("{" + stream_id + "}" in key for key in keys)
+
     async def test_eviction(self, redis_event_store):
         """Ring buffer evicts oldest when exceeding max_events."""
         stream_id = "test-stream-eviction"
@@ -332,10 +341,10 @@ class TestRedisEventStore:
 
         # Verify stream keys expired in Redis
         redis = fake_redis_client
-        meta_key = f"mcpgw:eventstore:{stream_id}:meta"
-        events_key = f"mcpgw:eventstore:{stream_id}:events"
-        messages_key = f"mcpgw:eventstore:{stream_id}:messages"
-        index_key = f"mcpgw:eventstore:event_index:{event_id}"
+        meta_key = short_ttl_store._get_stream_meta_key(stream_id)
+        events_key = short_ttl_store._get_stream_events_key(stream_id)
+        messages_key = short_ttl_store._get_stream_messages_key(stream_id)
+        index_key = short_ttl_store._event_index_key(event_id)
         meta_exists = await redis.exists(meta_key)
         events_exists = await redis.exists(events_key)
         messages_exists = await redis.exists(messages_key)
@@ -754,12 +763,14 @@ class TestRedisEventStore:
             )
 
     async def test_store_event_with_notify_happy_path_generates_event_id(self, monkeypatch: pytest.MonkeyPatch):
-        """Happy path: EVAL is invoked with the 12-arg store-and-notify signature and a UUID event id."""
+        """Happy path: EVAL is invoked with the store-and-notify signature, then the event index is written."""
         store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:notify-gen")
 
         class DummyRedis:
             def __init__(self) -> None:
                 self.eval = AsyncMock(return_value=1)
+                self.set = AsyncMock(return_value=True)
+                self.delete = AsyncMock(return_value=1)
 
         dummy = DummyRedis()
         monkeypatch.setattr(
@@ -774,7 +785,7 @@ class TestRedisEventStore:
         # Generated event ids are uuid4 hex-with-dashes; just validate shape.
         uuid.UUID(event_id)
 
-        # Inspect EVAL call: 3 keys + 8 argv = 11 positional args after the script.
+        # Inspect EVAL call: 3 keys + 6 argv positional args after the script.
         dummy.eval.assert_awaited_once()
         call_args = dummy.eval.call_args
         script = call_args.args[0]
@@ -793,10 +804,15 @@ class TestRedisEventStore:
         assert orjson.loads(argv_message_json) == msg
         assert call_args.args[7] == 60  # ttl
         assert call_args.args[8] == 10  # max_events
-        assert call_args.args[9] == store._event_index_prefix()
-        assert call_args.args[10] == stream_id
-        assert call_args.args[11] == "ch"
-        assert call_args.args[12] == b"pl"
+        assert call_args.args[9] == "ch"
+        assert call_args.args[10] == b"pl"
+
+        # The index entry is written by the client (it lives in a different slot).
+        dummy.set.assert_awaited_once()
+        set_args = dummy.set.call_args
+        assert set_args.args[0] == store._event_index_key(event_id)
+        assert orjson.loads(set_args.args[1]) == {"stream_id": stream_id, "seq_num": 1}
+        assert set_args.kwargs["ex"] == 60
 
     async def test_store_event_with_notify_uses_event_id_override(self, monkeypatch: pytest.MonkeyPatch):
         """event_id_override is passed through to the EVAL ARGV."""
@@ -805,6 +821,8 @@ class TestRedisEventStore:
         class DummyRedis:
             def __init__(self) -> None:
                 self.eval = AsyncMock(return_value=1)
+                self.set = AsyncMock(return_value=True)
+                self.delete = AsyncMock(return_value=1)
 
         dummy = DummyRedis()
         monkeypatch.setattr(
@@ -831,6 +849,8 @@ class TestRedisEventStore:
         class DummyRedis:
             def __init__(self) -> None:
                 self.eval = AsyncMock(return_value=1)
+                self.set = AsyncMock(return_value=True)
+                self.delete = AsyncMock(return_value=1)
 
         dummy = DummyRedis()
         monkeypatch.setattr(
@@ -983,6 +1003,8 @@ class TestRedisEventStore:
         class DummyRedis:
             def __init__(self) -> None:
                 self.eval = AsyncMock(return_value=1)
+                self.set = AsyncMock(return_value=True)
+                self.delete = AsyncMock(return_value=1)
 
         dummy = DummyRedis()
         monkeypatch.setattr(
@@ -997,13 +1019,14 @@ class TestRedisEventStore:
 
         dummy.eval.assert_awaited_once()
         call_args = dummy.eval.call_args
-        # 3 keys + 2 argv
+        # 3 keys + 1 argv
         assert call_args.args[1] == 3
         assert call_args.args[2] == store._get_stream_meta_key(stream_id)
         assert call_args.args[3] == store._get_stream_events_key(stream_id)
         assert call_args.args[4] == store._get_stream_messages_key(stream_id)
         assert call_args.args[5] == event_id
-        assert call_args.args[6] == store._event_index_prefix()
+        assert len(call_args.args) == 6
+        dummy.delete.assert_awaited_once_with(store._event_index_key(event_id))
 
     async def test_evict_event_returns_false_when_event_absent(self, monkeypatch: pytest.MonkeyPatch):
         """EVAL returns 0 → False (idempotent no-op)."""

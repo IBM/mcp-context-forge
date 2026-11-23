@@ -1,6 +1,0 @@
-# Local Rust crate artifacts
-/target
-
-# Local editor/runtime noise
-.idea
-*.log

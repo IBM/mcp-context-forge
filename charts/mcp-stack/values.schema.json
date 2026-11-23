@@ -316,6 +316,35 @@
                 "database"
               ]
             },
+            "CEL_EXECUTION": {
+              "type": "string",
+              "description": "Where tool validation policies (CEL) run",
+              "default": "subprocess",
+              "enum": [
+                "subprocess",
+                "inprocess"
+              ]
+            },
+            "CEL_TIMEOUT_SECONDS": {
+              "type": "string",
+              "description": "Wall-clock limit for one policy evaluation (seconds, at most 1.0)",
+              "default": "1.0"
+            },
+            "CEL_FILTER_TIMEOUT_SECONDS": {
+              "type": "string",
+              "description": "Wall-clock limit for one tool response filter (seconds, at most 60)",
+              "default": "2.0"
+            },
+            "CEL_FILTER_WORKERS": {
+              "type": "string",
+              "description": "Response-filter sandbox worker processes per gateway process",
+              "default": "2"
+            },
+            "CEL_WORKERS": {
+              "type": "string",
+              "description": "Policy sandbox worker processes per gateway process",
+              "default": "2"
+            },
             "CLIENT_MODE": {
               "type": "string"
             },
@@ -498,6 +527,15 @@
             },
             "GATEWAY_MAX_REDIRECTS": {
               "type": "string"
+            },
+            "GATEWAY_MODERN_LISTENERS_ENABLED": {
+              "type": "string",
+              "description": "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "GATEWAY_TOOL_NAME_SEPARATOR": {
               "type": "string"
@@ -831,6 +869,15 @@
                 "false"
               ]
             },
+            "MCP_LISTEN_MAX_LIFETIME_SECONDS": {
+              "type": "string"
+            },
+            "MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL": {
+              "type": "string"
+            },
+            "MCP_LISTEN_MAX_ANONYMOUS_STREAMS": {
+              "type": "string"
+            },
             "MCP_SESSION_POOL_ENABLED": {
               "type": "string"
             },
@@ -991,6 +1038,10 @@
               "description": "Application port",
               "default": "4444"
             },
+            "FORWARDED_ALLOW_IPS": {
+              "type": "string",
+              "description": "Comma-separated proxy IPs/CIDRs allowed to set X-Forwarded-For/Proto"
+            },
             "PROMPT_CACHE_SIZE": {
               "type": "string",
               "description": "Prompt cache size",
@@ -1005,6 +1056,15 @@
               "type": "string",
               "description": "MCP protocol version",
               "default": "2025-03-26"
+            },
+            "REDIS_CLUSTER_MODE": {
+              "type": "string",
+              "description": "Use the RedisCluster client for Redis Cluster deployments",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "REDIS_DECODE_RESPONSES": {
               "type": "string",
@@ -1842,12 +1902,12 @@
             "IDENTITY_SIGN_CLAIMS": {
               "type": "string",
               "enum": ["true", "false"],
-              "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification",
+              "description": "Sign propagated user claims as a short-lived HS256 JWS for upstream verification",
               "default": "false"
             },
             "IDENTITY_CLAIMS_SECRET": {
               "type": "string",
-              "description": "Secret for signing identity claims (uses JWT_SECRET_KEY if unset)",
+              "description": "Dedicated secret for signing identity claims. Required when IDENTITY_SIGN_CLAIMS is true; must differ from JWT_SECRET_KEY",
               "default": ""
             },
             "AUTH_REQUIRED": {
@@ -1894,6 +1954,9 @@
               "type": "string"
             },
             "DCR_TOKEN_ENDPOINT_AUTH_METHOD": {
+              "type": "string"
+            },
+            "DCR_APPLICATION_TYPE": {
               "type": "string"
             },
             "DEFAULT_ADMIN_ROLE": {

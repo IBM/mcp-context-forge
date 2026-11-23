@@ -67,7 +67,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities["resources"]["listChanged"] is True
@@ -116,7 +116,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock()
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify
             assert "resources" not in capabilities
@@ -168,7 +168,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock(side_effect=Exception("Failed to fetch prompts"))
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _, _instructions = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify - should return empty lists for resources/prompts on failure
             assert len(tools) == 1

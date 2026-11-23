@@ -421,6 +421,10 @@ class InitializeRequest(BaseModel):
     )
 
 
+# Text that ContextForge sends as ``instructions`` when no backing server supplies its own.
+DEFAULT_SERVER_INSTRUCTIONS = "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
+
+
 class InitializeResult(BaseModel):
     """Server's response to the initialization request.
 
@@ -627,7 +631,7 @@ class Tool(CommonAttributes):
         auth_username (Optional[str]): The username for basic authentication.
         auth_password (Optional[str]): The password for basic authentication.
         auth_token (Optional[str]): The token for bearer authentication.
-        jsonpath_filter (Optional[str]):  Filter the tool based on a JSON path expression.
+        jsonpath_filter (Optional[str]): CEL expression over ``response`` that replaces the tool's response.
         custom_name (Optional[str]): Custom tool name.
         custom_name_slug (Optional[str]): Alternative custom tool name.
         display_name (Optional[str]): Display name.

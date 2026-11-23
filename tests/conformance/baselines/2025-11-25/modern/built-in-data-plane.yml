@@ -1,0 +1,9 @@
+findings:
+- scenario: dns-rebinding-protection
+  check: localhost-host-rebinding-rejected
+  name: DNSRebindingRejected
+  status: FAILURE
+- scenario: server-session-lifecycle
+  check: server-session-terminated-returns-404
+  name: SessionTerminatedReturns404
+  status: FAILURE

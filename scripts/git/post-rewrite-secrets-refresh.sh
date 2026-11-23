@@ -10,11 +10,14 @@
 # reflect the tree at that pick), so the rebased baseline can drift from a
 # scan of the final tree. Refreshing once, at the end, closes the gap.
 #
-# Chaining: if <git-common-dir>/hooks/post-rewrite.chain exists, it is run
-# after this hook with the same arguments and a copy of stdin. The install
-# target (make install-post-rewrite-detect-secrets-hook) moves any pre-existing foreign
+# Chaining (file-based install, Git < 2.54): if
+# <git-common-dir>/hooks/post-rewrite.chain exists, it is run after this hook
+# with the same arguments and a copy of stdin. The install target (make
+# install-post-rewrite-detect-secrets-hook) moves any pre-existing foreign
 # post-rewrite hook there instead of overwriting it; the marker comment on
-# line 2 is how the target recognizes this hook as ours on reinstall.
+# line 2 is how the target recognizes this hook as ours on reinstall. On
+# Git >= 2.54 the target registers this script as a config hook instead
+# (hook.<name>.command/event) and Git runs other hooks itself.
 #
 # Like the merge driver, this hook is installed (copied into
 # <git-common-dir>/hooks/) and must not depend on the tree's Makefile: the
@@ -39,7 +42,7 @@ chain_hook=$(git rev-parse --git-common-dir)/hooks/post-rewrite.chain
 do_scan() {
     UV_BIN=${UV_BIN:-$(type -p uv 2>/dev/null || echo "$HOME/.local/bin/uv")}
     DETECT_SECRETS_SPEC=${DETECT_SECRETS_SPEC:-git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976}
-    DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |Cargo\.lock$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
+    DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
     # Scan scope: files the branch changes relative to its upstream, mirroring
     # the Makefile's `git diff $(GIT_DIFF_TARGET)`. Unlike the merge driver,
     # this hook cannot read the rebase state dir: git removes it before
@@ -169,7 +172,7 @@ refresh_secrets_baseline() {
     fi
 
     git add .secrets.baseline
-    echo "✅ .secrets.baseline refreshed" >&2
+    echo "⚠️  .secrets.baseline was refreshed and staged. Commit it (git commit -s) before you continue or push." >&2
 }
 
 # A post-rewrite hook must never fail the rebase; downgrade all failures

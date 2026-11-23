@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, without_progress_token
 
 
 class DummySettings:
@@ -288,3 +288,10 @@ def test_validate_url_dangerous_protocol():
         SecurityValidator.validate_url("ftp://foo.com", "URL")
     with pytest.raises(ValueError):
         SecurityValidator.validate_url("mailto:foo@bar.com", "URL")
+
+
+def test_without_progress_token():
+    """Both token spellings are dropped; an empty result becomes None."""
+    assert without_progress_token({"progress_token": 1, "traceparent": "x"}) == {"traceparent": "x"}
+    assert without_progress_token({"progressToken": "a"}) is None
+    assert without_progress_token(None) is None

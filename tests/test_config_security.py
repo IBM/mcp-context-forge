@@ -111,9 +111,9 @@ def test_fail_closed_default_user_password_when_email_auth_enabled():
 def test_enabled_auth_rejects_empty_and_placeholder_passwords(password_field, feature_settings, password):  # noqa: ANN001
     """Enabled authentication must reject empty and placeholder password values."""
     passwords = {
-        "basic_auth_password": "StrongBasic!P@ss9Xz",
-        "platform_admin_password": "StrongAdm!nP@ss#9kXz",
-        "default_user_password": "StrongUs3rP@ss!Xz9k",
+        "basic_auth_password": "StrongBasic!P@ss9Xz",  # pragma: allowlist secret
+        "platform_admin_password": "StrongAdm!nP@ss#9kXz",  # pragma: allowlist secret
+        "default_user_password": "StrongUs3rP@ss!Xz9k",  # pragma: allowlist secret
     }
     passwords[password_field] = password
 

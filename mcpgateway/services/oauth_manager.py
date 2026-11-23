@@ -18,8 +18,8 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, List, Optional, Union
-from urllib.parse import parse_qsl, quote, urlparse
+from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 
 # Third-Party
 import httpx
@@ -31,6 +31,7 @@ from requests_oauthlib import OAuth2Session
 from mcpgateway.common.oauth import (
     CLIENT_ASSERTION_TYPE_JWT_BEARER,
     DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG,
+    is_delegation_config,
     load_private_key_for_signing,
     MAX_CLIENT_ASSERTION_TTL_SECONDS,
     normalize_token_endpoint_auth_method,
@@ -40,12 +41,17 @@ from mcpgateway.common.oauth import (
 )
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
+from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_private_key
+from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
+from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
+from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 
 logger = logging.getLogger(__name__)
@@ -217,7 +223,15 @@ class OAuthManager:
         return audience
 
     async def get_access_token(
-        self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        subject_token: Optional[str] = None,
+        *,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
     ) -> str:
         """Get access token based on grant type.
 
@@ -228,6 +242,8 @@ class OAuthManager:
             client_key: Optional client private key for mTLS (PEM format or file path)
             subject_token: Optional subject token (e.g. the inbound user's JWT) required
                 for the RFC 8693 ``token-exchange`` grant type
+            actor_token: Optional RFC 8693 actor token for a ``token-exchange`` delegation config
+            actor_token_type: RFC 8693 type identifier for ``actor_token``
 
         Returns:
             Access token string
@@ -285,6 +301,8 @@ class OAuthManager:
                 ca_certificate=ca_certificate,
                 client_cert=client_cert,
                 client_key=client_key,
+                actor_token=actor_token,
+                actor_token_type=actor_token_type,
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -393,18 +411,23 @@ class OAuthManager:
             raise OAuthError(f"Token endpoint blocked by URL policy: {exc}") from exc
 
         extensions = pinned_target.extensions
+        body: Dict[str, Any] = {"data": data}
+        if isinstance(data, (list, tuple)):
+            # httpx reads a list as a byte stream and fails on an async client. Encode repeated keys (RFC 8707 resource) as the form body.
+            body = {"content": urlencode(data)}
+            pinned_headers = {**pinned_headers, "Content-Type": "application/x-www-form-urlencoded"}
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+                return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions, **body)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
         async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
+            return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions, **body)
 
     # Keys whose values must never be echoed in error messages or logs.
-    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "client_assertion"})
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
 
     # Cap on raw_response excerpts and any other string values surfaced via
     # OAuthError / logs (defense-in-depth against unbounded provider bodies).
@@ -419,7 +442,7 @@ class OAuthManager:
     # secrets embedded in HTML error pages or stack traces don't survive the
     # length cap (the value can fit entirely inside the truncation window).
     _LEAKY_PARAM_RE = re.compile(
-        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key|client_assertion)=[^&\s\"'<>]+",
+        r"(?i)\b(access_token|refresh_token|id_token|subject_token|actor_token|token|code|secret|key|password|api[_-]?key|client_assertion)=[^&\s\"'<>]+",
     )
 
     @staticmethod
@@ -550,8 +573,11 @@ class OAuthManager:
         encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
         return f"Basic {encoded_credentials}"
 
-    async def _build_client_assertion(self, runtime_credentials: Dict[str, Any]) -> str:
+    async def build_client_assertion(self, runtime_credentials: Dict[str, Any]) -> str:
         """Sign a JWT bearer client assertion for private_key_jwt (RFC 7523 Section 2.2).
+
+        The same signed shape serves as an RFC 8693 ``actor_token`` for the
+        ``client_assertion`` delegation source. Each call carries a fresh ``jti``.
 
         Args:
             runtime_credentials: Runtime-ready OAuth configuration after decryption.
@@ -571,10 +597,22 @@ class OAuthManager:
             raise OAuthError("OAuth configuration missing token_url required as the aud claim of the client assertion")
 
         private_key = runtime_credentials.get("private_key")
-        if not isinstance(private_key, str) or not private_key.strip():
+        # registration_method is editor-controlled stored config, so the CIMD key is used only
+        # when client_id is also the gateway's own CIMD document URL.
+        is_cimd = runtime_credentials.get("registration_method") == "cimd" and CimdService().owns_client_id(client_id)
+
+        if is_cimd:
+            try:
+                private_key = load_cimd_private_key()
+            except CimdKeyError as exc:
+                raise OAuthError(f"Failed to load CIMD private key for client assertion: {exc}") from exc
+        elif not isinstance(private_key, str) or not private_key.strip():
             raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
 
-        alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
+        if is_cimd:
+            alg = get_settings().cimd_signing_alg.upper()
+        else:
+            alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
         if not isinstance(alg, str):
             raise OAuthError("Unsupported token_endpoint_auth_signing_alg - must be a string")
         if alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
@@ -593,7 +631,7 @@ class OAuthManager:
         # Some identity providers (Entra ID, Keycloak) match the assertion
         # against the client's public JWKS by key ID; the kid is optional.
         headers: Dict[str, str] = {}
-        raw_kid = runtime_credentials.get("private_key_jwt_kid")
+        raw_kid = get_settings().cimd_key_id if is_cimd else runtime_credentials.get("private_key_jwt_kid")
         if isinstance(raw_kid, str) and raw_kid.strip():
             headers["kid"] = raw_kid.strip()
 
@@ -624,6 +662,8 @@ class OAuthManager:
             return await asyncio.to_thread(jwt.encode, payload, signing_key, algorithm=alg, headers=headers)
         except Exception as exc:
             raise OAuthError("Failed to sign client assertion for private_key_jwt client authentication") from exc
+
+    _build_client_assertion = build_client_assertion
 
     async def _refresh_client_assertion(self, token_data: Any, runtime_credentials: Dict[str, Any]) -> None:
         """Regenerate the client assertion before a retry when using private_key_jwt.
@@ -777,6 +817,31 @@ class OAuthManager:
 
         Returns:
             Access token string
+        """
+        token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        return token_response["access_token"]
+
+    async def get_client_credentials_token_response(
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        send_resource: bool = False,
+    ) -> Dict[str, Any]:
+        """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
+
+        Callers that cache the token use this instead of ``get_access_token()`` to learn its lifetime.
+
+        Args:
+            credentials: OAuth configuration with client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
+            send_resource: Send the RFC 8707 ``resource`` from ``credentials`` on the token request. Off by default so existing callers keep their request shape.
+
+        Returns:
+            Parsed token endpoint response containing at least ``access_token``.
 
         Raises:
             OAuthError: If token acquisition fails after all retries
@@ -802,6 +867,13 @@ class OAuthManager:
             token_data["audience"] = audience
             logger.debug("Including audience parameter in client credentials request: %s", sanitize_for_log(audience))
 
+        resource = runtime_credentials.get("resource")
+        if send_resource and resource and self._should_include_resource_parameter(runtime_credentials, scopes):
+            if isinstance(resource, list):
+                token_data = list(token_data.items()) + [("resource", item) for item in resource if item]  # type: ignore[assignment]
+            else:
+                token_data["resource"] = resource
+
         # Fetch token with retries
         for attempt in range(self.max_retries):
             await self._refresh_client_assertion(token_data, runtime_credentials)
@@ -815,7 +887,7 @@ class OAuthManager:
                     raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
-                return token_response["access_token"]
+                return token_response
 
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
@@ -952,16 +1024,20 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("No access_token in token response.", error_code=response_oauth_code(response) or "token_exchange_failed")
 
                 logger.info("""Successfully exchanged authorization code for access token""")
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
-                if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
-                await asyncio.sleep(2**attempt)  # Exponential backoff
+                error_response = getattr(e, "response", None)
+                error_code = "token_url_unreachable" if isinstance(e, httpx.RequestError) else (response_oauth_code(error_response) if error_response is not None else None) or "token_exchange_failed"
+                failure = oauth_failure(error_code)
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, failure.code)
+                permanent_failure = isinstance(error_response, httpx.Response) and 400 <= error_response.status_code < 500
+                if attempt == self.max_retries - 1 or permanent_failure:
+                    raise OAuthError(failure.message, error_code=failure.code) from None
+                await asyncio.sleep(2**attempt)
 
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
@@ -981,6 +1057,9 @@ class OAuthManager:
         client_key: Optional[str] = None,
         client_secret_is_plaintext: bool = False,
         oauth_config: Optional[Dict[str, Any]] = None,
+        *,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -1016,13 +1095,18 @@ class OAuthManager:
                 ``private_key_jwt``) is honored through ``_apply_token_endpoint_auth``.
                 The ``token_url``/``client_id``/``client_secret`` arguments are then
                 ignored.
+            actor_token: RFC 8693 §2.1 token that identifies ContextForge as the
+                acting party. Required when ``oauth_config`` sets an
+                ``actor_token_source`` other than ``none``.
+            actor_token_type: RFC 8693 §3 type identifier for ``actor_token``.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
             ``expires_in`` and ``scope``.
 
         Raises:
-            OAuthError: If token exchange fails after all retries, or the
+            OAuthError: If the config requests delegation and no ``actor_token``
+                is given (fail closed, never impersonate), if token exchange fails after all retries, or the
                 response ``token_type`` is not ``Bearer`` (RFC 8693 §2.2.1
                 allows ``N_A`` for non-access-token ``issued_token_type``
                 values, but CF only forwards exchanged tokens as
@@ -1057,6 +1141,10 @@ class OAuthManager:
                     logger.warning("Failed to decrypt client secret for token exchange: %s", e)
             runtime_credentials["client_secret"] = client_secret
 
+        # Fail closed: a delegation config must never degrade to an impersonation request.
+        if is_delegation_config(oauth_config) and not (actor_token and actor_token_type):
+            raise OAuthError("Delegation is configured but no actor token is available")
+
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
@@ -1067,6 +1155,9 @@ class OAuthManager:
             token_data["audience"] = audience
         if scope:
             token_data["scope"] = scope
+        if actor_token and actor_token_type:
+            token_data["actor_token"] = actor_token
+            token_data["actor_token_type"] = actor_token_type
 
         headers: Dict[str, str] = {}
         await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials, require_client_id=False)
@@ -1101,12 +1192,49 @@ class OAuthManager:
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, e)
+                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, self._LEAKY_PARAM_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", str(e)))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}")
+                    status_code, error_code, error_description = self._token_error_fields(e)
+                    raise OAuthTokenExchangeError(
+                        f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}",
+                        status_code=status_code,
+                        error_code=error_code,
+                        error_description=error_description,
+                    )
                 await asyncio.sleep(2**attempt)
 
-        raise OAuthError("Token exchange failed after all retry attempts")
+        raise OAuthTokenExchangeError("Token exchange failed after all retry attempts")
+
+    @staticmethod
+    def _token_error_fields(exc: httpx.HTTPError) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+        """Return the HTTP status and RFC 6749 §5.2 error fields of a failed token request.
+
+        Args:
+            exc: Error raised by the token request.
+
+        Returns:
+            ``(status_code, error, error_description)``. Each item is ``None`` when unknown.
+
+        Examples:
+            >>> request = httpx.Request("POST", "https://as/token")
+            >>> response = httpx.Response(400, json={"error": "invalid_client"}, request=request)
+            >>> OAuthManager._token_error_fields(httpx.HTTPStatusError("bad", request=request, response=response))
+            (400, 'invalid_client', None)
+            >>> OAuthManager._token_error_fields(httpx.ConnectError("down"))
+            (None, None, None)
+        """
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return None, None, None
+        response = exc.response
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            return response.status_code, None, None
+        error_code = body.get("error") if isinstance(body.get("error"), str) else None
+        error_description = body.get("error_description") if isinstance(body.get("error_description"), str) else None
+        return response.status_code, error_code, error_description
 
     @staticmethod
     def _apply_default_redirect_uri(credentials: Dict[str, Any], default_redirect_uri: Optional[str] = None) -> Dict[str, Any]:
@@ -1136,7 +1264,7 @@ class OAuthManager:
         return {**credentials, "redirect_uri": resolved}
 
     async def initiate_authorization_code_flow(
-        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None
+        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None, *, browser_binding: str
     ) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
@@ -1146,6 +1274,7 @@ class OAuthManager:
             app_user_email: ContextForge user email to associate with tokens
             popup: When True, the state token is prefixed with ``popup.`` so the
                 callback endpoint knows to respond with postMessage instead of HTML.
+            browser_binding: Browser transaction secret whose digest binds the callback.
             default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
                 *credentials* carries no ``redirect_uri`` (defence-in-depth; today's router
                 caller already resolves one before DCR runs, so this is normally a no-op).
@@ -1190,6 +1319,7 @@ class OAuthManager:
                 app_user_email=app_user_email,
                 redirect_uri=credentials.get("redirect_uri"),
                 team_id=team_id,
+                browser_binding_hash=hashlib.sha256(browser_binding.encode()).hexdigest(),
             )
 
         # Generate authorization URL with PKCE
@@ -1198,6 +1328,108 @@ class OAuthManager:
         logger.info("Generated authorization URL with PKCE for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
+
+    @staticmethod
+    async def _expected_issuer(credentials: Dict[str, Any], gateway_id: Optional[str]) -> tuple[Optional[str], bool, bool]:
+        """Return the issuer an authorization response must name, and whether the AS advertises ``iss``.
+
+        The value comes from the authorization server's validated metadata when discovery
+        succeeds, so it is exactly what the server calls itself. When discovery fails the
+        configured issuer is used and both sides are compared without a trailing slash,
+        since an admin may have typed one and some servers end their issuer with one.
+        ``None`` means nothing can be compared:
+        no issuer is configured, or the metadata issuer is a template such as a multi-tenant
+        placeholder, which no real response can ever equal.
+
+        Args:
+            credentials: OAuth configuration, read for its ``issuer``.
+            gateway_id: The gateway, for the log lines.
+
+        Returns:
+            tuple[Optional[str], bool, bool]: The expected issuer, or ``None``; the
+            ``authorization_response_iss_parameter_supported`` flag from the metadata; and
+            whether the comparison must ignore a trailing slash (the fallback path).
+        """
+        configured = credentials.get("issuer")
+        if not isinstance(configured, str) or not configured:
+            return None, False, False
+        try:
+            metadata = await DcrService().discover_as_metadata(configured)
+        except DcrIssuerMismatchError as exc:
+            if "{" in (exc.metadata_issuer or ""):
+                logger.warning("Gateway %s: issuer metadata names the template %s; the iss parameter cannot be validated", sanitize_for_log(gateway_id), sanitize_for_log(exc.metadata_issuer))
+                return None, False, False
+            logger.warning(
+                "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
+            )
+            return configured.rstrip("/"), False, True
+        except (DcrError, httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "Gateway %s: AS metadata unavailable, comparing iss against the configured issuer and without the advertised flag: %s", sanitize_for_log(gateway_id), sanitize_for_log(str(exc))
+            )
+            return configured.rstrip("/"), False, True
+        metadata_issuer = metadata.get("issuer")
+        advertised = bool(metadata.get("authorization_response_iss_parameter_supported"))
+        if isinstance(metadata_issuer, str) and metadata_issuer:
+            return metadata_issuer, advertised, False
+        return configured.rstrip("/"), advertised, True
+
+    @staticmethod
+    def _record_issuer_mismatch(gateway_id: Optional[str], expected: str, received: Optional[str]) -> None:
+        """Raise a security event for an authorization response that names the wrong issuer.
+
+        Args:
+            gateway_id: The gateway the response belongs to.
+            expected: The issuer the response had to name.
+            received: The ``iss`` the response carried, or ``None`` when it was missing.
+        """
+        try:
+            get_security_logger().log_suspicious_activity(
+                activity_type="oauth_issuer_mismatch",
+                description=f"Authorization response for gateway {gateway_id} did not name the expected issuer",
+                user_id=None,
+                user_email=None,
+                client_ip="unknown",
+                user_agent=None,
+                threat_score=0.7,
+                severity=SecuritySeverity.HIGH,
+                threat_indicators={"gateway_id": gateway_id, "expected_issuer": expected, "received_issuer": received},
+                action_taken="authorization_code_not_redeemed",
+            )
+        except Exception as exc:  # noqa: BLE001 - a logging failure must not change the outcome
+            logger.debug("Security event for issuer mismatch not recorded: %s", exc)
+
+    async def validate_authorization_response_issuer(self, credentials: Dict[str, Any], iss: Optional[str], gateway_id: Optional[str] = None) -> None:
+        """Apply RFC 9207 issuer validation to an authorization response (MCP 2026-07-28).
+
+        A present ``iss``, empty included, must equal the expected issuer by plain string
+        comparison; only on the fallback path, with no validated metadata, is a trailing
+        slash ignored on both sides. An absent ``iss`` is rejected only when the authorization server
+        advertises that it sends one. Nothing is compared when no issuer is configured or
+        the metadata issuer is a template.
+
+        Args:
+            credentials: OAuth configuration of the gateway the response belongs to.
+            iss: The ``iss`` parameter of the authorization response, or ``None`` when absent.
+            gateway_id: The gateway, for the log lines and the security event.
+
+        Raises:
+            OAuthError: If ``iss`` is missing although advertised, or names a different issuer.
+        """
+        expected, advertised, ignore_trailing_slash = await self._expected_issuer(credentials, gateway_id)
+        if expected is None:
+            return
+        if iss is None:
+            if advertised:
+                logger.warning("Gateway %s: authorization response omits the iss parameter its authorization server advertises", sanitize_for_log(gateway_id))
+                self._record_issuer_mismatch(gateway_id, expected, None)
+                raise OAuthError("Authorization response is missing the iss parameter its authorization server advertises")
+            return
+        received = iss.rstrip("/") if ignore_trailing_slash else iss
+        if received != expected:
+            logger.warning("Gateway %s: authorization response issuer %s does not match the expected issuer %s", sanitize_for_log(gateway_id), sanitize_for_log(iss), sanitize_for_log(expected))
+            self._record_issuer_mismatch(gateway_id, expected, iss)
+            raise OAuthError("Authorization response issuer mismatch")
 
     async def complete_authorization_code_flow(
         self,
@@ -1209,10 +1441,14 @@ class OAuthManager:
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         default_redirect_uri: Optional[str] = None,
+        iss: Optional[str] = None,
+        *,
+        validated_state: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
+            validated_state: Context returned by consume_and_validate_authorization_state.
             gateway_id: ID of the gateway
             code: Authorization code from callback
             state: State parameter for CSRF validation
@@ -1223,6 +1459,8 @@ class OAuthManager:
             default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
                 neither the state pinned at authorize time nor *credentials* itself carries a
                 ``redirect_uri`` (e.g. a state stored before pinning existed).
+            iss: The ``iss`` parameter of the authorization response, validated against the
+                issuer before the code is redeemed (RFC 9207).
 
         Returns:
             Dict containing success status, user_id, expiration info, AND state_data
@@ -1231,10 +1469,15 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # Validate state and retrieve code_verifier (atomically consumes state)
-        state_data = await self._validate_and_retrieve_state(gateway_id, state)
+        # Only the shared consumption operation supplies this transaction context.
+        state_data = validated_state
+        if not state_data or state_data.get("gateway_id") != gateway_id or state_data.get("state") != state:
+            raise OAuthError("Invalid authorization transaction")
         if not state_data:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
+
+        # The state is consumed either way; the code never reaches a token endpoint on mismatch.
+        await self.validate_authorization_response_issuer(credentials, iss, gateway_id=gateway_id)
 
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
@@ -1294,9 +1537,9 @@ class OAuthManager:
         # audience for the wrong IdP.  Passing None to store_tokens leaves any
         # previously-learned value for this user intact (it only overwrites on
         # non-None).  The check is skipped when no issuer is configured.
-        configured_issuer = credentials.get("issuer")
-        if configured_issuer and token_aud is not None:
-            if not isinstance(token_iss, str) or token_iss.rstrip("/") != str(configured_issuer).rstrip("/"):
+        expected_issuers = resolve_expected_token_issuers(credentials)
+        if expected_issuers and token_aud is not None:
+            if not isinstance(token_iss, str) or token_iss.rstrip("/") not in expected_issuers:
                 logger.debug(
                     "Skipping learned audience persistence for gateway %s: token iss does not match configured issuer",
                     gateway_id,
@@ -1487,6 +1730,7 @@ class OAuthManager:
         app_user_email: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         team_id: Optional[str] = None,
+        browser_binding_hash: Optional[str] = None,
     ) -> None:
         """Store authorization state for validation with TTL.
 
@@ -1499,6 +1743,7 @@ class OAuthManager:
                 ``complete_authorization_code_flow`` can reuse the exact same value at token
                 exchange time (RFC 6749 §4.1.3) instead of recomputing it from live gateway
                 state, which could have changed between authorize and callback.
+            browser_binding_hash: Digest of the initiating browser transaction secret.
             team_id: Team ID from JWT for Vault token storage path
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
@@ -1518,6 +1763,7 @@ class OAuthManager:
                         "app_user_email": app_user_email,
                         "redirect_uri": redirect_uri,
                         "team_id": team_id,
+                        "browser_binding_hash": browser_binding_hash,
                         "expires_at": expires_at.isoformat(),
                         "used": False,
                     }
@@ -1556,6 +1802,7 @@ class OAuthManager:
                     if hasattr(OAuthState, "team_id") and team_id:
                         oauth_state_kwargs["team_id"] = team_id
 
+                    oauth_state_kwargs["browser_binding_hash"] = browser_binding_hash
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
                     db.commit()
@@ -1578,6 +1825,7 @@ class OAuthManager:
                 "app_user_email": app_user_email,
                 "redirect_uri": redirect_uri,
                 "team_id": team_id,
+                "browser_binding_hash": browser_binding_hash,
                 "expires_at": expires_at.isoformat(),
                 "used": False,
             }
@@ -1724,6 +1972,29 @@ class OAuthManager:
             logger.debug("Successfully validated OAuth state from memory for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
             return True
 
+    async def consume_and_validate_authorization_state(self, gateway_id: str, state: str, browser_binding: Optional[str]) -> Dict[str, Any]:
+        """Consume a transaction and validate its initiating browser.
+
+        Args:
+            gateway_id: Gateway resolved from server-side state.
+            state: Opaque authorization transaction identifier.
+            browser_binding: Secret from the transaction cookie.
+
+        Returns:
+            Validated server-side transaction context.
+
+        Raises:
+            OAuthError: If the transaction or browser binding is invalid.
+        """
+        context = await self._validate_and_retrieve_state(gateway_id, state)
+        expected = context.get("browser_binding_hash") if context else None
+        if not browser_binding or len(browser_binding) > 128 or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise OAuthError("Invalid authorization transaction; restart authorization", error_code="invalid_state")
+        actual = hashlib.sha256(browser_binding.encode()).hexdigest()
+        if not secrets.compare_digest(expected, actual):
+            raise OAuthError("Invalid authorization transaction; restart authorization", error_code="invalid_state")
+        return context
+
     async def _validate_and_retrieve_state(self, gateway_id: str, state: str) -> Optional[Dict[str, Any]]:
         """Validate state and return full state data including code_verifier.
 
@@ -1780,6 +2051,16 @@ class OAuthManager:
                     if not oauth_state:
                         return None
 
+                    # A conditional claim prevents two workers from redeeming the same state.
+                    claimed = (
+                        db.query(OAuthState)
+                        .filter(OAuthState.id == oauth_state.id, OAuthState.used.is_(False), OAuthState.expires_at > datetime.now(timezone.utc))
+                        .update({"used": True}, synchronize_session=False)
+                    )
+                    if claimed != 1:
+                        db.rollback()
+                        return None
+
                     # Check expiration
                     expires_at = oauth_state.expires_at
                     if expires_at.tzinfo is None:
@@ -1799,6 +2080,7 @@ class OAuthManager:
                         "state": oauth_state.state,
                         "gateway_id": oauth_state.gateway_id,
                         "code_verifier": oauth_state.code_verifier,
+                        "browser_binding_hash": oauth_state.browser_binding_hash,
                         "expires_at": oauth_state.expires_at.isoformat(),
                     }
                     if hasattr(oauth_state, "app_user_email"):
@@ -1933,9 +2215,6 @@ class OAuthManager:
         Returns:
             Authorization URL string with PKCE parameters
         """
-        # Standard
-        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
-
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]
         authorization_url = credentials["authorization_url"]
@@ -2036,16 +2315,20 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("No access_token in token response.", error_code=response_oauth_code(response) or "token_exchange_failed")
 
                 logger.info("""Successfully exchanged authorization code for tokens""")
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
-                if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
-                await asyncio.sleep(2**attempt)  # Exponential backoff
+                error_response = getattr(e, "response", None)
+                error_code = "token_url_unreachable" if isinstance(e, httpx.RequestError) else (response_oauth_code(error_response) if error_response is not None else None) or "token_exchange_failed"
+                failure = oauth_failure(error_code)
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, failure.code)
+                permanent_failure = isinstance(error_response, httpx.Response) and 400 <= error_response.status_code < 500
+                if attempt == self.max_retries - 1 or permanent_failure:
+                    raise OAuthError(failure.message, error_code=failure.code) from None
+                await asyncio.sleep(2**attempt)
 
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
@@ -2309,6 +2592,50 @@ class OAuthError(Exception):
         ...     isinstance(e, OAuthError)
         True
     """
+
+    def __init__(self, message: str, *, error_code: str = "oauth_error"):
+        """Preserve safe structured failure evidence for callback consumers.
+
+        Args:
+            message: Internal error description.
+            error_code: Allowlisted provider or internal error code.
+        """
+        super().__init__(message)
+        failure = oauth_failure(error_code)
+        self.error_code = failure.code
+        self.reauthorization_required = failure.reauthorization_required
+
+
+class OAuthTokenExchangeError(OAuthError):
+    """Raised when an RFC 8693 token exchange or its actor token request fails.
+
+    ``stage`` is ``actor`` when the actor token could not be obtained, and
+    ``exchange`` when the exchange request itself failed. The token endpoint
+    fields are ``None`` when no response arrived, for example on a network error.
+
+    Examples:
+        >>> err = OAuthTokenExchangeError("denied", status_code=401, error_code="invalid_client")
+        >>> err.stage, err.status_code, err.error_code, err.error_description
+        ('exchange', 401, 'invalid_client', None)
+        >>> isinstance(OAuthTokenExchangeError("x", stage="actor"), OAuthError)
+        True
+    """
+
+    def __init__(self, message: str, *, stage: str = "exchange", status_code: Optional[int] = None, error_code: Optional[str] = None, error_description: Optional[str] = None) -> None:
+        """Initialize with message, failure stage, and token endpoint response fields.
+
+        Args:
+            message: Human-readable error description. Never carries a token value.
+            stage: ``actor`` or ``exchange``.
+            status_code: HTTP status of the token endpoint response, if any.
+            error_code: RFC 6749 §5.2 ``error`` value of the response, if any.
+            error_description: ``error_description`` value of the response, if any.
+        """
+        super().__init__(message)
+        self.stage = stage
+        self.status_code = status_code
+        self.error_code = error_code
+        self.error_description = error_description
 
 
 class OAuthInvalidGrantError(OAuthError):

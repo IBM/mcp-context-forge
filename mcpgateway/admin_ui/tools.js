@@ -677,6 +677,10 @@ export const editTool = async function (toolId) {
         : "";
       descField.value = decodeHtml(cleanDesc);
     }
+    const policyField = safeGetElement("edit-tool-validation-policy");
+    if (policyField) {
+      policyField.value = tool.toolValidationPolicy || "";
+    }
     if (typeField) {
       typeField.value = tool.integrationType || "MCP";
     }

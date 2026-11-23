@@ -10,12 +10,12 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 # Standard
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 import pytest
 from sqlalchemy.orm import Session
@@ -28,11 +28,13 @@ from mcpgateway.routers.oauth_router import (
     _require_admin_user,
     delete_registered_client,
     enforce_fetch_tools_csrf,
+    get_gateway_oauth_token,
     get_registered_client_for_gateway,
     list_registered_oauth_clients,
 )
-from mcpgateway.schemas import EmailUserResponse
-from mcpgateway.services.oauth_manager import OAuthError
+from mcpgateway.schemas import EmailUserResponse, OAuthAccessTokenResponse
+from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
+from mcpgateway.services.token_backends.base import AccessTokenDetails, TokenReauthorizationRequired
 from mcpgateway.utils.oauth_resource import derive_resource_origin
 
 
@@ -89,6 +91,11 @@ def mock_request():
     request.url = Mock()
     request.url.scheme = "https"
     request.url.netloc = "gateway.example.com"
+    request.url.path = "/oauth/token/gateway123"
+    request.method = "GET"
+    request.client = Mock()
+    request.client.host = "127.0.0.1"
+    request.headers = {}
     request.scope = {"root_path": ""}
     request.state = SimpleNamespace(token_teams=["team-1"])
     return request
@@ -101,6 +108,11 @@ def mock_request_popup():
     request.url = Mock()
     request.url.scheme = "https"
     request.url.netloc = "gateway.example.com"
+    request.url.path = "/oauth/token/gateway123"
+    request.method = "GET"
+    request.client = Mock()
+    request.client.host = "127.0.0.1"
+    request.headers = {}
     request.scope = {"root_path": ""}
     request.state = SimpleNamespace(token_teams=["team-1"], csp_nonce="test-nonce-popup", is_popup=True)
     return request
@@ -495,6 +507,9 @@ class TestOAuthRouter:
             assert exc_info.value.status_code == 400
             assert "incomplete" in str(exc_info.value.detail).lower()
             mock_dcr_service.assert_not_called()
+            assert "DCR_ENABLED" in exc_info.value.detail
+            assert "DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS" in exc_info.value.detail
+            assert "CIMD_ENABLED" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):
@@ -765,6 +780,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -782,6 +800,7 @@ class TestOAuthRouter:
 
                 # Verify the oauth_config includes the resource parameter (RFC 8707)
                 call_args = mock_oauth_manager.complete_authorization_code_flow.call_args
+                assert call_args.kwargs["validated_state"] is mock_oauth_manager.consume_and_validate_authorization_state.return_value
                 oauth_config_passed = call_args[0][3]  # 4th positional arg is credentials
                 assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
 
@@ -805,6 +824,9 @@ class TestOAuthRouter:
              patch("mcpgateway.routers.oauth_router.TokenStorageService"):
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "state-token", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -814,7 +836,10 @@ class TestOAuthRouter:
         assert response.status_code == 302
         assert response.headers["location"] == "https://app.example.org/oauth-complete?gateway_id=123"
         assert response.headers["referrer-policy"] == "no-referrer"
-        assert response.headers.getlist("set-cookie") == []
+        # Only the transient browser-binding cleanup cookie (Max-Age=0) may be present
+        for cookie in response.headers.getlist("set-cookie"):
+            assert "Max-Age=0" in cookie
+            assert "oauth_bind_" in cookie
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("redirect", ["/oauth-complete", "/\\evil.example/oauth-complete"])
@@ -835,6 +860,9 @@ class TestOAuthRouter:
              patch("mcpgateway.routers.oauth_router.TokenStorageService"):
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "state-token", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -876,6 +904,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -920,6 +951,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -944,6 +978,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -968,6 +1005,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -986,20 +1026,34 @@ class TestOAuthRouter:
         # First-Party
         from mcpgateway.routers.oauth_router import oauth_callback
 
-        result = await oauth_callback(
-            code=None,
-            state="gateway123_abc123",
-            error="invalid_target",
-            error_description="AADSTS9010010: The resource parameter does not match the requested scopes.",
-            request=mock_request,
-            db=mock_db,
-        )
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "gateway123_abc123", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager.validate_authorization_response_issuer = AsyncMock()
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            result = await oauth_callback(
+                code=None,
+                state="gateway123_abc123",
+                error="invalid_target",
+                error_description="AADSTS9010010: The resource parameter does not match the requested scopes.",
+                request=mock_request,
+                db=mock_db,
+            )
 
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         assert "OAuth Authorization Failed" in result.body.decode()
-        assert "invalid_target" in result.body.decode()
-        assert "AADSTS9010010" in result.body.decode()
+        assert "oauth_error" in result.body.decode()
+        assert "AADSTS9010010" not in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_missing_code_without_error(self, mock_db, mock_request):
@@ -1007,7 +1061,20 @@ class TestOAuthRouter:
         # First-Party
         from mcpgateway.routers.oauth_router import oauth_callback
 
-        result = await oauth_callback(code=None, state="gateway123_abc123", request=mock_request, db=mock_db)
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "gateway123_abc123", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            result = await oauth_callback(code=None, state="gateway123_abc123", request=mock_request, db=mock_db)
 
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
@@ -1122,6 +1189,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(side_effect=OAuthError("Invalid authorization code"))
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -1157,6 +1227,9 @@ class TestOAuthRouter:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(side_effect=RuntimeError("boom"))
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -2267,6 +2340,59 @@ class TestResolveTokenTeamsForScopeCheck:
         assert kwargs["request_headers"]["cookie"].startswith("jwt_token=")
 
     @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_with_discovery_cookie_only_succeeds(self, mock_db, mock_current_user):
+        """Fetch Tools with only a ContextForge cookie uses the discovery credential and never exchanges the cookie JWT."""
+        cookie_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"  # pragma: allowlist secret
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        request.headers = {"cookie": f"jwt_token={cookie_jwt}"}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "aud",
+            "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayService
+
+        from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
+
+        service = GatewayService()
+        service._service_token_cache = GatewayServiceTokenCache()
+        service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600})
+        service.oauth_manager.token_exchange = AsyncMock()
+        service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True, "tools_added": 4, "tools_updated": 0, "tools_removed": 0, "resources_added": 0, "resources_updated": 0, "resources_removed": 0, "prompts_added": 0, "prompts_updated": 0, "prompts_removed": 0})
+
+        class _DBCM:
+            def __enter__(self):
+                db = MagicMock()
+                db.execute.return_value.scalar_one_or_none.return_value = gateway
+                return db
+
+            def __exit__(self, *exc):
+                return False
+
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayService", return_value=service),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+            patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
+        ):
+            result = await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert result == {"success": True, "message": "Successfully fetched and created 4 tools"}
+        service.oauth_manager.token_exchange.assert_not_awaited()
+        assert service._refresh_gateway_tools_resources_prompts.call_args.kwargs["pre_auth_headers"] == {"Authorization": "Bearer svc-discovery-tok"}
+        assert cookie_jwt not in repr(service.oauth_manager.get_client_credentials_token_response.call_args)
+
+    @pytest.mark.asyncio
     async def test_fetch_tools_token_exchange_failure_maps_to_400(self, mock_db, mock_current_user):
         """success=False from refresh_gateway_manually must surface as HTTP 400, not 200."""
         request = Mock(spec=Request)
@@ -2829,6 +2955,100 @@ class TestRecoverTokenTeamsFromJwt:
         assert _recover_token_teams_from_jwt(request) is None
 
 
+_DCR_ISSUER = "https://issuer.example.com"
+
+
+async def _run_dcr_initiate(mock_db, mock_request, mock_current_user, oauth_config, metadata):
+    """Run initiate_oauth_flow through the DCR branch with the given config and AS metadata.
+
+    Returns:
+        Tuple of the gateway mock and the initiate_oauth_flow result.
+    """
+    mock_gateway = Mock(spec=Gateway)
+    mock_gateway.id = "gateway123"
+    mock_gateway.name = "Gateway"
+    mock_gateway.url = "https://mcp.example.com"
+    mock_gateway.visibility = "public"
+    mock_gateway.team_id = None
+    mock_gateway.auth_type = None
+    mock_gateway.oauth_config = {
+        "grant_type": "authorization_code",
+        "issuer": _DCR_ISSUER,
+        "redirect_uri": "https://gateway.example.com/oauth/callback",
+        **oauth_config,
+    }
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+    class _Registered:
+        client_id = "client-123"
+        client_secret_encrypted = None
+        token_endpoint_auth_method = "client_secret_post"
+
+    class _FakeDcrService:
+        async def get_or_register_client(self, **_kwargs):
+            return _Registered()
+
+        async def discover_as_metadata(self, _issuer):
+            return metadata
+
+    with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                # First-Party
+                from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                    mock_settings.dcr_enabled = True
+                    mock_settings.dcr_auto_register_on_missing_credentials = True
+                    mock_settings.dcr_default_scopes = ["openid"]
+
+                    result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+    return mock_gateway, result
+
+
+class TestDcrDiscoveredEndpointGate:
+    """Authorize-time DCR must gate AS metadata endpoints to the issuer origin."""
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_rejects_cross_origin_token_endpoint(self, mock_db, mock_request, mock_current_user):
+        """A cross-origin token_endpoint aborts DCR and is not persisted."""
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {}, metadata)
+
+        assert exc_info.value.status_code == 500
+        mock_db.commit.assert_not_called()
+        assert "token_url" not in mock_db.execute.return_value.scalar_one_or_none.return_value.oauth_config
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_rejects_cross_origin_authorization_endpoint(self, mock_db, mock_request, mock_current_user):
+        """A cross-origin authorization_endpoint aborts DCR and is not persisted."""
+        metadata = {"authorization_endpoint": "https://evil.example.net/auth", "token_endpoint": f"{_DCR_ISSUER}/token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {}, metadata)
+
+        assert exc_info.value.status_code == 500
+        mock_db.commit.assert_not_called()
+        assert "authorization_url" not in mock_db.execute.return_value.scalar_one_or_none.return_value.oauth_config
+
+    @pytest.mark.asyncio
+    async def test_dcr_metadata_keeps_admin_configured_token_url(self, mock_db, mock_request, mock_current_user):
+        """An admin-configured token_url is neither validated against metadata nor overwritten."""
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"}
+
+        mock_gateway, result = await _run_dcr_initiate(mock_db, mock_request, mock_current_user, {"token_url": f"{_DCR_ISSUER}/admin-token"}, metadata)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/admin-token"
+        assert mock_gateway.oauth_config["authorization_url"] == f"{_DCR_ISSUER}/auth"
+
+
 class TestOAuthRouterAdditionalCoverage:
     """Additional coverage for OAuth router branches."""
 
@@ -2849,7 +3069,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         class _Registered:
             client_id = "client-123"
@@ -2910,7 +3130,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         class _Registered:
             client_id = "client-123"
@@ -2973,7 +3193,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         class _Registered:
             client_id = "client-123"
@@ -3032,7 +3252,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         class _Registered:
             client_id = "client-123"
@@ -3112,7 +3332,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -3144,7 +3364,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+        auth_data = {"authorization_url": "https://issuer.example.com/auth", "state": "test-state"}
 
         class _Registered:
             client_id = "client-123"
@@ -3246,6 +3466,9 @@ class TestOAuthRouterAdditionalCoverage:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "u1@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_payload)
             mock_oauth_mgr.return_value = mock_mgr
 
@@ -3841,6 +4064,9 @@ class TestOAuthRouterAdditionalCoverage:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value=malicious_id)
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": malicious_id, "state": state, "code_verifier": "verifier", "app_user_email": "u1@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=token_result)
             mock_oauth_mgr.return_value = mock_mgr
 
@@ -3903,6 +4129,9 @@ class TestOAuthCallbackCSPCompliance:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-123")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway-123", "state": "test-state-token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
             mock_oauth_mgr.return_value = mock_mgr
 
@@ -3962,6 +4191,9 @@ class TestOAuthCallbackCSPCompliance:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="csrf-cookie-test")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "csrf-cookie-test", "state": "test-state-token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
             mock_oauth_mgr.return_value = mock_mgr
 
@@ -4021,6 +4253,9 @@ class TestOAuthCallbackCSPCompliance:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="csrf-reuse-test")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "csrf-reuse-test", "state": "test-state-token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(
                 return_value={
                     "user_id": "user@example.com",
@@ -4080,6 +4315,9 @@ class TestOAuthCallbackCSPCompliance:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-456")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway-456", "state": "test-state-token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
             mock_oauth_mgr.return_value = mock_mgr
 
@@ -4166,6 +4404,9 @@ class TestOAuthCallbackCSPCompliance:
             with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
                 mock_mgr = Mock()
                 mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-789")
+                mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                    return_value={"gateway_id": "test-gateway-789", "state": "test-state-token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+                )
                 mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
                 mock_oauth_mgr.return_value = mock_mgr
 
@@ -4188,7 +4429,6 @@ class TestOAuthCallbackCSPCompliance:
 
         # Verify we collected 3 unique nonces
         assert len(nonces_seen) == 3, "Each request should have a unique CSP nonce"
-
 
 
 class TestOAuthRouterPopupMode:
@@ -4264,7 +4504,7 @@ class TestOAuthRouterPopupMode:
                     call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
                     # popup is a Query object with default False, check its value
                     popup_arg = call_args[1]["popup"]
-                    assert popup_arg == False or (hasattr(popup_arg, 'default') and popup_arg.default == False)
+                    assert popup_arg is False or (hasattr(popup_arg, 'default') and popup_arg.default is False)
 
     @pytest.mark.asyncio
     async def test_popup_notification_script_helper(self):
@@ -4385,6 +4625,9 @@ class TestOAuthRouterPopupMode:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway", "state": "popup.abc123def456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
                 "user_id": "user@example.com",
                 "expires_at": "2026-12-31T23:59:59Z",
@@ -4428,20 +4671,29 @@ class TestOAuthRouterPopupMode:
         """Test oauth_callback returns postMessage error when provider returns error with popup state."""
         from mcpgateway.routers.oauth_router import oauth_callback
 
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
         # Mock request with CSP nonce
         mock_request = Mock()
         mock_request.state = Mock()
         mock_request.state.csp_nonce = "test-nonce-789"
 
-        # Execute with popup state and provider error
-        result = await oauth_callback(
-            code=None,
-            state="popup.xyz789",
-            error="access_denied",
-            error_description="User denied authorization",
-            request=mock_request,
-            db=mock_db
-        )
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway", "state": "popup.xyz789", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager.validate_authorization_response_issuer = AsyncMock()
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            # Execute with popup state and provider error
+            result = await oauth_callback(code=None, state="popup.xyz789", error="access_denied", error_description="User denied authorization", request=mock_request, db=mock_db)
 
         # Assert HTMLResponse with postMessage error script
         assert isinstance(result, HTMLResponse)
@@ -4454,7 +4706,8 @@ class TestOAuthRouterPopupMode:
         assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
         assert '"status": "error"' in body or '"status":"error"' in body
         assert '"error": "access_denied"' in body or '"error":"access_denied"' in body
-        assert '"errorDescription": "User denied authorization"' in body or '"errorDescription":"User denied authorization"' in body
+        assert "The provider denies authorization" in body
+        assert "User denied authorization" not in body
 
         # Verify no legacy admin UI elements
         assert 'Return to Admin Panel' not in body
@@ -4464,18 +4717,28 @@ class TestOAuthRouterPopupMode:
         """Test oauth_callback returns postMessage error when code is missing with popup state."""
         from mcpgateway.routers.oauth_router import oauth_callback
 
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
         # Mock request with CSP nonce
         mock_request = Mock()
         mock_request.state = Mock()
         mock_request.state.csp_nonce = "test-nonce-missing"
 
-        # Execute with popup state but no code
-        result = await oauth_callback(
-            code=None,
-            state="popup.state123",
-            request=mock_request,
-            db=mock_db
-        )
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway", "state": "popup.state123", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            # Execute with popup state but no code
+            result = await oauth_callback(code=None, state="popup.state123", request=mock_request, db=mock_db)
 
         # Assert HTMLResponse with postMessage error
         assert isinstance(result, HTMLResponse)
@@ -4556,6 +4819,9 @@ class TestOAuthRouterPopupMode:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway", "state": "regular-state-abc123", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
                 return_value={
                     "user_id": "user@example.com",
@@ -4635,20 +4901,29 @@ class TestOAuthRouterPopupMode:
         """Test oauth_callback returns full HTML error page when provider returns error without popup state."""
         from mcpgateway.routers.oauth_router import oauth_callback
 
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
         # Mock request
         mock_request = Mock()
         mock_request.state = Mock()
         mock_request.state.csp_nonce = "test-nonce-error"
 
-        # Execute with non-popup state and provider error
-        result = await oauth_callback(
-            code=None,
-            state="regular-state-xyz",
-            error="access_denied",
-            error_description="User denied authorization",
-            request=mock_request,
-            db=mock_db
-        )
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "test-gateway", "state": "regular-state-xyz", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager.validate_authorization_response_issuer = AsyncMock()
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            # Execute with non-popup state and provider error
+            result = await oauth_callback(code=None, state="regular-state-xyz", error="access_denied", error_description="User denied authorization", request=mock_request, db=mock_db)
 
         # Assert HTMLResponse with legacy error page
         assert isinstance(result, HTMLResponse)
@@ -4658,7 +4933,8 @@ class TestOAuthRouterPopupMode:
         # Verify legacy admin UI error elements
         assert 'OAuth Authorization Failed' in body
         assert 'access_denied' in body
-        assert 'User denied authorization' in body
+        assert 'The provider denies authorization' in body
+        assert 'User denied authorization' not in body
         assert 'Return to Admin Panel' in body
 
         # Verify NO postMessage script
@@ -4678,6 +4954,9 @@ class TestOAuthRouterPopupMode:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
                 side_effect=OAuthError("Invalid authorization code")
             )
@@ -4714,6 +4993,9 @@ class TestOAuthRouterPopupMode:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
                 side_effect=RuntimeError("Unexpected server error")
             )
@@ -5046,6 +5328,20 @@ class TestPersistLearnedAudience:
         assert gateway.oauth_config == {"issuer": "https://idp.example.com/", "resource": "aud-x"}
 
     @pytest.mark.asyncio
+    async def test_token_issuer_pins_instead_of_as_issuer(self, mock_db):
+        """token_issuer is the expected token iss; the AS issuer no longer pins the audience."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        config = {"issuer": "https://mcp.example.com", "token_issuer": "https://login.example.com"}
+        gateway = self._gateway(config)
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://mcp.example.com"}, mock_db)
+        mock_db.flush.assert_not_called()
+
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://login.example.com"}, mock_db)
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {**config, "resource": "aud-x"}
+
+    @pytest.mark.asyncio
     async def test_persists_when_no_issuer_configured(self, mock_db):
         """Without a configured issuer the pinning check is skipped (non-OIDC setups)."""
         from mcpgateway.routers.oauth_router import _persist_learned_audience
@@ -5091,9 +5387,10 @@ class TestPersistLearnedAudience:
         assert gateway.oauth_config is not original
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for _build_user_context session-token path (CWE-863 fix)
-# ===========================================================================
+# ====================================================================
 
 
 class TestBuildUserContextSessionTokenPath:
@@ -5230,9 +5527,10 @@ class TestBuildUserContextSessionTokenPath:
         assert result["teams"] is None
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for oauth_router callback scope handling (lines 914-930)
-# ===========================================================================
+# ====================================================================
 
 
 class TestOAuthCallbackScopeHandling:
@@ -5316,6 +5614,9 @@ class TestOAuthCallbackScopeHandling:
              patch("mcpgateway.routers.oauth_router.TokenStorageService"):
             mock_mgr = AsyncMock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gw-123")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gw-123", "state": "state_token", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
             mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_data)
             mock_mgr_cls.return_value = mock_mgr
 
@@ -5333,9 +5634,10 @@ class TestOAuthCallbackScopeHandling:
         assert response.status_code in (200, 400)
 
 
-# ===========================================================================
+# ====================================================================
+
 # Tests for oauth_router fetch-tools GatewayConnectionError (lines 1317-1318)
-# ===========================================================================
+# ====================================================================
 
 
 class TestFetchToolsGatewayConnectionError:
@@ -5578,3 +5880,1027 @@ class TestEnforceGatewayAccessCacheLayer:
         mock_cache.get_user_role.assert_awaited_once_with("outsider@example.com", "team-1")
         # No DB fallback on a negative cache hit
         mock_db.query.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# RFC 9207 iss validation on the callback (MCP 2026-07-28)
+# --------------------------------------------------------------------------- #
+
+DISCOVER = "mcpgateway.services.oauth_manager.DcrService.discover_as_metadata"
+
+
+def _as_metadata(issuer: str, advertised: bool) -> dict:
+    return {"issuer": issuer, "authorization_response_iss_parameter_supported": advertised}
+
+
+@pytest.fixture
+def issuer_gateway(mock_gateway, mock_db):
+    """A gateway with an issuer, resolved from any state through the real manager."""
+    mock_gateway.oauth_config["issuer"] = "https://as.example.com"
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+    async def consumed_context(gateway_id, state, _binding):
+        """Return the transaction context supplied by shared validation."""
+        return {"gateway_id": gateway_id, "state": state, "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+
+    with (
+        patch("mcpgateway.services.oauth_manager.OAuthManager.resolve_gateway_id_from_state", new=AsyncMock(return_value="gateway123")),
+        patch("mcpgateway.services.oauth_manager.OAuthManager.consume_and_validate_authorization_state", new=AsyncMock(side_effect=consumed_context)),
+    ):
+        yield mock_gateway
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_mismatching_iss_hides_provider_error(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", False))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://attacker.example", db=mock_db)
+
+    body = response.body.decode()
+    assert response.status_code == 400
+    assert "issuer mismatch" in body
+    assert "access_denied" not in body
+    assert "user said no" not in body
+
+
+@pytest.mark.asyncio
+async def test_callback_error_without_iss_from_an_advertising_server_is_refused(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))), patch("mcpgateway.services.oauth_manager.get_security_logger"):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", db=mock_db)
+
+    assert "issuer mismatch" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_with_matching_iss_shows_provider_error(mock_db, mock_request, issuer_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))):
+        response = await oauth_callback(request=mock_request, code=None, state="state-token", error="access_denied", error_description="user said no", iss="https://as.example.com", db=mock_db)
+
+    assert response.status_code == 400
+    assert "access_denied" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_callback_error_without_state_shows_provider_error(mock_db, mock_request):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    response = await oauth_callback(request=mock_request, code=None, state=None, error="access_denied", iss="https://anything.example", db=mock_db)
+
+    assert "access_denied" in response.body.decode()
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_success_path_refuses_wrong_iss_before_the_code_exchange(mock_db, mock_request, issuer_gateway):
+    """Through the real route and the real manager: the state is consumed, the token endpoint is never called."""
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    with (
+        patch(DISCOVER, new=AsyncMock(return_value=_as_metadata("https://as.example.com", True))),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._validate_and_retrieve_state", new=AsyncMock(return_value={"code_verifier": "v", "app_user_email": "test@example.com"})),
+        patch("mcpgateway.services.oauth_manager.OAuthManager._exchange_code_for_tokens", new=AsyncMock()) as exchange,
+        patch("mcpgateway.services.oauth_manager.get_security_logger"),
+        patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+    ):
+        response = await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://attacker.example", db=mock_db)
+
+    assert response.status_code == 400
+    assert "OAuth Authorization Failed" in response.body.decode()
+    exchange.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_passes_iss_to_the_completion_flow(mock_db, mock_request, mock_gateway):
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    token_result = {"user_id": "oauth_user_123", "expires_at": None, "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
+    with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
+        manager = Mock()
+        manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+        manager.consume_and_validate_authorization_state = AsyncMock(
+            return_value={"gateway_id": "gateway123", "state": "state-token", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+        )
+        manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+        manager_class.return_value = manager
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            await oauth_callback(request=mock_request, code="auth_code_123", state="state-token", iss="https://as.example.com", db=mock_db)
+
+    assert manager.complete_authorization_code_flow.call_args[1]["iss"] == "https://as.example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,expected",
+    [
+        ("redirect_uri_mismatch", "redirect_uri_mismatch"),
+        ("insufficient_scope", "insufficient_scope"),
+        ("invalid_scope", "invalid_scope"),
+        ("invalid_request", "invalid_request"),
+        ("unauthorized_client", "unauthorized_client"),
+        ("unsupported_response_type", "unsupported_response_type"),
+        ("server_error", "server_error"),
+        ("temporarily_unavailable", "temporarily_unavailable"),
+        ("ambiguous", "oauth_error"),
+    ],
+)
+async def test_callback_safe_structured_provider_errors(mock_db, mock_request_popup, provider, expected, caplog):
+    """Callbacks preserve safe evidence and discard unsafe provider descriptions."""
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_gateway = Mock(spec=Gateway)
+    mock_gateway.id = "gateway123"
+    mock_gateway.oauth_config = {"authorization_url": "https://auth.example.com", "token_url": "https://auth.example.com/token"}
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+    with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+        mock_oauth_manager = Mock()
+        mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+        mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+            return_value={"gateway_id": "gateway123", "state": "popup.test", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+        )
+        mock_oauth_manager.validate_authorization_response_issuer = AsyncMock()
+        mock_oauth_manager_class.return_value = mock_oauth_manager
+
+        result = await oauth_callback(
+            code=None,
+            state="popup.test",
+            error=provider,
+            error_description="client_secret=unsafe-provider-body",
+            request=mock_request_popup,
+            db=mock_db,
+        )
+    body = result.body.decode()
+    assert result.status_code == 400
+    assert f'"error": "{expected}"' in body
+    assert f'"errorCode": "{expected}"' in body
+    assert '"failedStage": "authorization"' in body
+    assert '"errorDescription"' in body
+    assert "unsafe-provider-body" not in body
+    assert "unsafe-provider-body" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["token_url_unreachable", "redirect_uri_mismatch", "token_exchange_failed"])
+async def test_callback_preserves_safe_exchange_codes(mock_db, mock_request_popup, mock_gateway, error_code, caplog):
+    """Token-exchange errors retain safe structured fields without exposing exception details."""
+    from mcpgateway.routers.oauth_router import oauth_callback
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+    manager = Mock()
+    manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+    manager.consume_and_validate_authorization_state = AsyncMock(
+        return_value={"gateway_id": "gateway123", "state": "popup.state", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+    )
+    manager.complete_authorization_code_flow = AsyncMock(side_effect=OAuthError("unsafe-exchange-body", error_code=error_code))
+    with patch("mcpgateway.routers.oauth_router.OAuthManager", return_value=manager):
+        result = await oauth_callback(code="code", state="popup.state", request=mock_request_popup, db=mock_db)
+    body = result.body.decode()
+    assert result.status_code == 400
+    assert f'"errorCode": "{error_code}"' in body
+    assert '"failedStage": "token_exchange"' in body
+    assert '"errorDescription"' in body
+    assert "unsafe-exchange-body" not in body
+    assert "unsafe-exchange-body" not in caplog.text
+
+
+class TestGetGatewayOauthToken:
+    """Tests for GET /oauth/token/{gateway_id} (get_gateway_oauth_token)."""
+
+    @pytest.fixture
+    def mock_current_user(self):
+        """A dict-typed user, as ``@require_permission`` requires at runtime."""
+        return _AttrDict(email="test@example.com", full_name="Test User", is_active=True, is_admin=False)
+
+    @pytest.fixture
+    def audit(self):
+        """Replace the audit trail service and expose its ``log_action`` mock."""
+        with patch("mcpgateway.routers.oauth_router.get_audit_trail_service") as service:
+            yield service.return_value.log_action
+
+    @pytest.fixture
+    def enabled(self):
+        """Enable token retrieval on the router settings with the default refresh threshold."""
+        with patch("mcpgateway.routers.oauth_router.settings") as router_settings:
+            router_settings.oauth_token_retrieval_enabled = True
+            router_settings.oauth_token_refresh_threshold_seconds = 600
+            yield router_settings
+
+    @staticmethod
+    def _call(mock_request, user, db):
+        return get_gateway_oauth_token("gateway123", mock_request, current_user=user, db=db)
+
+    @staticmethod
+    def _assert_refused(audit, reason):
+        audit.assert_called_once()
+        kwargs = audit.call_args.kwargs
+        assert kwargs["action"] == "gateway.oauth_token_issuance"
+        assert kwargs["resource_type"] == "gateway"
+        assert kwargs["resource_id"] == "gateway123"
+        assert kwargs["success"] is False
+        assert kwargs["error_message"] == reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error,status,reason",
+        [
+            (TokenReauthorizationRequired("secret-value"), 409, "reauth_required"),
+            (OAuthError("secret-value"), 502, "provider_error"),
+            (ValueError("secret-value"), 503, "token_unreadable"),
+            (RuntimeError("secret-value"), 503, "storage_error"),
+        ],
+    )
+    async def test_backend_errors_hide_tokens_and_are_audited(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog, error, status, reason):
+        """Backend failures map to HTTP errors and audit entries without disclosing exception contents."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        error.__cause__ = ValueError("secret-value")
+        storage = AsyncMock()
+        storage.get_user_token_details.side_effect = error
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as raised:
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        assert raised.value.status_code == status
+        assert "secret-value" not in raised.value.detail
+        assert "secret-value" not in caplog.text
+        assert "secret-value" not in repr(audit.call_args)
+        self._assert_refused(audit, reason)
+        if status == 503:
+            assert type(error).__name__ in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_vault_invalid_grant_revokes_and_returns_409(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog):
+        """A rejected Vault refresh grant revokes stored tokens and requires authorization."""
+        from pydantic import SecretStr
+
+        from mcpgateway.config import get_settings
+        from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend
+        from mcpgateway.services.token_storage_service import TokenStorageService
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        settings = get_settings().model_copy(update={"oauth_token_backend": "vault", "vault_token": SecretStr("example-vault")})
+        data = {
+            "token": {"access_token": "example-access", "refresh_token": "example-refresh"},
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(),
+        }
+        with (
+            patch("mcpgateway.services.token_storage_service.get_settings", return_value=settings),
+            patch.object(VaultTokenBackend, "_resolve_mcp_url", return_value="https://provider.example/mcp"),
+            patch.object(VaultTokenBackend, "_vault_request", new_callable=AsyncMock) as vault_request,
+            patch.object(VaultTokenBackend, "_refresh_token_details", new_callable=AsyncMock) as refresh,
+        ):
+            storage = TokenStorageService(mock_db, {"email": "test@example.com", "teams": ["team-1"]})
+            vault_request.return_value = {"data": {"data": data}}
+            refresh.side_effect = OAuthInvalidGrantError("example-access example-refresh")
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+                with pytest.raises(HTTPException) as raised:
+                    await self._call(mock_request, mock_current_user, mock_db)
+
+        assert raised.value.status_code == 409
+        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE"]
+        for token in ("example-access", "example-refresh"):
+            assert token not in raised.value.detail
+            assert token not in caplog.text
+        self._assert_refused(audit, "reauth_required")
+
+    @pytest.mark.asyncio
+    async def test_denied_without_gateway_token_read_permission(self, mock_db, mock_request):
+        """A caller without gateways.token_read cannot start a gateway lookup."""
+        with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
+            mock_permission_service = Mock()
+            mock_permission_service.check_permission = AsyncMock(return_value=False)
+            mock_permission_service_class.return_value = mock_permission_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await self._call(mock_request, {"email": "no-perms@example.com", "is_admin": False}, mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flag_disabled_returns_plain_404(self, mock_db, mock_current_user, mock_request, audit):
+        """A disabled feature looks like a missing route and does not name the setting."""
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.oauth_token_retrieval_enabled = False
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Not Found"
+        assert "OAUTH_TOKEN_RETRIEVAL_ENABLED" not in exc.value.detail
+        mock_db.execute.assert_not_called()
+        audit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gateway_not_found_returns_404(self, mock_db, mock_current_user, mock_request, audit, enabled):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 404
+        assert "Gateway not found" in exc.value.detail
+        self._assert_refused(audit, "gateway_not_found")
+
+    @pytest.mark.asyncio
+    async def test_no_gateway_access_returns_403(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch(
+            "mcpgateway.routers.oauth_router._enforce_gateway_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403, detail="You don't have access to this gateway")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 403
+        self._assert_refused(audit, "access_denied")
+
+    @pytest.mark.asyncio
+    async def test_identity_without_email_returns_401_before_token_lookup(self, mock_db, mock_request, mock_gateway, audit, enabled):
+        """An identity with no email is refused with 401 before any token lookup runs."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        storage = AsyncMock()
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, _AttrDict(is_admin=False), mock_db)
+
+        assert exc.value.status_code == 401
+        storage.get_user_token_details.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_oauth_config_returns_400(self, mock_db, mock_current_user, mock_request, audit, enabled):
+        gateway = Mock(spec=Gateway)
+        gateway.oauth_config = None
+        gateway.visibility = "public"
+        gateway.team_id = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 400
+        assert "not configured for OAuth" in exc.value.detail
+        self._assert_refused(audit, "not_oauth")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "password", "token-exchange", None])
+    async def test_non_authorization_code_grant_returns_400(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, grant_type):
+        """Grant types without a per-user token row are rejected before any token lookup."""
+        mock_gateway.oauth_config = {**mock_gateway.oauth_config, "grant_type": grant_type}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_storage = AsyncMock()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 400
+        assert "Authorization Code flow" in exc.value.detail
+        mock_storage.get_user_token_details.assert_not_called()
+        self._assert_refused(audit, "unsupported_grant")
+
+    @pytest.mark.asyncio
+    async def test_no_stored_token_returns_404(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            with pytest.raises(HTTPException) as exc:
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        assert exc.value.status_code == 404
+        assert "No OAuth token found" in exc.value.detail
+        self._assert_refused(audit, "no_token")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("threshold", [0, 600, 3600])
+    async def test_happy_path_returns_access_token_only(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, threshold):
+        """Returns the access token and its stored type, passes the operator threshold, and never carries a refresh token."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        enabled.oauth_token_refresh_threshold_seconds = threshold
+
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(
+            return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc), scopes=["read", "write"], token_type="bearer")
+        )
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            result = await self._call(mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, OAuthAccessTokenResponse)
+        body = result.model_dump()
+        assert body == {
+            "gateway_id": "gateway123",
+            "access_token": "live-access-tok",
+            "token_type": "bearer",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+            "scopes": ["read", "write"],
+        }
+        mock_storage.get_user_token_details.assert_awaited_once_with("gateway123", "test@example.com", threshold_seconds=threshold)
+
+    @pytest.mark.asyncio
+    async def test_happy_path_audits_success_without_token(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
+        """A successful issuance writes one audit entry that never contains the token value."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="super-secret-live-token", expires_at=None, scopes=["read"]))
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            await self._call(mock_request, mock_current_user, mock_db)
+
+        audit.assert_called_once()
+        kwargs = audit.call_args.kwargs
+        assert kwargs["action"] == "gateway.oauth_token_issuance"
+        assert kwargs["resource_type"] == "gateway"
+        assert kwargs["resource_id"] == "gateway123"
+        assert kwargs["user_id"] == "test@example.com"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["request_path"] == "/oauth/token/gateway123"
+        assert kwargs["request_method"] == "GET"
+        assert kwargs["success"] is True
+        assert kwargs["error_message"] is None
+        assert "super-secret-live-token" not in repr(audit.call_args)
+
+    def test_route_declares_no_query_parameters_or_refresh_token(self):
+        """A caller cannot choose the refresh threshold, and the response schema has no refresh_token field."""
+        from mcpgateway.routers.oauth_router import oauth_router
+
+        route = next(r for r in oauth_router.routes if r.endpoint is get_gateway_oauth_token)
+
+        assert route.dependant.query_params == []
+        assert route.response_model is OAuthAccessTokenResponse
+        assert "refresh_token" not in OAuthAccessTokenResponse.model_fields
+
+    @pytest.mark.asyncio
+    async def test_happy_path_missing_token_info_defaults_to_none(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled):
+        """Missing token metadata (e.g. backend returns None) shouldn't blow up the response."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="live-access-tok", expires_at=None, scopes=None))
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+            result = await self._call(mock_request, mock_current_user, mock_db)
+
+        assert result.access_token == "live-access-tok"
+        assert result.token_type == "Bearer"
+        assert result.expires_at is None
+        assert result.scopes is None
+
+    @pytest.mark.asyncio
+    async def test_happy_path_logs_issuance_without_leaking_token(self, mock_db, mock_current_user, mock_request, mock_gateway, audit, enabled, caplog):
+        """Successful issuance is logged for forensic traceability, but the token value itself must never appear in logs."""
+        import logging
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_storage = AsyncMock()
+        mock_storage.get_user_token_details = AsyncMock(return_value=AccessTokenDetails(access_token="super-secret-live-token", expires_at=None, scopes=["read"]))
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.routers.oauth_router"):
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=mock_storage):
+                await self._call(mock_request, mock_current_user, mock_db)
+
+        issuance_logs = [r.message for r in caplog.records if "gateway123" in r.message and "issued" in r.message]
+        assert len(issuance_logs) == 1
+        assert "test@example.com" in issuance_logs[0]
+        assert "super-secret-live-token" not in caplog.text
+
+
+class TestCimdRegistrationPreference:
+    """CIMD is preferred over the deprecated DCR fallback at authorize time."""
+
+    @staticmethod
+    def _gateway(mock_db):
+        gateway = Mock(spec=Gateway)
+        gateway.id = "gateway123"
+        gateway.name = "Gateway"
+        gateway.url = "https://mcp.example.com"
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.auth_type = None
+        gateway.oauth_config = {"grant_type": "authorization_code", "issuer": _DCR_ISSUER, "redirect_uri": "https://gateway.example.com/oauth/callback"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+        return gateway
+
+    @pytest.mark.asyncio
+    async def test_cimd_supported_skips_dcr(self, mock_db, mock_request, mock_current_user):
+        """A CIMD-capable AS gets the document URL as client_id and DCR is never called."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        fake_dcr.get_or_register_client.assert_not_awaited()
+        assert gateway.oauth_config["client_id"] == fake_cimd.client_id
+        assert gateway.oauth_config["token_endpoint_auth_method"] == "none"
+        assert "client_secret" not in gateway.oauth_config
+        assert gateway.auth_type == "oauth"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cimd_cross_origin_endpoint_rejected(self, mock_db, mock_request, mock_current_user):
+        """The issuer-origin gate on discovered endpoints applies to CIMD too."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        self._gateway(mock_db)
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": "https://evil.example.net/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr), patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd):
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 500
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dcr_fallback_logs_deprecation_without_secrets(self, mock_db, mock_request, mock_current_user, caplog):
+        """When CIMD is unsupported, DCR runs and a deprecation warning is logged."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        self._gateway(mock_db)
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
+        fake_cimd.is_applicable = AsyncMock(return_value=False)
+
+        with (
+            caplog.at_level("WARNING", logger="mcpgateway.routers.oauth_router"),
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_dcr.get_or_register_client.assert_awaited_once()
+        assert "deprecates" in caplog.text
+        assert "client-123" not in [r.getMessage() for r in caplog.records if r.levelname == "WARNING"][0]
+
+    @pytest.mark.asyncio
+    async def test_registration_method_persisted_cimd(self, mock_db, mock_request, mock_current_user):
+        """CIMD flow persists registration_method: 'cimd'."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert gateway.oauth_config["registration_method"] == "cimd"
+
+    @pytest.mark.asyncio
+    async def test_registration_method_persisted_dcr(self, mock_db, mock_request, mock_current_user):
+        """DCR flow persists registration_method: 'dcr'."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
+        fake_cimd.is_applicable = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert gateway.oauth_config["registration_method"] == "dcr"
+
+    @pytest.mark.asyncio
+    async def test_registration_method_override_force_cimd(self, mock_db, mock_request, mock_current_user):
+        """Gateway config registration_method: 'cimd' forces CIMD bypass of AS metadata check but not of the local guards."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "cimd"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.failed_guard = Mock(return_value=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=False)  # Normally fails auto selection
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert gateway.oauth_config["client_id"] == fake_cimd.client_id
+        assert gateway.oauth_config["registration_method"] == "cimd"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("guard", ["cimd_disabled", "client_id_not_https", "redirect_uri_mismatch", "issuer_not_allowed"])
+    async def test_registration_method_force_cimd_rejected_by_guard(self, mock_db, mock_request, mock_current_user, guard):
+        """A forced registration_method: 'cimd' is refused when a local CIMD guard fails."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "cimd"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_dcr.get_or_register_client = AsyncMock()
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.failed_guard = Mock(return_value=guard)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock()
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert guard in exc_info.value.detail
+        assert "client_id" not in gateway.oauth_config
+        assert gateway.oauth_config["registration_method"] == "cimd"
+        fake_dcr.get_or_register_client.assert_not_called()
+        fake_dcr.discover_as_metadata.assert_not_called()
+        mock_oauth_mgr.return_value.initiate_authorization_code_flow.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_registration_method_override_force_dcr(self, mock_db, mock_request, mock_current_user):
+        """Gateway config registration_method: 'dcr' forces DCR bypass of CIMD."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "dcr"
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)  # Normally would choose CIMD
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert gateway.oauth_config["client_id"] == "client-123"
+        assert gateway.oauth_config["registration_method"] == "dcr"
+
+    @pytest.mark.asyncio
+    async def test_dcr_fallback_warning_names_issuer(self, mock_db, mock_request, mock_current_user, caplog):
+        """The fallback log warning explicitly names the issuer that does not support CIMD."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        self._gateway(mock_db)
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(as_metadata=None, skip_reason="not_advertised")
+        fake_cimd.is_applicable = AsyncMock(return_value=False)
+
+        with (
+            caplog.at_level("WARNING", logger="mcpgateway.routers.oauth_router"),
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(_DCR_ISSUER in msg for msg in warning_msgs)
+
+    @pytest.mark.asyncio
+    async def test_unknown_registration_method_falls_back_to_auto(self, mock_db, mock_request, mock_current_user):
+        """An unrecognized stored registration_method is treated as auto."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["registration_method"] = "bogus"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_cimd.is_applicable.assert_awaited_once()
+        assert gateway.oauth_config["registration_method"] == "cimd"
+
+    @pytest.mark.asyncio
+    async def test_cimd_reuses_applicability_metadata(self, mock_db, mock_request, mock_current_user):
+        """AS metadata fetched by is_applicable fills endpoints without a second discovery call."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock()
+        metadata = {"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"}
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=metadata)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_dcr.discover_as_metadata.assert_not_awaited()
+        assert gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/token"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "skip_reason,expected",
+        [("not_advertised", "does not advertise"), ("discovery_failed", "CIMD was skipped (discovery_failed)"), ("redirect_uri_mismatch", "CIMD was skipped (redirect_uri_mismatch)")],
+    )
+    async def test_dcr_fallback_warning_states_actual_reason(self, mock_db, mock_request, mock_current_user, caplog, skip_reason, expected):
+        """The fallback warning names why CIMD was skipped instead of blaming the issuer."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        self._gateway(mock_db)
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        fake_dcr = Mock()
+        fake_dcr.get_or_register_client = AsyncMock(return_value=_Registered())
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={"authorization_endpoint": f"{_DCR_ISSUER}/auth", "token_endpoint": f"{_DCR_ISSUER}/token"})
+        fake_cimd = Mock(as_metadata=None, skip_reason=skip_reason)
+        fake_cimd.is_applicable = AsyncMock(return_value=False)
+
+        with (
+            caplog.at_level("WARNING", logger="mcpgateway.routers.oauth_router"),
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(expected in msg for msg in warnings)
+
+    @pytest.mark.asyncio
+    async def test_cimd_skips_discovery_when_endpoints_configured(self, mock_db, mock_request, mock_current_user):
+        """Configured authorization and token URLs are kept and AS metadata is not fetched."""
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        gateway = self._gateway(mock_db)
+        gateway.oauth_config["authorization_url"] = f"{_DCR_ISSUER}/configured-auth"
+        gateway.oauth_config["token_url"] = f"{_DCR_ISSUER}/configured-token"
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock()
+        fake_cimd = Mock(client_id="https://gateway.example.com/oauth/client-metadata.json", as_metadata=None)
+        fake_cimd.is_applicable = AsyncMock(return_value=True)
+
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.routers.oauth_router.CimdService", return_value=fake_cimd),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr.return_value.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": f"{_DCR_ISSUER}/auth", "state": "test-state"})
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        fake_dcr.discover_as_metadata.assert_not_awaited()
+        assert gateway.oauth_config["token_url"] == f"{_DCR_ISSUER}/configured-token"
+
+
+class TestCimdIntegration:
+    """Authorize -> callback integration tests against a CIMD-capable mock Authorization Server."""
+
+    @pytest.mark.asyncio
+    async def test_cimd_authorize_to_callback_integration(self, mock_db, mock_request, mock_current_user):
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow, oauth_callback
+
+        # 1. Setup Gateway with OAuth issuer, but no client_id
+        gateway = Mock(spec=Gateway)
+        gateway.id = "gateway_cimd_int"
+        gateway.name = "Cimd Gateway"
+        gateway.url = "https://mcp.example.com"
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.auth_type = None
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://mock-as.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback"
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        # Mock DCR Service metadata discovery (the mock AS supports CIMD)
+        fake_dcr = Mock()
+        fake_dcr.discover_as_metadata = AsyncMock(return_value={
+            "authorization_endpoint": "https://mock-as.example.com/auth",
+            "token_endpoint": "https://mock-as.example.com/token",
+            "client_id_metadata_document_supported": True
+        })
+
+        # Mock settings for CimdService to ensure client_id and redirect_uri are https:// and match
+        from types import SimpleNamespace
+        mock_settings = SimpleNamespace(
+            cimd_enabled=True,
+            well_known_enabled=True,
+            app_domain="https://gateway.example.com",
+            app_root_path="",
+            dcr_allowed_issuers=[],
+            cimd_client_metadata_url=None,
+            cimd_token_endpoint_auth_method="none",
+            cimd_document_cache_seconds=3600,
+            dcr_enabled=True,
+            dcr_auto_register_on_missing_credentials=True,
+            dcr_default_scopes=["openid"],
+            environment="development",
+            auth_encryption_secret="secret-key-at-least-32-chars-long-1234567",
+            secure_cookies=False,
+            csrf_token_expiry=3600,
+            oauth_redirect_allowed_origin=None
+        )
+
+        # 2. Trigger Auth Flow (Authorize Phase)
+        with (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.services.cimd_service.DcrService", return_value=fake_dcr),
+            patch("mcpgateway.services.cimd_service.get_settings", return_value=mock_settings),
+            patch("mcpgateway.routers.oauth_router.settings", mock_settings),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr_class,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+        ):
+            mock_oauth_mgr = mock_oauth_mgr_class.return_value
+            mock_oauth_mgr.initiate_authorization_code_flow = AsyncMock(return_value={"authorization_url": "https://mock-as.example.com/auth?client_id=...", "state": "mock_state_456"})
+
+            response = await initiate_oauth_flow("gateway_cimd_int", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(response, RedirectResponse)
+        # Verify CIMD Client ID and registration_method: "cimd" were persisted
+        assert gateway.oauth_config["client_id"] == "https://gateway.example.com/oauth/client-metadata.json"
+        assert gateway.oauth_config["registration_method"] == "cimd"
+        assert gateway.oauth_config["token_endpoint_auth_method"] == "none"
+        assert gateway.auth_type == "oauth"
+
+        # 3. Simulate AS Callback (Callback/Token Exchange Phase)
+        mock_request.url.path = "/oauth/callback"
+        mock_request.query_params = {"code": "mock_code_123", "state": "mock_state_456"}
+
+        with (
+            patch("mcpgateway.routers.oauth_router.settings", mock_settings),
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr_class,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService"),
+            patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock),
+        ):
+            mock_mgr = mock_oauth_mgr_class.return_value
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gateway_cimd_int")
+            mock_mgr.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway_cimd_int", "state": "mock_state_456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None}
+            )
+            mock_mgr.validate_authorization_response_issuer = AsyncMock()
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value={
+                "state_data": {
+                    "app_user_email": "user@example.com",
+                    "team_id": None
+                },
+                "token_response": {
+                    "access_token": "mock_access_token_abc"
+                }
+            })
+
+            callback_response = await oauth_callback(
+                request=mock_request,
+                code="mock_code_123",
+                state="mock_state_456",
+                db=mock_db
+            )
+
+        assert callback_response.status_code == 200
+        # Assert complete_authorization_code_flow was called with the persisted CIMD config plus the derived resource
+        expected_config = gateway.oauth_config.copy()
+        expected_config["resource"] = "https://mcp.example.com"
+        mock_mgr.complete_authorization_code_flow.assert_awaited_once_with(
+            "gateway_cimd_int",
+            "mock_code_123",
+            "mock_state_456",
+            expected_config,
+            ca_certificate=None,
+            client_cert=None,
+            client_key=None,
+            default_redirect_uri="https://gateway.example.com/oauth/callback",
+            iss=None,
+            validated_state={"gateway_id": "gateway_cimd_int", "state": "mock_state_456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None},
+        )

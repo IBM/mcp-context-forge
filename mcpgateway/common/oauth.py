@@ -63,6 +63,18 @@ SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS: frozenset[str] = frozenset(
 
 DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG: str = "RS256"
 
+# RFC 8693 delegation: where a token-exchange gateway gets the actor_token that
+# names ContextForge as the acting party. "none" keeps impersonation semantics.
+ACTOR_TOKEN_SOURCE_NONE: str = "none"
+ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS: str = "client_credentials"
+ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION: str = "client_assertion"
+ACTOR_TOKEN_SOURCES: tuple[str, ...] = (ACTOR_TOKEN_SOURCE_NONE, ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS, ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION)
+DEFAULT_ACTOR_TOKEN_TYPES: dict[str, str] = {
+    ACTOR_TOKEN_SOURCE_CLIENT_CREDENTIALS: "urn:ietf:params:oauth:token-type:access_token",  # nosec B105 - RFC 8693 URI  # pragma: allowlist secret
+    ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION: "urn:ietf:params:oauth:token-type:jwt",  # nosec B105 - RFC 8693 URI  # pragma: allowlist secret
+}
+
+
 # Method used when ``token_endpoint_auth_method`` is absent, null, empty, or
 # whitespace-only (RFC 6749 Section 2.3.1). Configurations written before this
 # field existed rely on it, so every boundary must agree on the fallback.
@@ -91,6 +103,26 @@ _EC_SIGNING_ALG_CURVES: dict[str, type] = {
     "ES384": ec.SECP384R1,
     "ES512": ec.SECP521R1,
 }
+
+
+def is_delegation_config(oauth_config: Any) -> bool:
+    """Report whether a token-exchange config requests RFC 8693 delegation.
+
+    Args:
+        oauth_config: Gateway ``oauth_config``, or ``None``.
+
+    Returns:
+        True when ``actor_token_source`` names a source other than ``none``.
+
+    Examples:
+        >>> is_delegation_config({"actor_token_source": "client_credentials"})
+        True
+        >>> is_delegation_config({"actor_token_source": "none"})
+        False
+        >>> is_delegation_config({}), is_delegation_config(None)
+        (False, False)
+    """
+    return isinstance(oauth_config, dict) and (oauth_config.get("actor_token_source") or ACTOR_TOKEN_SOURCE_NONE) != ACTOR_TOKEN_SOURCE_NONE
 
 
 def is_sensitive_oauth_key(key: Any) -> bool:

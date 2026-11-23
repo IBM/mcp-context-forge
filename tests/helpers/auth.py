@@ -14,9 +14,12 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import secrets
+import string
 from typing import Any
 
 # Third-Party
+from fastapi import Request
 import jwt
 
 # First-Party
@@ -24,6 +27,12 @@ from mcpgateway.utils import create_jwt_token as jwt_util
 
 _UNSET = object()
 _create_jwt_token: Any = jwt_util._create_jwt_token  # pylint: disable=protected-access  # type: ignore[attr-defined]
+
+
+def make_test_password() -> str:
+    """Generate random test passwords without sequential character runs."""
+    pairs = (secrets.choice(string.ascii_letters) + secrets.choice(string.digits) for _ in range(16))
+    return "".join(pairs) + "Aa1!"
 
 
 def make_test_jwt(
@@ -40,6 +49,8 @@ def make_test_jwt(
     include_email_claim: bool = False,
     user_data: dict[str, Any] | None = None,
     extra_payload: dict[str, Any] | None = None,
+    token_use: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Create a standardized JWT for tests while preserving legacy helper semantics.
 
@@ -51,6 +62,10 @@ def make_test_jwt(
         payload["email"] = email
     if extra_payload:
         payload.update(extra_payload)
+    if token_use is not None:
+        payload["token_use"] = token_use
+    if user_id is not None:
+        payload["user_id"] = user_id
 
     # Auto-enable include_user_data when is_admin=True to ensure the claim is embedded
     if is_admin and not include_user_data and user_data is None:
@@ -164,3 +179,24 @@ def make_playwright_api_context(playwright: Any, base_url: str, token: str, *, a
     from tests.helpers.api_helpers import ApiTestHelper  # pylint: disable=import-outside-toplevel
 
     return ApiTestHelper.new_context(playwright, base_url, token, accept=accept or "application/json", extra_headers=extra_headers)
+
+
+def make_test_scope_request(teams: list[str] | None = None) -> Request:
+    """Build resolved request scope for direct handler tests.
+
+    Args:
+        teams: Allowed team IDs, or unrestricted administrator scope.
+
+    Returns:
+        Request with canonical authentication state.
+    """
+    return Request(
+        {
+            "type": "http",
+            "headers": [],
+            "state": {
+                "token_teams": teams,
+                "_jwt_verified_payload": ("unit-test", {"teams": teams, "is_admin": teams is None}),
+            },
+        }
+    )

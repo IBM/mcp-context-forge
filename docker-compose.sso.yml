@@ -37,3 +37,5 @@ services:
       # Keep existing local admin login alongside SSO
       - SSO_AUTO_CREATE_USERS=true
       - SSO_PRESERVE_ADMIN_AUTH=true
+      # Accept external IdP access tokens as API bearer tokens (see make compose-sso-seed-audience)
+      - SSO_API_TOKEN_AUTH_ENABLED=true

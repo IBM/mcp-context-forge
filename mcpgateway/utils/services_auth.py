@@ -232,3 +232,34 @@ def decode_auth(encoded_value: str, *, secret: Optional[str] = None) -> dict:
     ciphertext = combined[12:]
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
     return orjson.loads(plaintext)
+
+
+def rebuild_basic_auth_with_stored_password(stored_auth: Optional[dict], username: str) -> Optional[dict]:
+    """Return a basic-auth header dict that pairs a new username with the stored password.
+
+    Args:
+        stored_auth: Decoded stored credential, expected to hold an ``Authorization: Basic`` header.
+        username: Replacement username.
+
+    Returns:
+        Optional[dict]: The rebuilt header dict, or None when the stored credential is not basic auth.
+
+    Examples:
+        >>> stored = {"Authorization": "Basic " + base64.b64encode(b"old:pw").decode()}
+        >>> rebuilt = rebuild_basic_auth_with_stored_password(stored, "new")
+        >>> base64.b64decode(rebuilt["Authorization"].split(" ", 1)[1]).decode()
+        'new:pw'
+        >>> rebuild_basic_auth_with_stored_password({"Authorization": "Bearer x"}, "new") is None
+        True
+        >>> rebuild_basic_auth_with_stored_password(None, "new") is None
+        True
+    """
+    header = (stored_auth or {}).get("Authorization", "")
+    if not isinstance(header, str) or not header.startswith("Basic "):
+        return None
+    try:
+        _, password = base64.b64decode(header[len("Basic ") :]).decode("utf-8").split(":", 1)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+    return {"Authorization": f"Basic {creds}"}

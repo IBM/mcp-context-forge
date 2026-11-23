@@ -310,7 +310,7 @@ OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     ```bash
     OTEL_EMIT_LANGFUSE_ATTRIBUTES=true
     OTEL_CAPTURE_IDENTITY_ATTRIBUTES=true
-    OTEL_REDACT_FIELDS=password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key
+    OTEL_REDACT_FIELDS=password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential
     OTEL_MAX_TRACE_PAYLOAD_SIZE=32768
     OTEL_CAPTURE_INPUT_SPANS=tool.invoke,prompt.render,llm.proxy
     OTEL_CAPTURE_OUTPUT_SPANS=llm.proxy,llm.chat

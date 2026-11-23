@@ -453,12 +453,14 @@ JWT_SECRET_KEY=your-secret
 # oauth_config in gateway configuration
 ```
 
-The gateway will always process `X-Upstream-Authorization` headers when:
+The gateway renames `X-Upstream-Authorization` to `Authorization` when:
 
-1. The gateway itself uses authentication (`auth_type` in ["basic", "bearer", "oauth"])
+1. The gateway does not store its own upstream credential (`auth_type` is `none`, unset, or `one_time_auth`)
 2. The header value passes security validation
 
-**Note**: `X-Upstream-Authorization` processing is independent of the `ENABLE_HEADER_PASSTHROUGH` flag and always works when the gateway uses authentication. This applies across all transports: REST (`/rpc`), SSE (`/servers/{id}/sse`), WebSocket (`/ws`), and Streamable HTTP (`/mcp`).
+The gateway drops the header and logs a warning when the gateway manages the upstream credential (`auth_type` is `oauth`, `bearer`, `basic`, or `authheaders`, or the OAuth grant is `token-exchange`). A caller cannot replace a stored or exchanged credential.
+
+**Note**: `X-Upstream-Authorization` processing is independent of the `ENABLE_HEADER_PASSTHROUGH` flag. This applies across all transports: REST (`/rpc`), SSE (`/servers/{id}/sse`), WebSocket (`/ws`), and Streamable HTTP (`/mcp`).
 
 #### Security Notes
 

@@ -130,6 +130,9 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 }
 ```
 
+The `instructions` text above is the default text. A virtual server can send other text, or none.
+See [Server Instructions](../manage/api-usage.md#server-instructions).
+
 ### 2. Send Initialized Notification
 
 After successful initialization, send the initialized notification:

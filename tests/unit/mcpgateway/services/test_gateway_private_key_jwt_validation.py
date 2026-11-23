@@ -339,7 +339,7 @@ class TestUpdatePathRejectsMalformedKey:
             gateway: Gateway row stub returned by ``get_for_update``.
         """
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[gateway, None]))
-        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", AsyncMock)
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
 
@@ -351,7 +351,7 @@ class TestUpdatePathRejectsMalformedKey:
 
         db = MagicMock()
         db.rollback = MagicMock()
-        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         service._notify_gateway_updated = AsyncMock()
 
         update = GatewayUpdate(
@@ -389,7 +389,7 @@ class TestUpdatePathRejectsMalformedKey:
 
         db = MagicMock()
         db.rollback = MagicMock()
-        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
         service._notify_gateway_updated = AsyncMock()
 
         update = GatewayUpdate(

@@ -17,6 +17,9 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
+# Local
+from tests.helpers.auth import make_test_scope_request
+
 # Third-Party
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -286,7 +289,7 @@ class _StubTeamService:
         self.create_args = (team_id, user_email, message)
         return self.create_request
 
-    async def cancel_join_request(self, request_id: str, user_email: str):
+    async def cancel_join_request(self, request_id: str, user_email: str, team_id: str):
         self.cancel_args = (request_id, user_email)
         return self.cancel_ok
 
@@ -325,11 +328,11 @@ def test_client_ip_and_user_agent():
     request = MagicMock()
     request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1", "User-Agent": "TestAgent"}
     request.client = SimpleNamespace(host="10.0.0.2")
-    assert admin.get_client_ip(request) == "192.168.1.1"
+    assert admin.get_client_ip(request) == "10.0.0.2"
     assert admin.get_user_agent(request) == "TestAgent"
 
     request.headers = {"X-Real-IP": "10.0.0.5"}
-    assert admin.get_client_ip(request) == "10.0.0.5"
+    assert admin.get_client_ip(request) == "10.0.0.2"
 
     request.headers = {}
     request.client = None
@@ -1301,8 +1304,8 @@ async def test_admin_cancel_join_request_failure(monkeypatch):
 
     _allow_permissions(monkeypatch)
     response = await admin.admin_cancel_join_request("team-1", "req-1", db=mock_db, user=user)
-    assert response.status_code == 400
-    assert "Failed to cancel join request" in _response_text(response)
+    assert response.status_code == 404
+    assert "Join request not found or unavailable" in _response_text(response)
 
 
 @pytest.mark.asyncio
@@ -1331,6 +1334,7 @@ async def test_admin_list_join_requests_owner_no_pending(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
+    request.state.token_teams = ['team-1']
     response = await admin.admin_list_join_requests("team-1", request, db=mock_db, user=user)
     assert response.status_code == 200
     assert "No pending join requests" in _response_text(response)
@@ -1355,6 +1359,7 @@ async def test_admin_list_join_requests_with_entries(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
+    request.state.token_teams = ['team-1']
     response = await admin.admin_list_join_requests("team-1", request, db=mock_db, user=user)
     assert response.status_code == 200
     body = _response_text(response)
@@ -1374,7 +1379,7 @@ async def test_admin_approve_join_request_success(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
-    response = await admin.admin_approve_join_request("team-1", "req-1", db=mock_db, user=user)
+    response = await admin.admin_approve_join_request("team-1", "req-1", db=mock_db, user=user, request=make_test_scope_request(['team-1']))
     assert response.status_code == 200
     assert "Join request approved" in _response_text(response)
     assert "HX-Trigger" in response.headers
@@ -1391,7 +1396,7 @@ async def test_admin_reject_join_request_forwards_team_id(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
-    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user)
+    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user, request=make_test_scope_request(['team-1']))
     assert response.status_code == 200
     assert "Join request rejected" in _response_text(response)
     assert team_service.reject_args == ("team-1", "req-1", "owner@example.com")
@@ -1407,7 +1412,7 @@ async def test_admin_reject_join_request_not_owner(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
-    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user)
+    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user, request=make_test_scope_request(['team-1']))
     assert response.status_code == 403
     assert "Only team owners can reject join requests" in _response_text(response)
 
@@ -1424,6 +1429,7 @@ async def test_admin_leave_team_personal(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
+    request.state.token_teams = ['team-1']
     response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
     assert response.status_code == 400
     assert "Cannot leave your personal team" in _response_text(response)
@@ -1441,6 +1447,7 @@ async def test_admin_leave_team_last_owner(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
+    request.state.token_teams = ['team-1']
     response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
     assert response.status_code == 400
     assert "Cannot leave team as the last owner" in _response_text(response)
@@ -1458,6 +1465,7 @@ async def test_admin_leave_team_success(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
     _allow_permissions(monkeypatch)
+    request.state.token_teams = ['team-1']
     response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
     assert response.status_code == 200
     assert "Successfully left the team" in _response_text(response)
@@ -1566,12 +1574,12 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
     _allow_permissions(monkeypatch)
 
     auth_service._user = SimpleNamespace(is_admin=True)
-    result = await admin.admin_get_all_team_ids(include_inactive=True, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com"})
+    result = await admin.admin_get_all_team_ids(include_inactive=True, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com"}, request=make_test_scope_request(None))
     assert result["team_ids"] == ["team-1", "team-2"]
     assert result["count"] == 2
 
     auth_service._user = SimpleNamespace(is_admin=False)
-    result = await admin.admin_get_all_team_ids(include_inactive=False, visibility="public", q="alp", db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_get_all_team_ids(include_inactive=False, visibility="public", q="alp", db=mock_db, user={"email": "user@example.com"}, request=make_test_scope_request(None))
     assert result["team_ids"] == ["team-3"]
     assert result["count"] == 1
 
@@ -1588,7 +1596,7 @@ async def test_admin_get_all_team_ids_user_not_found(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: MagicMock())
     _allow_permissions(monkeypatch)
 
-    result = await admin.admin_get_all_team_ids(db=mock_db, user={"email": "missing@example.com"})
+    result = await admin.admin_get_all_team_ids(db=mock_db, user={"email": "missing@example.com"}, request=make_test_scope_request(None))
     assert result == {"team_ids": [], "count": 0}
 
 

@@ -7,34 +7,23 @@ Module Description.
 Module documentation...
 """
 
-import importlib
-from unittest.mock import patch
-
+# Third-Party
+from fastapi import FastAPI
 from starlette.applications import Starlette
 
+# First-Party
+import mcpgateway.main as main_module
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
 
-def test_rate_limit_middleware_registered_when_enabled():
+def test_rate_limit_middleware_registered_when_enabled(monkeypatch):
     """Test RateLimitMiddleware is added when enabled."""
-    with (
-        patch("mcpgateway.main.settings.rate_limiting_enabled", True),
-        patch("mcpgateway.main.settings.rate_limiting_redis_enabled", False),
-        patch("mcpgateway.main.settings.rate_limit_critical_rpm", 10),
-        patch("mcpgateway.main.settings.rate_limit_critical_burst", 0),
-        patch("mcpgateway.main.settings.rate_limit_high_rpm", 30),
-        patch("mcpgateway.main.settings.rate_limit_high_burst", 0),
-        patch("mcpgateway.main.settings.rate_limit_medium_rpm", 100),
-        patch("mcpgateway.main.settings.rate_limit_medium_burst", 20),
-        patch("mcpgateway.main.settings.rate_limit_low_rpm", 500),
-        patch("mcpgateway.main.settings.rate_limit_low_burst", 100),
-        patch("mcpgateway.main.settings.rate_limit_lockout_enabled", True),
-        patch("mcpgateway.main.settings.rate_limit_lockout_threshold", 5),
-        patch("mcpgateway.main.settings.rate_limit_lockout_duration_minutes", 15),
-    ):
-        main = importlib.reload(importlib.import_module("mcpgateway.main"))
+    monkeypatch.setattr(main_module.settings, "rate_limiting_enabled", True)
 
-    middleware_classes = [mw.cls.__name__ for mw in main.app.user_middleware]
+    app = FastAPI()
+    main_module._register_middleware(app)  # pylint: disable=protected-access
+
+    middleware_classes = [mw.cls.__name__ for mw in app.user_middleware]
     assert "RateLimitMiddleware" in middleware_classes
 
 

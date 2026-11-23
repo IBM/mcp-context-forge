@@ -13,10 +13,14 @@ And verifies deprecation of old non-compliant endpoints:
 - /servers/{server_id}/.well-known/oauth-protected-resource (server-scoped, returns 301)
 """
 
-import pytest
-from fastapi.testclient import TestClient
+# Standard
 from unittest.mock import MagicMock, patch
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.db import get_db
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError
 
@@ -29,6 +33,8 @@ def mock_server():
     server.enabled = True
     server.visibility = "public"
     server.oauth_enabled = True
+    server.oauth_config_approved = True
+    server.oauth_config_generation = "approved-generation"
     server.oauth_config = {"authorization_servers": ["https://auth.example.com"], "scopes_supported": ["read", "write"]}
     return server
 
@@ -292,6 +298,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_returns_authorization_servers_array(self, mock_server):
         """Test service layer returns authorization_servers as JSON array per RFC 9728."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_db = MagicMock()
@@ -310,6 +317,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_plural_config(self, mock_server):
         """Test service handles authorization_servers config with multiple servers."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_server.oauth_config = {"authorization_servers": ["https://auth.example.com", "https://backup.example.com"], "scopes_supported": ["read"]}
@@ -327,6 +335,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_singular_config_fallback(self, mock_server):
         """Test service reads singular authorization_server config as fallback."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         # Configure with singular form only (legacy)
@@ -345,6 +354,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_resource_url_includes_mcp_suffix(self, mock_server):
         """Test service preserves /mcp suffix in resource URL."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_db = MagicMock()
@@ -359,6 +369,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_disabled_server_raises_not_found(self, mock_server):
         """Test service raises ServerNotFoundError for disabled servers."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_server.enabled = False
@@ -373,6 +384,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_non_public_server_raises_not_found(self, mock_server):
         """Test service raises ServerNotFoundError for non-public servers."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_server.visibility = "private"
@@ -387,6 +399,7 @@ class TestServiceLayerRFC9728Compliance:
 
     def test_service_oauth_not_enabled_raises_error(self, mock_server):
         """Test service raises ServerError when OAuth not enabled."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         mock_server.oauth_enabled = False
@@ -450,6 +463,7 @@ class TestRFC9728SecurityValidation:
 
     def test_only_public_servers_exposed(self, mock_server):
         """Test only public servers expose OAuth metadata."""
+        # First-Party
         from mcpgateway.services.server_service import ServerService
 
         service = ServerService()

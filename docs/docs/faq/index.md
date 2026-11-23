@@ -176,6 +176,8 @@
     2. Rename `X-Upstream-Authorization` to `Authorization` when forwarding to the upstream MCP server
     3. This solves the header conflict and allows different auth tokens for gateway vs upstream
 
+    The rename applies only to gateways that do not store their own upstream credential (`auth_type` of `none` or `one_time_auth`). For `oauth`, `bearer`, `basic`, and `authheaders` gateways, the gateway drops the header and logs a warning.
+
 ---
 
 ## 📡 Tools, Servers & Federation

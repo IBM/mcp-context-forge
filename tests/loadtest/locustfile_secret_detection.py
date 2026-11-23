@@ -3,16 +3,13 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Focused load test for secrets detection plugin performance comparison.
+Focused load test for secrets detection plugin performance.
 This locustfile is specifically designed to benchmark the secrets detection plugin
 by sending prompts with and without secrets to measure detection overhead.
 Usage:
-    make load-test-secret-detection-compare
+    make load-test LOADTEST_LOCUSTFILE=tests/loadtest/locustfile_secret_detection.py \
+        LOADTEST_USERS=100 LOADTEST_SPAWN_RATE=10 LOADTEST_RUN_TIME=60s LOADTEST_PROCESSES=1
 Environment Variables:
-    SECRET_DETECTION_LOADTEST_HOST: Target host URL (default: http://localhost:8080)
-    SECRET_DETECTION_LOADTEST_USERS: Number of concurrent users (default: 100)
-    SECRET_DETECTION_LOADTEST_SPAWN_RATE: Users spawned per second (default: 10)
-    SECRET_DETECTION_LOADTEST_RUN_TIME: Test duration (default: 60s)
     MCPGATEWAY_BEARER_TOKEN: JWT token for authenticated requests
 """
 

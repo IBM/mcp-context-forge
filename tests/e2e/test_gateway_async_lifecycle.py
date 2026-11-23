@@ -199,6 +199,10 @@ async def lifecycle_client(main_app_with_admin_api):
         yield client, main_mod.gateway_service
 
     app.dependency_overrides.clear()
+    # Tests assign AsyncMocks to the shared gateway_service instance; drop them so later tests see the real methods.
+    for patched_method in ("_initialize_gateway", "_initialize_gateway_with_timeout"):
+        vars(main_mod.gateway_service).pop(patched_method, None)
+    vars(main_mod.gateway_service._event_service).pop("publish_event", None)
     user_context_db.close()
     main_mod.SessionLocal = original_main_session_local
     main_mod.validate_token_user = original_validate_token_user
@@ -246,6 +250,7 @@ async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -280,6 +285,7 @@ async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -324,6 +330,7 @@ async def test_sqlite_async_gateway_update_bad_url_defers_failure_to_worker(life
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -436,7 +443,8 @@ async def test_gateway_resource_cold_cache_failure_end_to_end(lifecycle_client, 
                 ],
                 [],
                 [],
-            )
+            None,
+        )
         ),
     )
     monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True, raising=False)

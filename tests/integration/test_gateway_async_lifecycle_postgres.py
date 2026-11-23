@@ -270,6 +270,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -304,6 +305,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -363,6 +365,7 @@ async def test_postgres_gateway_lifecycle_claims_prevent_duplicate_pickup(lifecy
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._process_gateway_lifecycle_batch(first_claim)

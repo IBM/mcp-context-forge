@@ -14,6 +14,7 @@ import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, call, MagicMock, patch
@@ -41,7 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_registry_cache,
     _get_tool_lookup_cache,
     _get_validator_class_and_check,
-    extract_using_jq,
+    apply_response_filter,
     ToolError,
     ToolInvocationError,
     ToolLockConflictError,
@@ -2969,6 +2970,26 @@ class TestCallA2AAgent:
     """Tests for _call_a2a_agent method."""
 
     @pytest.mark.asyncio
+    async def test_call_a2a_agent_passes_protocol_binding(self, tool_service):
+        """The stored protocol_binding is handed to prepare_a2a_invocation."""
+        agent = MagicMock()
+        agent.name = "binding-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.protocol_binding = "http_json"
+
+        prepare = MagicMock(side_effect=RuntimeError("stop here"))
+        with patch("mcpgateway.services.tool_service.prepare_a2a_invocation", prepare):
+            with pytest.raises(RuntimeError, match="stop here"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
+    @pytest.mark.asyncio
     async def test_call_a2a_jsonrpc_agent_with_query(self, tool_service):
         """Should build JSONRPC request for generic agent."""
         agent = MagicMock()
@@ -2990,6 +3011,65 @@ class TestCallA2AAgent:
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
             result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
         assert result == {"result": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_sends_resolved_token(self, tool_service):
+        """Should resolve the agent-level OAuth token and send it as Authorization."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        resolve = AsyncMock(return_value={"Authorization": "Bearer agent-token"})
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", resolve),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"result": "ok"}
+        resolve.assert_awaited_once_with("agent-1", "oauth-agent", "http://agent.example.com/", agent.oauth_config)
+        sent_headers = {key.lower(): value for key, value in mock_client.post.call_args.kwargs["headers"].items()}
+        assert sent_headers["authorization"] == "Bearer agent-token"
+
+    @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_token_failure_raises_agent_error_without_calling_agent(self, tool_service):
+        """A token failure raises A2AAgentError and the agent receives no request."""
+        # First-Party
+        from mcpgateway.services.a2a_oauth import A2AOAuthError
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_client = AsyncMock()
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            with pytest.raises(A2AAgentError, match="token refused"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+        mock_client.post.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_call_a2a_custom_agent(self, tool_service):
@@ -3104,8 +3184,9 @@ class TestCallA2AAgent:
         assert mock_client.post.call_args.args[0] == "http://agent.example.com/"
 
     @pytest.mark.asyncio
-    async def test_call_a2a_agent_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service):
+    async def test_call_a2a_agent_jsonrpc_request_data_prepare_error_is_logged_and_raised(self, tool_service, caplog):
         """If preparing/logging JSONRPC request_data fails, error is logged and re-raised."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.services.tool_service")
 
         class BadRepr:
             def __repr__(self):
@@ -4394,36 +4475,31 @@ class TestConvertToolToReadMetrics:
 
 
 # ---------------------------------------------------------------------------
-# extract_using_jq — error paths (lines 286-289)
+# apply_response_filter — error paths
 # ---------------------------------------------------------------------------
 
 
-class TestExtractUsingJqErrors:
-    def test_jq_filter_returns_none_result(self):
-        """When jq filter produces [None], returns error TextContent in list."""
+class TestApplyResponseFilterErrors:
+    def test_filter_evaluation_error(self):
+        """When the expression fails at runtime, a fixed message is raised and the detail is kept aside."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.cel_runner import CelEvaluationError
 
-        with patch.object(ts, "run_jq_filter", return_value=[None]):
-            result = extract_using_jq({"key": "value"}, ".x")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
+        with patch.object(ts, "evaluate_value", side_effect=CelEvaluationError("KeyError: 'x'")):
+            with pytest.raises(ts.ResponseFilterError, match="^Error applying jsonpath filter$") as excinfo:
+                apply_response_filter({"key": "value"}, "response.x")
+        assert excinfo.value.detail == "KeyError: 'x'"
 
-    def test_jq_filter_exception(self):
-        """When the filter engine raises, a fixed error message is returned."""
+    def test_filter_syntax_error(self):
+        """When the expression does not compile, the message names the engine without the detail."""
         # First-Party
         import mcpgateway.services.tool_service as ts
-        from mcpgateway.utils.jq_runner import JqFilterError
+        from mcpgateway.utils.cel_runner import CelSyntaxError
 
-        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
-            result = extract_using_jq({"data": 1}, "bad_filter")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
-        assert "bad filter" not in result[0].text
+        with patch.object(ts, "evaluate_value", side_effect=CelSyntaxError("bad filter")):
+            with pytest.raises(ts.ResponseFilterError, match="^jsonpath filter is not a valid CEL expression$"):
+                apply_response_filter({"data": 1}, "bad_filter")
 
 
 # ---------------------------------------------------------------------------
@@ -11382,3 +11458,149 @@ class TestUpstreamErrorRelay:
         assert result.is_error is True
         assert result.content[0].text == "Unknown tool: [REDACTED]"
         assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
+
+
+# ---------------------------------------------------------------------------
+# Token-exchange discovery credential never reaches invocation paths
+# ---------------------------------------------------------------------------
+
+
+class TestTokenExchangeDiscoveryInvocationIsolation:
+    """A cached discovery token for a gateway must never authorize a tool call."""
+
+    _TE_DISCOVERY = {
+        "grant_type": "token-exchange",
+        "client_id": "cf",
+        "token_url": "https://as.example.com/token",
+        "target_audience": "aud",
+        "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+    }
+    _USER_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+
+    @staticmethod
+    async def _seed_discovery_cache():
+        """Cache a discovery token for the gateway under its real key.
+
+        Returns:
+            GatewayServiceTokenCache: Cache holding ``svc-discovery-tok``.
+        """
+        # First-Party
+        from mcpgateway.services.gateway_service import build_discovery_oauth_config
+        from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache, service_token_fingerprint
+
+        cache = GatewayServiceTokenCache()
+        fingerprint = service_token_fingerprint(build_discovery_oauth_config(TestTokenExchangeDiscoveryInvocationIsolation._TE_DISCOVERY))
+        await cache.set("discovery", "gw-uuid-1", fingerprint, "svc-discovery-tok", expires_in=3600)
+        return cache
+
+    async def _invoke(self, tool_service, *, request_headers, exchange_side_effect=None, discovery_side_effect=None):
+        """Invoke an MCP tool on a token-exchange gateway with a discovery credential.
+
+        Args:
+            tool_service: ToolService under test.
+            request_headers: Inbound request headers.
+            exchange_side_effect: Optional exception for the per-user exchange.
+            discovery_side_effect: Optional exception for discovery token requests.
+
+        Returns:
+            tuple: ``(result_or_exception, captured_upstream_headers, proxy_mock)``.
+        """
+        # First-Party
+        from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config=dict(self._TE_DISCOVERY))
+        captured_headers: dict[str, str] = {}
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
+
+        def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            captured_headers.update(headers or {})
+
+            class _CM:
+                async def __aenter__(self):
+                    return mock_session
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        tool_service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+        tool_service.oauth_manager = MagicMock()
+        tool_service.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "user-exchanged-tok", "expires_in": 3600}, side_effect=exchange_side_effect)
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="svc-discovery-tok")
+        tool_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600}, side_effect=discovery_side_effect)
+        service_cache = await self._seed_discovery_cache()
+        proxy = MagicMock(side_effect=fake_proxy_client)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _req, base, *_a, **_k: dict(base)),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", proxy),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch("mcpgateway.services.gateway_service.GatewayService._resolve_discovery_header", side_effect=AssertionError("invocation must never use the discovery credential")),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            try:
+                outcome = await tool_service.invoke_tool(MagicMock(), "test_tool", {}, request_headers=request_headers, app_user_email="u@e")
+            except Exception as exc:  # noqa: BLE001 - the deny-path tests assert on the exception
+                outcome = exc
+        assert list(service_cache._mem.values())[0][0] == "svc-discovery-tok"
+        return outcome, captured_headers, proxy
+
+    @pytest.mark.asyncio
+    async def test_tool_call_uses_only_exchanged_user_token(self, tool_service):
+        outcome, captured, _proxy = await self._invoke(tool_service, request_headers={"authorization": f"Bearer {self._USER_JWT}"})
+
+        assert not isinstance(outcome, Exception)
+        assert captured["Authorization"] == "Bearer user-exchanged-tok"
+        assert "svc-discovery-tok" not in repr(captured)
+        assert tool_service.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == self._USER_JWT
+        tool_service.oauth_manager.get_access_token.assert_not_awaited()
+        tool_service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_headers", [None, {}, {"authorization": "Bearer opaque-not-a-jwt"}])
+    async def test_tool_call_without_user_jwt_rejected_without_upstream_request(self, tool_service, request_headers):
+        outcome, captured, proxy = await self._invoke(tool_service, request_headers=request_headers)
+
+        assert isinstance(outcome, ToolInvocationError)
+        proxy.assert_not_called()
+        assert captured == {}
+        tool_service.oauth_manager.token_exchange.assert_not_awaited()
+        tool_service.oauth_manager.get_access_token.assert_not_awaited()
+        tool_service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_discovery_failure_does_not_affect_tool_call(self, tool_service):
+        """When discovery token requests fail, the per-user exchange runs as usual."""
+        outcome, captured, _proxy = await self._invoke(tool_service, request_headers={"authorization": f"Bearer {self._USER_JWT}"}, discovery_side_effect=RuntimeError("discovery as down"))
+
+        assert not isinstance(outcome, Exception)
+        assert captured["Authorization"] == "Bearer user-exchanged-tok"
+        tool_service.oauth_manager.token_exchange.assert_awaited_once()
+
+    def test_invocation_services_never_reference_discovery_resolver(self):
+        """Structural guarantee: invocation services have no path to the discovery credential."""
+        # Standard
+        import inspect
+
+        # First-Party
+        from mcpgateway.services import prompt_service, resource_service, tool_service as tool_service_module
+
+        for module in (tool_service_module, resource_service, prompt_service):
+            source = inspect.getsource(module)
+            for forbidden in ("_resolve_discovery_header", "build_discovery_oauth_config", "GatewayServiceTokenCache", "get_client_credentials_token_response"):
+                assert forbidden not in source, f"{module.__name__} references {forbidden}"

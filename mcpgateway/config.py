@@ -49,26 +49,34 @@ Examples:
 # Standard
 from functools import lru_cache
 from importlib.resources import files
+import ipaddress
 import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, SecretStr, ValidationInfo
+from pydantic_settings import NoDecode
 
-# First-Party
 from mcpgateway._security_constants import calculate_entropy
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+
+# First-Party
+from mcpgateway.config_sections import (
+    DatabaseSettings,
+    ListenerSettings,
+    RedisSettings,
+    TransportSettings,
+)
 from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
@@ -133,7 +141,7 @@ _normalize_env_list_vars()
 
 
 # Default content type for outgoing requests to Forge
-FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+FORGE_CONTENT_TYPE = TransportSettings().forge_content_type
 
 # UI embedding / visibility controls
 UI_HIDABLE_SECTIONS = frozenset(
@@ -175,7 +183,11 @@ class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
 
 
-class Settings(BaseSettings):
+class Settings(  # pylint: disable=too-many-ancestors
+    ListenerSettings,
+    DatabaseSettings,
+    RedisSettings,
+):
     """
     ContextForge AI Gateway configuration settings.
 
@@ -226,22 +238,12 @@ class Settings(BaseSettings):
 
     # Basic Settings
     app_name: str = "ContextForge"
-    host: str = "127.0.0.1"
-    port: PositiveInt = Field(default=4444, ge=1, le=65535)
+    gateway_replicas: int = Field(default=1, description="Gateway replica count used during database bootstrap")
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     api_allow_basic_auth: bool = Field(
         default=False,
         description="Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
-    )
-    database_url: str = Field(
-        default="sqlite:///./mcp.db",
-        description=(
-            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
-            "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma: allowlist secret
-            "(See Issue #1535 for details)"
-        ),
     )
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -399,7 +401,7 @@ class Settings(BaseSettings):
             "/teams/",
             "/llmchat/",
             "/api/logs/",
-            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity/Rust forwards); not browser-reachable
+            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity); not browser-reachable
         ],
         description="Paths exempt from CSRF protection",
     )
@@ -534,6 +536,7 @@ class Settings(BaseSettings):
         description=(
             "Allow an existing account (matched by verified email) to sign in through a different trusted SSO provider, "
             "rebinding it to the new provider. Only applies to email-verified logins that already pass trusted-domain policy. "
+            "Relinking requires the new provider to send an explicit verified-email claim; a login that omits the claim is refused. "
             "This is a single global switch for ALL configured providers, not scoped to a specific trusted pair — enabling it "
             "allows relinking between any two providers on this gateway. Admin status is re-vetted against the new provider "
             "on relink regardless of how admin was originally granted, so a non-admin-granting provider cannot inherit admin. "
@@ -592,6 +595,24 @@ class Settings(BaseSettings):
             "set true to require a valid Bearer token for all /mcp requests."
         ),
     )
+    mcp_listen_max_lifetime_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Maximum lifetime of a subscriptions/listen stream in seconds; a token expiry earlier than this ends the stream sooner",
+    )
+    mcp_listen_max_streams_per_principal: int = Field(
+        default=32,
+        ge=1,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams per authenticated principal on one worker",
+    )
+    mcp_listen_max_anonymous_streams: int = Field(
+        default=256,
+        ge=0,
+        le=1024,
+        description="Maximum concurrent subscriptions/listen streams shared by all anonymous callers on one worker; 0 refuses anonymous streams",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -601,6 +622,36 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    forwarded_allow_ips: str = Field(
+        default="127.0.0.1,::1",
+        description="Comma-separated proxy IPs/CIDRs allowed to set X-Forwarded-For/Proto. '*' trusts every peer and lets clients spoof their IP.",
+    )
+
+    @field_validator("forwarded_allow_ips")
+    @classmethod
+    def validate_forwarded_allow_ips(cls, v: str) -> str:
+        """Reject entries that are neither ``*`` nor a strict IP address or CIDR.
+
+        Uvicorn silently ignores malformed entries, and gunicorn rejects them at startup.
+
+        Args:
+            v: Comma-separated proxy addresses.
+
+        Returns:
+            The unchanged value.
+
+        Raises:
+            ValueError: If an entry is not a valid IP address or network.
+        """
+        if v.strip() == "*":
+            return v
+        for entry in filter(None, (e.strip() for e in v.split(","))):
+            try:
+                ipaddress.ip_network(entry)
+            except ValueError as exc:
+                raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} is not a valid IP address or CIDR network") from exc
+        return v
+
     mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
         default="auto",
         description=(
@@ -708,11 +759,11 @@ class Settings(BaseSettings):
     )
     identity_sign_claims: bool = Field(
         default=False,
-        description="Sign propagated user claims with HMAC for verification",
+        description="Sign propagated user claims as a short-lived HS256 JWS. Requires IDENTITY_CLAIMS_SECRET",
     )
     identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
-        description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
+        description="Dedicated secret for signing propagated identity claims. Required when IDENTITY_SIGN_CLAIMS=true; must differ from JWT_SECRET_KEY",
     )
 
     # ===================================
@@ -979,6 +1030,23 @@ class Settings(BaseSettings):
         default=None,
         description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
     )
+    oauth_token_refresh_threshold_seconds: int = Field(
+        default=600,
+        ge=0,
+        le=3600,
+        description="Seconds before expiry to refresh tokens returned by GET /oauth/token/{gateway_id}.",
+    )
+    oauth_token_retrieval_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable GET /oauth/token/{gateway_id}, which returns the caller's own "
+            "current OAuth access_token for a gateway (auto-refreshed if it is within "
+            "OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS of expiring). The refresh_token is never returned by this "
+            "endpoint. Disabled by default since it exposes a live bearer credential "
+            "to the caller. The Vault backend serializes refreshes per process only, so "
+            "concurrent workers can reuse a rotating refresh token."
+        ),
+    )
 
     @field_validator("oauth_redirect_allowed_origin")
     @classmethod
@@ -1017,6 +1085,9 @@ class Settings(BaseSettings):
     # Token endpoint auth method
     dcr_token_endpoint_auth_method: str = Field(default="client_secret_basic", description="Token endpoint auth method for DCR (client_secret_basic or client_secret_post)")
 
+    # Application type (OpenID Connect Dynamic Client Registration); MCP 2026-07-28 requires one
+    dcr_application_type: Literal["auto", "web", "native"] = Field(default="auto", description="application_type sent in DCR requests; auto picks native for a loopback redirect URI and web otherwise")
+
     # Metadata cache TTL
     dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
 
@@ -1028,6 +1099,89 @@ class Settings(BaseSettings):
         default=False,
         description="Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
     )
+
+    # ===================================
+    # Client ID Metadata Documents (CIMD) - Client Mode
+    # ===================================
+
+    cimd_enabled: bool = Field(
+        default=True,
+        description="Prefer Client ID Metadata Documents over Dynamic Client Registration when the authorization server advertises client_id_metadata_document_supported",
+    )
+
+    cimd_client_name: str = Field(default="ContextForge", description="client_name published in the gateway's Client ID Metadata Document")
+
+    cimd_client_metadata_url: Optional[str] = Field(
+        default=None,
+        description="Optional explicit URL of the gateway's Client ID Metadata Document, overriding the auto-derived URL when served behind a reverse proxy",
+    )
+
+    cimd_token_endpoint_auth_method: Literal["none", "private_key_jwt"] = Field(
+        default="none",
+        description="Preferred token endpoint authentication method for CIMD clients (none or private_key_jwt)",
+    )
+
+    cimd_private_key_path: str = Field(
+        default="",
+        description="Path to the dedicated PEM private key that signs CIMD private_key_jwt client assertions. Never the JWT signing key; required when cimd_token_endpoint_auth_method is private_key_jwt",
+    )
+
+    cimd_previous_public_key_path: str = Field(
+        default="",
+        description="Optional path to the previous CIMD public key PEM, published in the CIMD JWKS during key rotation",
+    )
+
+    cimd_key_id: str = Field(default="cimd-1", description="kid of the CIMD signing key, set in assertion headers and the CIMD JWKS")
+
+    cimd_previous_key_id: str = Field(
+        default="",
+        description="kid published for the previous CIMD public key during rotation. Set it to the former CIMD_KEY_ID so assertions signed before rotation still verify. Defaults to <CIMD_KEY_ID>-previous",
+    )
+
+    cimd_signing_alg: Literal["RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512"] = Field(
+        default="RS256", description="Signing algorithm for CIMD client assertions (RS256, RS384, RS512, PS256, ES256, ES384, ES512)"
+    )
+
+    cimd_document_cache_seconds: int = Field(
+        default=3600,
+        ge=0,
+        description="Cache-Control max-age in seconds for the Client ID Metadata Document public endpoint",
+    )
+
+    @field_validator("cimd_client_metadata_url")
+    @classmethod
+    def validate_cimd_client_metadata_url(cls, url: Optional[str]) -> Optional[str]:
+        """Require the override URL to end with the path the gateway serves the document at.
+
+        Args:
+            url: Configured ``CIMD_CLIENT_METADATA_URL`` value.
+
+        Returns:
+            The URL unchanged, or ``None`` when unset or blank.
+
+        Raises:
+            ValueError: If the URL has a query, a fragment, or a path other than ``/oauth/client-metadata.json``.
+        """
+        if not url:
+            return None
+        parsed = urlsplit(url)
+        if parsed.query or parsed.fragment or not parsed.path.endswith("/oauth/client-metadata.json"):
+            raise ValueError("CIMD_CLIENT_METADATA_URL must end with /oauth/client-metadata.json, the path the gateway serves, and carry no query or fragment")
+        return url
+
+    @model_validator(mode="after")
+    def validate_cimd_private_key_config(self) -> Self:
+        """Require a dedicated key when CIMD authenticates with ``private_key_jwt``.
+
+        Returns:
+            Self for chaining.
+
+        Raises:
+            ValueError: If ``private_key_jwt`` is selected without ``CIMD_PRIVATE_KEY_PATH``.
+        """
+        if self.cimd_enabled and self.cimd_token_endpoint_auth_method == "private_key_jwt" and not self.cimd_private_key_path:
+            raise ValueError("CIMD_TOKEN_ENDPOINT_AUTH_METHOD=private_key_jwt requires CIMD_PRIVATE_KEY_PATH; the JWT signing key is never used")
+        return self
 
     # ===================================
     # OAuth Discovery (RFC 8414)
@@ -1092,7 +1246,7 @@ class Settings(BaseSettings):
     password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
     password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
     password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
-    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
+    password_reset_invalidate_sessions: bool = Field(default=True, description="After a password reset, change, or admin reset, reject sessions issued earlier and revoke the user API tokens")
     password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
 
     # Email delivery for auth notifications
@@ -1132,6 +1286,7 @@ class Settings(BaseSettings):
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
+    mcpgateway_ui_deprecation_notice_enabled: bool = Field(default=True, description="Show the built-in Admin UI deprecation notice")
     mcpgateway_admin_api_enabled: bool = False
 
     # Migration runner ownership.
@@ -1244,7 +1399,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = Field(
         default=False,
         description="Skip SSL certificate verification for ALL outbound HTTPS requests "
-        "(federation, MCP servers, LLM providers, A2A agents). "
+        "(federation, MCP servers, LLM providers, A2A agents, SSO and OIDC discovery, JWKS key fetches). "
         "WARNING: Only enable in dev environments with self-signed certificates.",
     )
     cors_enabled: bool = True
@@ -1671,6 +1826,8 @@ class Settings(BaseSettings):
         empty, placeholder, known-weak, and too-short (below
         ``password_min_length_user``, the OWASP baseline) values when their
         consuming authentication feature is enabled (feature-gated fail-closed).
+        ``identity_claims_secret`` gets the full secret checks when it is set or
+        ``identity_sign_claims`` is on, and must differ from ``jwt_secret_key``.
         No entropy floor is applied to passwords: the Shannon-entropy check used
         for random secrets is a poor signal for human-chosen passwords and the
         length + known-weak-value checks already cover the realistic risk.
@@ -1733,6 +1890,19 @@ class Settings(BaseSettings):
                     min_length=self.password_min_length_user,
                     check_placeholder=True,
                 )
+
+        claims_secret = self.identity_claims_secret.get_secret_value() if self.identity_claims_secret else ""
+        if self.identity_sign_claims or claims_secret:
+            self._enforce_secret_strength(
+                "identity_claims_secret",
+                claims_secret,
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+            )
+            if claims_secret == self.jwt_secret_key.get_secret_value():
+                raise SecurityConfigurationError("identity_claims_secret must differ from jwt_secret_key: upstream servers that verify identity claims hold this secret.")
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
@@ -2125,7 +2295,6 @@ class Settings(BaseSettings):
         return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
     # Logging
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
@@ -2366,7 +2535,19 @@ class Settings(BaseSettings):
     siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
     siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
     siem_export_redact_fields: List[str] = Field(
-        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key"],
+        default_factory=lambda: [
+            "user_email",
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "secret_access_key",
+            "session_token",
+            "x-amz-security-token",
+            "x-amz-signature",
+            "x-amz-credential",
+        ],
         description="Fields to redact before exporting events",
     )
     siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
@@ -2444,6 +2625,7 @@ class Settings(BaseSettings):
     auth_cache_teams_enabled: bool = Field(default=True, description="Enable caching for get_user_teams() (default: true)")
     auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
+    auth_cache_key_version: str = Field(default="v1", description="Redis key version prefix for auth cache namespace isolation")
 
     # Registry Cache Configuration (reduces DB queries for list endpoints)
     registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
@@ -2605,32 +2787,6 @@ class Settings(BaseSettings):
 
         return self
 
-    @field_validator("log_level", mode="before")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        """
-        Normalize and validate the log level value.
-
-        Ensures that the input string matches one of the allowed log levels,
-        case-insensitively. The value is uppercased before validation so that
-        "debug", "Debug", etc. are all accepted as "DEBUG".
-
-        Args:
-            v (str): The log level string provided via configuration or environment.
-
-        Returns:
-            str: The validated and normalized (uppercase) log level.
-
-        Raises:
-            ValueError: If the provided value is not one of
-                {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}.
-        """
-        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        v_up = v.upper()
-        if v_up not in allowed:
-            raise ValueError(f"Invalid log_level: {v}")
-        return v_up
-
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
     mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
@@ -2723,20 +2879,53 @@ class Settings(BaseSettings):
     # jq filter sandbox — see docs/superpowers/specs/2026-08-11-jq-env-disclosure-design.md
     jq_filter_execution: Literal["subprocess", "inprocess"] = Field(
         default="subprocess",
-        description="Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
         "'inprocess' removes both protections and is unsafe; it exists only for platforms where fork is unavailable.",
     )
     jq_filter_timeout_seconds: float = Field(
         default=2.0,
         gt=0,
         le=60,
-        description="Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
     )
     jq_filter_workers: int = Field(
         default=2,
         ge=1,
         le=16,
-        description="Number of forked jq worker processes per gateway worker. Default: 2.",
+        description="Deprecated and ignored since response filters moved to CEL (#6899); removed by #6900. Number of forked jq worker processes per gateway worker. Default: 2.",
+    )
+
+    # CEL expression sandbox: operator-supplied policy expressions on gateway and tool records.
+    cel_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for CEL policy expressions. 'subprocess' runs each evaluation in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections; it exists only for platforms where fork is unavailable.",
+    )
+    cel_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=1.0,
+        description="Wall-clock limit for evaluating one CEL expression, at most 1.0. Exceeding it kills the worker and fails the evaluation. Default: 1.0 seconds.",
+    )
+    cel_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked CEL worker processes per gateway worker. Default: 2.",
+    )
+    # Response filters are CEL expressions supplied by tool registrants. They run in their own
+    # pool, so a runaway filter cannot take out a policy evaluation, with a longer budget for large responses.
+    cel_filter_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        description="Wall-clock limit for running one tool response filter. Exceeding it kills the filter worker and returns an error result. Default: 2.0 seconds.",
+    )
+    cel_filter_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked response-filter worker processes per gateway worker. Default: 2.",
     )
 
     # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.
@@ -2911,7 +3100,13 @@ class Settings(BaseSettings):
     # Modern (2026-07-28) change-event listeners
     # When enabled, the gateway holds one standing subscriptions/listen stream per
     # server to get the list changed event
-    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
+    gateway_modern_listeners_enabled: bool = Field(
+        default=False,
+        description=(
+            "Hold standing subscriptions/listen streams to 2026-era upstream servers for change-driven refresh; "
+            "runs on the primary worker; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster"
+        ),
+    )
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
@@ -2981,7 +3176,6 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 3600
     db_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
     db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
-    db_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
     # Database Performance Optimization
     use_postgresdb_percentiles: bool = Field(
@@ -3020,14 +3214,9 @@ class Settings(BaseSettings):
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
-    redis_url: Optional[str] = "redis://localhost:6379/0"
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
-    redis_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
-    redis_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
-    redis_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
-
     # GlobalConfig In-Memory Cache (Issue #1715)
     # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries
     global_config_cache_ttl: int = Field(
@@ -3051,6 +3240,14 @@ class Settings(BaseSettings):
     redis_parser: Literal["auto", "hiredis", "python"] = Field(
         default="auto",
         description="Redis protocol parser: auto (use hiredis if available), hiredis (require hiredis), python (pure-Python)",
+    )
+
+    # Redis Cluster Mode
+    redis_cluster_mode: bool = Field(
+        default=False,
+        description="Use RedisCluster client for Redis Cluster deployments. "
+        "When enabled, the client handles MOVED/ASK redirects automatically. "
+        "The REDIS_URL must not include a database number (e.g. /0) in cluster mode.",
     )
 
     # Redis Connection Pool - Performance Optimized
@@ -3181,7 +3378,10 @@ class Settings(BaseSettings):
     )
     otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
     otel_redact_fields: str = Field(
-        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid",
+        default=(
+            "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid,"
+            "session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential"
+        ),
         description="Comma-separated trace payload field names to redact before export",
     )
     otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")
@@ -3290,7 +3490,6 @@ Disallow: /
     # ===================================
 
     slug_refresh_batch_size: int = Field(default=1000, description="Batch size for gateway/tool slug refresh at startup")
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
     valid_slug_separator_regexp: ClassVar[str] = r"^(-{1,2}|[_.])$"
@@ -3787,7 +3986,7 @@ Disallow: /
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
     validation_max_json_depth: int = Field(
-        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        default=30,
         description=(
             "Maximum allowed JSON nesting depth for tool/resource schemas. "
             "Increased from 10 to 30 for compatibility with deeply nested schemas "
@@ -3892,7 +4091,7 @@ Disallow: /
     )
 
     # Passthrough headers configuration
-    default_passthrough_headers: List[str] = Field(default_factory=list)
+    default_passthrough_headers: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["X-Tenant-Id", "X-Trace-Id"])
 
     # Passthrough headers source priority
     # - "env": Environment variable always wins (ideal for Kubernetes/containerized deployments)
@@ -3998,6 +4197,29 @@ Disallow: /
 
         return self
 
+    @field_validator("default_passthrough_headers", mode="before")
+    @classmethod
+    def parse_passthrough_headers(cls, value: Any) -> Any:
+        """Parse JSON arrays or comma-separated passthrough header names.
+
+        Args:
+            value: Header names from constructor, environment, or file configuration.
+
+        Returns:
+            A list of header names for validation.
+        """
+        if isinstance(value, str):
+            if not value:
+                return ["X-Tenant-Id", "X-Trace-Id"]
+            try:
+                parsed = orjson.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except orjson.JSONDecodeError:
+                pass
+            return [header.strip() for header in value.split(",") if header.strip()]
+        return value
+
     def __init__(self, **kwargs: Any) -> None:
         """Initialize Settings with environment variable parsing.
 
@@ -4022,25 +4244,9 @@ Disallow: /
         """
         super().__init__(**kwargs)
 
-        # Parse DEFAULT_PASSTHROUGH_HEADERS environment variable
-        default_value = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS")
-        if default_value:
-            try:
-                # Try JSON parsing first
-                self.default_passthrough_headers = orjson.loads(default_value)
-                if not isinstance(self.default_passthrough_headers, list):
-                    raise ValueError("Must be a JSON array")
-            except (orjson.JSONDecodeError, ValueError):
-                # Fallback to comma-separated parsing
-                self.default_passthrough_headers = [h.strip() for h in default_value.split(",") if h.strip()]
-                logger.info(f"Parsed comma-separated passthrough headers: {self.default_passthrough_headers}")
-        else:
-            # Safer defaults without Authorization header
-            self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
-
         # Configure environment-aware CORS origins if not explicitly set via env or kwargs
         # Only apply defaults if using the default allowed_origins value
-        if not os.environ.get("ALLOWED_ORIGINS") and "allowed_origins" not in kwargs and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
+        if "allowed_origins" not in self.model_fields_set and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
             if self.environment == "development":
                 self.allowed_origins = {
                     "http://localhost",

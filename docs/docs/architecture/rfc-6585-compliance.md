@@ -17,8 +17,8 @@ RFC 6585 defines additional HTTP status codes for specific error conditions:
 
 ContextForge uses 429 responses with RFC-compliant headers for rate limiting across multiple surfaces:
 
-**Middleware**: [`RateLimitMiddleware`](../../../mcpgateway/middleware/rate_limit_middleware.py:71)
-**Configuration**: [`config.py`](../../../mcpgateway/config.py:3185-3209)
+**Middleware**: [`RateLimitMiddleware`](https://github.com/IBM/mcp-context-forge/blob/main/mcpgateway/middleware/rate_limit_middleware.py)
+**Configuration**: [`config.py`](https://github.com/IBM/mcp-context-forge/blob/main/mcpgateway/config.py)
 
 ### Response Headers
 
@@ -94,8 +94,8 @@ out, but they remain subject to their ordinary per-minute limit.
 
 ContextForge validates header sizes per RFC 6585 § 5 to prevent resource exhaustion attacks.
 
-**Middleware**: [`HeaderSizeMiddleware`](../../../mcpgateway/middleware/header_size_middleware.py:32)
-**Configuration**: [`config.py`](../../../mcpgateway/config.py:3211-3214)
+**Middleware**: [`HeaderSizeMiddleware`](https://github.com/IBM/mcp-context-forge/blob/main/mcpgateway/middleware/header_size_middleware.py)
+**Configuration**: [`config.py`](https://github.com/IBM/mcp-context-forge/blob/main/mcpgateway/config.py)
 
 ### Validation Rules
 
@@ -296,11 +296,11 @@ def validate_headers(headers):
 
 ### Rate Limiting Tests
 
-See [`test_rate_limit_middleware.py`](../../../tests/unit/mcpgateway/middleware/test_rate_limit_middleware.py) for comprehensive test coverage.
+See [`test_rate_limit_middleware.py`](https://github.com/IBM/mcp-context-forge/blob/main/tests/unit/mcpgateway/middleware/test_rate_limit_middleware.py) for comprehensive test coverage.
 
 ### Header Size Tests
 
-See [`test_header_size_middleware.py`](../../../tests/unit/mcpgateway/middleware/test_header_size_middleware.py) for validation tests.
+See [`test_header_size_middleware.py`](https://github.com/IBM/mcp-context-forge/blob/main/tests/unit/mcpgateway/middleware/test_header_size_middleware.py) for validation tests.
 
 ## Security Considerations
 

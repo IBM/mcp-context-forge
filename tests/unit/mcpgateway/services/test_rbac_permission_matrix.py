@@ -78,6 +78,7 @@ TEAM_ADMIN_PERMISSIONS = sorted(
         "tokens.read",
         "tokens.update",
         "tokens.revoke",
+        "validation_policy.manage",
     ]
 )
 
@@ -182,6 +183,7 @@ MUTATION_PERMISSIONS = sorted(
 
 # Permissions developer should NOT have (team management, admin), excluding fallbacks
 DEVELOPER_DENIED_PERMISSIONS = [
+    "validation_policy.manage",
     "teams.update",
     "teams.delete",
     "teams.manage_members",

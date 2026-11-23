@@ -27,6 +27,24 @@ The gateway forwards the reference, argument, context, and request `_meta` to th
 owning upstream. Local schema completion remains available for local references.
 An upstream without `completions` returns JSON-RPC `-32601` on MCP routes.
 
+## Terminology aliases
+
+The product calls a registered upstream an "MCP server" and a virtual server a "virtual server". The API keeps the original names and also accepts the product names in requests.
+
+| Original | Alias | Where |
+|----------|-------|-------|
+| `gateway_id` | `mcp_server_id` | Tool, resource, and prompt create and update bodies; the MCP-server handshake test body |
+| `gateway_id` | `mcp_server_id` | Query filter on `GET /tools`, `GET /resources`, `GET /prompts`, and `GET /v1/search` |
+| `server` | `virtual_server` | Top-level key of the `POST /servers` and `POST /v1/virtual-servers` body |
+
+Rules:
+
+- Both spellings work in requests.
+- Responses that carry `gatewayId` also carry `mcpServerId` with the same value: tool, resource, and prompt records, the MCP-server refresh result, and the impact preview. Responses keep the original keys. The legacy keys stay until a later release announces their removal.
+- Camel-case bodies accept `mcpServerId` where they accept `gatewayId`.
+- A request that sends both spellings with different values returns `422`.
+- A request that sends both spellings with the same value is accepted.
+
 ## Prerequisites
 
 Before using the API, you need to:
@@ -347,7 +365,7 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
-Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
 **Async create response example (`202 Accepted`):**
 
@@ -912,6 +930,55 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
+
+### Server Instructions
+
+A virtual server tells each MCP client how to use it. The text is the `instructions` field of the handshake result:
+
+- Legacy era (`2025-11-25` and earlier): the `initialize` result.
+- Modern era (`2026-07-28`): the `server/discover` result.
+
+The gateway chooses the text in this order:
+
+1. **Operator override.** The `instructions` field of the virtual server, when it is not `null`.
+   An empty string (`""`) is an override that sends no `instructions` field.
+2. **Upstream text.** The text of the upstream server, when the virtual server is single-upstream.
+   A virtual server is single-upstream when every tool, resource, and prompt comes from the same registered gateway
+   and the virtual server has no A2A agent. A virtual server that uses only some tools of one gateway is single-upstream.
+   When that upstream server sends no text, the virtual server sends the default text.
+   A caller that cannot see the upstream gateway also receives the default text.
+3. **Default text.** Every other virtual server, and the global `/mcp` endpoint, send the default text.
+
+```bash
+# Set an override
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": "Call get_system_time before any other tool."}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+
+# Send no instructions field
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": ""}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+
+# Remove the override and use the upstream or default text again
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instructions": null}' \
+  $BASE_URL/servers/$SERVER_ID | jq '.instructions'
+```
+
+A request that omits `instructions` leaves the override unchanged. The maximum length is 8192 characters.
+The Admin UI shows the same field as **Instructions** on the create and edit forms. A blank field means `null`.
+
+!!! note "When upstream text changes"
+    The gateway stores the upstream text when it connects to the upstream server and when it refreshes the gateway.
+    A change on the upstream server reaches clients after the next refresh, not on the next request.
+
+!!! warning "Upstream text is untrusted"
+    A client can place `instructions` in the prompt of a model. A malicious or faulty upstream server can use this
+    to steer the model. If you do not trust an upstream server, set an override on each virtual server that uses it.
 
 ### Enable/Disable Server
 
@@ -1713,6 +1780,28 @@ A2A (Agent-to-Agent) enables integration with external AI agents.
 
 !!! note "A2A Feature Flag"
     A2A features must be enabled via `MCPGATEWAY_A2A_ENABLED=true` in your `.env` file.
+
+### Detect Whether A2A Is Enabled
+
+`GET /auth/email/me` returns a `features` object that any authenticated user can read:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/email/me | jq '.features'
+# { "a2a": false }
+```
+
+When A2A is disabled, every A2A route returns 404 with `{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}`. Unauthenticated callers receive 401.
+
+Status changes from earlier releases:
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/a2a/*`, `/v1/a2a/*` | 404, generic body | 404, typed body |
+| `GET /admin/a2a` | 200, empty page | 404, typed body |
+| `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial` | 500 or 200 | 404, typed body |
+| `POST /admin/a2a` | 403, `success: false` | 404, typed body |
+| `POST /admin/a2a/{agent_id}/test` | 403, `success: false` | 404, typed body |
+| `POST /metrics/reset`, entity `a2a` | 400, "A2A features are disabled" | 404, typed body |
 
 ### List All A2A Agents
 

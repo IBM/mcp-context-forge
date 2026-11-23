@@ -7,8 +7,10 @@ Additional tests to improve coverage for session_registry.py.
 Targets specific uncovered lines and branches.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import json
 import logging
@@ -16,9 +18,12 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
 from mcpgateway.config import settings
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 
@@ -2032,6 +2037,8 @@ class TestGetOauthExperimentalConfig:
         caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://auth.example.com"],
             "scopes_supported": ["read", "write"],
@@ -2059,6 +2066,8 @@ class TestGetOauthExperimentalConfig:
         """Lines 1722-1723: oauth_config with authorization_server (singular)."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://auth.example.com",
             "scopes": ["read"],
@@ -2084,6 +2093,8 @@ class TestGetOauthExperimentalConfig:
         """Lines 1733: No authorization_servers key - returns None."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "scopes": ["read"],
         }
@@ -2126,6 +2137,7 @@ class TestHandleInitializeLogicEdgeCases:
     async def test_initialize_with_server_id_oauth(self, registry, monkeypatch):
         """Lines 1801-1804: OAuth config queried for server_id."""
         monkeypatch.setattr("asyncio.to_thread", AsyncMock(return_value={"oauth": {"authorization_servers": ["https://auth.example.com"]}}))
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", AsyncMock(return_value=None))
 
         body = {"protocol_version": settings.protocol_version}
         result = await registry.handle_initialize_logic(body, server_id="server1")
@@ -2138,12 +2150,45 @@ class TestHandleInitializeLogicEdgeCases:
         """Lines 1805-1806: OAuth config query fails."""
         caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
         monkeypatch.setattr("asyncio.to_thread", AsyncMock(side_effect=RuntimeError("oauth boom")))
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", AsyncMock(return_value=None))
 
         body = {"protocol_version": settings.protocol_version}
         result = await registry.handle_initialize_logic(body, server_id="server1")
 
         assert "Failed to query OAuth config for server server1" in caplog.text
         assert result.capabilities.experimental is None
+
+
+class TestHandleInitializeLogicInstructions:
+    """The ``instructions`` text of ``initialize`` follows the server scope."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_without_server_id_sends_default_text(self, registry):
+        """No virtual server: the default text."""
+        result = await registry.handle_initialize_logic({"protocol_version": settings.protocol_version})
+
+        assert result.instructions == DEFAULT_SERVER_INSTRUCTIONS
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_server_id_sends_resolved_text(self, registry, monkeypatch):
+        """A virtual server: the resolved text."""
+        monkeypatch.setattr("asyncio.to_thread", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", AsyncMock(return_value="Use the clock tools."))
+
+        result = await registry.handle_initialize_logic({"protocol_version": settings.protocol_version}, server_id="server1")
+
+        assert result.instructions == "Use the clock tools."
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_unresolved_text_omits_field(self, registry, monkeypatch):
+        """A resolved value of None: no ``instructions`` key on the wire."""
+        monkeypatch.setattr("asyncio.to_thread", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.resolve_instructions", AsyncMock(return_value=None))
+
+        result = await registry.handle_initialize_logic({"protocol_version": settings.protocol_version}, server_id="server1")
+
+        assert result.instructions is None
+        assert "instructions" not in result.model_dump(by_alias=True, exclude_none=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2483,6 +2528,8 @@ class TestOauthConfigScopesBranch:
         """Lines 1726-1728: No scopes_supported or scopes in config."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://auth.example.com"],
             # No scopes at all

@@ -633,7 +633,7 @@ class TestMarkPollCompletedInRefreshPath:
 
         # Mock _initialize_gateway to return empty (no changes, but success)
         with (
-            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
+            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [], None))),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_fn,
@@ -678,7 +678,7 @@ class TestMarkPollCompletedInRefreshPath:
         mock_gateway.refresh_interval_seconds = None
 
         with (
-            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
+            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [], None))),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_fn,
@@ -792,6 +792,7 @@ class TestUpdateGatewayPollSchedule:
         gateway_update.auth_headers = None
         gateway_update.auth_value = None
         gateway_update.oauth_config = None
+        gateway_update.sigv4_config = None
         gateway_update.auth_query_param_key = None
         gateway_update.auth_query_param_value = None
         gateway_update.ca_certificate = None
@@ -806,7 +807,7 @@ class TestUpdateGatewayPollSchedule:
         gateway_update.gateway_mode = None
 
         with (
-            patch.object(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
+            patch.object(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [], None))),
             patch.object(service, "_notify_gateway_updated", AsyncMock()),
             patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=AsyncMock()),
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=AsyncMock()),
