@@ -43,10 +43,9 @@ import mcp_types
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.observability import create_span, upstream_transport_context
-from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.session_compat import RequestResponder
-from mcpgateway.utils.ssrf_pinning import PinnedTarget, resolve_pinned_target
+from mcpgateway.utils.ssrf_pinning import build_pinned_httpx_client_factory, HttpxClientFactory, PinnedTarget, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client, UpstreamSessionInfo
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
@@ -69,11 +68,6 @@ class TransportType(str, Enum):
     SSE = "sse"
     STREAMABLE_HTTP = "streamablehttp"
 
-
-HttpxClientFactory = Callable[
-    [Optional[dict[str, str]], Optional[httpx2.Timeout], Optional[httpx2.Auth]],
-    httpx2.AsyncClient,
-]
 
 # Type alias for the per-session message handler that the SDK ClientSession
 # calls into. Receives ServerNotification, ServerRequest responders, or Exceptions.
@@ -515,52 +509,6 @@ async def _resolve_pinned_session_target(url: str) -> PinnedTarget:
         raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [url_policy] outbound URL blocked by URL policy") from pin_exc
 
 
-def _build_pinned_httpx_client_factory(pinned_target: PinnedTarget) -> HttpxClientFactory:
-    """Build a default httpx client factory dialing the validated address.
-
-    Used when the caller passed no ``httpx_client_factory`` of its own.
-
-    Args:
-        pinned_target: The target validated for this session's URL.
-
-    Returns:
-        HttpxClientFactory: A factory whose client dials ``pinned_target``'s
-        validated address, verifying TLS per ``get_default_verify()``.
-    """
-
-    def _pinned_factory(
-        headers: Optional[dict[str, str]] = None,
-        timeout: Optional[httpx2.Timeout] = None,
-        auth: Optional[httpx2.Auth] = None,
-    ) -> httpx2.AsyncClient:
-        """Build the pinned httpx client.
-
-        Args:
-            headers: Optional headers for the client.
-            timeout: Optional timeout for the client.
-            auth: Optional auth for the client.
-
-        Returns:
-            httpx2.AsyncClient: Configured HTTPX async client.
-        """
-        return httpx2.AsyncClient(
-            follow_redirects=False,
-            headers=headers,
-            timeout=timeout if timeout else get_httpx2_timeout(),
-            auth=auth,
-            **pinned_target.client_kwargs(
-                verify=get_default_verify(),
-                limits=httpx2.Limits(
-                    max_connections=settings.httpx_max_connections,
-                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                    keepalive_expiry=settings.httpx_keepalive_expiry,
-                ),
-            ),
-        )
-
-    return _pinned_factory
-
-
 def _wrap_httpx_client_factory(pinned_target: PinnedTarget, inner_factory: HttpxClientFactory) -> HttpxClientFactory:
     """Wrap a caller-supplied httpx client factory so its client dials the pinned address.
 
@@ -656,7 +604,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     if req.httpx_client_factory is not None:
         pinned_httpx_client_factory = _wrap_httpx_client_factory(pinned_target, req.httpx_client_factory)
     else:
-        pinned_httpx_client_factory = _build_pinned_httpx_client_factory(pinned_target)
+        pinned_httpx_client_factory = build_pinned_httpx_client_factory(pinned_target)
 
     if req.transport_type is TransportType.SSE:
         transport_ctx = sse_client(

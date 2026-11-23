@@ -20,7 +20,7 @@ The module consists of several key components:
 # Standard
 from datetime import datetime, timezone
 import time
-from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 # Third-Party
@@ -101,11 +101,11 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.http_client_service import get_default_verify
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.ssrf_pinning import PinnedTarget, resolve_pinned_target
+from mcpgateway.utils.ssrf_pinning import build_pinned_httpx_client_factory, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2143,38 +2143,13 @@ class ChatHistoryManager:
 _TOOL_CALL_TIMEOUT = httpx2.Timeout(30.0, read=300.0)
 
 
-def _pinned_client_factory(pinned: PinnedTarget) -> Callable[..., httpx2.AsyncClient]:
-    """Return an httpx client factory whose connections go only to the validated addresses.
-
-    Args:
-        pinned: Target resolved and checked by :func:`resolve_pinned_target`.
-
-    Returns:
-        Callable[..., httpx2.AsyncClient]: Factory accepting ``headers``, ``timeout`` and ``auth``.
-    """
-
-    def _factory(headers: Optional[Dict[str, str]] = None, timeout: Optional[httpx2.Timeout] = None, auth: Optional[httpx2.Auth] = None) -> httpx2.AsyncClient:
-        """Build one isolated client for one MCP session.
-
-        Args:
-            headers: Optional headers for the client.
-            timeout: Optional timeout for the client.
-            auth: Optional auth for the client.
-
-        Returns:
-            httpx2.AsyncClient: Client that dials the pinned addresses and never follows redirects.
-        """
-        return httpx2.AsyncClient(follow_redirects=False, headers=headers, timeout=timeout, auth=auth, **pinned.client_kwargs(verify=get_default_verify()))
-
-    return _factory
-
-
 async def _build_transport(connection: Dict[str, Any]) -> Any:
     """Return the MCP SDK transport for one chat server connection.
 
-    HTTP transports validate the URL again on every call and dial only the addresses that
-    passed that check, so a DNS answer that changes after validation cannot redirect the
-    connection.
+    HTTP transports validate the URL again on every call. When the target is pinned, the
+    client dials only the addresses that passed that check, so a DNS answer that changes
+    after validation cannot redirect the connection. With SSRF protection disabled, or when
+    an egress proxy applies, the URL is validated but not pinned. Redirects are never followed.
 
     Args:
         connection: Server settings with ``transport`` and either ``url`` plus optional
@@ -2184,7 +2159,8 @@ async def _build_transport(connection: Dict[str, Any]) -> Any:
         Any: A target accepted by ``mcp.client.Client``.
 
     Raises:
-        ValueError: If the transport is not supported or the URL fails validation.
+        ValueError: If the transport is not supported.
+        ConnectionError: If the URL is blocked by the outbound URL policy.
 
     Examples:
         >>> import asyncio
@@ -2197,7 +2173,11 @@ async def _build_transport(connection: Dict[str, Any]) -> Any:
     """
     transport = connection.get("transport")
     if transport in ("streamable_http", "sse"):
-        client_factory = _pinned_client_factory(await resolve_pinned_target(connection["url"], "MCP server URL"))
+        try:
+            pinned = await resolve_pinned_target(connection["url"], "MCP server URL")
+        except ValueError as exc:
+            raise ConnectionError(f"MCP server URL {sanitize_url_for_logging(connection['url'])} is blocked by the outbound URL policy") from exc
+        client_factory = build_pinned_httpx_client_factory(pinned)
         if transport == "streamable_http":
             return streamable_http_client(connection["url"], headers=connection.get("headers"), timeout=_TOOL_CALL_TIMEOUT, httpx_client_factory=client_factory)
         return sse_client(connection["url"], headers=connection.get("headers"), timeout=30.0, sse_read_timeout=300.0, httpx_client_factory=client_factory)
@@ -2302,9 +2282,12 @@ class MCPToolLoader:
                 str: The text content of the result.
 
             Raises:
-                ToolException: If the server marked the result as an error.
+                ToolException: If the server marked the result as an error, or a ``ConnectionError`` occurs (for example, the outbound URL policy blocks the URL).
             """
-            text, is_error = await self.call_tool(tool.name, arguments)
+            try:
+                text, is_error = await self.call_tool(tool.name, arguments)
+            except ConnectionError as exc:
+                raise ToolException(str(exc)) from exc
             if is_error:
                 raise ToolException(text or f"Tool {tool.name} failed")
             return text

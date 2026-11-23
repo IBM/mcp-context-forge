@@ -23,7 +23,10 @@ import pytest
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services import mcp_client_chat_service as svc
+from mcpgateway.services.http_client_service import get_httpx2_timeout
 from mcpgateway.utils.ssrf_pinning import PinnedTarget, SniPinningTransport
+
+needs_langchain = pytest.mark.skipif(not svc._LLMCHAT_AVAILABLE, reason="the llmchat extra is not installed")
 
 # --------------------------------------------------------------------------- #
 # TRANSPORT SELECTION AND RESULT TEXT
@@ -117,27 +120,38 @@ async def test_build_transport_builds_a_plain_client_for_an_unpinned_target(monk
     client = captured_factories["streamable_http"]()
     assert not isinstance(client._transport, SniPinningTransport)
     assert client.follow_redirects is False
+    assert client.timeout == get_httpx2_timeout()
 
 
-@pytest.mark.asyncio
-async def test_build_transport_refuses_a_url_that_fails_validation(monkeypatch, captured_factories):
-    async def _resolve(url, field_name):
-        raise ValueError("MCP server URL resolves to a blocked address")
-
-    monkeypatch.setattr(svc, "resolve_pinned_target", _resolve)
-
-    with pytest.raises(ValueError, match="blocked address"):
-        await svc._build_transport({"transport": "sse", "url": "http://mcp.example.test/mcp"})
-    assert captured_factories == {}
+@pytest.fixture
+def strict_ssrf(monkeypatch):
+    """Turn on SSRF protection with no localhost or private-network exemption."""
+    monkeypatch.setattr(settings, "ssrf_protection_enabled", True)
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["streamable_http", "sse"])
-async def test_tool_loader_dials_only_the_address_that_passed_validation(monkeypatch, transport):
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.5", "169.254.169.254"])
+async def test_build_transport_refuses_a_blocked_address(strict_ssrf, captured_factories, transport, address):
+    with pytest.raises(ConnectionError, match="blocked by the outbound URL policy"):
+        await svc._build_transport({"transport": transport, "url": f"http://{address}/mcp"})
+    assert captured_factories == {}
+
+
+@needs_langchain
+@pytest.mark.asyncio
+async def test_blocked_url_at_call_time_is_returned_to_the_model(strict_ssrf):
+    tool = svc.MCPToolLoader({"transport": "sse", "url": "http://169.254.169.254/mcp"})._as_langchain_tool(mcp_types.Tool(name="t", inputSchema={"type": "object", "properties": {}}))
+
+    assert "blocked by the outbound URL policy" in await tool.ainvoke({})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["streamable_http", "sse"])
+async def test_tool_loader_dials_only_the_address_that_passed_validation(monkeypatch, strict_ssrf, transport):
     """A name that resolves to a public address at validation and to loopback later must not reach loopback."""
-    monkeypatch.setattr(settings, "ssrf_protection_enabled", True)
-    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
-    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
     for name in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
         monkeypatch.delenv(name, raising=False)
 
@@ -159,7 +173,8 @@ async def test_tool_loader_dials_only_the_address_that_passed_validation(monkeyp
     monkeypatch.setattr(socket, "getaddrinfo", _changing_dns)
     monkeypatch.setattr(AnyIOBackend, "connect_tcp", _refuse_dial)
 
-    with pytest.raises(BaseException):
+    # streamable_http wraps the dial error in a task-group ExceptionGroup; sse raises it bare
+    with pytest.RaisesGroup(httpx2.ConnectError, allow_unwrapped=True):
         await svc.MCPToolLoader({"transport": transport, "url": "http://mcp.example.test/mcp"}).list_tools()
 
     assert dialed and set(dialed) == {PUBLIC_IP}
@@ -261,8 +276,6 @@ async def test_list_tools_follows_pagination(monkeypatch):
 # --------------------------------------------------------------------------- #
 # WRAPPING FOR LANGCHAIN (runs only where the llmchat extra is installed)
 # --------------------------------------------------------------------------- #
-
-needs_langchain = pytest.mark.skipif(not svc._LLMCHAT_AVAILABLE, reason="the llmchat extra is not installed")
 
 
 @needs_langchain
