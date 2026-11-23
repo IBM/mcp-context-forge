@@ -506,6 +506,9 @@ def test_upstream_request_context_limits_sdk_baggage(monkeypatch, enabled, exter
     monkeypatch.setattr(observability, "get_settings", lambda: settings)
     monkeypatch.setattr(settings, "otel_baggage_enabled", enabled)
     monkeypatch.setattr(settings, "otel_baggage_propagate_to_external", external)
+    # Pin the default naming policy. App startup installs the deployment policy
+    # from plugins/config.yaml, and that process-wide state leaks across tests.
+    monkeypatch.setattr(observability, "_BAGGAGE_SPAN_ATTRIBUTE_POLICY", observability.BaggageSpanAttributePolicy())
     token = context.attach(baggage.set_baggage("tenant.id", "tenant-a"))
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
