@@ -112,7 +112,7 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _resolve_team_and_check_mode, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
@@ -5160,19 +5160,20 @@ async def refresh_a2a_agent_card(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
     payload = payload or A2ACardRefreshRequest()
-    if payload.base_url is not None and not await check_permission_inline(user, "a2a.create", db=db, request=request):
-        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
-    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if payload.base_url is not None:
+        team_id, check_any_team = await _resolve_team_and_check_mode(user, {"agent_id": agent_id, "db": db})
+        if not await check_permission_inline(user, "a2a.create", team_id=team_id, check_any_team=check_any_team, db=db, request=request):
+            raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
     try:
         result = await a2a_service.refresh_card(db, agent_id, payload, user_email=user_email, token_teams=token_teams)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2ACardRefreshThrottledError as e:
         raise HTTPException(status_code=429, detail=str(e), headers={"Retry-After": str(e.retry_after)})
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_card_refresh(request, user, agent_id, result)
     logger.info(f"User {safe_log_user(user)} re-fetched the Agent Card of A2A agent {agent_id}: {result.status}")
     return result
 
@@ -5627,6 +5628,23 @@ def _audit_a2a_extended_card_read(request: Request, user: Any, agent_id: str) ->
         user_agent=request.headers.get("user-agent"),
         request_path=request.url.path,
         request_method=request.method,
+    )
+
+
+def _audit_a2a_card_refresh(request: Request, user: Any, agent_id: str, result: A2ACardRefreshResponse) -> None:
+    """Record an audit entry for an Agent Card refresh, which fetches from an external host and can store a card version."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="refresh_a2a_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
+        details={"status": result.status, "version": result.version, "source_url": sanitize_url_for_logging(str(result.source_url))},
     )
 
 

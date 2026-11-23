@@ -23,7 +23,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, A2AAgentCard, Base
 from mcpgateway.schemas import A2ACardRefreshRequest
 from mcpgateway.services import a2a_service as a2a_service_module
-from mcpgateway.services.a2a_card_import import _build_found_response
+from mcpgateway.services.a2a_card_import import _build_found_response, ExtendedCardResult
 from mcpgateway.services.a2a_service import _origin_of, A2AAgentError, A2AAgentNotFoundError, A2ACardRefreshThrottledError, A2AAgentService
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -227,8 +227,13 @@ class TestRefreshCard:
     async def test_storage_failure_leaves_the_card_unchanged(self, db, service, fetch, monkeypatch):
         """A failed write rolls back, raises, and keeps the stored card."""
         _store(db)
-        fetch.return_value = _found({**V1_CARD, "version": "9.9.9"}, etag='"v9"')
-        monkeypatch.setattr(db, "commit", MagicMock(side_effect=RuntimeError("disk full")))
+        found = _found({**V1_CARD, "version": "9.9.9"}, etag='"v9"')
+
+        async def fail_after_fetch(*args, **kwargs):
+            monkeypatch.setattr(db, "flush", MagicMock(side_effect=RuntimeError("disk full")))
+            return found
+
+        fetch.side_effect = fail_after_fetch
         with pytest.raises(A2AAgentError, match="Failed to store"):
             await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
         monkeypatch.undo()
@@ -248,14 +253,70 @@ class TestRefreshCard:
         agent.auth_type, agent.auth_value = "bearer", encode_auth({"Authorization": "Bearer s"})
         assert service._card_credentials(agent, "not a url") is None  # pylint: disable=protected-access
 
-    async def test_non_owner_is_denied(self, db, service, fetch, monkeypatch):
-        """Ownership is enforced like agent update."""
-        from mcpgateway.services import permission_service
+    async def test_stale_result_is_rejected_when_the_stored_card_changed(self, db, service, fetch):
+        """A card stored by another refresh during the fetch is not overwritten or given a stale 304."""
+        _store(db)
 
-        monkeypatch.setattr(permission_service.PermissionService, "check_resource_ownership", AsyncMock(return_value=False))
-        with pytest.raises(PermissionError):
-            await service.refresh_card(db, "agent-1", A2ACardRefreshRequest(), user_email="other@example.com")
-        fetch.assert_not_awaited()
+        async def concurrent_store(*args, **kwargs):
+            _store(db, version=2, card={**V1_CARD, "version": "3.0.0"})
+            return _not_modified()
+
+        fetch.side_effect = concurrent_store
+        with pytest.raises(A2AAgentError, match="changed during the refresh"):
+            await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert [row.version for row in db.query(A2AAgentCard)] == [1, 2]
+
+    async def test_version_conflict_is_reported_as_a_retry(self, db, service, fetch, monkeypatch):
+        """A uniqueness conflict from a concurrent writer is rejected, not a storage failure."""
+        from sqlalchemy.exc import IntegrityError
+
+        _store(db)
+        found = _found({**V1_CARD, "version": "9.9.9"})
+
+        async def conflict_after_fetch(*args, **kwargs):
+            monkeypatch.setattr(db, "flush", MagicMock(side_effect=IntegrityError("insert", {}, Exception("unique"))))
+            return found
+
+        fetch.side_effect = conflict_after_fetch
+        with pytest.raises(A2AAgentError, match="changed during the refresh"):
+            await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+
+    async def test_true_and_one_are_different_values(self, db, service, fetch):
+        """A field that changes from true to 1 stores a new version and is listed."""
+        _store(db, card={**V1_CARD, "flag": True})
+        fetch.return_value = _found({**V1_CARD, "flag": 1})
+        result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert (result.status, result.changed_keys) == ("updated", ["flag"])
+
+    async def test_added_null_field_is_listed(self, db, service, fetch):
+        """A key that appears with a null value is a change."""
+        fetch.return_value = _found({**V1_CARD, "extra": None})
+        _store(db)
+        result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert (result.status, result.changed_keys) == ("updated", ["extra"])
+
+    async def test_identical_200_from_another_url_updates_source_and_validators(self, db, service, fetch):
+        """An identical card from a new URL moves source_url with its ETag and max-age."""
+        _store(db)
+        fetch.return_value = _found(V1_CARD, url="https://agent.example.com/other.json", etag='"x9"')
+        result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        row = db.query(A2AAgentCard).one()
+        assert (result.status, row.source_url, row.etag) == ("unchanged", "https://agent.example.com/other.json", '"x9"')
+
+    async def test_304_stores_the_extended_card(self, db, service, fetch, monkeypatch):
+        """An unchanged public card still refreshes the extended card with the agent credential."""
+        agent = db.get(A2AAgent, "agent-1")
+        agent.auth_type, agent.auth_value = "bearer", encode_auth({"Authorization": "Bearer s"})
+        db.commit()
+        _store(db)
+        fetch.return_value = _not_modified()
+        extended = {**V1_CARD, "skills": []}
+        result_card = ExtendedCardResult("found", extended, extended, '"e1"', 30)
+        stored_fetch = AsyncMock(return_value=result_card)
+        monkeypatch.setattr(a2a_service_module, "fetch_stored_extended_card", stored_fetch)
+        await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
+        assert stored_fetch.await_args.args[2] == {"Authorization": "Bearer s"}
+        assert [(row.version, row.kind) for row in db.query(A2AAgentCard).order_by(A2AAgentCard.version)] == [(1, "public"), (2, "extended")]
 
 
 def test_headers_require_base_url():
@@ -280,7 +341,9 @@ class TestRefreshRoute:
         service.refresh_card = AsyncMock()
         monkeypatch.setattr(main, "a2a_service", service)
         monkeypatch.setattr(main, "get_scoped_resource_access_context", lambda request, user: ("u@example.com", None))
+        service.check_agent_manage_access = AsyncMock(return_value=True)
         monkeypatch.setattr(main, "check_permission_inline", AsyncMock(return_value=True))
+        monkeypatch.setattr(main, "_audit_a2a_card_refresh", MagicMock())
         return service
 
     async def _call(self, payload=None):
@@ -316,12 +379,31 @@ class TestRefreshRoute:
             await self._call()
         assert exc.value.status_code == 503
 
-    async def test_non_owner_is_403(self, route):
-        """An ownership failure in the service is 403."""
-        route.refresh_card.side_effect = PermissionError("Only the owner can refresh the Agent Card of this agent")
+    async def test_non_owner_is_404_and_nothing_is_fetched(self, route):
+        """A caller who cannot manage the agent gets 404, as on the task routes."""
+        route.check_agent_manage_access.return_value = False
         with pytest.raises(HTTPException) as exc:
             await self._call()
-        assert exc.value.status_code == 403
+        assert exc.value.status_code == 404
+        route.refresh_card.assert_not_awaited()
+
+    async def test_create_check_carries_the_agent_team(self, route, monkeypatch):
+        """The additive a2a.create check resolves the team context like require_permission."""
+        check = AsyncMock(return_value=True)
+        monkeypatch.setattr(main, "check_permission_inline", check)
+        monkeypatch.setattr(main, "_resolve_team_and_check_mode", AsyncMock(return_value=("team-1", False)))
+        await self._call(A2ACardRefreshRequest(base_url="https://a.example.com"))
+        assert (check.await_args.args[1], check.await_args.kwargs["team_id"], check.await_args.kwargs["check_any_team"]) == ("a2a.create", "team-1", False)
+
+    async def test_success_is_audited_and_failure_is_not(self, route):
+        """Only a stored or checked refresh writes an audit entry."""
+        await self._call()
+        main._audit_a2a_card_refresh.assert_called_once()
+        main._audit_a2a_card_refresh.reset_mock()
+        route.refresh_card.side_effect = A2AAgentError("nope")
+        with pytest.raises(HTTPException):
+            await self._call()
+        main._audit_a2a_card_refresh.assert_not_called()
 
     async def test_unknown_agent_is_404(self, route):
         """An agent the caller cannot see is 404."""

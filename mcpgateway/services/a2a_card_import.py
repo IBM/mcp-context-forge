@@ -754,6 +754,45 @@ def _build_found_response(url: str, document: Dict[str, Any], etag: Optional[str
     )
 
 
+def apply_extended_result(found: A2AFetchCardResponse, result: "ExtendedCardResult") -> None:
+    """Set the extended card fields of ``found`` from an extended card attempt.
+
+    Args:
+        found: Response for the public card. A ``not_modified`` response has no public card, so it gets no added field paths.
+        result: Outcome of the extended card request.
+    """
+    found.extended_outcome = result.outcome
+    if result.card is not None:
+        found.extended_card = result.card
+        found.extended_raw_card = None if result.card is result.document else result.document
+        found.extended_etag = result.etag
+        found.extended_max_age = result.max_age
+        if found.card:
+            found.extended_additions = extended_card_additions(found.card, result.card)
+
+
+async def fetch_stored_extended_card(document: Dict[str, Any], source_url: str, headers: Optional[Dict[str, str]]) -> Optional["ExtendedCardResult"]:
+    """Fetch the extended card for a stored public card, for example after a 304 answer.
+
+    Args:
+        document: Stored public card, as fetched.
+        source_url: URL the public card came from.
+        headers: Credential headers for the card URL.
+
+    Returns:
+        The extended card result, or ``None`` when there are no credentials or the card declares no extended card.
+    """
+    if not headers:
+        return None
+    try:
+        card, _ = normalize_card(document)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        return None
+    if not declares_extended_card(card):
+        return None
+    return await fetch_extended_card(card, source_url, headers)
+
+
 async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Add the extended card to a found response when the card declares one and credentials exist.
 
@@ -767,14 +806,7 @@ async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dic
     """
     if not headers or not found.card or not declares_extended_card(found.card):
         return found
-    result = await fetch_extended_card(found.card, str(found.source_url), headers)
-    found.extended_outcome = result.outcome
-    if result.card is not None:
-        found.extended_card = result.card
-        found.extended_raw_card = None if result.card is result.document else result.document
-        found.extended_etag = result.etag
-        found.extended_max_age = result.max_age
-        found.extended_additions = extended_card_additions(found.card, result.card)
+    apply_extended_result(found, await fetch_extended_card(found.card, str(found.source_url), headers))
     return found
 
 
