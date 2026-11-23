@@ -328,28 +328,6 @@ class TokenBlocklistService:
             logger.error("Failed to cleanup expired tokens: %s", e)
             return 0
 
-    def revoke_user_tokens(self, user_email: str, revoked_by: str, reason: str = "security") -> int:
-        """Revoke all active tokens for a user.
-
-        This is useful for security incidents or when a user's credentials are compromised.
-
-        Args:
-            user_email: Email of user whose tokens should be revoked
-            revoked_by: Email of user performing the revocation
-            reason: Reason for revocation
-
-        Returns:
-            Number of tokens revoked.
-        """
-        # Note: This requires tracking active tokens per user, which would need
-        # additional implementation. For now, this is a placeholder for future enhancement.
-        logger.warning(
-            "Bulk token revocation requested for user %s but not yet implemented",
-            user_email,
-            extra={"security_event": "bulk_revocation_requested", "target_user": user_email, "revoked_by": revoked_by, "reason": reason},
-        )
-        return 0
-
     def get_revocation_stats(self) -> Dict[str, int]:
         """Get statistics about token revocations.
 

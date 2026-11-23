@@ -18,7 +18,7 @@ It handles:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Any, cast, Dict, List, Optional, TypedDict
+from typing import Any, cast, Dict, Iterable, List, Optional, Sequence, TypedDict
 
 # Third-Party
 from sqlalchemy import or_, select
@@ -1079,6 +1079,21 @@ class ExportService:
 
         return exported_servers
 
+    @staticmethod
+    def _filter_visible_ids(visible_items: Iterable[Any], requested: Iterable[str], key_attrs: Sequence[str]) -> List[str]:
+        """Return the IDs of visible items whose ``key_attrs`` match a requested identifier.
+
+        Args:
+            visible_items: Items the requesting principal may see.
+            requested: Identifiers named in the selective export request.
+            key_attrs: Item attributes compared against the requested identifiers.
+
+        Returns:
+            IDs of the visible items that match, as strings.
+        """
+        requested_set = set(requested)
+        return [str(item.id) for item in visible_items if any(str(getattr(item, attr)) in requested_set for attr in key_attrs)]
+
     async def _export_selected_prompts(self, db: Session, prompt_names: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific prompts by their identifiers using batch queries.
 
@@ -1096,33 +1111,17 @@ class ExportService:
         if not prompt_names:
             return []
 
-        visible_prompt_identifiers: Optional[set[str]] = None
         if self._is_scoped_selective_export(user_email, token_teams):
             visible_prompts = await self._fetch_all_prompts(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
-            visible_prompt_identifiers = set()
-            for prompt in visible_prompts:
-                visible_prompt_identifiers.add(str(prompt.id))
-                if getattr(prompt, "name", None):
-                    visible_prompt_identifiers.add(prompt.name)
-                if getattr(prompt, "original_name", None):
-                    visible_prompt_identifiers.add(prompt.original_name)
-                if getattr(prompt, "custom_name", None):
-                    visible_prompt_identifiers.add(prompt.custom_name)
-            prompt_names = [prompt_name for prompt_name in prompt_names if prompt_name in visible_prompt_identifiers]
-            if not prompt_names:
+            selected_ids = self._filter_visible_ids(visible_prompts, prompt_names, ("id", "name"))
+            if not selected_ids:
                 return []
+            prompt_query = select(DbPrompt).where(DbPrompt.id.in_(selected_ids))
+        else:
+            prompt_query = select(DbPrompt).where(or_(DbPrompt.id.in_(prompt_names), DbPrompt.name.in_(prompt_names)))
 
         # Batch query for selected prompts only
-        db_prompts = db.execute(select(DbPrompt).where(or_(DbPrompt.id.in_(prompt_names), DbPrompt.name.in_(prompt_names)))).scalars().all()
-        if visible_prompt_identifiers is not None:
-            db_prompts = [
-                db_prompt
-                for db_prompt in db_prompts
-                if str(db_prompt.id) in visible_prompt_identifiers
-                or (getattr(db_prompt, "name", None) in visible_prompt_identifiers)
-                or (getattr(db_prompt, "original_name", None) in visible_prompt_identifiers)
-                or (getattr(db_prompt, "custom_name", None) in visible_prompt_identifiers)
-            ]
+        db_prompts = db.execute(prompt_query).scalars().all()
 
         exported_prompts = []
         for db_prompt in db_prompts:
@@ -1164,18 +1163,17 @@ class ExportService:
         if not resource_uris:
             return []
 
-        visible_resource_uris: Optional[set[str]] = None
         if self._is_scoped_selective_export(user_email, token_teams):
             visible_resources = await self._fetch_all_resources(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
-            visible_resource_uris = {resource.uri for resource in visible_resources}
-            resource_uris = [resource_uri for resource_uri in resource_uris if resource_uri in visible_resource_uris]
-            if not resource_uris:
+            selected_ids = self._filter_visible_ids(visible_resources, resource_uris, ("uri",))
+            if not selected_ids:
                 return []
+            resource_query = select(DbResource).where(DbResource.id.in_(selected_ids))
+        else:
+            resource_query = select(DbResource).where(DbResource.uri.in_(resource_uris))
 
         # Batch query for selected resources only
-        db_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
-        if visible_resource_uris is not None:
-            db_resources = [db_resource for db_resource in db_resources if db_resource.uri in visible_resource_uris]
+        db_resources = db.execute(resource_query).scalars().all()
 
         exported_resources = []
         for db_resource in db_resources:

@@ -112,7 +112,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
-from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -123,7 +123,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -400,6 +400,20 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
             logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
         except Exception:  # noqa: BLE001  # nosec B110
             pass
+
+
+def _identity_signing_failure(audience: Any, exc: IdentitySigningError) -> "ToolInvocationError":
+    """Log an identity signing failure and map it to a tool invocation error.
+
+    Args:
+        audience: Gateway or tool identifier the claims were signed for.
+        exc: The signing failure.
+
+    Returns:
+        The error to raise.
+    """
+    logger.error("Identity claim signing is misconfigured for %s: %s", audience, exc)
+    return ToolInvocationError("Identity claim signing is misconfigured for the tool gateway")
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:
@@ -2648,6 +2662,7 @@ class ToolService(BaseService):
                     "display_name": db_tool.display_name,
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
+                    **sigv4_audit_values(getattr(db_tool, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -3040,6 +3055,7 @@ class ToolService(BaseService):
 
             tools_to_add = []
             tools_to_update = []
+            previous_sigv4_configs: dict[int, Any] = {}
             gateway_policies = self._gateway_tool_validation_policies(db, (tool.gateway_id for tool in chunk))
 
             for tool in chunk:
@@ -3066,6 +3082,7 @@ class ToolService(BaseService):
                     stats["created"] += 1
                 elif result["status"] == "update":
                     tools_to_update.append(result["tool"])
+                    previous_sigv4_configs[id(result["tool"])] = result.get("previous_sigv4_config")
                     stats["updated"] += 1
                 elif result["status"] == "skip":
                     stats["skipped"] += 1
@@ -3089,10 +3106,22 @@ class ToolService(BaseService):
                 db.add_all(tools_to_add)
 
             audit_counts: dict[str | None, dict[str, int]] = {}
+            audit_sigv4_fingerprints: dict[str | None, set[str]] = {}
+            audit_sigv4_changes: list[tuple[Any, dict[str, Any]]] = []
             for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
                 for db_tool in tools:
                     counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
                     counts[operation] += 1
+                    current_sigv4_config = getattr(db_tool, "sigv4_config", None)
+                    fingerprint = sigv4_audit_values(current_sigv4_config, registration=True).get("sigv4_key_fingerprint")
+                    if fingerprint:
+                        audit_sigv4_fingerprints.setdefault(db_tool.team_id, set()).add(fingerprint)
+                    if operation == "created":
+                        change = sigv4_audit_values(current_sigv4_config, registration=True)
+                    else:
+                        change = sigv4_audit_values(current_sigv4_config, previous_sigv4_configs.get(id(db_tool)))
+                    if change:
+                        audit_sigv4_changes.append((db_tool, change))
 
             # Commit the chunk
             db.commit()
@@ -3103,6 +3132,10 @@ class ToolService(BaseService):
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
 
+            audit_sigv4_tools: dict[str | None, list[dict[str, Any]]] = {}
+            for db_tool, change in audit_sigv4_changes:
+                audit_sigv4_tools.setdefault(db_tool.team_id, []).append({"tool_id": getattr(db_tool, "id", None), "name": getattr(db_tool, "name", None), **change})
+
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
                     user_id=user_id or created_by or SYSTEM_ACTOR,
@@ -3110,7 +3143,12 @@ class ToolService(BaseService):
                     resource_type="tool",
                     resource_id=None,
                     team_id=audit_team_id,
-                    details={"count": sum(counts.values()), "import_batch_id": import_batch_id},
+                    details={
+                        "count": sum(counts.values()),
+                        "import_batch_id": import_batch_id,
+                        **({"sigv4_key_fingerprints": sorted(audit_sigv4_fingerprints[audit_team_id])} if audit_team_id in audit_sigv4_fingerprints else {}),
+                        **({"sigv4_tools": audit_sigv4_tools[audit_team_id]} if audit_team_id in audit_sigv4_tools else {}),
+                    },
                 )
 
         except Exception as e:
@@ -3160,7 +3198,8 @@ class ToolService(BaseService):
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
-                and either "tool" (DbTool object) or "error" (error message).
+                and either "tool" (DbTool object) or "error" (error message). An "update" result also carries
+                "previous_sigv4_config", the stored SigV4 configuration before the overwrite.
         """
         try:
             # Same three US-3 malicious-pattern scans that register_tool() runs.
@@ -3227,6 +3266,7 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     if tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
+                    previous_sigv4_config = getattr(existing_tool, "sigv4_config", None)
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title
@@ -3264,7 +3304,7 @@ class ToolService(BaseService):
                         existing_tool.plugin_chain_pre = tool.plugin_chain_pre
                         existing_tool.plugin_chain_post = tool.plugin_chain_post
 
-                    return {"status": "update", "tool": existing_tool}
+                    return {"status": "update", "tool": existing_tool, "previous_sigv4_config": previous_sigv4_config}
 
                 if conflict_strategy == "rename":
                     # Create with renamed tool
@@ -4475,8 +4515,11 @@ class ToolService(BaseService):
 
             # Inject identity propagation headers
             if user_context:
-                headers.update(build_identity_headers(user_context, gateway))
-                meta_data = build_identity_meta(user_context, meta_data, gateway)
+                try:
+                    headers.update(build_identity_headers(user_context, gateway))
+                    meta_data = build_identity_meta(user_context, meta_data, gateway)
+                except IdentitySigningError as signing_exc:
+                    raise _identity_signing_failure(gateway_id, signing_exc) from signing_exc
 
             gateway_url = gateway.url
 
@@ -6106,7 +6149,10 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str or tool_id))
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str or tool_id, signing_exc) from signing_exc
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -6580,8 +6626,11 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str))
+                            meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation, audience=gateway_id_str)
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str, signing_exc) from signing_exc
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -8136,6 +8185,7 @@ class ToolService(BaseService):
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
 
+            original_sigv4_config = tool.sigv4_config
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
                     if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
@@ -8212,6 +8262,7 @@ class ToolService(BaseService):
                     "name": tool.name,
                     "display_name": tool.display_name,
                     "version": tool.version,
+                    **sigv4_audit_values(tool.sigv4_config, original_sigv4_config),
                 },
                 context={
                     "modified_via": modified_via,

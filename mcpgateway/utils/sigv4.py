@@ -97,7 +97,27 @@ class SigV4Credentials:
         Returns:
             str: First 12 hex characters of the SHA-256 of the access key ID.
         """
-        return hashlib.sha256(self.access_key_id.encode("utf-8")).hexdigest()[:12]
+        return access_key_fingerprint(self.access_key_id)
+
+
+def access_key_fingerprint(access_key_id: str) -> str:
+    """Return a non-secret identifier for an access key ID, safe for audit records.
+
+    Args:
+        access_key_id: AWS access key ID.
+
+    Returns:
+        str: First 12 hex characters of the SHA-256 of the access key ID.
+
+    Examples:
+        >>> len(access_key_fingerprint("AKIDEXAMPLE0000000"))
+        12
+        >>> access_key_fingerprint("AKIDEXAMPLE0000000") == access_key_fingerprint("AKIDEXAMPLE0000000")
+        True
+        >>> "AKIDEXAMPLE" in access_key_fingerprint("AKIDEXAMPLE0000000")
+        False
+    """
+    return hashlib.sha256(access_key_id.encode("utf-8")).hexdigest()[:12]
 
 
 def validate_sigv4_config(config: Any) -> Dict[str, Any]:
@@ -558,6 +578,89 @@ def decrypt_stored_sigv4_config(stored: Mapping[str, Any]) -> Dict[str, Any]:
                 raise SigV4ConfigError(f"sigv4_config.{key} could not be decrypted; re-supply the credential")
             plain[key] = decrypted
     return plain
+
+
+_ROTATION_FIELDS = ("access_key_id", "secret_access_key", "session_token", "region", "service")
+
+
+def sigv4_credential_changed(previous: Optional[Mapping[str, Any]], current: Optional[Mapping[str, Any]]) -> bool:
+    """Report whether a stored ``sigv4_config`` holds a different credential than before.
+
+    An encrypted secret differs on every write, so two different ciphertexts that decrypt
+    to the same plaintext do not count as a change. A masked placeholder keeps the stored
+    ciphertext and so also does not count.
+
+    Args:
+        previous: Stored configuration before the update, or None.
+        current: Stored configuration after the update, or None.
+
+    Returns:
+        bool: True when the access key, a secret, the region or the service changed.
+
+    Examples:
+        >>> base = {"access_key_id": "AKIDEXAMPLE0000000", "region": "us-east-1", "service": "s3"}
+        >>> sigv4_credential_changed(base, dict(base))
+        False
+        >>> sigv4_credential_changed(base, {**base, "region": "eu-west-1"})
+        True
+        >>> sigv4_credential_changed(None, base)
+        True
+    """
+    if not previous or not current:
+        return bool(previous) != bool(current)
+    for field_name in _ROTATION_FIELDS:
+        before, after = previous.get(field_name) or None, current.get(field_name) or None
+        if before == after:
+            continue
+        if field_name in SIGV4_SENSITIVE_KEYS and before and after:
+            plain_before = decrypt_sigv4_secret(field_name, before)
+            if plain_before is not None and plain_before == decrypt_sigv4_secret(field_name, after):
+                continue
+        return True
+    return False
+
+
+def sigv4_audit_values(current: Any, previous: Any = None, *, registration: bool = False) -> Dict[str, Any]:
+    """Build the non-secret audit fields for a SigV4 registration, rotation or removal.
+
+    The result holds key fingerprints only. It never holds the access key ID, a secret or a session token.
+
+    Args:
+        current: Stored ``sigv4_config`` after the operation.
+        previous: Stored ``sigv4_config`` before an update. Ignored for a registration.
+        registration: True for a create operation, which always reports the fingerprint.
+
+    Returns:
+        Dict[str, Any]: Fields to merge into ``new_values``. A removal reports ``sigv4_credential_removed`` and the
+        previous fingerprint. Empty when the operation involves no SigV4 credential change, so audit entries of other operations stay unchanged.
+
+    Examples:
+        >>> cfg = {"access_key_id": "AKIDEXAMPLE0000000", "region": "us-east-1", "service": "s3"}
+        >>> values = sigv4_audit_values(cfg, registration=True)
+        >>> values["auth_type"], len(values["sigv4_key_fingerprint"])
+        ('sigv4', 12)
+        >>> sigv4_audit_values(cfg, dict(cfg))
+        {}
+        >>> sigv4_audit_values(None, registration=True)
+        {}
+        >>> removed = sigv4_audit_values(None, cfg)
+        >>> removed["sigv4_credential_removed"], len(removed["sigv4_previous_key_fingerprint"])
+        (True, 12)
+    """
+    previous_config = previous if isinstance(previous, Mapping) and previous.get("access_key_id") else None
+    if not isinstance(current, Mapping) or not current.get("access_key_id"):
+        if registration or previous_config is None:
+            return {}
+        return {"sigv4_credential_removed": True, "sigv4_previous_key_fingerprint": access_key_fingerprint(str(previous_config["access_key_id"]))}
+    values: Dict[str, Any] = {"auth_type": "sigv4", "sigv4_key_fingerprint": access_key_fingerprint(str(current["access_key_id"]))}
+    if registration:
+        return values
+    if not sigv4_credential_changed(previous_config, current):
+        return {}
+    values["sigv4_credential_rotated"] = True
+    if previous_config:
+        values["sigv4_previous_key_fingerprint"] = access_key_fingerprint(str(previous_config["access_key_id"]))
+    return values
 
 
 def build_stored_sigv4_auth(stored: Optional[Mapping[str, Any]]) -> Optional[SigV4Auth]:

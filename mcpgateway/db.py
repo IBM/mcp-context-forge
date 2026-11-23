@@ -43,6 +43,8 @@ from sqlalchemy import (
     ForeignKey,
     func,
     Index,
+)
+from sqlalchemy import (
     Integer,
     JSON,
     make_url,
@@ -4714,6 +4716,8 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    oauth_config_approved: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    oauth_config_generation: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     # Operator-set instructions text. NULL: not set. Empty string: send no instructions.
     instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

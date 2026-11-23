@@ -2255,6 +2255,41 @@ class TestAuthValidationErrors:
             assert obj.auth_type == auth_type
 
 
+class TestGatewayIdentitySigningValidation:
+    """Per-gateway sign_claims needs a configured IDENTITY_CLAIMS_SECRET."""
+
+    @pytest.mark.parametrize("schema_name", ["GatewayCreate", "GatewayUpdate"])
+    def test_sign_claims_without_secret_rejected(self, schema_name):
+        """Saving sign_claims=true without a claims secret is a validation error."""
+        # First-Party
+        from mcpgateway import schemas
+
+        with patch.object(schemas.settings, "identity_claims_secret", None):
+            with pytest.raises(ValidationError, match="IDENTITY_CLAIMS_SECRET"):
+                getattr(schemas, schema_name)(name="gw", url="http://example.com", identity_propagation={"sign_claims": True})
+
+    @pytest.mark.parametrize("schema_name", ["GatewayCreate", "GatewayUpdate"])
+    def test_sign_claims_with_secret_accepted(self, schema_name):
+        """A configured claims secret lets sign_claims=true save."""
+        # Third-Party
+        from pydantic import SecretStr
+
+        # First-Party
+        from mcpgateway import schemas
+
+        with patch.object(schemas.settings, "identity_claims_secret", SecretStr("x" * 40)):
+            gw = getattr(schemas, schema_name)(name="gw", url="http://example.com", identity_propagation={"sign_claims": True})
+        assert gw.identity_propagation == {"sign_claims": True}
+
+    def test_sign_claims_false_needs_no_secret(self):
+        """Unsigned propagation saves without a claims secret."""
+        # First-Party
+        from mcpgateway import schemas
+
+        with patch.object(schemas.settings, "identity_claims_secret", None):
+            schemas.GatewayCreate(name="gw", url="http://example.com", identity_propagation={"sign_claims": False})
+
+
 class TestGatewayTransportValidation:
     """Test transport validation on GatewayCreate and GatewayUpdate."""
 

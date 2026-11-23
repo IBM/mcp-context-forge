@@ -512,7 +512,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
 | `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
 | `PASSWORD_RESET_RATE_WINDOW_MINUTES` | Password reset rate-limit window        | `15`                  | int > 0 |
-| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Invalidate active sessions on reset     | `true`                | bool    |
+| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Reject older sessions, revoke API tokens | `true`                | bool    |
 | `PASSWORD_RESET_MIN_RESPONSE_MS` | Minimum forgot-password response duration    | `250`                 | int >= 0 |
 | `PROTECT_ALL_ADMINS`         | Allow active admin accounts to bypass login lockout. Admin self-demotion and last-active-admin protection are always enforced independently. | `true` | bool |
 | `SMTP_ENABLED`                | Enable SMTP notifications for auth emails        | `false`               | bool    |
@@ -922,8 +922,8 @@ MCP Gateway can **propagate end-user identity** to upstream MCP servers when pro
 | `IDENTITY_PROPAGATION_MODE`          | How to propagate identity                                | `both`               | `headers`, `meta`, `both`  |
 | `IDENTITY_PROPAGATION_HEADERS_PREFIX`| Prefix for identity HTTP headers                         | `X-Forwarded-User`   | string                     |
 | `IDENTITY_SENSITIVE_ATTRIBUTES`      | User attributes to strip before propagating              | `["password_hash","internal_id","ssn"]` | JSON array |
-| `IDENTITY_SIGN_CLAIMS`               | Sign propagated user claims with HMAC                    | `false`              | bool                       |
-| `IDENTITY_CLAIMS_SECRET`             | Secret key for signing identity claims                   | (none)               | string                     |
+| `IDENTITY_SIGN_CLAIMS`               | Sign propagated user claims as a short-lived JWS         | `false`              | bool                       |
+| `IDENTITY_CLAIMS_SECRET`             | Dedicated secret for signing identity claims (required when signing; not `JWT_SECRET_KEY`) | (none) | string |
 
 **Propagation modes:**
 
@@ -935,7 +935,7 @@ MCP Gateway can **propagate end-user identity** to upstream MCP servers when pro
     Identity propagation can be configured per-gateway by setting the `identity_propagation` JSON field on individual gateway registrations. Per-gateway settings override the global defaults. See the [Identity Propagation guide](identity-propagation.md) for details.
 
 !!! warning "Claim Signing"
-    When `IDENTITY_SIGN_CLAIMS=true`, an HMAC-SHA256 signature is appended to propagated headers/meta so upstream servers can verify the claims were issued by the gateway. Uses `IDENTITY_CLAIMS_SECRET` if set, otherwise falls back to `JWT_SECRET_KEY`.
+    When `IDENTITY_SIGN_CLAIMS=true`, an HS256 JWS over every identity claim, bound to the target gateway id and valid for 60 seconds, is added to propagated headers/meta so upstream servers can verify the claims were issued by the gateway. `IDENTITY_CLAIMS_SECRET` is required and must differ from `JWT_SECRET_KEY`; the gateway refuses to start otherwise. See the [Identity Propagation guide](identity-propagation.md#claim-signing).
 
 ### SSRF Protection
 
@@ -1288,7 +1288,7 @@ override them with its own CEL expression. See [Tool Description Content Validat
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation (-1 to disable) | `3`     | int     |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
-| `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
+| `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources. OAuth `authorization_code` servers with no stored user token are skipped and need a manual refresh; the skip is logged once per gateway at `LOG_LEVEL=INFO` | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs) and catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
 | `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to modern upstream servers for refresh | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |

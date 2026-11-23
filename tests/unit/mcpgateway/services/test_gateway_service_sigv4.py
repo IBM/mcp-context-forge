@@ -22,7 +22,7 @@ from mcpgateway.schemas import GatewayUpdate
 from mcpgateway.services import upstream_session_registry as registry_module
 from mcpgateway.services.gateway_service import GatewayCredentialError, GatewayService
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
-from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, encrypt_sigv4_secret, SigV4Auth, with_sigv4_auth
+from mcpgateway.utils.sigv4 import access_key_fingerprint, decrypt_sigv4_secret, encrypt_sigv4_secret, SigV4Auth, with_sigv4_auth
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
@@ -384,3 +384,220 @@ class TestSigV4FactoryOverridesCallerAuth:
         with_sigv4_auth(factory, signer)(None, None, "attacker-auth")
 
         assert received["auth"] is signer
+
+
+class TestSigV4AuditAttribution:
+    """update_gateway and register_gateway record key fingerprints, never credentials."""
+
+    FINGERPRINT = access_key_fingerprint(CONFIG["access_key_id"])
+    OTHER_CONFIG = {**CONFIG, "access_key_id": "AKIAI44QH8DHBEXAMPLE"}  # pragma: allowlist secret
+    OTHER_FINGERPRINT = access_key_fingerprint(OTHER_CONFIG["access_key_id"])
+
+    @pytest.fixture
+    def helper(self, monkeypatch):
+        """Reuse the TestUpdateGateway builders with a captured audit logger."""
+        registry = registry_module.UpstreamSessionRegistry()
+        monkeypatch.setattr(registry_module, "_registry", registry)
+        registry.evict_gateway = AsyncMock(return_value=0)  # type: ignore[method-assign]
+        return TestUpdateGateway()
+
+    async def _update(self, helper, gateway, update):
+        service = helper._service()
+        registry_cache, lookup_cache, stats_cache, validate, invalidate, audit = helper._patches()
+        with registry_cache as rc, lookup_cache as lc, stats_cache as sc, validate as mv, invalidate, audit as audit_mock:
+            for name in ("invalidate_gateways", "invalidate_tools", "invalidate_resources", "invalidate_prompts"):
+                setattr(rc.return_value, name, AsyncMock())
+            lc.return_value.invalidate_gateway = AsyncMock()
+            sc.invalidate_tags = AsyncMock()
+            mv.return_value.masked.return_value = MagicMock()
+            await service.update_gateway(helper._db(gateway), "gw-1", update)
+        audit_mock.log_action.assert_called_once()
+        return audit_mock.log_action.call_args.kwargs
+
+    @staticmethod
+    def _assert_no_credential_in(call_kwargs):
+        rendered = repr(call_kwargs)
+        for forbidden in (SECRET, ROTATED_SECRET, CONFIG["access_key_id"], TestSigV4AuditAttribution.OTHER_CONFIG["access_key_id"], "SESSIONTOKENVALUE"):
+            assert forbidden not in rendered
+
+    @pytest.mark.asyncio
+    async def test_rotation_records_old_and_new_fingerprint(self, helper):
+        gateway = helper._gateway()
+
+        call = await self._update(helper, gateway, GatewayUpdate(auth_type="sigv4", sigv4_config={**self.OTHER_CONFIG, "secret_access_key": ROTATED_SECRET}))
+
+        new_values = call["new_values"]
+        assert new_values["sigv4_credential_rotated"] is True
+        assert new_values["sigv4_key_fingerprint"] == self.OTHER_FINGERPRINT
+        assert new_values["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert call["resource_id"] == "gw-1"
+        assert call["resource_name"] == "gw"
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
+    async def test_secret_rotation_with_same_key_id_is_a_rotation(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(auth_type="sigv4", sigv4_config={**CONFIG, "secret_access_key": ROTATED_SECRET}))
+
+        assert call["new_values"]["sigv4_credential_rotated"] is True
+        assert call["new_values"]["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+
+    @pytest.mark.asyncio
+    async def test_masked_echo_is_not_a_rotation(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(auth_type="sigv4", sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value}))
+
+        assert "sigv4_credential_rotated" not in call["new_values"]
+        assert "sigv4_key_fingerprint" not in call["new_values"]
+
+    @pytest.mark.asyncio
+    async def test_resending_the_same_secret_is_not_a_rotation(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(auth_type="sigv4", sigv4_config=dict(CONFIG)))
+
+        assert "sigv4_credential_rotated" not in call["new_values"]
+
+    @pytest.mark.asyncio
+    async def test_description_only_update_is_not_a_rotation(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(description="new description"))
+
+        assert set(call["new_values"]) == {"name", "url", "version"}
+
+    @pytest.mark.asyncio
+    async def test_non_sigv4_gateway_audit_entry_is_unchanged(self, helper):
+        gateway = helper._gateway(auth_type="bearer", sigv4_config=None)
+
+        call = await self._update(helper, gateway, GatewayUpdate(description="new description"))
+
+        assert set(call["new_values"]) == {"name", "url", "version"}
+
+    @pytest.mark.asyncio
+    async def test_switching_away_from_sigv4_records_the_removal(self, helper):
+        call = await self._update(helper, helper._gateway(), GatewayUpdate(auth_type="bearer", auth_token="new-token"))  # pragma: allowlist secret
+
+        new_values = call["new_values"]
+        assert new_values["sigv4_credential_removed"] is True
+        assert new_values["sigv4_previous_key_fingerprint"] == self.FINGERPRINT
+        assert "sigv4_key_fingerprint" not in new_values
+        self._assert_no_credential_in(call)
+
+    @pytest.mark.asyncio
+    async def test_switching_to_sigv4_records_the_new_fingerprint_only(self, helper):
+        gateway = helper._gateway(auth_type="bearer", sigv4_config=None)
+
+        call = await self._update(helper, gateway, GatewayUpdate(auth_type="sigv4", sigv4_config=dict(CONFIG)))
+
+        assert call["new_values"]["sigv4_key_fingerprint"] == self.FINGERPRINT
+        assert call["new_values"]["sigv4_credential_rotated"] is True
+        assert "sigv4_previous_key_fingerprint" not in call["new_values"]
+        self._assert_no_credential_in(call)
+
+
+class TestSigV4GatewayRegistrationAudit:
+    """register_gateway records the key fingerprint and no credential."""
+
+    @staticmethod
+    def _db():
+        db = MagicMock()
+        empty = MagicMock()
+        empty.scalar_one_or_none.return_value = None
+        empty.scalars.return_value.all.return_value = []
+        db.execute = Mock(side_effect=[empty, empty])
+        return db
+
+    async def _register(self, gateway_create):
+        service = GatewayService()
+        service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], [], None))
+        service._notify_gateway_added = AsyncMock()
+        with (
+            patch("mcpgateway.services.gateway_service.audit_trail") as audit,
+            patch("mcpgateway.services.gateway_service.structured_logger"),
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate"),
+        ):
+            await service.register_gateway(self._db(), gateway_create)
+        audit.log_action.assert_called_once()
+        return audit.log_action.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_registration_records_the_fingerprint(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        call = await self._register(
+            GatewayCreate(name="aws-gw", url="https://api.example.com/mcp", transport="STREAMABLEHTTP", auth_type="sigv4", sigv4_config={**CONFIG, "session_token": "SESSIONTOKENVALUE"})
+        )
+
+        assert call["action"] == "create_gateway"
+        assert call["new_values"]["auth_type"] == "sigv4"
+        assert call["new_values"]["sigv4_key_fingerprint"] == access_key_fingerprint(CONFIG["access_key_id"])
+        assert call["resource_name"] == "aws-gw"
+        assert call["resource_id"]
+        assert "db" not in call
+        rendered = repr(call)
+        for forbidden in (SECRET, CONFIG["access_key_id"], "SESSIONTOKENVALUE"):
+            assert forbidden not in rendered
+
+    @pytest.mark.asyncio
+    async def test_non_sigv4_registration_audit_entry_is_unchanged(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        call = await self._register(GatewayCreate(name="plain-gw", url="https://example.com/mcp", transport="SSE"))
+
+        assert set(call["new_values"]) == {"name", "url", "visibility", "transport", "tools_count", "resources_count", "prompts_count"}
+
+
+class TestFailingGatewayCallLeaksNoCredential:
+    """A failing SigV4 gateway call logs and raises no secret, signature or session token."""
+
+    SESSION_TOKEN = "SESSIONTOKENVALUE"  # pragma: allowlist secret
+    SIGNATURE = "deadbeefsignature0123"  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport,method", [("streamablehttp", "connect_to_streamablehttp_server"), ("sse", "connect_to_sse_server")])
+    async def test_connection_failure_with_a_signed_url(self, caplog, transport, method):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+
+        service = GatewayService()
+        url = f"https://api.example.com/mcp?X-Amz-Signature={self.SIGNATURE}&X-Amz-Security-Token={self.SESSION_TOKEN}&X-Amz-Credential={CONFIG['access_key_id']}"  # pragma: allowlist secret
+        setattr(service, method, AsyncMock(side_effect=RuntimeError(f"connection to {url} failed")))
+
+        with caplog.at_level("DEBUG"), pytest.raises(GatewayConnectionError) as raised:
+            await service._initialize_gateway(url, transport=transport, auth_type="sigv4", sigv4_config=_stored(session_token=encrypt_sigv4_secret("session_token", self.SESSION_TOKEN)))
+
+        messages = "\n".join(record.getMessage() for record in caplog.records)
+        for value in (self.SESSION_TOKEN, self.SIGNATURE, CONFIG["access_key_id"]):
+            assert value not in messages
+            assert value not in str(raised.value)
+        assert SECRET not in caplog.text
+        assert SECRET not in str(raised.value)
+
+    @pytest.mark.asyncio
+    async def test_upstream_rejection_names_no_credential(self, caplog):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayCredentialError
+
+        service = GatewayService()
+        response = httpx2.Response(403, request=httpx2.Request("POST", "https://api.example.com/mcp"))
+        service.connect_to_streamablehttp_server = AsyncMock(side_effect=httpx2.HTTPStatusError("403 Forbidden", request=response.request, response=response))
+
+        with caplog.at_level("DEBUG"), pytest.raises(GatewayCredentialError) as raised:
+            await service._initialize_gateway("https://api.example.com/mcp", transport="streamablehttp", auth_type="sigv4", sigv4_config=_stored())
+
+        logged = "\n".join(record.getMessage() + "\n" + str(record.__dict__.get("exc_text") or "") for record in caplog.records)
+        for value in (SECRET, CONFIG["access_key_id"]):
+            assert value not in logged
+            assert value not in str(raised.value)
+
+    @pytest.mark.asyncio
+    async def test_undecryptable_credentials_name_no_secret(self, caplog):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayCredentialError
+
+        service = GatewayService()
+        broken = {**CONFIG, "secret_access_key": "not-encrypted"}  # pragma: allowlist secret
+
+        with caplog.at_level("DEBUG"), pytest.raises(GatewayCredentialError) as raised:
+            await service._initialize_gateway("https://api.example.com/mcp", transport="streamablehttp", auth_type="sigv4", sigv4_config=broken)
+
+        logged = "\n".join(record.getMessage() for record in caplog.records)
+        assert "not-encrypted" not in logged
+        assert "not-encrypted" not in str(raised.value)

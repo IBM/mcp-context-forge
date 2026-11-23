@@ -529,6 +529,23 @@ def _validate_header_mapping_targets(v: dict | None) -> dict | None:
     return v
 
 
+def _require_claims_secret_for_signing(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject per-gateway claim signing when no IDENTITY_CLAIMS_SECRET is configured.
+
+    Args:
+        v: Per-gateway identity propagation configuration.
+
+    Returns:
+        The unchanged configuration.
+
+    Raises:
+        ValueError: If ``sign_claims`` is true and ``IDENTITY_CLAIMS_SECRET`` is unset.
+    """
+    if v and v.get("sign_claims") is True and not settings.identity_claims_secret:
+        raise ValueError("identity_propagation.sign_claims requires IDENTITY_CLAIMS_SECRET to be configured")
+    return v
+
+
 def _coerce_visibility(v: Optional[str]) -> Optional[str]:
     """Normalize legacy visibility values in Read/response schemas.
 
@@ -1229,6 +1246,7 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4' on a REST tool: access_key_id, secret_access_key, region, service, optional session_token and optional unsigned_payload. "
         "Secrets are stored encrypted. A SigV4 tool without this field uses the SigV4 configuration of its gateway.",
     )
@@ -1895,6 +1913,7 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for a REST tool with auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
     )
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool; also accepted as mcp_server_id", validation_alias=_GATEWAY_ID_CAMEL_ALIAS)
@@ -3854,6 +3873,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     # AWS Signature V4 configuration
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4': access_key_id, secret_access_key, region, service and optional session_token. Secrets are stored encrypted.",
     )
 
@@ -3947,6 +3967,8 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+
+    _validate_identity_propagation = field_validator("identity_propagation")(classmethod(lambda cls, v: _require_claims_secret_for_signing(v)))
 
     @field_validator("gateway_mode", mode="before")
     @classmethod
@@ -4292,6 +4314,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # AWS Signature V4 configuration
     sigv4_config: Optional[Dict[str, Any]] = Field(
         None,
+        repr=False,
         description="AWS SigV4 configuration for auth_type 'sigv4'. A masked secret_access_key or session_token keeps the stored value.",
     )
 
@@ -4413,6 +4436,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+
+    _validate_identity_propagation = field_validator("identity_propagation")(classmethod(lambda cls, v: _require_claims_secret_for_signing(v)))
 
     @field_validator("tags")
     @classmethod
@@ -5498,6 +5523,12 @@ class ServerInterfaceRead(BaseModel):
     updated_at: datetime
 
 
+class ServerOAuthApprovalRequest(BaseModel):
+    """Identify the server version reviewed for OAuth approval."""
+
+    version: int = Field(ge=1, description="Server version reviewed by the administrator")
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -5926,6 +5957,7 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    oauth_config_approved: bool = Field(False, description="Whether an unrestricted administrator approved the current OAuth configuration")
 
     instructions: Optional[str] = Field(None, description="Operator-set instructions text. Null: not set. Empty string: send no instructions")
 

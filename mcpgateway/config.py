@@ -759,11 +759,11 @@ class Settings(  # pylint: disable=too-many-ancestors
     )
     identity_sign_claims: bool = Field(
         default=False,
-        description="Sign propagated user claims with HMAC for verification",
+        description="Sign propagated user claims as a short-lived HS256 JWS. Requires IDENTITY_CLAIMS_SECRET",
     )
     identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
-        description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
+        description="Dedicated secret for signing propagated identity claims. Required when IDENTITY_SIGN_CLAIMS=true; must differ from JWT_SECRET_KEY",
     )
 
     # ===================================
@@ -1246,7 +1246,7 @@ class Settings(  # pylint: disable=too-many-ancestors
     password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
     password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
     password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
-    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
+    password_reset_invalidate_sessions: bool = Field(default=True, description="After a password reset, change, or admin reset, reject sessions issued earlier and revoke the user API tokens")
     password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
 
     # Email delivery for auth notifications
@@ -1826,6 +1826,8 @@ class Settings(  # pylint: disable=too-many-ancestors
         empty, placeholder, known-weak, and too-short (below
         ``password_min_length_user``, the OWASP baseline) values when their
         consuming authentication feature is enabled (feature-gated fail-closed).
+        ``identity_claims_secret`` gets the full secret checks when it is set or
+        ``identity_sign_claims`` is on, and must differ from ``jwt_secret_key``.
         No entropy floor is applied to passwords: the Shannon-entropy check used
         for random secrets is a poor signal for human-chosen passwords and the
         length + known-weak-value checks already cover the realistic risk.
@@ -1888,6 +1890,19 @@ class Settings(  # pylint: disable=too-many-ancestors
                     min_length=self.password_min_length_user,
                     check_placeholder=True,
                 )
+
+        claims_secret = self.identity_claims_secret.get_secret_value() if self.identity_claims_secret else ""
+        if self.identity_sign_claims or claims_secret:
+            self._enforce_secret_strength(
+                "identity_claims_secret",
+                claims_secret,
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+            )
+            if claims_secret == self.jwt_secret_key.get_secret_value():
+                raise SecurityConfigurationError("identity_claims_secret must differ from jwt_secret_key: upstream servers that verify identity claims hold this secret.")
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
@@ -2520,7 +2535,19 @@ class Settings(  # pylint: disable=too-many-ancestors
     siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
     siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
     siem_export_redact_fields: List[str] = Field(
-        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key"],
+        default_factory=lambda: [
+            "user_email",
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "secret_access_key",
+            "session_token",
+            "x-amz-security-token",
+            "x-amz-signature",
+            "x-amz-credential",
+        ],
         description="Fields to redact before exporting events",
     )
     siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
@@ -3337,7 +3364,10 @@ class Settings(  # pylint: disable=too-many-ancestors
     )
     otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
     otel_redact_fields: str = Field(
-        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid",
+        default=(
+            "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid,"
+            "session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential"
+        ),
         description="Comma-separated trace payload field names to redact before export",
     )
     otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")

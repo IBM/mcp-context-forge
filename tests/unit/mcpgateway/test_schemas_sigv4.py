@@ -12,7 +12,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret
 
@@ -141,3 +141,31 @@ class TestStorageEncryption:
 
     def test_none(self):
         assert protect_sigv4_config_sync(None) is None
+
+
+class TestSecretsStayOutOfRepr:
+    """A request model printed in a debug log line never shows the SigV4 secret, the session token or the access key ID."""
+
+    SESSION_TOKEN = "SESSIONTOKENVALUE"  # pragma: allowlist secret
+
+    @staticmethod
+    def _models(config):
+        return [
+            GatewayCreate(name="g", url="http://example.com/mcp", auth_type="sigv4", sigv4_config=config, transport="STREAMABLEHTTP"),
+            GatewayUpdate(auth_type="sigv4", sigv4_config=config),
+            ToolCreate(name="t", url="http://example.com/x", integration_type="REST", request_type="POST", auth_type="sigv4", sigv4_config=config),
+            ToolUpdate(auth_type="sigv4", sigv4_config=config),
+        ]
+
+    @pytest.mark.parametrize("render", [repr, str, lambda model: f"{model}"], ids=["repr", "str", "f-string"])
+    def test_rendered_model_holds_no_credential(self, render):
+        config = {**CONFIG, "session_token": self.SESSION_TOKEN}
+
+        for model in self._models(config):
+            rendered = render(model)
+            for forbidden in (SECRET, self.SESSION_TOKEN, CONFIG["access_key_id"]):
+                assert forbidden not in rendered, type(model).__name__
+
+    def test_the_value_is_still_available_to_the_service(self):
+        for model in self._models({**CONFIG}):
+            assert model.sigv4_config["secret_access_key"] == SECRET

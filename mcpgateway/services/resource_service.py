@@ -80,7 +80,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
-from mcpgateway.utils.identity_propagation import build_identity_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -329,6 +329,7 @@ def _raise_unresolved_gateway_resource(exc: BaseException, auth_query_params: Op
 
 UNRESOLVED_GATEWAY_RESOURCE_MESSAGE = "Gateway resource content could not be resolved"
 DIRECT_PROXY_RESOURCE_ERROR_MESSAGE = "Direct proxy resource read failed"
+IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE = "Identity claim signing is misconfigured for the resource gateway"
 
 
 def _has_authoritative_cached_content(resource: Optional[DbResource]) -> bool:
@@ -2160,6 +2161,7 @@ class ResourceService(BaseService):
                         gateway_auth_value = gateway.auth_value
                         gateway_oauth_config = gateway.oauth_config
                         gateway_name = gateway.name
+                        gateway_audience = str(gateway.id)
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
                         try:
                             gateway_sigv4_auth = build_gateway_sigv4_auth(gateway_auth_type, getattr(gateway, "sigv4_config", None))
@@ -2303,7 +2305,12 @@ class ResourceService(BaseService):
                             from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
-                                headers.update(build_identity_headers(user_identity, gateway))
+                                try:
+                                    headers.update(build_identity_headers(user_identity, gateway, audience=gateway_audience))
+                                    meta_data = build_identity_meta(user_identity, meta_data, gateway, audience=gateway_audience)
+                                except IdentitySigningError as signing_exc:
+                                    logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_audience, signing_exc)
+                                    raise ResourceError(IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE) from signing_exc
 
                         async def _read_resource_content_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str | types.BlobResourceContents:
                             """Retry remote resource reads on an already established MCP session."""
@@ -2862,6 +2869,9 @@ class ResourceService(BaseService):
 
                         except ResourceInputRequired:
                             raise
+                        except IdentitySigningError as e:
+                            logger.error("Identity claim signing is misconfigured for gateway %s: %s", resource_db.gateway.id, e)
+                            raise ResourceError(IDENTITY_SIGNING_RESOURCE_ERROR_MESSAGE) from e
                         except Exception as e:
                             wrapped = _upstream_root_cause(e, ResourceInputRequired)
                             if isinstance(wrapped, ResourceInputRequired):

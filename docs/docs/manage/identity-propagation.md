@@ -41,8 +41,8 @@ sequenceDiagram
 | `IDENTITY_PROPAGATION_MODE` | `both` | Propagation method: `headers`, `meta`, or `both` |
 | `IDENTITY_PROPAGATION_HEADERS_PREFIX` | `X-Forwarded-User` | Prefix for HTTP identity headers |
 | `IDENTITY_SENSITIVE_ATTRIBUTES` | `["password_hash","internal_id","ssn"]` | Attributes stripped before propagation |
-| `IDENTITY_SIGN_CLAIMS` | `false` | HMAC-sign claims for upstream verification |
-| `IDENTITY_CLAIMS_SECRET` | (none) | Signing secret (falls back to `JWT_SECRET_KEY`) |
+| `IDENTITY_SIGN_CLAIMS` | `false` | Sign claims as a short-lived JWS for upstream verification |
+| `IDENTITY_CLAIMS_SECRET` | (none) | Dedicated signing secret. Required when signing is on; must differ from `JWT_SECRET_KEY` |
 
 ### Enabling Identity Propagation
 
@@ -70,7 +70,7 @@ The gateway injects HTTP headers into upstream requests:
 | `X-Forwarded-User-Team-Id` | `team-alpha` | Active team context |
 | `X-Forwarded-User-Service-Account` | `ci-bot` | Service account (if acting on behalf) |
 | `X-Forwarded-User-Delegation-Chain` | `ci-bot>alice` | Delegation chain |
-| `X-Forwarded-User-Claims-Signature` | `<hmac>` | HMAC signature (when signing enabled) |
+| `X-Forwarded-User-Claims-Signature` | `<jws>` | HS256 JWS over all identity claims (when signing enabled) |
 
 The header prefix is configurable via `IDENTITY_PROPAGATION_HEADERS_PREFIX`.
 
@@ -120,18 +120,58 @@ Per-gateway settings take precedence over global defaults. If a gateway sets `"e
 
 ## Claim Signing
 
-When `IDENTITY_SIGN_CLAIMS=true`, the gateway appends an HMAC-SHA256 signature to the propagated claims:
+When `IDENTITY_SIGN_CLAIMS=true` (globally, or `"sign_claims": true` on a gateway), the gateway attaches a compact HS256 JWS to the propagated identity:
 
-- **Headers mode**: Adds `X-Forwarded-User-Claims-Signature` header
-- **Meta mode**: Adds `claims_signature` field to the `_meta.user` object
+- **Headers**: `X-Forwarded-User-Claims-Signature` header
+- **Meta**: `claims_signature` field in the `_meta.user` object
 
-The signature covers the canonical JSON representation of the identity payload. Upstream servers can verify the signature using the shared secret to confirm the claims originated from the gateway.
+The JWS payload holds every identity claim (`id`, `email`, `full_name`, `groups`, `teams`, `roles`, `is_admin`, `auth_method`, `service_account`, `delegation_chain`; empty optional claims are omitted) plus:
+
+| Claim | Value |
+|-------|-------|
+| `iss` | `mcpgateway-identity-propagation` |
+| `aud` | Target gateway id (for REST tools without a gateway: the tool id) |
+| `iat` / `exp` | Issue time and expiry, 60 seconds apart |
+| `jti` | Unique token id per request |
+
+Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`. The gateway refuses to start when `IDENTITY_CLAIMS_SECRET` is set but weak or equal to `JWT_SECRET_KEY`, or when `IDENTITY_SIGN_CLAIMS=true` and the secret is missing. The gateway rejects a per-gateway `sign_claims` override at save time when no secret is configured. If the secret is removed later, the upstream call fails with a configuration error instead of sending unsigned or wrongly signed claims.
+
+!!! note "Pooled upstream sessions"
+    A pooled (session-affinity) upstream session reuses its HTTP headers for every call. The gateway does not send the `X-Forwarded-User-Claims-Signature` header on these sessions, because the token would expire and repeat. Verify `_meta.user.claims_signature` instead. It carries a fresh token on each call.
 
 ```bash
 # Enable claim signing
 IDENTITY_SIGN_CLAIMS=true
-IDENTITY_CLAIMS_SECRET=my-shared-secret  # or uses JWT_SECRET_KEY
+IDENTITY_CLAIMS_SECRET=<random, 32+ chars, not JWT_SECRET_KEY>  # pragma: allowlist secret
 ```
+
+### Verifying on the upstream
+
+Authorize from the decoded token claims, never from the plaintext `X-Forwarded-User-*` headers: the plaintext headers are informational and are not individually signed.
+
+```python
+import jwt
+
+claims = jwt.decode(
+    request.headers["X-Forwarded-User-Claims-Signature"],
+    IDENTITY_CLAIMS_SECRET,
+    algorithms=["HS256"],
+    audience="<this upstream's gateway id in ContextForge>",
+    issuer="mcpgateway-identity-propagation",
+    leeway=5,  # allow small clock skew
+)
+if claims["is_admin"]: ...
+```
+
+To reject replays inside the 60-second window, cache seen `jti` values until their `exp`.
+
+!!! warning "Shared-secret trust"
+    The secret is symmetric: any upstream that can verify tokens can also mint them. Give each trust domain its own gateway deployment, and never reuse `JWT_SECRET_KEY`.
+
+!!! note "Format change"
+    Earlier releases sent a hex HMAC over `user_id:email` only, and fell back to `JWT_SECRET_KEY`. Verifiers built for that format reject the new token. If an earlier deployment ran with signing on and no `IDENTITY_CLAIMS_SECRET`, rotate `JWT_SECRET_KEY`.
+
+The signed token adds roughly the size of the plaintext identity headers again. Users with many teams or roles can exceed an upstream's header size limit.
 
 ## Sensitive Attribute Filtering
 

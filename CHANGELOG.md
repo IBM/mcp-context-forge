@@ -9,7 +9,29 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Virtual-server OAuth requires administrator approval** - Only unrestricted platform administrators can submit
+  `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
+  or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.
+  Tokens from a pending server issuer receive HTTP 503. Protected-resource metadata excludes pending issuers.
+  Deploy the migration and application together. Restart all workers to stop existing authenticated streams.
+  Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
+  `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
+  See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
+### Security
+
+- **Identity claim signing covers every claim** - With `IDENTITY_SIGN_CLAIMS=true`, `X-Forwarded-User-Claims-Signature` and `_meta.user.claims_signature` now carry an HS256 JWS over all propagated identity claims, including the admin flag, teams, roles, groups, and delegation chain. The token has `iss`, `aud` (target gateway id), a 60-second `exp`, and a `jti`. Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`; the gateway no longer falls back to `JWT_SECRET_KEY` and refuses to start without the secret or with a secret equal to `JWT_SECRET_KEY`. **Breaking:** upstream verifiers of the old hex HMAC must switch to JWS verification. See [Identity Propagation](docs/docs/manage/identity-propagation.md#claim-signing). If an earlier deployment ran with signing on and no `IDENTITY_CLAIMS_SECRET`, rotate `JWT_SECRET_KEY`.
+
 ### Added
+
+- **SigV4 credential hygiene, audit, and access-control tests** ([#7626](https://github.com/IBM/mcp-context-forge/issues/7626), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - ContextForge redacts SigV4 credentials in logs, traces, and SIEM exports, and audits SigV4 registration and rotation.
+    - Redaction covers `secret_access_key`, `session_token`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential` in headers, query parameters, request logs, trace payloads, and SIEM events. The `OTEL_REDACT_FIELDS` and `SIEM_EXPORT_REDACT_FIELDS` defaults list these names. An existing explicit setting keeps its value, so add the names to it. SIEM redaction now matches field names without regard to letter case, so a configured name such as `token` also redacts `Token`. The request models of a gateway and a tool no longer print `sigv4_config` in `repr()` or `str()`, so the debug line for a gateway registration no longer shows the secret access key, the session token, or the access key ID. Free-text redaction also removes a SigV4 `Authorization` header value in any parameter order, and the value of `x-amz-signature`, `x-amz-credential`, and `x-amz-security-token` pairs outside a URL.
+    - Gateway and tool create and update audit entries carry `sigv4_key_fingerprint`. A credential rotation adds `sigv4_credential_rotated` and `sigv4_previous_key_fingerprint`. A removal, such as a switch to another auth type, adds `sigv4_credential_removed` and `sigv4_previous_key_fingerprint`. A bulk import with `conflict_strategy=update` lists each changed tool as `tool_id`, `name`, and the same fields in the `sigv4_tools` list of the `bulk_update_tools` entry. The fingerprint is the first 12 hex characters of the SHA-256 of the access key ID. The entries never hold the access key ID, the secret, or the session token.
+    - Header filtering now removes `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential` from plugin input. With `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false`, the default, it also removes them from downstream A2A agent calls, even when a passthrough allowlist names them. Set `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true` to forward them.
+    - ContextForge audits registration and rotation only, not each signed request or health check. No role changes: the `developer` role keeps `gateways.create`, `gateways.update`, `tools.create`, and `tools.update`.
+    - Adds deny-path tests for create, update, and the stored-credential handshake, a plaintext-at-rest regression test, a signing p99 benchmark, and live gateway deny tests. See [AWS SigV4 Gateway Authentication](docs/docs/using/sigv4-gateway-auth.md#security-properties).
 
 - **AWS Signature V4 signing for REST tools** ([#7561](https://github.com/IBM/mcp-context-forge/issues/7561), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810)) - A REST tool accepts `auth_type: "sigv4"`. A standalone tool carries its own `sigv4_config`. A tool under a SigV4 gateway inherits the gateway credential.
     - ContextForge signs the final request, so the body hash covers the exact bytes sent and URL templates are substituted first. The tool `sigv4_config` takes precedence over the gateway one.
@@ -102,9 +124,13 @@
 
 - **Provider relinking requires a verified-email claim** ([#7564](https://github.com/IBM/mcp-context-forge/pull/7564)) - With `SSO_ALLOW_PROVIDER_LINKING=true`, the gateway rebinds an account to a different SSO provider only when that provider sends an explicit verified-email claim. Before, a login without the claim also relinked. GitHub and most Entra ID tenants send no claim, so relinking to them is now refused; ADFS identities count as verified. Sign-in through the account's own provider does not change. The gateway log records each refusal. See [SSO](docs/docs/manage/sso.md).
 
+- **Breaking: a password change revokes all API tokens of the user** - A password reset, a password change, and an admin password reset now revoke every active API token of that user. Session tokens issued before the change are rejected. Automation that uses these tokens fails with `401` until you create new tokens. `PASSWORD_RESET_INVALIDATE_SESSIONS` controls both actions and defaults to `true`. Set it to `false` to disable the session check and the API token revocation. See [Configuration](docs/docs/manage/configuration.md).
+
 ### Fixed
 
 - **Cancelled tool calls are no longer recorded as failures** ([#6646](https://github.com/IBM/mcp-context-forge/issues/6646)) - A tool call cancelled with no known failure, for example a client disconnect or `notifications/cancelled`, now logs `Tool '<name>' invocation cancelled` at INFO instead of an ERROR failure. Its `tool.invoke` database span ends with status `cancelled`, and it records no tool or server execution metric. Known failures, such as timeouts, upstream error results, and exceptions, keep the ERROR log, the `error` span status, and the failure metric, even when a cancel arrives later, for example during a plugin retry backoff or the timeout post-invoke hook. The OpenTelemetry `tool.invoke` span of a cancelled call ends with status OK, not ERROR, and gains a `cancelled` attribute. A cancel after a known failure keeps the ERROR status. A client disconnect cancels a running tool call only on `/rpc`, SSE `/message`, `/mcp` SSE streams (requests with a progress token), and stateful `/mcp` sessions (`notifications/cancelled`). On default `/mcp` (JSON responses, stateless), a disconnect does not cancel the call, so the call records its real outcome.
+
+- **Auto-refresh reports the authorization_code gateways it cannot refresh** ([#7015](https://github.com/IBM/mcp-context-forge/issues/7015)) - With `AUTO_REFRESH_SERVERS` enabled, background refresh now skips an OAuth `authorization_code` gateway when the health check has no stored user token for it, and logs once per gateway at `info`: "Auto-refresh skipped for gateway <name>: authorization_code servers require a manual refresh". Before, the refresh fetched nothing and logged nothing, so the gateway's catalog went stale without a signal. The notice shows at `LOG_LEVEL=INFO` and repeats if the token is lost again after it was available. Gateways where the health check finds a stored token still refresh.
 
 - **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 

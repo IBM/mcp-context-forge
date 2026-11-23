@@ -1116,6 +1116,7 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 email_verified_at=user.email_verified_at,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
+                password_changed_at=user.password_changed_at,
             )
         return None
 
@@ -1180,7 +1181,41 @@ def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Option
     )
 
 
-def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
+def session_predates_password_change(payload: Dict[str, Any], password_changed_at: Optional[datetime]) -> bool:
+    """Tell whether a session token was issued before the user's last password change.
+
+    ``iat`` has whole-second resolution, so the comparison uses whole seconds.
+    A token issued in the same second as the change stays valid.
+    Only ``token_use=session`` tokens are affected. API tokens use ``EmailApiToken`` revocation.
+
+    Args:
+        payload: Verified JWT payload.
+        password_changed_at: ``EmailUser.password_changed_at``. SQLite returns it naive.
+
+    Returns:
+        True when the token must be rejected.
+
+    Examples:
+        >>> changed = datetime(2026, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+        >>> before = int(changed.timestamp()) - 1
+        >>> session_predates_password_change({"token_use": "session", "iat": before}, changed)
+        True
+        >>> session_predates_password_change({"token_use": "session", "iat": before + 1}, changed)
+        False
+        >>> session_predates_password_change({"token_use": "api", "iat": before}, changed)
+        False
+        >>> session_predates_password_change({"token_use": "session", "iat": before}, None)
+        False
+    """
+    iat = payload.get("iat")
+    if not settings.password_reset_invalidate_sessions or password_changed_at is None or iat is None or payload.get("token_use") != "session":  # nosec B105 - JWT claim, not a password
+        return False
+    if password_changed_at.tzinfo is None:
+        password_changed_at = password_changed_at.replace(tzinfo=timezone.utc)
+    return iat < int(password_changed_at.timestamp())
+
+
+def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Batched auth context lookup in a single DB session.
 
     Combines what were 3 separate asyncio.to_thread calls into 1:
@@ -1194,6 +1229,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
     Args:
         email: User email address
         jti: JWT ID for revocation check (optional)
+        payload: Verified JWT payload. When given, a session token issued before the
+            user's last password change is reported as revoked (optional)
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
@@ -1236,6 +1273,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
+            if payload is not None and session_predates_password_change(payload, user.password_changed_at):
+                result["is_token_revoked"] = True
 
             # Query 2: Get personal team (only if user exists)
             team_result = db.execute(
@@ -1297,7 +1336,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         # Query 3: Check token revocation (if JTI provided)
         if jti:
             revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
-            result["is_token_revoked"] = revoke_result.scalar_one_or_none() is not None
+            result["is_token_revoked"] = result["is_token_revoked"] or revoke_result.scalar_one_or_none() is not None
 
         return result
 
@@ -1718,6 +1757,7 @@ async def get_current_user(
 
     logger.debug("Attempting authentication with bearer credentials")
     email = None
+    payload: Dict[str, Any] = {}
 
     try:
         # Dispatch to the shared verifier, which tries a trusted external-IdP
@@ -1864,7 +1904,7 @@ async def get_current_user(
         # === BATCHED QUERIES: Single DB call for user + team + revocation ===
         if settings.auth_cache_batch_queries:
             try:
-                auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti, payload)
 
                 # Check revocation
                 if auth_ctx.get("is_token_revoked"):
@@ -2197,6 +2237,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Individual-query fallback: the batched path reports this as a revoked token.
+    if session_predates_password_change(payload, user.password_changed_at):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
