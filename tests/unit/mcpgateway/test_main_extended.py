@@ -442,6 +442,7 @@ class TestInternalTrustedMcpTransportBridge:
         header_names = [name for name, _value in start["headers"]]
         assert header_names.count(b"x-contextforge-mcp-runtime") == 1
 
+
 class TestMcpSerialization:
     """Test MCP-specific response shaping helpers."""
 
@@ -1957,7 +1958,9 @@ class TestAdminAuthMiddleware:
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
         mock_permission_service.has_admin_permission.assert_awaited_once_with(
-            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
+            "dev@example.com",
+            team_id="a1b2c3d4e5f6789012345678abcdef01",
+            token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"],  # pragma: allowlist secret
         )
 
     @pytest.mark.asyncio
@@ -2162,7 +2165,9 @@ class TestAdminAuthMiddleware:
         assert response == "ok"
         # Hyphenated UUID should be normalized to hex and match token_teams
         mock_permission_service.has_admin_permission.assert_awaited_once_with(
-            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
+            "dev@example.com",
+            team_id="a1b2c3d4e5f6789012345678abcdef01",
+            token_teams=["a1b2c3d4e5f6789012345678abcdef01"],  # pragma: allowlist secret
         )  # pragma: allowlist secret
 
     @pytest.mark.asyncio
@@ -2218,7 +2223,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
         )
         # Simulate repeated keys — .get() returns the last value
-        request.query_params = QueryParams("team_id=00000000000000000000000000000099" "&team_id=a1b2c3d4e5f6789012345678abcdef01")
+        request.query_params = QueryParams("team_id=00000000000000000000000000000099&team_id=a1b2c3d4e5f6789012345678abcdef01")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2249,7 +2254,9 @@ class TestAdminAuthMiddleware:
         assert response == "ok"
         # .get() returns last value (hex UUID), which IS in token_teams
         mock_permission_service.has_admin_permission.assert_awaited_once_with(
-            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
+            "dev@example.com",
+            team_id="a1b2c3d4e5f6789012345678abcdef01",
+            token_teams=["a1b2c3d4e5f6789012345678abcdef01"],  # pragma: allowlist secret
         )  # pragma: allowlist secret
 
     @pytest.mark.asyncio
@@ -5807,7 +5814,6 @@ class TestA2ABranchCoverage:
         agent = A2AAgentCreate(name="agent", endpoint_url="http://example.com/agent")
         response = await main_mod.create_a2a_agent(agent, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert response.status_code == 403
-
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_validation_and_integrity_errors(self, monkeypatch):

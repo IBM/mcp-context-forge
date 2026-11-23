@@ -11005,9 +11005,7 @@ async def import_configuration(
         )
 
         if roots_excluded:
-            import_status.warnings.append(
-                "Roots were excluded from this import because the caller is not an unrestricted platform administrator."
-            )
+            import_status.warnings.append("Roots were excluded from this import because the caller is not an unrestricted platform administrator.")
 
         return import_status.to_dict()
 
