@@ -299,7 +299,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         """Make HTTP request to Vault with retry logic.
 
         Args:
-            method: HTTP method (GET, POST, DELETE)
+            method: HTTP method (GET, POST, DELETE) or the Vault LIST verb
             path: Vault API path (relative to /v1/)
             data: Request body (for POST)
 
@@ -325,6 +325,8 @@ class VaultTokenBackend(AbstractTokenBackend):
                         resp = await client.post(url, headers=headers, json=data)
                     elif method == "DELETE":
                         resp = await client.delete(url, headers=headers)
+                    elif method == "LIST":
+                        resp = await client.request("LIST", url, headers=headers)
                     else:
                         raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -460,7 +462,6 @@ class VaultTokenBackend(AbstractTokenBackend):
                 "gateway_id": gateway_id,
                 "email": app_user_email,
                 "team_id": team_id,
-                "gateway_id": gateway_id,  # the path is keyed on this; recorded so the row is self-describing
                 "mcp_url": mcp_url,
                 "token": {
                     "access_token": access_token,
@@ -559,14 +560,11 @@ class VaultTokenBackend(AbstractTokenBackend):
             OAuthError: The provider cannot refresh an expired token.
             ValueError: Stored token expiry is invalid.
         """
-        mcp_url = self._resolve_mcp_url(gateway_id)
-        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
         lock = await self._get_refresh_lock(gateway_id, team_id, app_user_email)
         async with lock:
-            result = await self._vault_request("GET", path)
-            if result is None:
+            data = await self._read_user_record(team_id, gateway_id, app_user_email)
+            if data is None:
                 return None
-            data = result["data"]["data"]
             token = data.get("token")
             if not isinstance(token, dict) or not token.get("access_token"):
                 return None
@@ -759,10 +757,9 @@ class VaultTokenBackend(AbstractTokenBackend):
             Token status and valid access token, or None when authorization is absent.
         """
         mcp_url = self._resolve_mcp_url(gateway_id)
-        result = await self._vault_request("GET", self._construct_vault_path(team_id, mcp_url, app_user_email))
-        if not result or "data" not in result:
+        data = await self._read_user_record(team_id, gateway_id, app_user_email)
+        if data is None:
             return None
-        data = result["data"]["data"]
         if data.get("gateway_id") != gateway_id or data.get("email") != app_user_email or data.get("mcp_url") != mcp_url:
             return ValidationToken("unbound")
         if data.get("expires_at"):
@@ -894,6 +891,67 @@ class VaultTokenBackend(AbstractTokenBackend):
         except Exception as e:
             logger.error("Failed to revoke OAuth tokens in Vault: %s", str(e))
             return False
+
+    async def _list_keys(self, metadata_path: str) -> list[str]:
+        """List the child keys under a KV v2 metadata path.
+
+        Args:
+            metadata_path: KV v2 metadata path to list
+
+        Returns:
+            Child keys as Vault returns them (folders end with '/'), or an empty list when the path holds nothing.
+        """
+        result = await self._vault_request("LIST", metadata_path)
+        keys = (result or {}).get("data", {}).get("keys")
+        return keys if isinstance(keys, list) else []
+
+    async def delete_gateway_tokens(self, gateway_id: str, mcp_url: str, include_legacy: bool) -> int:
+        """Hard-delete every per-user record of a deleted gateway.
+
+        The team segment comes from each caller's token, so the records of one gateway sit under
+        many team segments. The method lists every team segment and deletes the gateway's records
+        in each one.
+
+        Args:
+            gateway_id: ID of the deleted gateway
+            mcp_url: URL of the deleted gateway
+            include_legacy: Also delete the legacy URL-keyed records. Pass True only when no
+                remaining gateway has this URL, because those records are shared by URL.
+
+        Returns:
+            Count of deleted records.
+
+        Raises:
+            VaultConnectionError: If Vault is unreachable
+            VaultAuthError: If Vault rejects the token
+        """
+        base_path = f"{self.mount}/metadata/{self.prefix}"
+        server_segments = [self._server_segment(gateway_id)]
+        if include_legacy:
+            server_segments.append(self._hash_server_id(mcp_url))
+
+        deleted = 0
+        for team_key in await self._list_keys(base_path):
+            if not team_key.endswith("/") or team_key == "credentials/":
+                continue
+            for server_segment in server_segments:
+                folder = f"{base_path}/{quote(team_key.rstrip('/'), safe='')}/{server_segment}"
+                for user_key in await self._list_keys(folder):
+                    if user_key.endswith("/"):
+                        continue
+                    await self._vault_request("DELETE", f"{folder}/{quote(user_key, safe='')}")
+                    deleted += 1
+
+        for cache_key in [key for key in VaultTokenBackend._token_cache if key[1] == gateway_id]:
+            VaultTokenBackend._token_cache.pop(cache_key, None)
+
+        logger.info(
+            "Deleted %d OAuth token records in Vault for deleted gateway %s (legacy records included: %s)",
+            deleted,
+            SecurityValidator.sanitize_log_message(gateway_id),
+            include_legacy,
+        )
+        return deleted
 
     def _write_token_cache(self, cache_key: tuple[str, str, str], token: str) -> None:
         """Write a token to the class-level LRU cache, evicting the LRU entry if full.

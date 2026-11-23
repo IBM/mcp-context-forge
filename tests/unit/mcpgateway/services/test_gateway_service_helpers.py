@@ -1465,6 +1465,7 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
     service = GatewayService()
     service._active_gateways = {"http://example.com"}
     service._notify_gateway_deleted = AsyncMock()
+    service._purge_vault_oauth_tokens = AsyncMock()
 
     registry_cache = RegistryCache()
     registry_cache._get_redis_client = AsyncMock(return_value=None)
@@ -1504,10 +1505,55 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
     tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
     stats_cache.invalidate_tags.assert_awaited_once()
     invalidate_passthrough.assert_called_once_with()
+    service._purge_vault_oauth_tokens.assert_awaited_once_with("gw-1", "http://example.com")
     service._notify_gateway_deleted.assert_awaited_once_with(gateway_info)
     audit_log.assert_called_once()
     structured_log.assert_called_once()
     assert "http://example.com" not in service._active_gateways
+
+
+def _patch_vault_purge(monkeypatch, url_still_registered: bool, delete_side_effect=None):
+    """Route the Vault purge to a mock backend and a session that reports whether the URL is still registered."""
+    db = MagicMock()
+    db.execute.return_value.limit.return_value = db.execute.return_value
+    db.execute.return_value.first.return_value = ("gw-other",) if url_still_registered else None
+    session = MagicMock()
+    session.__enter__.return_value = db
+    backend = MagicMock(delete_gateway_tokens=AsyncMock(return_value=2, side_effect=delete_side_effect))
+    backend_cls = MagicMock(return_value=backend)
+    monkeypatch.setattr(settings, "oauth_token_backend", "vault")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: session)
+    monkeypatch.setattr("mcpgateway.services.token_backends.vault_backend.VaultTokenBackend", backend_cls)
+    return backend_cls, backend
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url_still_registered", [False, True])
+async def test_purge_vault_oauth_tokens_deletes_legacy_records_only_for_unshared_url(monkeypatch, url_still_registered):
+    """The gateway-keyed records always go; legacy URL-keyed records go only when no remaining gateway has the URL."""
+    _, backend = _patch_vault_purge(monkeypatch, url_still_registered)
+    await GatewayService()._purge_vault_oauth_tokens("gw-1", "http://example.com")
+    backend.delete_gateway_tokens.assert_awaited_once_with("gw-1", "http://example.com", include_legacy=not url_still_registered)
+
+
+@pytest.mark.asyncio
+async def test_purge_vault_oauth_tokens_skips_database_backend(monkeypatch):
+    """The database backend cascades token rows with the gateway row, so no Vault call happens."""
+    backend_cls, _ = _patch_vault_purge(monkeypatch, url_still_registered=False)
+    monkeypatch.setattr(settings, "oauth_token_backend", "database")
+    await GatewayService()._purge_vault_oauth_tokens("gw-1", "http://example.com")
+    backend_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_purge_vault_oauth_tokens_does_not_fail_the_deletion(monkeypatch):
+    """A Vault failure is logged and does not propagate to the gateway deletion."""
+    # First-Party
+    from mcpgateway.services.token_backends.vault_backend import VaultConnectionError
+
+    _, backend = _patch_vault_purge(monkeypatch, url_still_registered=False, delete_side_effect=VaultConnectionError("vault down"))
+    await GatewayService()._purge_vault_oauth_tokens("gw-1", "http://example.com")
+    backend.delete_gateway_tokens.assert_awaited_once()
 
 
 def test_update_or_create_tools_authheaders_no_spurious_update():

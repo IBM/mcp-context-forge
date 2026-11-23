@@ -6169,7 +6169,7 @@ class TestGetGatewayOauthToken:
                     await self._call(mock_request, mock_current_user, mock_db)
 
         assert raised.value.status_code == 409
-        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE"]
+        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE", "DELETE"]
         for token in ("example-access", "example-refresh"):
             assert token not in raised.value.detail
             assert token not in caplog.text
