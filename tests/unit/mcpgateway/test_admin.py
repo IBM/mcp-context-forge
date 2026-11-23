@@ -13297,6 +13297,28 @@ async def test_get_configuration_settings_does_not_mask_empty_sensitive_values(m
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("database_url", "redis_url", "expected_database", "expected_redis"),
+    [
+        ("postgresql://u:dbpw@db/mcp?sslpassword=qpw", "redis://:rpw@r:6379/0", settings.masked_auth_value, settings.masked_auth_value),  # pragma: allowlist secret
+        ("postgresql://u:pa/ss@db/mcp", None, settings.masked_auth_value, None),  # pragma: allowlist secret
+        ("postgresql://u:pa/ss@db/mcp", "", settings.masked_auth_value, ""),  # pragma: allowlist secret
+        ("", None, "", None),
+        ("sqlite:///./mcp.db", None, settings.masked_auth_value, None),
+    ],
+)
+async def test_get_configuration_settings_redacts_connection_urls(monkeypatch, mock_db, allow_permission, database_url, redis_url, expected_database, expected_redis):
+    """Connection URLs never reach the response (#7051). Empty values pass through; all others are masked."""
+    monkeypatch.setattr(settings, "database_url", database_url)
+    monkeypatch.setattr(settings, "redis_url", redis_url)
+    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    group = result["groups"]["Database & Cache"]
+    assert group["database_url"] == expected_database
+    assert group["redis_url"] == expected_redis
+    assert not any(secret in json.dumps(result) for secret in ("dbpw", "qpw", "rpw", "pa/ss"))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
 async def test_admin_servers_partial_html_renders(monkeypatch, mock_request, mock_db, render):
     pagination = make_pagination_meta()
