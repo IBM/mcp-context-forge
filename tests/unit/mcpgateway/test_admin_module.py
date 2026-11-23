@@ -122,7 +122,7 @@ class _GatewayPayloadTeamService:
     def __init__(self, db):
         self.db = db
 
-    async def verify_team_for_user(self, _user_email, team_id):
+    async def verify_team_for_user(self, _user_email, team_id, _token_teams=None):
         return team_id
 
 

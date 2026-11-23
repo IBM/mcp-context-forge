@@ -94,6 +94,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.register_server = AsyncMock(side_effect=CoreValidationError.from_exception_data("test", []))
@@ -113,6 +114,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.register_server = AsyncMock(side_effect=ServerNameConflictError("Name conflict"))
@@ -132,6 +134,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.register_server = AsyncMock(side_effect=ServerError("Server error"))
@@ -151,6 +154,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.register_server = AsyncMock(side_effect=ValueError("Invalid value"))
@@ -170,6 +174,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_error = IntegrityError("INSERT failed", {}, Exception("constraint violation"))
@@ -190,6 +195,7 @@ class TestAdminAddServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.register_server = AsyncMock(side_effect=Exception("Unknown error"))
@@ -238,6 +244,7 @@ class TestAdminEditServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.update_server = AsyncMock(side_effect=ServerNameConflictError("Name conflict"))
@@ -257,6 +264,7 @@ class TestAdminEditServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.update_server = AsyncMock(side_effect=PermissionError("Not authorized"))
@@ -276,6 +284,7 @@ class TestAdminEditServerErrors:
         ):
             mock_team_svc_instance = MagicMock()
             mock_team_svc_instance.verify_team_for_user = AsyncMock(return_value=None)
+            mock_team_svc_instance.verify_team_for_user_strict = AsyncMock(return_value=None)
             mock_team_service.return_value = mock_team_svc_instance
 
             mock_service.update_server = AsyncMock(side_effect=RuntimeError("Runtime error"))
