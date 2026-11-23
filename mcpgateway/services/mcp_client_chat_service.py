@@ -102,8 +102,10 @@ from mcpgateway.config import settings
 from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.ssrf_pinning import build_pinned_httpx_client_factory, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2141,8 +2143,13 @@ class ChatHistoryManager:
 _TOOL_CALL_TIMEOUT = httpx2.Timeout(30.0, read=300.0)
 
 
-def _build_transport(connection: Dict[str, Any]) -> Any:
+async def _build_transport(connection: Dict[str, Any]) -> Any:
     """Return the MCP SDK transport for one chat server connection.
+
+    HTTP transports validate the URL again on every call. When the target is pinned, the
+    client dials only the addresses that passed that check, so a DNS answer that changes
+    after validation cannot redirect the connection. With SSRF protection disabled, or when
+    an egress proxy applies, the URL is validated but not pinned. Redirects are never followed.
 
     Args:
         connection: Server settings with ``transport`` and either ``url`` plus optional
@@ -2153,20 +2160,27 @@ def _build_transport(connection: Dict[str, Any]) -> Any:
 
     Raises:
         ValueError: If the transport is not supported.
+        ConnectionError: If the URL is blocked by the outbound URL policy.
 
     Examples:
-        >>> _build_transport({"transport": "stdio", "command": "python", "args": ["server.py"]}).args
+        >>> import asyncio
+        >>> asyncio.run(_build_transport({"transport": "stdio", "command": "python", "args": ["server.py"]})).args
         ['server.py']
-        >>> _build_transport({"transport": "websocket"})
+        >>> asyncio.run(_build_transport({"transport": "websocket"}))
         Traceback (most recent call last):
             ...
         ValueError: Unsupported MCP transport: websocket
     """
     transport = connection.get("transport")
-    if transport == "streamable_http":
-        return streamable_http_client(connection["url"], headers=connection.get("headers"), timeout=_TOOL_CALL_TIMEOUT)
-    if transport == "sse":
-        return sse_client(connection["url"], headers=connection.get("headers"), timeout=30.0, sse_read_timeout=300.0)
+    if transport in ("streamable_http", "sse"):
+        try:
+            pinned = await resolve_pinned_target(connection["url"], "MCP server URL")
+        except ValueError as exc:
+            raise ConnectionError(f"MCP server URL {sanitize_url_for_logging(connection['url'])} is blocked by the outbound URL policy") from exc
+        client_factory = build_pinned_httpx_client_factory(pinned)
+        if transport == "streamable_http":
+            return streamable_http_client(connection["url"], headers=connection.get("headers"), timeout=_TOOL_CALL_TIMEOUT, httpx_client_factory=client_factory)
+        return sse_client(connection["url"], headers=connection.get("headers"), timeout=30.0, sse_read_timeout=300.0, httpx_client_factory=client_factory)
     if transport == "stdio":
         return StdioServerParameters(command=connection["command"], args=connection.get("args") or [])
     raise ValueError(f"Unsupported MCP transport: {transport}")
@@ -2216,7 +2230,7 @@ class MCPToolLoader:
             List[mcp_types.Tool]: The definitions exactly as ``tools/list`` returned them.
         """
         tools: List[mcp_types.Tool] = []
-        async with MCPSDKClient(_build_transport(self.connection)) as client:
+        async with MCPSDKClient(await _build_transport(self.connection)) as client:
             cursor: Optional[str] = None
             while True:
                 page = await client.list_tools(cursor=cursor)
@@ -2236,7 +2250,7 @@ class MCPToolLoader:
         Returns:
             tuple[str, bool]: The text content of the result and whether the server marked it an error.
         """
-        async with MCPSDKClient(_build_transport(self.connection)) as client:
+        async with MCPSDKClient(await _build_transport(self.connection)) as client:
             result = await client.call_tool(name, arguments)
         return _result_text(result), bool(result.is_error)
 
@@ -2268,9 +2282,12 @@ class MCPToolLoader:
                 str: The text content of the result.
 
             Raises:
-                ToolException: If the server marked the result as an error.
+                ToolException: If the server marked the result as an error, or a ``ConnectionError`` occurs (for example, the outbound URL policy blocks the URL).
             """
-            text, is_error = await self.call_tool(tool.name, arguments)
+            try:
+                text, is_error = await self.call_tool(tool.name, arguments)
+            except ConnectionError as exc:
+                raise ToolException(str(exc)) from exc
             if is_error:
                 raise ToolException(text or f"Tool {tool.name} failed")
             return text

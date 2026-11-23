@@ -24,7 +24,7 @@ hostnames.
 from dataclasses import dataclass
 import logging
 import os
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 # Third-Party
@@ -33,8 +33,14 @@ import httpx2
 # First-Party
 from mcpgateway.common.validators import _authority_is_ipv6_literal, pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 
 logger = logging.getLogger(__name__)
+
+HttpxClientFactory = Callable[
+    [Optional[dict[str, str]], Optional[httpx2.Timeout], Optional[httpx2.Auth]],
+    httpx2.AsyncClient,
+]
 
 # httpx mounts HTTP_PROXY on http:// only and HTTPS_PROXY on https:// only. A variable for the
 # other scheme must not skip pinning, because httpx then connects directly and re-resolves DNS.
@@ -205,6 +211,54 @@ class PinnedTarget:
             # target must configure the client directly and leave the transport unset.
             return transport_kwargs
         return {"transport": SniPinningTransport(sni_hostname=self.hostname, pinned_hosts=self.resolved_ips, **transport_kwargs)}
+
+
+def build_pinned_httpx_client_factory(pinned_target: PinnedTarget) -> HttpxClientFactory:
+    """Build an httpx client factory for one validated target.
+
+    The client dials only the validated addresses when ``pinned_target`` is pinned. An unpinned
+    target (SSRF protection disabled, or an egress proxy applies) gets a plain client that resolves
+    DNS itself. The client never follows redirects.
+
+    Args:
+        pinned_target: The target returned by :func:`resolve_pinned_target`.
+
+    Returns:
+        HttpxClientFactory: A factory accepting ``headers``, ``timeout`` and ``auth``. A missing
+        timeout falls back to ``get_httpx2_timeout()``; TLS uses ``get_default_verify()``.
+    """
+
+    def _pinned_factory(
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[httpx2.Timeout] = None,
+        auth: Optional[httpx2.Auth] = None,
+    ) -> httpx2.AsyncClient:
+        """Build the pinned httpx client.
+
+        Args:
+            headers: Optional headers for the client.
+            timeout: Optional timeout for the client.
+            auth: Optional auth for the client.
+
+        Returns:
+            httpx2.AsyncClient: Configured HTTPX async client.
+        """
+        return httpx2.AsyncClient(
+            follow_redirects=False,
+            headers=headers,
+            timeout=timeout if timeout else get_httpx2_timeout(),
+            auth=auth,
+            **pinned_target.client_kwargs(
+                verify=get_default_verify(),
+                limits=httpx2.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            ),
+        )
+
+    return _pinned_factory
 
 
 async def resolve_pinned_target(url: str, field_name: str = "URL") -> PinnedTarget:
