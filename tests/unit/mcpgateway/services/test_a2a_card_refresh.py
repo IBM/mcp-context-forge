@@ -130,7 +130,7 @@ class TestRefreshCard:
         _store(db, version=2, kind="extended", card={**V1_CARD, "secret": 1})
         fetch.return_value = _found({**V1_CARD, "version": "2.2.0"}, etag='"v2"')
         result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
-        assert (result.status, result.version) == ("updated", 3)
+        assert (result.status, result.version, result.pending_version) == ("pending", 1, 3)
 
     async def test_refresh_stores_and_updates_the_extended_card(self, db, service, fetch):
         """A found extended card is stored once and left alone when unchanged."""
@@ -159,12 +159,12 @@ class TestRefreshCard:
         assert db.query(A2AAgentCard).one().checked_at is not None
 
     async def test_changed_card_becomes_next_version_and_lists_keys(self, db, service, fetch):
-        """A changed card is stored as version 2 and the changed top-level keys are listed."""
+        """A changed card is held as pending version 2, the current card stays, and the changed keys are listed."""
         _store(db)
         fetch.return_value = _found({**V1_CARD, "version": "2.2.0", "extra": 1}, etag='"v2"')
         result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
-        assert (result.status, result.version, result.changed_keys) == ("updated", 2, ["extra", "version"])
-        assert (await service.get_stored_card(db, "agent-1")).etag == '"v2"'
+        assert (result.status, result.version, result.pending_version, result.changed_keys) == ("pending", 1, 2, ["extra", "version"])
+        assert (await service.get_stored_card(db, "agent-1")).etag == '"v1"'
         assert db.query(A2AAgentCard).count() == 2
 
     @pytest.mark.parametrize("outcome", ["unreachable", "auth_required", "no_card"])
@@ -286,14 +286,14 @@ class TestRefreshCard:
         _store(db, card={**V1_CARD, "flag": True})
         fetch.return_value = _found({**V1_CARD, "flag": 1})
         result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
-        assert (result.status, result.changed_keys) == ("updated", ["flag"])
+        assert (result.status, result.changed_keys) == ("pending", ["flag"])
 
     async def test_added_null_field_is_listed(self, db, service, fetch):
         """A key that appears with a null value is a change."""
         fetch.return_value = _found({**V1_CARD, "extra": None})
         _store(db)
         result = await service.refresh_card(db, "agent-1", A2ACardRefreshRequest())
-        assert (result.status, result.changed_keys) == ("updated", ["extra"])
+        assert (result.status, result.changed_keys) == ("pending", ["extra"])
 
     async def test_identical_200_from_another_url_updates_source_and_validators(self, db, service, fetch):
         """An identical card from a new URL moves source_url with its ETag and max-age."""

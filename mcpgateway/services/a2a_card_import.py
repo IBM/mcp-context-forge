@@ -13,6 +13,7 @@ cannot reveal which hosts the gateway can or cannot reach.
 
 # Standard
 import asyncio
+import json
 import logging
 import re
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
@@ -941,6 +942,40 @@ def extended_card_additions(public: Dict[str, Any], extended: Dict[str, Any], pr
         elif isinstance(value, dict) and isinstance(public[key], dict):
             paths.extend(extended_card_additions(public[key], value, f"{path}."))
         elif value != public[key]:
+            paths.append(path)
+    return sorted(paths)
+
+
+def changed_card_paths(previous: Dict[str, Any], current: Dict[str, Any], prefix: str = "") -> List[str]:
+    """List the dotted paths where two cards differ, including keys that one card lacks.
+
+    Nested objects are compared key by key, as ``extended_card_additions`` does. Lists and
+    scalars are compared whole. ``true`` and ``1`` count as different values.
+
+    Args:
+        previous: Card before the change.
+        current: Card after the change.
+        prefix: Path prefix for nested calls.
+
+    Returns:
+        Sorted dotted paths that exist in only one card or hold a different value.
+
+    Examples:
+        >>> changed_card_paths({"capabilities": {"streaming": True, "extensions": []}}, {"capabilities": {"streaming": False, "extensions": []}})
+        ['capabilities.streaming']
+        >>> changed_card_paths({"name": "a", "version": "1"}, {"name": "a", "iconUrl": "x"})
+        ['iconUrl', 'version']
+        >>> changed_card_paths({"flag": True}, {"flag": 1})
+        ['flag']
+    """
+    paths: List[str] = []
+    for key in set(previous) | set(current):
+        path = f"{prefix}{key}"
+        if key not in previous or key not in current:
+            paths.append(path)
+        elif isinstance(previous[key], dict) and isinstance(current[key], dict):
+            paths.extend(changed_card_paths(previous[key], current[key], f"{path}."))
+        elif json.dumps(previous[key], sort_keys=True, separators=(",", ":")) != json.dumps(current[key], sort_keys=True, separators=(",", ":")):
             paths.append(path)
     return sorted(paths)
 

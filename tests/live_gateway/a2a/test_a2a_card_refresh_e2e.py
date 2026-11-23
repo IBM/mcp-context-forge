@@ -102,7 +102,7 @@ def test_caller_who_does_not_own_the_agent_cannot_refresh_it(gateway, agent):  #
     email = f"refresher-{uuid.uuid4().hex[:8]}@example.com"
     role = _request(gateway, "POST", "/rbac/roles", json={"name": f"refresher-{uuid.uuid4().hex[:8]}", "description": "Update agents", "scope": "global", "permissions": ["a2a.read", "a2a.update"]})
     assert role.status_code == 200, role.text
-    user = {"email": email, "password": f"Aa1!{uuid.uuid4().hex}", "full_name": email, "is_admin": False}
+    user = {"email": email, "password": "Corr3ct-Horse-Battery-Staple!", "full_name": email, "is_admin": False}  # pragma: allowlist secret
     assert _request(gateway, "POST", "/auth/email/admin/users", json=user).status_code == 201
     assert _request(gateway, "POST", f"/rbac/users/{email}/roles", json={"role_id": role.json()["id"], "scope": "global"}).status_code == 200
     before = _gets(agent)

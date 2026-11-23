@@ -6400,6 +6400,7 @@ class A2AStoredCardRead(BaseModelWithConfigDict):
 
     version: int = Field(..., description="Stored card version, starting at 1")
     kind: Literal["public", "extended"] = Field("public", description="public for the card read without credentials, extended for the authenticated extended card")
+    status: Literal["applied", "pending", "rejected", "superseded"] = Field("applied", description="applied cards are current or earlier versions. A pending card waits for apply or reject")
     card: Dict[str, Any] = Field(..., description="Card document as fetched")
     detected_version: str = Field(..., description="Card format version detected at fetch time: 1.0 or 0.3")
     source_url: str = Field(..., description="URL the card was fetched from")
@@ -6439,11 +6440,47 @@ class A2ACardRefreshRequest(BaseModelWithConfigDict):
 class A2ACardRefreshResponse(BaseModelWithConfigDict):
     """Outcome of re-fetching the Agent Card of a registered agent."""
 
-    status: Literal["unchanged", "updated", "created"] = Field(..., description="Card unchanged, stored as the next version, or stored as the first version")
-    version: int = Field(..., description="Current stored card version after the call")
-    changed_keys: List[str] = Field(default_factory=list, description="Top-level card keys that differ from the previous version")
+    status: Literal["unchanged", "pending", "created"] = Field(..., description="Card unchanged, a changed card stored as a pending version, or the first card stored and applied")
+    version: int = Field(..., description="Current applied card version after the call")
+    pending_version: Optional[int] = Field(None, description="Version waiting for apply or reject, when status is pending")
+    changed_keys: List[str] = Field(default_factory=list, description="Dotted card paths that differ from the current card, for example capabilities.streaming")
+    drifted: bool = Field(False, description="True when the remote card differs from the card the agent runs on and the change was rejected")
     source_url: str = Field(..., description="URL the card came from")
     checked_at: datetime = Field(..., description="When this check ran")
+
+
+class A2APendingCardRead(BaseModelWithConfigDict):
+    """A pending Agent Card beside the current one, with the paths that differ."""
+
+    current: Optional[A2AStoredCardRead] = Field(None, description="Current applied card, or null when the agent has none")
+    pending: A2AStoredCardRead = Field(..., description="Card waiting for apply or reject")
+    changed_keys: List[str] = Field(default_factory=list, description="Dotted card paths where the pending card differs from the current card")
+
+
+class A2ACardVersionRead(BaseModelWithConfigDict):
+    """One stored version of the public Agent Card, without the card document."""
+
+    version: int = Field(..., description="Stored card version")
+    status: Literal["applied", "pending", "rejected", "superseded"] = Field(..., description="Version status")
+    source_url: str = Field(..., description="URL the card was fetched from")
+    fetched_at: datetime = Field(..., description="When the card was fetched")
+    checked_at: Optional[datetime] = Field(None, description="When a re-fetch last found this card unchanged")
+
+
+class A2ACardDecisionRequest(BaseModelWithConfigDict):
+    """Decision on the pending Agent Card version."""
+
+    version: int = Field(..., ge=1, description="Pending version the caller reviewed. A newer pending version makes the call fail")
+
+
+class A2ACardDecisionResponse(BaseModelWithConfigDict):
+    """Outcome of applying or rejecting a pending Agent Card version."""
+
+    status: Literal["applied", "rejected"] = Field(..., description="Decision taken")
+    version: int = Field(..., description="Version the decision applies to")
+    drifted: bool = Field(..., description="Agent drift flag after the decision")
+    applied_fields: List[str] = Field(default_factory=list, description="Agent fields changed by applying the card")
+    warnings: List[str] = Field(default_factory=list, description="Card changes applying did not map onto the agent")
 
 
 class A2AFetchCardRequest(BaseModelWithConfigDict):
@@ -7357,6 +7394,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     config: Dict[str, Any]
     enabled: bool
     reachable: bool
+    drifted: bool = Field(False, description="True when the remote Agent Card differs from the card the agent runs on and the change was rejected")
+    unverified: bool = Field(False, description="True when the agent has a credential that no card fetch has checked")
     created_at: datetime
     updated_at: datetime
     last_interaction: Optional[datetime]
@@ -7418,6 +7457,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     uaid_native_id: Optional[str] = Field(None, description="Native endpoint from UAID for cross-gateway routing")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+    _default_card_flags = field_validator("drifted", "unverified", mode="before")(classmethod(lambda cls, v: bool(v)))
 
     @model_validator(mode="before")
     @classmethod

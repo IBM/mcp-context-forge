@@ -1579,6 +1579,13 @@ class TestA2AAgentService:
         assert result.auth_value == settings.masked_auth_value
         assert result.auth_username == "admin"
 
+    def test_convert_agent_to_read_reports_drift_and_unverified(self, service, sample_db_agent):
+        """The agent read says whether the agent drifted and whether its credential is unchecked (#7661)."""
+        sample_db_agent.auth_type, sample_db_agent.auth_value = None, None
+        sample_db_agent.drifted, sample_db_agent.unverified = True, True
+        result = service.convert_agent_to_read(sample_db_agent)
+        assert (result.drifted, result.unverified) == (True, True)
+
     def test_convert_agent_to_read_masks_bearer_auth_credentials(self, service, sample_db_agent):
         """convert_agent_to_read must never return a usable bearer token (issue #6704)."""
         sample_db_agent.auth_type = "bearer"

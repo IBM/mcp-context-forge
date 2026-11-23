@@ -495,7 +495,37 @@ Stored cards share one version counter per agent. A public card and an extended 
 2. The `source_url` of the stored card, with its `ETag` in `If-None-Match`.
 3. The URLs derived from the agent `endpoint_url`.
 
-The gateway sends the agent credential only to a URL with the scheme, host, and port of `endpoint_url`, and applies the outbound URL policy on every call. The response `status` is `unchanged` (no new version, `checked_at` set), `updated` (next version stored), or `created` (first version). `changed_keys` lists the changed top-level keys. A failed fetch stores nothing. The route never writes the agent row. One agent allows one call per `A2A_CARD_REFRESH_MIN_INTERVAL` seconds per worker (default 30). An early call returns 429 with `Retry-After`. When the agent credential unlocks an extended card, the refresh stores it as the next version with `kind` `extended`, only when it changed. The response describes the public card only.
+The gateway sends the agent credential only to a URL with the scheme, host, and port of `endpoint_url`, and applies the outbound URL policy on every call. The response `status` is:
+
+- `unchanged`: no new version. `checked_at` is set and any pending version is dropped.
+- `pending`: the card changed. The gateway stores it as a pending version, `pendingVersion`. The current card and the agent stay as they are until a caller applies the pending version.
+- `created`: the first card, applied at once.
+
+`changedKeys` lists dotted paths, for example `capabilities.streaming` and `capabilities.extensions`, so a client can tell a behaviour change from a display change. A failed fetch stores nothing. The route never writes the agent row. One agent allows one call per `A2A_CARD_REFRESH_MIN_INTERVAL` seconds per worker (default 30). An early call returns 429 with `Retry-After`. When the agent credential unlocks an extended card, the refresh stores it as the next version with `kind` `extended`, only when it changed. The response describes the public card only.
+
+### Confirm or reject a changed card
+
+A newer pending version replaces an older one. All routes need `a2a.update` and agent ownership.
+
+| Route | Purpose |
+|-------|---------|
+| `GET /a2a/{agent_id}/stored-card/pending` | The pending card beside the current card, with `changedKeys`. Returns 404 when none is pending. |
+| `POST /a2a/{agent_id}/card/apply` with `{"version": N}` | Make the pending card current and update the agent fields the gateway calls the agent with: `endpoint_url`, `protocol_version`, `capabilities` and `skills`. |
+| `POST /a2a/{agent_id}/card/reject` with `{"version": N}` | Keep the current card. The agent keeps working and `drifted` becomes `true`. |
+
+`version` must match the pending version. A newer pending version returns 409. Apply never changes the agent name, auth type or credentials. A change to `securitySchemes` comes back in `warnings`. When the agent has credentials, apply refuses an endpoint on another origin with 400. Update the endpoint directly in that case.
+
+`drifted` on the agent read is `true` after a reject. It returns to `false` when a caller applies a version, or when a re-fetch finds that the remote card matches the current card again. A re-fetch that finds the rejected card again creates no new pending version.
+
+`GET /a2a/{agent_id}/stored-card?version=N` reads an earlier applied version. `GET /a2a/{agent_id}/stored-card/versions` lists the applied versions. Pending and rejected versions only appear on the pending route.
+
+### Scheduled re-sync
+
+Set `A2A_CARD_SYNC_ENABLED=true` to re-fetch the card of every enabled agent with a stored card every `A2A_CARD_SYNC_INTERVAL` seconds (default 3600). Only the primary worker runs the re-sync. The per-agent minimum interval of the on-demand route applies. A changed card becomes a pending version and is never applied.
+
+### Unverified agents
+
+An agent saved with a `basic`, `bearer` or `authheaders` credential has `unverified` set to `true`. A card re-fetch that sends the credential and is not rejected clears it. Changing the credential sets it again.
 
 **Visibility of stored cards.** The route does not check how the card was fetched. A card fetched with registration credentials is readable by every caller who has `a2a.read` and can see the agent. For a `team` or `public` agent, that includes every team member or every user. Do not register a card behind credentials with a `team` or `public` agent if its content is confidential. Use `private` visibility instead.
 

@@ -3242,6 +3242,18 @@ class Settings(  # pylint: disable=too-many-ancestors
         description="Minimum seconds between Agent Card re-fetches of one agent, per gateway worker (default: 30). 0 disables the limit",
     )
 
+    a2a_card_sync_enabled: bool = Field(
+        default=False,
+        description="Re-fetch the Agent Cards of registered agents on a schedule. A changed card becomes a pending version and is never applied (default: false)",
+    )
+
+    a2a_card_sync_interval: int = Field(
+        default=3600,
+        ge=60,
+        le=604800,
+        description="Seconds between scheduled Agent Card re-syncs, run on the primary worker (default: 3600)",
+    )
+
     # Redis Parser Configuration (ADR-026)
     # hiredis C parser provides up to 83x faster response parsing for large responses
     redis_parser: Literal["auto", "hiredis", "python"] = Field(

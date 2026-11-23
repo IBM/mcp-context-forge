@@ -5044,6 +5044,8 @@ class A2AAgent(Base):
     # Status and metadata
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reachable: Mapped[bool] = mapped_column(Boolean, default=True)
+    drifted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    unverified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     last_interaction: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -5231,7 +5233,8 @@ class A2AAgentCard(Base):
 
     The card document stays separate from the deployment settings on ``A2AAgent``.
     ``kind`` is ``public`` for the card read without credentials and ``extended`` for the
-    authenticated extended card. The highest ``version`` of a kind is its current card.
+    authenticated extended card. ``status`` is ``applied``, ``pending``, ``rejected`` or ``superseded``.
+    The highest applied ``version`` of a kind is its current card. At most one public row is ``pending``.
     """
 
     __tablename__ = "a2a_agent_cards"
@@ -5240,6 +5243,7 @@ class A2AAgentCard(Base):
     a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False, default="public", server_default="public")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="applied", server_default="applied")
     card: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
     detected_version: Mapped[str] = mapped_column(String(20), nullable=False)
     source_url: Mapped[str] = mapped_column(String(2048), nullable=False)

@@ -195,7 +195,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Order matters: the first method+path match wins. The stored extended card needs
     # a2a.update, so it precedes the general GET /a2a rule. The concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
-    ("GET", re.compile(r"^/a2a/[^/]+/stored-card/extended/?$"), Permissions.A2A_UPDATE),
+    ("GET", re.compile(r"^/a2a/[^/]+/stored-card/(?:extended|pending)/?$"), Permissions.A2A_UPDATE),
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
@@ -205,7 +205,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Card fetch makes the gateway issue an outbound request to a caller-chosen URL,
     # so it needs a2a.create rather than a2a.read.
     ("POST", re.compile(r"^/a2a/fetch-card/?$"), Permissions.A2A_CREATE),
-    ("POST", re.compile(r"^/a2a/[^/]+/card/?$"), Permissions.A2A_UPDATE),
+    ("POST", re.compile(r"^/a2a/[^/]+/card(?:/(?:apply|reject))?/?$"), Permissions.A2A_UPDATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
