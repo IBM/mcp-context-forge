@@ -661,7 +661,7 @@ async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[s
     Returns:
         A ``CardResponse`` as described by ``_get_json``.
     """
-    async with client.stream("GET", target.pin(target.validated_url), headers=request_headers, extensions=target.extensions) as response:
+    async with target.stream_async(client, "GET", target.validated_url, headers=request_headers) as response:
         if response.status_code != 200:
             return CardResponse(response.status_code, challenge=response.headers.get("www-authenticate"))
         if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
