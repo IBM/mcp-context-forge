@@ -56,6 +56,14 @@ class ValidationToken:
 
 
 @dataclass
+class RevocationTokens:
+    """The stored access and refresh tokens, read for RFC 7009 revocation; never printed."""
+
+    access_token: str | None = field(default=None, repr=False)
+    refresh_token: str | None = field(default=None, repr=False)
+
+
+@dataclass
 class TokenRecord:
     """
     Plain dataclass for token records - no SQLAlchemy dependencies.
@@ -206,6 +214,22 @@ class AbstractTokenBackend(ABC):
             NotImplementedError: If the backend cannot guarantee a read-only lookup.
         """
         raise NotImplementedError("Read-only token validation is unavailable")
+
+    async def read_revocation_tokens(self, gateway_id: str, team_id: str | None, app_user_email: str) -> RevocationTokens | None:  # pylint: disable=unused-argument
+        """Read the stored access and refresh tokens without refreshing or modifying them.
+
+        Used only to revoke them at the provider (RFC 7009) after they are deleted.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Token storage path context.
+            app_user_email: User whose tokens to read.
+
+        Returns:
+            The stored tokens, or None when none are stored. A backend without a read-only
+            lookup returns None, so its tokens are deleted but not revoked at the provider.
+        """
+        return None
 
     @abstractmethod
     async def get_token_info(

@@ -1370,3 +1370,30 @@ async def test_validation_token_rejects_unusable_credentials(backend_with_encryp
     if token_type == "Basic":
         backend.encryption.decrypt_secret_async.assert_not_called()
     backend.db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_revocation_tokens_read_both_tokens_without_refresh_or_writes(backend_with_encryption):
+    """RFC 7009 revocation reads the caller's stored pair as-is: no refresh, no writes, never printed."""
+    backend = backend_with_encryption
+    backend.db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    backend._refresh_access_token = AsyncMock()
+    result = await backend.read_revocation_tokens("gw-1", None, "user@test.com")
+    assert (result.access_token, result.refresh_token) == ("decrypted_value", "decrypted_value")
+    assert "decrypted_value" not in repr(result)
+    backend._refresh_access_token.assert_not_called()
+    backend.db.commit.assert_not_called()
+    query = backend.db.execute.call_args.args[0]
+    assert set(query.compile().params.values()) == {"gw-1", "user@test.com"}
+
+
+@pytest.mark.asyncio
+async def test_revocation_tokens_missing_record_and_missing_refresh_token(backend_with_encryption):
+    """No row means nothing to revoke; a row without a refresh token reads it as None."""
+    backend = backend_with_encryption
+    backend.db.execute.return_value.scalar_one_or_none.return_value = None
+    assert await backend.read_revocation_tokens("gw-1", None, "user@test.com") is None
+    backend.db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(refresh_token=None)
+    result = await backend.read_revocation_tokens("gw-1", None, "user@test.com")
+    assert result.refresh_token is None
+    assert result.access_token == "decrypted_value"

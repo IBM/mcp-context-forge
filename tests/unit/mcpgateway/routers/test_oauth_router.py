@@ -8,6 +8,7 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 """
 
 # Standard
+import asyncio
 import base64
 import json
 from datetime import datetime, timedelta, timezone
@@ -34,7 +35,7 @@ from mcpgateway.routers.oauth_router import (
 )
 from mcpgateway.schemas import EmailUserResponse, OAuthAccessTokenResponse
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
-from mcpgateway.services.token_backends.base import AccessTokenDetails, TokenReauthorizationRequired
+from mcpgateway.services.token_backends.base import AccessTokenDetails, RevocationTokens, TokenReauthorizationRequired
 from mcpgateway.utils.oauth_resource import derive_resource_origin
 
 
@@ -6169,7 +6170,8 @@ class TestGetGatewayOauthToken:
                     await self._call(mock_request, mock_current_user, mock_db)
 
         assert raised.value.status_code == 409
-        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE"]
+        # Read for refresh, then revoke: an existence GET before the metadata DELETE.
+        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "GET", "DELETE"]
         for token in ("example-access", "example-refresh"):
             assert token not in raised.value.detail
             assert token not in caplog.text
@@ -6904,3 +6906,265 @@ class TestCimdIntegration:
             iss=None,
             validated_state={"gateway_id": "gateway_cimd_int", "state": "mock_state_456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None},
         )
+
+
+class TestRevokeOAuthToken:
+    """Tests for DELETE /oauth/tokens/{gateway_id} (local delete)."""
+
+    @staticmethod
+    def _storage(deleted=True, error=None, tokens=None):
+        storage = Mock()
+        storage.read_revocation_tokens = AsyncMock(return_value=tokens)
+        storage.revoke_user_tokens = AsyncMock(return_value=deleted, side_effect=error)
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_deletes_the_callers_own_token(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage(deleted=True)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert result == {"gateway_id": "gateway123", "deleted": True, "provider_revoked": None}
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_is_idempotent_when_no_token_is_stored(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=self._storage(deleted=False)):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert result["deleted"] is False
+        assert result["provider_revoked"] is None
+
+    @pytest.mark.asyncio
+    async def test_naming_yourself_needs_no_admin_rights(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            await revoke_oauth_token("gateway123", mock_request, app_user_email=" Test@Example.com ", current_user=mock_current_user, db=mock_db)
+
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_revoke_another_users_token(self, mock_db, mock_current_user, mock_request):
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unnarrowed_admin_revokes_another_users_token(self, mock_db, mock_gateway, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_request.state.token_teams = None  # un-narrowed admin session
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage), patch("mcpgateway.routers.oauth_router.settings.oauth_token_backend", "database"):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=" Alice@Example.com ", current_user=admin, db=mock_db)
+
+        assert result["deleted"] is True
+        # Account emails are stored lowercase, so the target is normalized the same way.
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "alice@example.com")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token_teams", [["team-1"], []])
+    async def test_narrowed_admin_cannot_revoke_another_users_token(self, mock_db, mock_request, token_teams):
+        mock_request.state.token_teams = token_teams  # team-narrowed or public-only admin token
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=admin, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_vault_backend_refuses_revoking_another_user(self, mock_db, mock_request):
+        mock_request.state.token_teams = None
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage), patch("mcpgateway.routers.oauth_router.settings.oauth_token_backend", "vault"):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=admin, db=mock_db)
+
+        assert exc_info.value.status_code == 501
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_requires_an_authenticated_user(self, mock_db, mock_request):
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.get_user_email", return_value="unknown"):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=_AttrDict(), db=mock_db)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_unknown_gateway_is_not_found(self, mock_db, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with pytest.raises(HTTPException) as exc_info:
+            await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_gateway_access_is_enforced_before_deleting(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        denied = AsyncMock(side_effect=HTTPException(status_code=403, detail="You don't have access to this gateway"))
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", denied), patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_is_a_generic_500(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=self._storage(error=RuntimeError("backend down"))):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 500
+        assert "backend down" not in exc_info.value.detail
+
+
+class TestProviderSideRevocation:
+    """RFC 7009 provider-side revocation for DELETE /oauth/tokens/{gateway_id}."""
+
+    ISSUER = "https://auth.example.com"
+    ENDPOINT = "https://auth.example.com/oauth/revoke"
+
+    @staticmethod
+    def _tokens(access="access-value", refresh="refresh-value"):
+        return RevocationTokens(access_token=access, refresh_token=refresh)
+
+    def _patches(self, metadata=None, revoke_results=(True, True)):
+        """Patch discovery, origin validation and OAuthManager; return (dcr, manager, context managers)."""
+        dcr = Mock()
+        dcr.discover_as_metadata = AsyncMock(return_value={"revocation_endpoint": self.ENDPOINT} if metadata is None else metadata)
+        manager = Mock()
+        manager.revoke_token = AsyncMock(side_effect=list(revoke_results))
+        return dcr, manager, (
+            patch("mcpgateway.routers.oauth_router.DcrService", return_value=dcr),
+            patch("mcpgateway.routers.oauth_router.validate_issuer_scoped_endpoint", AsyncMock(side_effect=lambda url, *_: url)),
+            patch("mcpgateway.routers.oauth_router.OAuthManager", return_value=manager),
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider_result", [True, False, None])
+    async def test_route_deletes_locally_then_reports_provider_outcome(self, mock_db, mock_gateway, mock_current_user, mock_request, provider_result):
+        """The local delete always runs, and before the provider call, so a refresh in between cannot survive."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        order = []
+        storage = TestRevokeOAuthToken._storage(tokens=self._tokens())
+        storage.revoke_user_tokens = AsyncMock(side_effect=lambda *_: order.append("delete") or True)
+
+        async def provider(*_args):
+            order.append("provider")
+            return provider_result
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage), patch("mcpgateway.routers.oauth_router._revoke_at_provider", provider):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert result == {"gateway_id": "gateway123", "deleted": True, "provider_revoked": provider_result}
+        assert order == ["delete", "provider"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tokens,oauth_config,metadata",
+        [
+            (None, {"issuer": ISSUER}, None),  # nothing stored
+            (RevocationTokens(), {"issuer": ISSUER}, None),  # empty record
+            ("tokens", None, None),  # no oauth_config
+            ("tokens", {"issuer": ""}, None),  # no issuer to discover from
+            ("tokens", {"issuer": ISSUER}, {}),  # issuer advertises no revocation endpoint
+        ],
+    )
+    async def test_nothing_to_revoke_is_none(self, mock_gateway, tokens, oauth_config, metadata):
+        from mcpgateway.routers.oauth_router import _revoke_at_provider
+
+        mock_gateway.oauth_config = oauth_config
+        _, manager, (p1, p2, p3) = self._patches(metadata=metadata)
+        with p1, p2, p3:
+            assert await _revoke_at_provider(mock_gateway, self._tokens() if tokens == "tokens" else tokens) is None
+        manager.revoke_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("results,expected", [((True, True), True), ((False, True), False)])
+    async def test_revokes_refresh_then_access_token_at_the_validated_endpoint(self, mock_gateway, results, expected):
+        from mcpgateway.routers.oauth_router import _revoke_at_provider
+
+        mock_gateway.oauth_config = {"issuer": self.ISSUER, "revocation_endpoint": "https://attacker.example.net/revoke"}
+        dcr, manager, (p1, p2, p3) = self._patches(revoke_results=results)
+        with p1, p2 as validate, p3:
+            assert await _revoke_at_provider(mock_gateway, self._tokens()) is expected
+
+        dcr.discover_as_metadata.assert_awaited_once_with(self.ISSUER)
+        validate.assert_awaited_once_with(self.ENDPOINT, self.ISSUER, "revocation_endpoint")
+        assert [call.args[1] for call in manager.revoke_token.await_args_list] == ["refresh_token", "access_token"]
+        # A configured revocation_endpoint is ignored: tokens only go to the issuer-advertised one.
+        assert {call.args[3] for call in manager.revoke_token.await_args_list} == {self.ENDPOINT}
+
+    @pytest.mark.asyncio
+    async def test_foreign_origin_endpoint_is_refused_as_false(self, mock_gateway):
+        from mcpgateway.routers.oauth_router import _revoke_at_provider
+
+        mock_gateway.oauth_config = {"issuer": self.ISSUER}
+        _, manager, (p1, _, p3) = self._patches(metadata={"revocation_endpoint": "https://attacker.example.net/revoke"})
+        with p1, p3:
+            assert await _revoke_at_provider(mock_gateway, self._tokens()) is False
+        manager.revoke_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_failure_reports_false_without_logging_the_error_text(self, mock_gateway, caplog):
+        from mcpgateway.routers.oauth_router import _revoke_at_provider
+
+        mock_gateway.oauth_config = {"issuer": self.ISSUER}
+        _, manager, (p1, p2, p3) = self._patches()
+        manager.revoke_token = AsyncMock(side_effect=RuntimeError("echoed refresh-value"))
+        with p1, p2, p3, caplog.at_level("WARNING"):
+            assert await _revoke_at_provider(mock_gateway, self._tokens()) is False
+        assert "refresh-value" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_slow_provider_times_out_as_false(self, mock_gateway):
+        from mcpgateway.routers import oauth_router
+
+        async def never_answers(*_args, **_kwargs):
+            await asyncio.sleep(10)
+
+        mock_gateway.oauth_config = {"issuer": self.ISSUER}
+        dcr, _, (p1, p2, p3) = self._patches()
+        dcr.discover_as_metadata = never_answers
+        with p1, p2, p3, patch.object(oauth_router, "OAUTH_PROVIDER_REVOCATION_TIMEOUT_SECONDS", 0.01):
+            assert await oauth_router._revoke_at_provider(mock_gateway, self._tokens()) is False

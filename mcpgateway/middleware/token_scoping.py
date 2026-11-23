@@ -163,6 +163,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # OAuth per-caller access token retrieval (GET /oauth/token/{gateway_id}); returns a
     # live bearer token, so it requires gateways.token_read.
     ("GET", re.compile(r"^/oauth/token(?:$|/)"), Permissions.GATEWAYS_TOKEN_READ),
+    # Per-user OAuth token delete ("disconnect"). Same reasoning as the status entry:
+    # the handler enforces gateway access and limits other users to un-narrowed admins.
+    ("DELETE", re.compile(r"^/oauth/tokens/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an

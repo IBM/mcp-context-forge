@@ -3477,3 +3477,67 @@ async def test_build_client_assertion_is_public_with_private_alias(oauth_manager
     second = jwt.decode(await oauth_manager._build_client_assertion(credentials), public_pem, algorithms=["RS256"], audience=credentials["token_url"])
     assert first["iss"] == first["sub"] == "test-client"
     assert first["jti"] != second["jti"]
+
+
+class TestRevokeToken:
+    """RFC 7009 token revocation authenticates exactly like the token endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["client_secret_basic", "client_secret_post"])
+    async def test_posts_token_and_hint_with_configured_client_auth(self, oauth_manager, method):
+        credentials = {"client_id": "client-1", "client_secret": "secret-1", "token_endpoint_auth_method": method}
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = MagicMock(status_code=200)
+            revoked = await oauth_manager.revoke_token("refresh-value", "refresh_token", credentials, "https://auth.example.com/revoke", ca_certificate="ca-pem")
+
+        assert revoked is True
+        url, data = post.await_args.args
+        assert url == "https://auth.example.com/revoke"
+        assert data["token"] == "refresh-value"
+        assert data["token_type_hint"] == "refresh_token"
+        assert post.await_args.kwargs["ca_certificate"] == "ca-pem"
+        headers = post.await_args.kwargs["headers"]
+        if method == "client_secret_basic":
+            assert headers["Authorization"].startswith("Basic ")
+            assert "client_secret" not in data
+        else:
+            assert data["client_id"] == "client-1"
+            assert data["client_secret"] == "secret-1"
+            assert "Authorization" not in headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 401, 503])
+    async def test_any_answer_other_than_200_is_not_revoked(self, oauth_manager, status):
+        credentials = {"client_id": "client-1", "client_secret": "secret-1"}
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = MagicMock(status_code=status)
+            assert await oauth_manager.revoke_token("access-value", "access_token", credentials, "https://auth.example.com/revoke") is False
+
+    @pytest.mark.asyncio
+    async def test_private_key_jwt_assertion_is_never_sent_to_another_host(self, oauth_manager):
+        credentials = {"client_id": "client-1", "token_endpoint_auth_method": "private_key_jwt", "token_url": "https://auth.example.com/token"}
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError):
+                await oauth_manager.revoke_token("access-value", "access_token", credentials, "https://revoke.example.net/revoke")
+        post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_private_key_jwt_on_the_token_endpoint_origin_is_signed(self, oauth_manager):
+        credentials = {"client_id": "client-1", "token_endpoint_auth_method": "private_key_jwt", "token_url": "https://auth.example.com/token"}
+        with (
+            patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post,
+            patch.object(oauth_manager, "_build_client_assertion", AsyncMock(return_value="signed.assertion")),
+        ):
+            post.return_value = MagicMock(status_code=200)
+            assert await oauth_manager.revoke_token("access-value", "access_token", credentials, "https://auth.example.com/revoke") is True
+        data = post.await_args.args[1]
+        assert data["client_assertion"] == "signed.assertion"
+        assert data["client_assertion_type"] == CLIENT_ASSERTION_TYPE_JWT_BEARER
+
+    @pytest.mark.asyncio
+    async def test_unsupported_client_auth_method_raises(self, oauth_manager):
+        credentials = {"client_id": "client-1", "token_endpoint_auth_method": "made_up"}
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError):
+                await oauth_manager.revoke_token("access-value", "access_token", credentials, "https://auth.example.com/revoke")
+        post.assert_not_awaited()

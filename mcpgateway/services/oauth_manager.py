@@ -48,6 +48,7 @@ from mcpgateway.services.http_client_service import get_http_client, get_isolate
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
 from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
+from mcpgateway.utils.origin import is_same_origin, origin_from_url
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
@@ -2439,6 +2440,54 @@ class OAuthManager:
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         raise OAuthError("Failed to refresh token after all retry attempts")
+
+    async def revoke_token(
+        self,
+        token: str,
+        token_type_hint: str,
+        credentials: Dict[str, Any],
+        revocation_endpoint: str,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> bool:
+        """Revoke one token at the provider (RFC 7009), authenticating like the token endpoint.
+
+        A single attempt with no retries: the caller has already deleted its own copy.
+
+        Args:
+            token: The access or refresh token to revoke.
+            token_type_hint: ``"access_token"`` or ``"refresh_token"`` (RFC 7009 Section 2.1).
+            credentials: Stored gateway oauth_config; sensitive values are decrypted here.
+            revocation_endpoint: The provider's revocation endpoint, already validated by the caller.
+            ca_certificate: Optional custom CA certificate, as for the token endpoint.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            True when the provider answered 200, which RFC 7009 Section 2.2 also uses for a
+            token that was already invalid; False for any other answer.
+
+        Raises:
+            OAuthError: If the client authentication method is unsupported or misconfigured, or a
+                private_key_jwt assertion would go to a host other than the token endpoint.
+            httpx.HTTPError: If the request fails.
+        """
+        runtime_credentials = await self._prepare_runtime_credentials(credentials, "token-revocation")
+        # A private_key_jwt assertion's audience is the token endpoint. Never hand one to a
+        # different host, where it could be replayed at the token endpoint until it expires.
+        if normalize_token_endpoint_auth_method(runtime_credentials.get("token_endpoint_auth_method")) == "private_key_jwt" and not is_same_origin(
+            revocation_endpoint, origin_from_url(runtime_credentials.get("token_url") or "")
+        ):
+            raise OAuthError("private_key_jwt revocation requires the revocation endpoint to share the token endpoint origin")
+        data: Dict[str, Any] = {"token": token, "token_type_hint": token_type_hint}
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(data, headers, runtime_credentials)
+        response = await self._post_token_request(revocation_endpoint, data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=headers)
+        if response.status_code == 200:
+            return True
+        logger.warning("Token revocation was refused with status %s", response.status_code)
+        return False
 
     def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:
         """Extract user ID from token response.
