@@ -17386,6 +17386,7 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
     [
         (PermissionError("User membership in team not sufficient for this update."), 403),
         (PublicValidationError("Unable to verify team membership for the requested team."), 400),
+        ("team-a", 403),
         ("team-b", 201),
     ],
 )
@@ -20920,6 +20921,49 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
 
         response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
         assert response.status_code == expected_status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exception, expected_status",
+    [
+        (PermissionError("User membership in team not sufficient for this update."), 403),
+        (PublicValidationError("Team team-1 not found"), 400),
+    ],
+)
+@pytest.mark.parametrize("method", ["add", "edit"])
+async def test_admin_a2a_agent_team_scope_errors_map_to_status(monkeypatch, mock_db, method, exception, expected_status):
+    """A team-scope verification failure maps to 403 or 400 before any agent write."""
+    form_data = FakeForm({"name": "Agent", "endpoint_url": "http://agent.example.com"})
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(side_effect=exception)
+    team_service.verify_team_for_user_strict = AsyncMock(side_effect=exception)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+    service = MagicMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+
+    if method == "add":
+        response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    else:
+        response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
+
+    assert response.status_code == expected_status
+    team_service.verify_team_for_user.assert_awaited_once()
+    service.register_agent.assert_not_called()
+    service.update_agent.assert_not_called()
 
 
 @pytest.mark.asyncio

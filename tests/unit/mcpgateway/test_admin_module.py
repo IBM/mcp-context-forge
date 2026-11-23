@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from mcpgateway import admin
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.server_service import ServerNotFoundError
+from mcpgateway.utils.error_formatter import PublicValidationError
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 
 
@@ -241,6 +242,40 @@ async def test_admin_edit_gateway_includes_gateway_payload(monkeypatch):
 
     assert response.status_code == 202
     assert payload["gateway"] == result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exception, expected_status",
+    [
+        (PermissionError("User membership in team not sufficient for this update."), 403),
+        (PublicValidationError("Team team-1 not found"), 400),
+    ],
+)
+@pytest.mark.parametrize("handler", ["add", "update_rest", "edit"])
+async def test_admin_gateway_team_scope_errors_map_to_status(monkeypatch, handler, exception, expected_status):
+    """A team-scope verification failure maps to 403 or 400 before any gateway write."""
+    verify = AsyncMock(side_effect=exception)
+    stub = SimpleNamespace(verify_team_for_user=verify, verify_team_for_user_strict=verify)
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(owner_email="admin@example.com", team_id="team-1")
+    user = {"email": "admin@example.com"}
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: stub)
+    monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE", "visibility": "private"}))
+    monkeypatch.setattr(admin.MetadataCapture, "extract_creation_metadata", MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}))
+    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+
+    if handler == "add":
+        response = await _unwrap(admin.admin_add_gateway)(_gateway_payload_request(), db, user)
+    elif handler == "update_rest":
+        response = await _unwrap(admin.admin_update_gateway_rest)("gw-1", _gateway_payload_request(), db, user)
+    else:
+        request = _make_request()
+        request.form = AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE", "visibility": "private"})
+        response = await _unwrap(admin.admin_edit_gateway)("gw-1", request, db, user)
+
+    assert response.status_code == expected_status
+    verify.assert_awaited_once()
 
 
 class _StubTeamService:
