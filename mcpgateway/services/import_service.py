@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from inspect import isawaitable
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 import uuid
@@ -137,6 +138,7 @@ class ImportStatus:
         self.updated_entities = 0
         self.skipped_entities = 0
         self.failed_entities = 0
+        self.unknown_entities = 0
         self.errors: List[str] = []
         self.warnings: List[str] = []
         self.credentials_required: List[Dict[str, str]] = []
@@ -164,6 +166,7 @@ class ImportStatus:
                 "updated": self.updated_entities,
                 "skipped": self.skipped_entities,
                 "failed": self.failed_entities,
+                **({"unknown": self.unknown_entities} if self.unknown_entities else {}),
             },
             "credentials_required": self.credentials_required,
             "errors": self.errors,
@@ -600,10 +603,24 @@ class ImportService:
                     for candidate in indexes[kind][key]
                     if (team_name is None or candidate.team_id == status.team_id) and (kind not in {"tools", "resources", "prompts"} or candidate.gateway_id == gateway_id)
                 ]
-                if federated and not candidates:
-                    raise ImportValidationError("Federated file item does not match a discovered entity")
                 if federated and strategy == ConflictStrategy.RENAME:
                     raise ImportValidationError("Federated file items do not support rename")
+                if federated and not candidates:
+                    if dry_run and isinstance(mapped_gateway, SimpleNamespace):
+                        if strategy == ConflictStrategy.UPDATE:
+                            self._catalog_import_schema(kind, clean, create=False)
+                        item["outcome"] = "unknown"
+                        item["upstream_check"] = "unknown"
+                        status.unknown_entities += 1
+                        self._record_mapping(mappings, kind, source_identity, None)
+                        local_warnings.append(f"{kind} item {identifier}: match depends on upstream discovery")
+                        return
+                    raise ImportValidationError("Federated file item does not match a discovered entity")
+                if not admin and (not federated or strategy == ConflictStrategy.UPDATE):
+                    eligible = [candidate for candidate in candidates if self._can_update_import_candidate(candidate, actor, token_teams)]
+                    if federated and not eligible:
+                        raise PermissionError("Caller cannot update this entity")
+                    candidates = eligible
             if len(candidates) > 1:
                 if strategy == ConflictStrategy.FAIL:
                     raise ImportConflictError(f"Ambiguous match for {kind} item: {item['identifier']}")
@@ -639,8 +656,6 @@ class ImportService:
                 if not dry_run:
                     root_events.append({"type": "root_updated" if existing else "root_added", "data": {"uri": prepared.uri, "name": prepared.name}})
             else:
-                if existing is not None and not admin and (existing.owner_email != actor or token_teams is not None and existing.team_id not in token_teams):
-                    raise PermissionError("Caller cannot update this entity")
                 if kind == "gateways" and self._is_token_exchange(existing) and not admin:
                     raise PermissionError("Caller cannot update a token-exchange gateway")
                 if existing is None and not admin and token_teams is not None and status.team_id not in token_teams:
@@ -653,7 +668,9 @@ class ImportService:
                     )
                     if kind in {"tools", "gateways"}:
                         await self._preview_validation_policy(db, kind, schema, existing, actor, status.team_id)
-                    if kind == "tools":
+                    if existing is None:
+                        self._check_preview_create_conflict(kind, key, schema, indexes, clean.get("visibility", "team"), status.team_id)
+                    if kind == "tools" and existing is not None:
                         duplicate = self._preview_tool_name_conflict(schema, existing, mapped_gateway, indexes[kind], clean.get("visibility"))
                         if duplicate is not None:
                             item["conflicts_with"] = True
@@ -666,6 +683,7 @@ class ImportService:
                     result = existing or self._planned_entry(kind, key, clean, status)
                 else:
                     connection = db.connection()
+                    # PostgreSQL holds row locks from successful items through discovery until the outer commit.
                     with connection.begin_nested():
                         # Keep service commits and rollbacks inside the current item savepoint.
                         with Session(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False) as item_db:
@@ -685,7 +703,7 @@ class ImportService:
                                     or not self._visible(locked, actor, token_teams)
                                     or (mapped_gateway is not None and locked.gateway_id != mapped_gateway.id)
                                     or (team_name is not None and locked.team_id != status.team_id)
-                                    or (not admin and (locked.owner_email != actor or token_teams is not None and locked.team_id not in token_teams))
+                                    or (not admin and not self._can_update_import_candidate(locked, actor, token_teams))
                                 ):
                                     raise PermissionError("Caller cannot update this entity")
                                 existing = locked
@@ -740,10 +758,13 @@ class ImportService:
             status.warnings.extend(local_warnings)
 
     @staticmethod
+    def _can_update_import_candidate(candidate, actor, token_teams):
+        """Check whether the caller owns a candidate within their token scope."""
+        return candidate.owner_email == actor and (token_teams is None or candidate.team_id in token_teams)
+
+    @staticmethod
     def _planned_entry(kind, key, data, status):
         """Represent a proposed create for subsequent matches during dry run."""
-        from types import SimpleNamespace
-
         return SimpleNamespace(
             id=f"planned:{kind}:{key}",
             original_name=data.get("name"),
@@ -776,9 +797,8 @@ class ImportService:
             else:
                 mappings["gateway_names"][name] = result
 
-    def _prepare_import_schema(self, db, kind, data, existing, indexes, mappings, warnings, actor, token_teams, dry_run, explicit_team_id):
-        """Build a write schema and report whether the entity needs credentials."""
-        create = existing is None
+    def _catalog_import_schema(self, kind, data, *, create):
+        """Build a catalog write schema from local file data."""
         to_schema = {
             "tools": (self._convert_to_tool_create, self._convert_to_tool_update),
             "gateways": (self._convert_to_gateway_create, self._convert_to_gateway_update),
@@ -788,6 +808,14 @@ class ImportService:
         visibility = data.get("visibility")
         if visibility is not None and visibility not in {"public", "team", "private"}:
             raise ImportValidationError("Invalid visibility")
+        schema = to_schema[kind][0 if create else 1](data)
+        if not create and visibility is not None:
+            schema.visibility = visibility
+        return schema
+
+    def _prepare_import_schema(self, db, kind, data, existing, indexes, mappings, warnings, actor, token_teams, dry_run, explicit_team_id):
+        """Build a write schema and report whether the entity needs credentials."""
+        create = existing is None
         if kind == "servers":
             names = ("tool_refs", "tool_ids", "associated_tools")
             references = next((data[key] for key in names if key in data), None)
@@ -805,9 +833,7 @@ class ImportService:
                     payload["associated_tools"] = ids
             return (ServerCreate if create else ServerUpdate)(**payload), False
         needs_credentials = bool(data.get("credentials_required")) and create
-        schema = to_schema[kind][0 if create else 1](data)
-        if not create and visibility is not None:
-            schema.visibility = visibility
+        schema = self._catalog_import_schema(kind, data, create=create)
         if kind == "gateways" and schema.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
             raise ImportValidationError("Direct-proxy gateways are disabled")
         if kind not in {"gateways", "tools"} or create:
@@ -852,13 +878,13 @@ class ImportService:
         for index, reference in enumerate(references):
             gateway = None
             if isinstance(reference, str):
-                tool = mappings["tools"].get(reference) or by_id.get(reference)
+                tool = mappings["tools"].get(reference, by_id.get(reference))
             elif isinstance(reference, dict):
                 source_id = str(reference.get("id", ""))
                 original_name = reference.get("original_name")
                 source_tool = mappings["source_tools"].get(source_id)
-                tool = mappings["tools"].get(source_id) or by_id.get(source_id)
-                if reference.get("gateway_id") or reference.get("gateway_name"):
+                tool = mappings["tools"].get(source_id, by_id.get(source_id))
+                if (reference.get("gateway_id") or reference.get("gateway_name")) and not (source_id in mappings["tools"] and tool is None):
                     gateway = self._mapped_gateway(reference, indexes, mappings)
                     matching = [candidate for candidate in indexes["tools"].get(original_name, ()) if gateway is not None and candidate.gateway_id == gateway.id]
                     tool = matching[0] if len(matching) == 1 else None
@@ -944,14 +970,29 @@ class ImportService:
         return self.gateway_service.find_duplicate_gateway(eligible, auth_value, oauth_config, sigv4_config)
 
     @staticmethod
+    def _check_preview_create_conflict(kind, key, schema, indexes, visibility, team_id):
+        """Check visibility conflicts with rows outside the update candidates."""
+        errors = {"tools": ToolNameConflictError, "gateways": GatewayNameConflictError, "resources": ResourceURIConflictError, "prompts": PromptNameConflictError}
+        if kind not in errors or visibility not in {"public", "team"}:
+            return
+        if kind in {"tools", "gateways"} and visibility == "team" and not team_id:
+            return
+        buckets = indexes[kind].values() if kind == "tools" and visibility == "public" else (indexes[kind][key],)
+        rows = (row for bucket in buckets for row in bucket)
+        if kind == "tools":
+            rows = (row for row in rows if row.name == schema.name)
+        for row in rows:
+            if kind in {"prompts", "resources"} and row.gateway_id is not None:
+                continue
+            if row.visibility == visibility and (visibility == "public" or row.team_id == team_id):
+                raise errors[kind](key)
+
+    @staticmethod
     def _preview_tool_name_conflict(schema, existing, gateway, tools, visibility):
-        """Check for a conflicting public tool name during dry run."""
-        target_visibility = visibility or getattr(existing, "visibility", "team")
+        """Check for a conflicting public tool name during a planned update."""
+        target_visibility = visibility or existing.visibility
         if target_visibility != "public":
             return None
-        if existing is None:
-            name = schema.name
-            return next((row for group in tools.values() for row in group if row.name == name and row.visibility == "public"), None)
         name_changed = schema.name is not None and schema.name != existing.name
         if not name_changed and target_visibility == existing.visibility:
             return None
@@ -1128,19 +1169,20 @@ class ImportService:
         Returns:
             ToolUpdate schema object
         """
+        discovered_mcp = tool_data.get("integration_type") == "MCP" and bool(tool_data.get("gateway_id") or tool_data.get("gateway_name"))
+        transport = {} if discovered_mcp else {"integration_type": tool_data.get("integration_type"), "request_type": tool_data.get("request_type")}
         return ToolUpdate(
             name=tool_data.get("name"),
             displayName=tool_data.get("displayName"),
             url=tool_data.get("url"),
             description=tool_data.get("description"),
-            integration_type=tool_data.get("integration_type"),
-            request_type=tool_data.get("request_type"),
             headers=tool_data.get("headers"),
             input_schema=tool_data.get("input_schema"),
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
             tags=tool_data.get("tags"),
+            **transport,
             **({"tool_validation_policy": tool_data["tool_validation_policy"]} if "tool_validation_policy" in tool_data else {}),
         )
 

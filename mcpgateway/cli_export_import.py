@@ -229,6 +229,8 @@ async def import_command(args: argparse.Namespace) -> None:
         print(f"   • Updated: {progress.get('updated', 0)}")
         print(f"   • Skipped: {progress.get('skipped', 0)}")
         print(f"   • Failed: {progress.get('failed', 0)}")
+        if progress.get("unknown"):
+            print(f"   • Unknown: {progress['unknown']}")
 
         # Show warnings if any
         warnings = result.get("warnings", [])

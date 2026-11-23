@@ -189,6 +189,32 @@ def test_owner_and_platform_admin_can_still_update_through_import(isolated_gatew
     assert tenants.stored() == (_ATTACKER_URL, tenants.victim, tenants.victim_team)
 
 
+def test_repeat_import_prefers_owned_server_to_teammates_server(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811  pylint: disable=redefined-outer-name
+    """An unnamed destination matches the caller's own server in the shared team."""
+    admin, _, base_url, signing_key = isolated_gateway
+    team_id, owner = _create_team_member(admin, "repeat-owner")
+    teammate = _create_user(admin, "repeat-teammate")
+    _api(admin, "POST", f"/teams/{team_id}/members", json={"email": teammate, "role": "member"})
+    team_name = _api(admin, "GET", f"/teams/{team_id}")["name"]
+    payload = _import_payload(_VICTIM_URL)
+    payload["import_data"]["entities"] = {"servers": [{"name": "shared-server", "description": "original"}]}
+    for actor in (teammate, owner):
+        _grant(admin, actor, ["admin.import"], scope="global")
+        with _client_for(base_url, signing_key, actor, team_id) as client:
+            result = _api(client, "POST", "/v1/import", json={**payload, "team_name": team_name})
+            assert result["progress"]["created"] == 1
+
+    payload["import_data"]["entities"]["servers"][0]["description"] = "owner update"
+    with _client_for(base_url, signing_key, owner, team_id) as client:
+        result = _api(client, "POST", "/v1/import", json=payload)
+        assert result["progress"]["updated"] == 1
+        assert result["progress"]["failed"] == 0
+
+    servers = _api(admin, "GET", "/v1/servers", params={"limit": 0})
+    descriptions = {server["ownerEmail"]: server["description"] for server in servers if server["name"] == "shared-server"}
+    assert descriptions == {owner: "owner update", teammate: "original"}
+
+
 @pytest.mark.parametrize("isolated_gateway", [{"ROOT_ALLOWED_SCHEMES": '["https"]'}], indirect=True)
 def test_import_checks_raw_roots_before_applying_selection(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811  pylint: disable=redefined-outer-name
     """Require root authority for the envelope and apply the tool-only selection."""
@@ -278,6 +304,18 @@ def test_gateway_selection_discovers_tools_and_import_uses_their_destination_ids
     config = _import_payload(_VICTIM_URL)["import_data"]
     config["entities"].update(
         gateways=[{"id": source_gateway_id, "name": gateway_name, "url": discovery_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"}],
+        tools=[
+            {
+                "id": source_tool_id,
+                "name": "shared_lookup",
+                "url": discovery_upstream,
+                "integration_type": "MCP",
+                "request_type": "STREAMABLEHTTP",
+                "gateway_id": source_gateway_id,
+                "gateway_name": gateway_name,
+                "gateway_url": discovery_upstream,
+            }
+        ],
         servers=[
             {
                 "name": server_name,
@@ -285,6 +323,11 @@ def test_gateway_selection_discovers_tools_and_import_uses_their_destination_ids
             }
         ],
     )
+
+    dry_run = _api(admin, "POST", "/v1/import", json={"import_data": config, "dry_run": True, "selected_entities": {"gateways": [source_gateway_id], "tools": [source_tool_id]}})
+    assert dry_run["progress"] == {"total": 2, "processed": 2, "created": 1, "updated": 0, "skipped": 0, "failed": 0, "unknown": 1}, dry_run["errors"]
+    exported = _api(admin, "GET", "/v1/export?types=gateways")["entities"]
+    assert not exported.get("gateways")
 
     result = _api(admin, "POST", "/v1/import", json={"import_data": config, "selected_entities": {"gateways": [source_gateway_id]}})
     assert result["progress"] == {"total": 1, "processed": 1, "created": 1, "updated": 0, "skipped": 0, "failed": 0}
@@ -295,8 +338,10 @@ def test_gateway_selection_discovers_tools_and_import_uses_their_destination_ids
     assert any(resource.get("gateway_id") == gateway["id"] for resource in exported["resources"])
     assert any(prompt.get("gateway_id") == gateway["id"] for prompt in exported["prompts"])
 
-    result = _api(admin, "POST", "/v1/import", json={"import_data": config, "selected_entities": {"servers": [server_name]}})
+    result = _api(admin, "POST", "/v1/import", json={"import_data": config, "selected_entities": {"tools": [source_tool_id], "servers": [server_name]}})
     assert result["progress"]["created"] == 1
+    assert result["progress"]["updated"] == 1
+    assert result["progress"]["failed"] == 0, result["errors"]
     assert not result["warnings"]
     exported = _api(admin, "GET", "/v1/export?types=gateways,servers")["entities"]
     server = next(server for server in exported["servers"] if server["name"] == server_name)

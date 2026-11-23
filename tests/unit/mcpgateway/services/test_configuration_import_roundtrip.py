@@ -80,6 +80,44 @@ async def test_selection_named_team_and_repeat_update(registry, importer):
 
 
 @pytest.mark.asyncio
+async def test_default_non_admin_import_matches_owned_server(registry, importer):
+    """Create and update the caller's server beside a teammate's server."""
+    teammate = "teammate@example.com"
+    registry.add(EmailUser(email=teammate, password_hash="unused", full_name="Teammate"))
+    registry.flush()
+    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="member"))
+    registry.commit()
+    shared = envelope(servers=[{"name": "shared", "description": "teammate"}])
+    assert (await importer.import_configuration(registry, shared, imported_by=teammate, team_name="Target", token_teams=["target"])).created_entities == 1
+    scope = {"imported_by": ACTOR, "token_teams": ["personal", "target"]}
+    config = envelope(servers=[{"name": "shared", "description": "initial"}])
+    assert (await importer.import_configuration(registry, config, **scope, dry_run=True)).created_entities == 1
+    assert (await importer.import_configuration(registry, config, **scope)).created_entities == 1
+    config["entities"]["servers"][0]["description"] = "updated"
+    assert (await importer.import_configuration(registry, config, **scope, dry_run=True)).updated_entities == 1
+    assert (await importer.import_configuration(registry, config, **scope)).updated_entities == 1
+    rows = {row.owner_email: (row.team_id, row.description) for row in registry.scalars(select(Server))}
+    assert rows == {ACTOR: ("personal", "updated"), teammate: ("target", "teammate")}
+
+
+@pytest.mark.asyncio
+async def test_foreign_public_tool_remains_a_create_conflict(registry, importer):
+    """Respect public tool uniqueness after filtering update candidates."""
+    teammate = "teammate@example.com"
+    registry.add(EmailUser(email=teammate, password_hash="unused", full_name="Teammate"))
+    registry.flush()
+    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="member"))
+    registry.commit()
+    config = envelope(tools=[tool("shared", visibility="public")])
+    assert (await importer.import_configuration(registry, config, imported_by=teammate, team_name="Target", token_teams=["target"])).created_entities == 1
+    for dry_run in (True, False):
+        result = await importer.import_configuration(registry, config, imported_by=ACTOR, token_teams=["personal", "target"], dry_run=dry_run)
+        assert result.items["tools"][0]["conflicts_with"] is True
+        assert (result.created_entities, result.updated_entities, result.failed_entities) == (0, 0, 1)
+    assert registry.scalars(select(Tool)).one().owner_email == teammate
+
+
+@pytest.mark.asyncio
 async def test_fatal_conflict_restores_rows_and_roots(registry, importer, monkeypatch):
     """Undo writes even after nested service commits and keep staged roots private."""
     monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
@@ -529,6 +567,67 @@ async def test_legacy_in_file_gateway_name_resolves_new_discovery(registry, impo
     result = await importer.import_configuration(registry, config, imported_by=ACTOR)
     assert result.created_entities == 2 and not result.warnings
     assert registry.scalars(select(Server)).one().tools[0].gateway.name == "legacy-gateway"
+
+
+@pytest.mark.asyncio
+async def test_new_gateway_federated_tool_preview_requires_discovery(registry, importer, monkeypatch):
+    """Keep undiscovered tools unresolved in preview and bind them after discovery."""
+    url = "https://discovery.example.com/mcp"
+    discovery_calls = []
+
+    async def initialize(url, *args, **kwargs):
+        discovery_calls.append(url)
+        return {}, [ToolCreate(name="echo", url=url, integration_type="REST", request_type="GET")], [], [], [], None
+
+    monkeypatch.setattr(importer.gateway_service, "_initialize_gateway", initialize)
+    reference = {"id": "source-tool", "original_name": "echo", "gateway_id": "source-gateway"}
+    config = envelope(
+        gateways=[{"id": "source-gateway", "name": "discovery", "url": url, "transport": "STREAMABLEHTTP"}],
+        tools=[tool("echo", id="source-tool", gateway_id="source-gateway")],
+        servers=[{"name": "server", "tool_refs": [reference]}],
+    )
+    preview = await importer.preview_import(registry, config, imported_by=ACTOR)
+    dry = await importer.import_configuration(registry, config, imported_by=ACTOR, dry_run=True)
+    assert preview["outcomes"]["progress"] == dry.to_dict()["progress"] == {"total": 3, "processed": 3, "created": 2, "updated": 0, "skipped": 0, "failed": 0, "unknown": 1}
+    assert preview["items"]["tools"][0]["outcome"] == "unknown"
+    assert preview["items"]["tools"][0]["conflicts_with"] is None
+    assert any("Unresolved tool references" in warning for warning in dry.warnings)
+    assert not discovery_calls
+    assert all(registry.scalar(select(model.id)) is None for model in (Gateway, Tool, Server))
+    result = await importer.import_configuration(registry, config, imported_by=ACTOR)
+    assert discovery_calls == [url]
+    assert (result.created_entities, result.updated_entities, result.failed_entities, result.unknown_entities) == (2, 1, 0, 0)
+    assert registry.scalars(select(Server)).one().tools[0].original_name == "echo"
+
+
+@pytest.mark.asyncio
+async def test_unknown_federated_tool_does_not_bind_unrelated_destination_id(registry, importer):
+    """Keep a legacy reference unresolved when the file tool needs discovery."""
+    await importer.import_configuration(registry, envelope(tools=[tool("unrelated")]), imported_by=ACTOR)
+    tool_id = registry.scalar(select(Tool.id))
+    url = "https://discovery.example.com/mcp"
+    config = envelope(
+        gateways=[{"id": "source-gateway", "name": "discovery", "url": url, "transport": "STREAMABLEHTTP"}],
+        tools=[tool("echo", id=tool_id, url=url, integration_type="MCP", request_type="STREAMABLEHTTP", gateway_id="source-gateway")],
+        servers=[{"name": "server", "tool_ids": [tool_id]}],
+    )
+    status = await importer.import_configuration(registry, config, imported_by=ACTOR, dry_run=True)
+    assert status.unknown_entities == 1
+    assert any("Unresolved tool references" in warning for warning in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_new_gateway_preview_still_reports_local_federated_errors(registry, importer):
+    """Reject a mismatched gateway reference and malformed tool update locally."""
+    config = envelope(
+        gateways=[{"id": "source-gateway", "name": "discovery", "url": "https://discovery.example.com/mcp", "transport": "STREAMABLEHTTP"}],
+        tools=[
+            tool("wrong-gateway", gateway_id="source-gateway", gateway_name="other"),
+            tool("bad-request-type", gateway_id="source-gateway", request_type="INVALID"),
+        ],
+    )
+    result = await importer.import_configuration(registry, config, imported_by=ACTOR, dry_run=True)
+    assert (result.created_entities, result.failed_entities, result.unknown_entities) == (1, 2, 0)
 
 
 @pytest.mark.asyncio

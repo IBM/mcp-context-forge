@@ -623,8 +623,8 @@ async def test_import_command_success_dry_run():
     # Mock API response
     api_response = {
         "status": "validated",
-        "progress": {"total": 1, "processed": 1, "created": 0, "updated": 0, "skipped": 1, "failed": 0},
-        "warnings": ["Warning: Tool already exists"],
+        "progress": {"total": 1, "processed": 1, "created": 0, "updated": 0, "skipped": 0, "failed": 0, "unknown": 1},
+        "warnings": ["tools item test_tool: match depends on upstream discovery"],
         "errors": [],
         "import_id": "test-123",
         "started_at": "2023-01-01T00:00:00Z",
@@ -654,9 +654,9 @@ async def test_import_command_success_dry_run():
                 mock_print.assert_any_call("📊 Results:")
                 mock_print.assert_any_call("   • Total entities: 1")
                 mock_print.assert_any_call("   • Processed: 1")
-                mock_print.assert_any_call("   • Skipped: 1")
+                mock_print.assert_any_call("   • Unknown: 1")
                 mock_print.assert_any_call("\n⚠️  Warnings (1):")
-                mock_print.assert_any_call("   • Warning: Tool already exists")
+                mock_print.assert_any_call("   • tools item test_tool: match depends on upstream discovery")
                 mock_print.assert_any_call("\n🔍 Import details:")
                 mock_print.assert_any_call("   • Import ID: test-123")
     finally:

@@ -153,6 +153,8 @@ mcpgateway import backup.json --conflict-strategy fail    # Fail on conflicts
 
 Without `--team-name`, new entities go into your personal team. With `--team-name`, the import targets that team. Imported entities keep explicit visibility from the file where the operation permits it. When you supply a selection, the import processes only the entity types in that selection. A selected gateway can still discover its own upstream tools, resources, and prompts.
 
+Live import uses one transaction so a fatal error can roll back all registry changes. On PostgreSQL, row locks from successful items can remain held during upstream gateway discovery until the import commits.
+
 An export can omit server tool bindings that are outside its visibility or activity filters. Import reports those omissions and preserves the destination server's existing bindings. Import also preserves existing bindings if any reference in the file cannot resolve.
 
 ### REST API Import
@@ -327,19 +329,22 @@ Always validate imports before applying changes:
 mcpgateway import backup.json --dry-run
 ```
 
+If a federated item needs discovery on a new gateway, preview and dry run report that item as unknown. The item counts toward progress and any dependent tool binding stays unresolved until discovery finds an eligible tool.
+
 **Output:**
 ```
 🔍 Dry-run validation completed!
 📊 Results:
    • Total entities: 15
    • Processed: 15
-   • Would create: 12
-   • Would update: 3
-   • Conflicts: 0
+   • Created: 11
+   • Updated: 3
+   • Skipped: 0
+   • Failed: 0
+   • Unknown: 1
 
-⚠️  Warnings (2):
-   • Would import tool: weather_api
-   • Would import gateway: prod-east
+⚠️  Warnings (1):
+   • tools item weather_api: match depends on upstream discovery
 ```
 
 ### Schema Validation
