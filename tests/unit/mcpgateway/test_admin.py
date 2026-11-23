@@ -264,6 +264,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
+from mcpgateway.admin import _redact_url_userinfo
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
@@ -13294,6 +13295,19 @@ async def test_get_configuration_settings_does_not_mask_empty_sensitive_values(m
     monkeypatch.setattr(settings, "basic_auth_password", "")
     result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == ""
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("postgresql+psycopg://postgres:dbpass@pgbouncer:6432/mcp", "[REDACTED]"),  # pragma: allowlist secret
+        ("redis://host/0#secret", "[REDACTED]"),
+        (None, None),
+        ("", ""),
+    ],
+)
+def test_redact_url_userinfo(url, expected):
+    assert _redact_url_userinfo(url) == expected
 
 
 @pytest.mark.asyncio

@@ -3062,6 +3062,13 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
+def _redact_url_userinfo(url: Optional[str]) -> Optional[str]:
+    """Redact full URL that could contain user secrets."""
+    if not url:
+        return url
+    return "[REDACTED]"
+
+
 @admin_router.get("/config/settings")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
@@ -3142,9 +3149,9 @@ async def get_configuration_settings(
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
-            "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
+            "database_url": _redact_url_userinfo(settings.database_url),
             "cache_type": settings.cache_type,
-            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
+            "redis_url": _redact_url_userinfo(settings.redis_url),
             "db_pool_size": settings.db_pool_size,
             "db_max_overflow": settings.db_max_overflow,
         },
