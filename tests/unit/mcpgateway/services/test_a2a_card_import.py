@@ -8,11 +8,13 @@ Unit tests for A2A Agent Card fetch, normalization and agent-field mapping (#473
 
 # Standard
 import asyncio
+import ssl
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi import HTTPException, Request
+import httpx
 import orjson
 import pytest
 
@@ -29,6 +31,7 @@ from mcpgateway.services.a2a_card_import import (
     suggest_agent_fields,
 )
 from mcpgateway.services.a2a_service import A2AAgentService
+from mcpgateway.utils.ssrf_pinning import PinnedTarget
 
 V1_CARD = {
     "name": "weather",
@@ -664,50 +667,23 @@ class TestGetJson:
 
     async def test_oversized_body_is_discarded(self, monkeypatch):
         """A body larger than the cap yields no document."""
-        target = MagicMock()
-        target.apply_headers.side_effect = lambda h: dict(h)
-        target.pin.return_value = "https://1.2.3.4/card.json"
-        target.validated_url = "https://a.example.com/card.json"
-        target.extensions = {}
-        monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
-
-        class _Resp:
-            status_code = 200
-            headers = {}
-
-            async def aiter_raw(self):
-                yield b"x" * (a2a_card_import.MAX_CARD_BYTES + 1)
-
-        class _Stream:
-            async def __aenter__(self):
-                return _Resp()
-
-            async def __aexit__(self, *exc):
-                return False
-
-        class _Client:
-            def stream(self, *args, **kwargs):
-                assert kwargs["extensions"] == {}
-                return _Stream()
-
-        class _Ctx:
-            async def __aenter__(self):
-                return _Client()
-
-            async def __aexit__(self, *exc):
-                return False
-
-        monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
+        _stub_stream(monkeypatch, _Resp(200, b"x" * (a2a_card_import.MAX_CARD_BYTES + 1)))
         assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
 
-def _stub_stream(monkeypatch, response=None, error=None):
-    """Patch the outbound client so ``stream`` yields ``response`` or raises ``error``."""
-    target = MagicMock()
-    target.apply_headers.side_effect = lambda h: dict(h)
-    target.pin.return_value = "https://1.2.3.4/card.json"
-    target.validated_url = "https://a.example.com/card.json"
-    target.extensions = {}
+def _stub_stream(monkeypatch, response=None, error=None, resolved_ips=("1.2.3.4",)):
+    """Stub the HTTP stream while retaining the real address fallback helper.
+
+    Args:
+        monkeypatch: Fixture that replaces the resolver and client factory.
+        response: Response returned when the stream opens.
+        error: Exception raised when the stream opens.
+        resolved_ips: Validated addresses that the helper can dial.
+
+    Returns:
+        Stream mock that records each connection attempt.
+    """
+    target = PinnedTarget("https://a.example.com/card.json", "a.example.com", "a.example.com", resolved_ips)
     monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
 
     class _Stream:
@@ -719,18 +695,19 @@ def _stub_stream(monkeypatch, response=None, error=None):
         async def __aexit__(self, *exc):
             return False
 
-    class _Client:
-        def stream(self, *args, **kwargs):
-            return _Stream()
+    stream = MagicMock(return_value=_Stream())
+    client = SimpleNamespace(stream=stream)
 
     class _Ctx:
         async def __aenter__(self):
-            return _Client()
+            return client
 
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
+    monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", MagicMock(return_value=_Ctx()))
+
+    return stream
 
 
 class _Resp:
@@ -744,6 +721,7 @@ class _Resp:
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error:PinnedTarget.pin:DeprecationWarning")
 class TestGetJsonOutcomes:
     """Remaining outcomes of the guarded network read."""
 
@@ -751,6 +729,69 @@ class TestGetJsonOutcomes:
         """A 200 response with a JSON body yields the parsed document."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
         assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == CardResponse(200, {"name": "a"})  # pylint: disable=protected-access
+
+    @pytest.mark.parametrize("resolved_ips", [("2001:db8::1", "192.0.2.1"), ("192.0.2.1", "2001:db8::1")])
+    @pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ConnectTimeout])
+    @pytest.mark.parametrize("payload", [None, {"jsonrpc": "2.0", "id": "1", "method": "GetExtendedAgentCard", "params": {}}])
+    async def test_connection_failure_tries_next_validated_address(self, monkeypatch, resolved_ips, error_type, payload):
+        """Retry connection failures with the validated Host header and TLS hostname on every attempt."""
+        stream = _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'), resolved_ips=resolved_ips)
+        stream.side_effect = [error_type("Connection failed"), stream.return_value]
+
+        result = await a2a_card_import._get_json("https://a.example.com/card.json", {"Host": "untrusted.example", "X-K": "v"}, payload)  # pylint: disable=protected-access
+
+        assert result == CardResponse(200, {"name": "a"})
+        assert stream.call_count == 2
+        for call, address in zip(stream.call_args_list, resolved_ips):
+            authority = f"[{address}]" if ":" in address else address
+            assert call.args == ("GET" if payload is None else "POST", f"https://{authority}/card.json")
+            expected_headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Host": "a.example.com", "X-K": "v"}
+            if payload is not None:
+                expected_headers["Content-Type"] = "application/json"
+            assert call.kwargs["headers"] == expected_headers
+            assert call.kwargs["extensions"] == {"sni_hostname": "a.example.com"}
+            assert call.kwargs["content"] == (None if payload is None else orjson.dumps(payload))
+
+    async def test_all_addresses_refused_reports_unreachable(self, monkeypatch):
+        """Return no status after every validated address refuses the connection."""
+        stream = _stub_stream(monkeypatch, error=httpx.ConnectError("Connection refused"), resolved_ips=("192.0.2.1", "192.0.2.2"))
+
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
+        assert stream.call_count == 2
+
+    async def test_certificate_failure_stops_without_fallback(self, monkeypatch):
+        """Stop after certificate verification fails on the first address."""
+        error = httpx.ConnectError("TLS verification failed")
+        error.__cause__ = ssl.SSLCertVerificationError("Certificate verification failed")
+        stream = _stub_stream(monkeypatch, error=error, resolved_ips=("192.0.2.1", "192.0.2.2"))
+
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
+        stream.assert_called_once()
+
+    @pytest.mark.parametrize("status", [302, 401, 403, 404, 503])
+    async def test_http_response_does_not_retry_another_address(self, monkeypatch, status):
+        """Return the HTTP status without another address attempt or redirect."""
+        stream = _stub_stream(monkeypatch, _Resp(status), resolved_ips=("192.0.2.1", "192.0.2.2"))
+
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(status)  # pylint: disable=protected-access
+        stream.assert_called_once()
+        a2a_card_import.get_isolated_http_client.assert_called_once_with(follow_redirects=False, timeout=float(a2a_card_import.settings.federation_timeout))
+
+    async def test_response_read_failure_does_not_replay_request(self, monkeypatch):
+        """Return no status without replaying a partially read response."""
+
+        class _BrokenResponse(_Resp):
+            """Fail after yielding the first response chunk."""
+
+            async def aiter_raw(self):
+                """Yield a partial document, then report a read failure."""
+                yield b"{"
+                raise httpx.ReadError("Read failed")
+
+        stream = _stub_stream(monkeypatch, _BrokenResponse(200), resolved_ips=("192.0.2.1", "192.0.2.2"))
+
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
+        stream.assert_called_once()
 
     @pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "zstd"])
     async def test_content_encoded_response_is_discarded(self, monkeypatch, encoding):
@@ -760,10 +801,9 @@ class TestGetJsonOutcomes:
 
     async def test_requests_identity_encoding(self, monkeypatch):
         """The request asks for an uncompressed body."""
-        _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
-        target = a2a_card_import.resolve_pinned_target.return_value
+        stream = _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
         await a2a_card_import._get_json("https://a.example.com/card.json", None)  # pylint: disable=protected-access
-        assert target.apply_headers.call_args.args[0]["Accept-Encoding"] == "identity"
+        assert stream.call_args.kwargs["headers"]["Accept-Encoding"] == "identity"
 
     async def test_slow_response_hits_total_deadline(self, monkeypatch):
         """A server that drips bytes past the total deadline is abandoned as unreachable."""
@@ -826,7 +866,9 @@ class TestRequestSchema:
         with pytest.raises(ValueError):
             A2AFetchCardRequest(baseUrl=base)
 
-    @pytest.mark.parametrize("headers", [{"Content-Length": "1"}, {"Transfer-Encoding": "chunked"}, {"Connection": "close"}, {"Upgrade": "h2c"}, {"Proxy-Authorization": "x"}, {"Accept-Encoding": "gzip"}])
+    @pytest.mark.parametrize(
+        "headers", [{"Content-Length": "1"}, {"Transfer-Encoding": "chunked"}, {"Connection": "close"}, {"Upgrade": "h2c"}, {"Proxy-Authorization": "x"}, {"Accept-Encoding": "gzip"}]
+    )
     def test_framing_headers_rejected(self, headers):
         """Hop-by-hop and framing headers fail validation."""
         with pytest.raises(ValueError):
@@ -932,11 +974,7 @@ class TestGetJsonTransport:
     def sent(self, monkeypatch):
         """Record the call that reaches the isolated client."""
         record = {}
-        target = MagicMock()
-        target.apply_headers.side_effect = lambda h: dict(h)
-        target.pin.return_value = "https://1.2.3.4/rpc"
-        target.validated_url = "https://a.example.com/rpc"
-        target.extensions = {"sni_hostname": "a.example.com"}
+        target = PinnedTarget("https://a.example.com/rpc", "a.example.com", "a.example.com", ("1.2.3.4",))
         monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
 
         class _Resp:

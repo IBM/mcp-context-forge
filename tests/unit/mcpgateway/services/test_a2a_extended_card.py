@@ -26,6 +26,7 @@ from mcpgateway.services import a2a_card_import
 from mcpgateway.services import a2a_service as a2a_service_module
 from mcpgateway.services.a2a_card_import import _build_found_response, CardResponse, extended_card_additions, fetch_agent_card, fetch_extended_card
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.utils.ssrf_pinning import PinnedTarget
 
 SOURCE_URL = "https://agent.example.com/.well-known/agent-card.json"
 PUBLIC_CARD = {
@@ -572,12 +573,11 @@ class TestRegistrationToStoredCards:
     @pytest.fixture
     def transport(self, monkeypatch):
         """Stub the isolated HTTP client so ``_get_json`` and ``_read_body`` run for real."""
-        target = MagicMock()
-        target.apply_headers.side_effect = lambda h: dict(h)
-        target.pin.side_effect = lambda url: url
-        target.validated_url = "https://agent.example.com"
-        target.extensions = {}
-        monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
+        monkeypatch.setattr(
+            a2a_card_import,
+            "resolve_pinned_target",
+            AsyncMock(side_effect=lambda url, *_args: PinnedTarget(url, "agent.example.com", "agent.example.com", ("192.0.2.1",))),
+        )
         sent = []
 
         class _Resp:

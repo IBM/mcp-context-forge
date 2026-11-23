@@ -165,6 +165,20 @@ def test_fetches_v1_card_on_both_aliases(gateway, agent_server, prefix):
     assert body["suggestedAgent"]["auth_type"] == "bearer"
 
 
+def test_fetches_card_after_ipv6_connection_refusal(gateway, agent_server):
+    """Fetch a card from IPv4 loopback after the first validated IPv6 address refuses the connection."""
+    port = int(agent_server.rsplit(":", 1)[1])
+    addresses = list(dict.fromkeys(item[4][0] for item in socket.getaddrinfo("localhost", port, type=socket.SOCK_STREAM)))
+    if not addresses or addresses[0] != "::1" or "127.0.0.1" not in addresses:
+        pytest.skip("localhost must resolve to IPv6 before IPv4 for this fallback check")
+
+    response = _post(gateway, {"baseUrl": f"http://localhost:{port}/v1"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "found"
+    assert response.json()["card"]["name"] == V1_CARD["name"]
+
+
 def test_fetches_legacy_card(gateway, agent_server):
     """A 0.3 card falls back to the pre-1.0 path and is converted."""
     response = _post(gateway, {"baseUrl": f"{agent_server}/legacy"})

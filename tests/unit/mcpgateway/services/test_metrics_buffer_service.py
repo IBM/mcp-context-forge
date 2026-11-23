@@ -816,7 +816,7 @@ class TestMetricsSetup:
         assert b"Metrics collection is disabled" in response.body
 
     def test_update_http_pool_metrics_handles_exceptions(self, monkeypatch):
-        """update_http_pool_metrics should swallow errors from SharedHttpClient."""
+        """Handle errors from SharedHttpClient without propagating them."""
         # Third-Party
         from fastapi import FastAPI
 
@@ -853,7 +853,7 @@ class TestMetricsSetup:
 
         metrics_module.setup_metrics(app)
 
-        http_client_service.SharedHttpClient._instance = SimpleNamespace(_initialized=True, get_pool_stats=MagicMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr(http_client_service.SharedHttpClient, "_instance", SimpleNamespace(_initialized=True, get_pool_stats=MagicMock(side_effect=RuntimeError("boom"))))
 
         app.state.update_http_pool_metrics()
 
