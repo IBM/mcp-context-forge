@@ -209,7 +209,7 @@ class ImportService:
         from mcpgateway.services.gateway_service import gateway_service
         from mcpgateway.services.prompt_service import prompt_service
         from mcpgateway.services.resource_service import resource_service
-        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.root_service import get_root_service
         from mcpgateway.services.server_service import server_service
         from mcpgateway.services.tool_service import tool_service
 
@@ -218,7 +218,7 @@ class ImportService:
         self.resource_service = resource_service
         self.prompt_service = prompt_service
         self.server_service = server_service
-        self.root_service = root_service
+        self.root_service = get_root_service()
         self.active_imports: Dict[str, ImportStatus] = {}
 
     async def initialize(self) -> None:
@@ -367,6 +367,7 @@ class ImportService:
         return status
 
     async def _run_import(self, db, import_data, strategy, dry_run, actor, selection, team_name, token_teams, admin, status):
+        """Process the selected entries and publish registry effects after commit."""
         self.validate_import_data(import_data)
         status.imported_by = actor
         status.platform_scope = admin and team_name is None
@@ -438,6 +439,7 @@ class ImportService:
                     logger.exception("Root notification failed after import commit")
 
     def _destination_team(self, db, actor, team_name, token_teams, admin):
+        """Resolve the requested or personal team within the caller's scope."""
         if team_name is None:
             user = db.scalar(select(EmailUser).where(EmailUser.email == actor))
             team = user.get_personal_team() if user else None
@@ -456,6 +458,7 @@ class ImportService:
 
     @staticmethod
     def _visible(row, actor, token_teams):
+        """Check whether the request scope permits reading the destination row."""
         if row.visibility == "public":
             return True
         if token_teams is None:
@@ -465,6 +468,7 @@ class ImportService:
         return (row.visibility == "private" and row.owner_email == actor) or (row.visibility == "team" and row.team_id in token_teams)
 
     def _destination_index(self, db, selected, token_teams, actor):
+        """Index visible destination records by entity type and match key."""
         models = {"tools": Tool, "gateways": Gateway, "servers": Server, "prompts": Prompt, "resources": Resource}
         kinds = set(selected)
         if selected.get("servers"):
@@ -487,6 +491,7 @@ class ImportService:
         return indexes
 
     def _add_discovered_rows(self, db, selected, indexes, mappings, actor, token_teams):
+        """Index visible catalog items discovered by gateways in this import."""
         gateway_ids = {gateway.id for bucket in (mappings["gateways"], mappings["gateway_names"]) for gateway in bucket.values() if gateway is not None}
         if not gateway_ids:
             return
@@ -502,6 +507,7 @@ class ImportService:
 
     @staticmethod
     def _mapped_gateway(data, indexes, mappings):
+        """Resolve a file reference to an unambiguous destination gateway."""
         source_gateway_id = str(data.get("gateway_id") or "")
         gateway_name = data.get("gateway_name")
         gateway_url = data.get("gateway_url")
@@ -524,6 +530,7 @@ class ImportService:
 
     @staticmethod
     def _destination_key(kind, row):
+        """Return the match key for an existing destination record."""
         if kind == "gateways":
             return row.slug
         if kind == "resources":
@@ -534,10 +541,12 @@ class ImportService:
 
     @staticmethod
     def _federated_prompt_key(row):
+        """Return the upstream prompt name used for a federated match."""
         return row.get("original_name") or row["name"]
 
     @staticmethod
     def _file_key(kind, row):
+        """Return the match key for a configuration file entry."""
         if kind in {"roots", "resources"}:
             return row["uri"]
         if kind == "gateways":
@@ -547,6 +556,7 @@ class ImportService:
         return row["name"]
 
     async def _apply_import_entry(self, db, kind, row, indexes, mappings, root_state, root_events, strategy, dry_run, actor, team_name, token_teams, admin, status):
+        """Process one entry and record its outcome in the import status."""
         status.processed_entities += 1
         identifier = self._get_entity_identifier(kind, row)
         is_gateway_item = bool(row.get("gateway_name") or row.get("gateway_id"))
@@ -704,9 +714,15 @@ class ImportService:
                 status.created_entities += 1
             else:
                 status.updated_entities += 1
-        except ImportConflictError:
-            raise
-        except (ToolNameConflictError, GatewayNameConflictError, GatewayDuplicateConflictError, GatewayToolNameConflictError, ServerNameConflictError, PromptNameConflictError, ResourceURIConflictError) as exc:
+        except (
+            ToolNameConflictError,
+            GatewayNameConflictError,
+            GatewayDuplicateConflictError,
+            GatewayToolNameConflictError,
+            ServerNameConflictError,
+            PromptNameConflictError,
+            ResourceURIConflictError,
+        ) as exc:
             if strategy == ConflictStrategy.FAIL:
                 raise ImportConflictError(f"Conflict for {kind} item: {item['identifier']}") from exc
             item["outcome"] = "failed"
@@ -725,6 +741,7 @@ class ImportService:
 
     @staticmethod
     def _planned_entry(kind, key, data, status):
+        """Represent a proposed create for subsequent matches during dry run."""
         from types import SimpleNamespace
 
         return SimpleNamespace(
@@ -746,6 +763,7 @@ class ImportService:
 
     @staticmethod
     def _record_mapping(mappings, kind, data, result):
+        """Record how file identifiers and names resolve to destination records."""
         if kind in mappings and data.get("id"):
             source_id = str(data["id"])
             mappings[kind][source_id] = result
@@ -759,6 +777,7 @@ class ImportService:
                 mappings["gateway_names"][name] = result
 
     def _prepare_import_schema(self, db, kind, data, existing, indexes, mappings, warnings, actor, token_teams, dry_run, explicit_team_id):
+        """Build a write schema and report whether the entity needs credentials."""
         create = existing is None
         to_schema = {
             "tools": (self._convert_to_tool_create, self._convert_to_tool_update),
@@ -802,6 +821,7 @@ class ImportService:
 
     @staticmethod
     def _has_destination_credentials(entity, header_credentials):
+        """Check whether the destination entity has credential material."""
         return bool(
             getattr(entity, "auth_value", None)
             or any(header_credentials.values())
@@ -816,10 +836,12 @@ class ImportService:
 
     @staticmethod
     def _origin(url):
+        """Return the scheme, host, and effective port of a URL."""
         parsed = urlsplit(url)
         return parsed.scheme, parsed.hostname, parsed.port or {"http": 80, "https": 443, "ws": 80, "wss": 443}.get(parsed.scheme)
 
     def _resolve_import_bindings(self, db, references, indexes, mappings, actor, token_teams, dry_run, explicit_team_id):
+        """Resolve tool references and return labels for unresolved entries."""
         by_id = {str(tool.id): tool for group in indexes["tools"].values() for tool in group}
         gateways_by_id = {str(gateway.id): gateway for group in indexes["gateways"].values() for gateway in group}
         expected = {}
@@ -875,6 +897,7 @@ class ImportService:
         return list(expected), unresolved
 
     def _lock_import_bindings(self, db, expected, actor, token_teams, explicit_team_id):
+        """Lock candidate bindings and recheck visibility and identity."""
         gateway_ids = {gateway.id for _, gateway in expected.values() if gateway is not None}
         gateways = {}
         if gateway_ids:
@@ -898,6 +921,7 @@ class ImportService:
         return actual
 
     def _preview_gateway_duplicate(self, schema, existing, indexes, data, actor, team_id, needs_credentials):
+        """Check for a gateway URL and authentication conflict during dry run."""
         url = self.gateway_service.normalize_url(str(schema.url or getattr(existing, "url", "")))
         visibility = data.get("visibility") or getattr(existing, "visibility", None) or "team"
         owner = getattr(existing, "owner_email", actor)
@@ -917,10 +941,11 @@ class ImportService:
             and gateway.visibility == visibility
             and (visibility == "public" or visibility == "private" and gateway.owner_email == owner or visibility == "team" and target_team and gateway.team_id == target_team)
         ]
-        return self.gateway_service._find_duplicate_gateway(eligible, auth_value, oauth_config, sigv4_config)
+        return self.gateway_service.find_duplicate_gateway(eligible, auth_value, oauth_config, sigv4_config)
 
     @staticmethod
     def _preview_tool_name_conflict(schema, existing, gateway, tools, visibility):
+        """Check for a conflicting public tool name during dry run."""
         target_visibility = visibility or getattr(existing, "visibility", "team")
         if target_visibility != "public":
             return None
@@ -938,6 +963,7 @@ class ImportService:
 
     @staticmethod
     async def _preview_validation_policy(db, kind, schema, existing, actor, team_id):
+        """Apply local validation policy and permission checks during dry run."""
         policy = schema.tool_validation_policy
         if existing is None:
             if policy_text(policy):
@@ -949,10 +975,12 @@ class ImportService:
 
     @staticmethod
     def _is_token_exchange(gateway):
+        """Check whether the gateway uses the OAuth token exchange grant."""
         oauth_config = getattr(gateway, "oauth_config", None)
         return isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "token-exchange"
 
     async def _write_import_entity(self, db, kind, schema, existing, data, actor, team_id, needs_credentials, admin, token_teams):
+        """Create or update an entity through its registry service."""
         services = {
             "tools": (self.tool_service, "tool"),
             "gateways": (self.gateway_service, "gateway"),
@@ -1250,6 +1278,7 @@ class ImportService:
 
     @staticmethod
     def _can_access_status(status, imported_by, token_teams, unrestricted_admin):
+        """Check whether the caller may access the import status."""
         if imported_by is None or unrestricted_admin:
             return True
         return not status.platform_scope and status.imported_by == imported_by and (token_teams is None or status.request_team_ids is not None and status.request_team_ids.issubset(token_teams))

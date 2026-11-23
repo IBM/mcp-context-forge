@@ -630,7 +630,15 @@ class RootService:
 
 # Lazy singleton - created on first access, not at module import time.
 # This avoids instantiation when only exception classes are imported.
-_root_service_instance = None  # pylint: disable=invalid-name
+_root_service_instance: Optional[RootService] = None  # pylint: disable=invalid-name
+
+
+def get_root_service() -> RootService:
+    """Return the shared root service, creating it on first access."""
+    global _root_service_instance  # pylint: disable=global-statement
+    if _root_service_instance is None:
+        _root_service_instance = RootService()
+    return _root_service_instance
 
 
 def __getattr__(name: str):
@@ -645,9 +653,6 @@ def __getattr__(name: str):
     Raises:
         AttributeError: If the attribute name is not "root_service".
     """
-    global _root_service_instance  # pylint: disable=global-statement
     if name == "root_service":
-        if _root_service_instance is None:
-            _root_service_instance = RootService()
-        return _root_service_instance
+        return get_root_service()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

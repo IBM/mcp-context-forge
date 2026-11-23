@@ -1,4 +1,10 @@
-"""Exercise import transaction, matching, and portable associations against SQLite."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_configuration_import_roundtrip.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Exercise import transaction, matching, and portable associations against SQLite.
+"""
 
 # Standard
 from datetime import datetime, timezone

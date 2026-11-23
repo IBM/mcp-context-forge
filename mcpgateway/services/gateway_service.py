@@ -886,6 +886,7 @@ def gateway_requires_credentials(gateway: DbGateway) -> bool:
 
 
 def _is_upstream_unauthorized(exc: BaseException) -> bool:
+    """Detect an upstream HTTP 401 in an exception chain or group."""
     pending = [exc]
     seen = set()
     while pending:
@@ -2351,16 +2352,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if gateway_id:
             query = query.filter(DbGateway.id != gateway_id)
 
-        return self._find_duplicate_gateway(query.all(), auth_value, oauth_config, sigv4_config)
+        return self.find_duplicate_gateway(query.all(), auth_value, oauth_config, sigv4_config)
 
     @staticmethod
-    def _find_duplicate_gateway(
+    def find_duplicate_gateway(
         existing_gateways: Iterable[DbGateway],
         auth_value: Optional[Dict[str, str]],
         oauth_config: Optional[Dict[str, Any]],
         sigv4_config: Optional[Dict[str, Any]],
     ) -> Optional[DbGateway]:
         # Check each existing gateway
+        """Find a gateway in the candidate set with equivalent authentication."""
         for existing in existing_gateways:
             # SigV4 gateways differ from every other auth type and match only on the same signing identity
             if sigv4_config or existing.auth_type == "sigv4":

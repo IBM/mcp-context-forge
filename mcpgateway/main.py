@@ -320,12 +320,13 @@ _enable_plugin_subsystem_if_configured()
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError  # noqa: E402
+from mcpgateway.services.root_service import get_root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
 # Services that do not expose module-level singletons are instantiated here
 completion_service = CompletionService()
+root_service = get_root_service()
 sampling_handler = SamplingHandler()
 tag_service = TagService()
 export_service = ExportService()

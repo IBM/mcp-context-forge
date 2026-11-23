@@ -1,4 +1,10 @@
-"""Credential filtering for portable configuration files."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/utils/portable_credentials.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Credential filtering for portable configuration files.
+"""
 
 # Standard
 import re

@@ -207,7 +207,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
-from mcpgateway.services.root_service import root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
+from mcpgateway.services.root_service import get_root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -889,6 +889,7 @@ tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
 gateway_service: GatewayService = GatewayService()
 resource_service: ResourceService = ResourceService()
+root_service = get_root_service()
 export_service: ExportService = ExportService()
 # Created only when A2A is enabled. A2A admin handlers call raise_if_a2a_disabled() first, so they treat it as present.
 a2a_service: A2AAgentService = typing_cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)

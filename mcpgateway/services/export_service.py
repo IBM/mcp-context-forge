@@ -176,7 +176,7 @@ class ExportService:
         from mcpgateway.services.gateway_service import gateway_service
         from mcpgateway.services.prompt_service import prompt_service
         from mcpgateway.services.resource_service import resource_service
-        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.root_service import get_root_service
         from mcpgateway.services.server_service import server_service
         from mcpgateway.services.tool_service import tool_service
 
@@ -185,7 +185,7 @@ class ExportService:
         self.resource_service = resource_service
         self.prompt_service = prompt_service
         self.server_service = server_service
-        self.root_service = root_service
+        self.root_service = get_root_service()
 
     async def initialize(self) -> None:
         """Initialize the export service."""
@@ -550,6 +550,7 @@ class ExportService:
     def _export_tool_refs(
         db: Session, server_ids: List[str], user_email: Optional[str], token_teams: Optional[List[str]], *, include_inactive: bool = True
     ) -> tuple[Dict[str, List[Dict[str, Any]]], set[str]]:
+        """Return visible tool references and server IDs with omitted bindings."""
         refs = defaultdict(list)
         incomplete = set()
         if not server_ids:
@@ -557,6 +558,7 @@ class ExportService:
         assoc = server_tool_association
 
         def visible(model):
+            """Build the visibility predicate for the tool or gateway join."""
             if token_teams is None:
                 return or_(model.visibility != "private", and_(model.visibility == "private", model.owner_email == user_email, bool(user_email)))
             return or_(
