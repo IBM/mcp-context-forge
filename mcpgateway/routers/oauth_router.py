@@ -1741,6 +1741,82 @@ async def get_oauth_status(
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
+@oauth_router.delete("/tokens/{gateway_id}")
+async def revoke_oauth_token(
+    gateway_id: str,
+    request: Request,
+    app_user_email: Optional[str] = Query(
+        default=None,
+        max_length=255,
+        description="Administrators only: the user whose stored token to delete. Defaults to the caller.",
+    ),
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Delete a stored per-user OAuth token for a gateway ("disconnect").
+
+    Deletes only the token of one user for one gateway, unlike
+    ``DELETE /oauth/registered-clients/{client_id}``, which removes the shared
+    client registration for every user. The target user is the authenticated
+    caller unless an un-narrowed platform administrator names another user with
+    ``app_user_email`` (database token backend only).
+    Idempotent: deleting a token that is not stored reports ``deleted: false``.
+
+    Provider-side revocation (RFC 7009) is not attempted, so
+    ``provider_revoked`` is always ``None``.
+
+    Args:
+        gateway_id: ID of the gateway whose token to delete.
+        request: Request with token-scoping context.
+        app_user_email: Un-narrowed administrators only: the user whose token to delete.
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        ``{"gateway_id": ..., "deleted": bool, "provider_revoked": None}``
+
+    Raises:
+        HTTPException: 401 without an authenticated user; 403 when the caller names another
+            user without un-narrowed administrator access, or lacks access to the gateway;
+            404 when the gateway does not exist; 501 when another user is named with the
+            Vault token backend; 500 on an unexpected error.
+    """
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        raise HTTPException(status_code=401, detail="User authentication required")
+    # Account emails are stored lowercase, and tokens are keyed by them.
+    target_email = requester_email.strip().lower()
+    if app_user_email is not None and app_user_email.strip().lower() != target_email:
+        # Like registered-client management: a team-narrowed or public-only admin token
+        # must not reach other users' tokens on every gateway in its scope.
+        _require_unnarrowed_admin(request, current_user)
+        if settings.oauth_token_backend == "vault":
+            # Vault keys tokens by the owner's team, which this request does not know.
+            raise HTTPException(status_code=501, detail="Revoking another user's token is not supported with the Vault token backend")
+        target_email = app_user_email.strip().lower()
+
+    try:
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        if not gateway:
+            raise HTTPException(status_code=404, detail="Gateway not found")
+
+        await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+
+        token_storage = TokenStorageService(db, _build_user_context(current_user))
+        deleted = await token_storage.revoke_user_tokens(gateway_id, target_email)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to revoke OAuth token for gateway %s: %s",
+            SecurityValidator.sanitize_log_message(gateway_id),
+            type(e).__name__,
+        )
+        raise HTTPException(status_code=500, detail="Failed to revoke OAuth token")
+
+    return {"gateway_id": gateway_id, "deleted": bool(deleted), "provider_revoked": None}
+
+
 OAUTH_STATUS_BATCH_MAX_IDS = 100
 
 # Upper bound on how long the batch endpoint will wait for the whole

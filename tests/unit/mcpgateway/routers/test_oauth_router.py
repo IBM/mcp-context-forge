@@ -6169,7 +6169,8 @@ class TestGetGatewayOauthToken:
                     await self._call(mock_request, mock_current_user, mock_db)
 
         assert raised.value.status_code == 409
-        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "DELETE"]
+        # Read for refresh, then revoke: an existence GET before the metadata DELETE.
+        assert [call.args[0] for call in vault_request.await_args_list] == ["GET", "GET", "DELETE"]
         for token in ("example-access", "example-refresh"):
             assert token not in raised.value.detail
             assert token not in caplog.text
@@ -6904,3 +6905,150 @@ class TestCimdIntegration:
             iss=None,
             validated_state={"gateway_id": "gateway_cimd_int", "state": "mock_state_456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None},
         )
+
+
+class TestRevokeOAuthToken:
+    """Tests for DELETE /oauth/tokens/{gateway_id} (local delete)."""
+
+    @staticmethod
+    def _storage(deleted=True, error=None):
+        storage = Mock()
+        storage.revoke_user_tokens = AsyncMock(return_value=deleted, side_effect=error)
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_deletes_the_callers_own_token(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage(deleted=True)
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert result == {"gateway_id": "gateway123", "deleted": True, "provider_revoked": None}
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_is_idempotent_when_no_token_is_stored(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=self._storage(deleted=False)):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert result["deleted"] is False
+        assert result["provider_revoked"] is None
+
+    @pytest.mark.asyncio
+    async def test_naming_yourself_needs_no_admin_rights(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            await revoke_oauth_token("gateway123", mock_request, app_user_email=" Test@Example.com ", current_user=mock_current_user, db=mock_db)
+
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_revoke_another_users_token(self, mock_db, mock_current_user, mock_request):
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unnarrowed_admin_revokes_another_users_token(self, mock_db, mock_gateway, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_request.state.token_teams = None  # un-narrowed admin session
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage), patch("mcpgateway.routers.oauth_router.settings.oauth_token_backend", "database"):
+            result = await revoke_oauth_token("gateway123", mock_request, app_user_email=" Alice@Example.com ", current_user=admin, db=mock_db)
+
+        assert result["deleted"] is True
+        # Account emails are stored lowercase, so the target is normalized the same way.
+        storage.revoke_user_tokens.assert_awaited_once_with("gateway123", "alice@example.com")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token_teams", [["team-1"], []])
+    async def test_narrowed_admin_cannot_revoke_another_users_token(self, mock_db, mock_request, token_teams):
+        mock_request.state.token_teams = token_teams  # team-narrowed or public-only admin token
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=admin, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_vault_backend_refuses_revoking_another_user(self, mock_db, mock_request):
+        mock_request.state.token_teams = None
+        admin = _AttrDict(email="admin@example.com", is_admin=True)
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage), patch("mcpgateway.routers.oauth_router.settings.oauth_token_backend", "vault"):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email="alice@example.com", current_user=admin, db=mock_db)
+
+        assert exc_info.value.status_code == 501
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_requires_an_authenticated_user(self, mock_db, mock_request):
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.get_user_email", return_value="unknown"):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=_AttrDict(), db=mock_db)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_unknown_gateway_is_not_found(self, mock_db, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with pytest.raises(HTTPException) as exc_info:
+            await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_gateway_access_is_enforced_before_deleting(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        storage = self._storage()
+        denied = AsyncMock(side_effect=HTTPException(status_code=403, detail="You don't have access to this gateway"))
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", denied), patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=storage):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        storage.revoke_user_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_is_a_generic_500(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        from mcpgateway.routers.oauth_router import revoke_oauth_token
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService", return_value=self._storage(error=RuntimeError("backend down"))):
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_oauth_token("gateway123", mock_request, app_user_email=None, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 500
+        assert "backend down" not in exc_info.value.detail

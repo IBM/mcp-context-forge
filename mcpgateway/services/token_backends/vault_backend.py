@@ -767,7 +767,11 @@ class VaultTokenBackend(AbstractTokenBackend):
         metadata_path = self._construct_metadata_path(team_id, mcp_url, app_user_email)
 
         try:
-            result = await self._vault_request("DELETE", metadata_path)
+            # Vault answers a metadata DELETE for a missing path with 204, so check first:
+            # callers report whether anything was actually stored.
+            existing = await self._vault_request("GET", self._construct_vault_path(team_id, mcp_url, app_user_email))
+            stored = bool(existing) and "data" in existing
+            result = await self._vault_request("DELETE", metadata_path) if stored else None
 
             # Mark the cache entry as immediately expired rather than deleting it.
             # Deleting would only clear this worker's copy; other workers in a
