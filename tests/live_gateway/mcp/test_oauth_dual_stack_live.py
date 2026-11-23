@@ -116,6 +116,8 @@ def ipv4_oauth_provider() -> Iterator[tuple[str, list[dict[str, list[str]]]]]:
 def oauth_gateway(tmp_path: Path) -> Iterator[httpx.Client]:
     """Start an authenticated gateway with a private database and localhost SSRF access.
 
+    Use development cookie settings for the loopback HTTP endpoint.
+
     Args:
         tmp_path: Temporary directory for the gateway database and log.
 
@@ -139,6 +141,8 @@ def oauth_gateway(tmp_path: Path) -> Iterator[httpx.Client]:
         "DEFAULT_USER_PASSWORD": secrets.token_urlsafe(32),
         "PLATFORM_ADMIN_EMAIL": "admin@example.com",
         "AUTH_REQUIRED": "true",
+        "ENVIRONMENT": "development",
+        "SECURE_COOKIES": "false",
         "REQUIRE_USER_IN_DB": "false",
         "MCPGATEWAY_ADMIN_API_ENABLED": "true",
         "MCPGATEWAY_UI_ENABLED": "false",
@@ -217,9 +221,10 @@ def test_authorization_code_falls_back_to_ipv4(ipv4_oauth_provider: tuple[str, l
 
     authorization = oauth_gateway.get(f"/oauth/authorize/{gateway_id}")
     assert authorization.status_code == 307, authorization.text
-    with httpx.Client(trust_env=False) as browser:
+    with httpx.Client(trust_env=False, cookies=oauth_gateway.cookies) as browser:
         provider = browser.get(authorization.headers["location"])
         assert provider.status_code == 302, provider.text
+        assert "authorization" not in provider.request.headers
         callback = browser.get(provider.headers["location"])
     assert callback.status_code == 200, callback.text
     assert "OAuth Authorization Successful" in callback.text

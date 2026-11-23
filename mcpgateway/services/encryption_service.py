@@ -667,18 +667,28 @@ def _protect_sigv4_secret(field: str, value: Any, existing_value: Any) -> Any:
 
     Returns:
         Any: Value suitable for persistence.
+
+    Raises:
+        PublicValidationError: If the value is a masked placeholder and no stored value exists to keep.
     """
     if not isinstance(value, str) or not value:
         return value
     if value == settings.masked_auth_value:
-        return existing_value if isinstance(existing_value, str) and existing_value else None
+        if isinstance(existing_value, str) and existing_value:
+            return existing_value
+        if field == "secret_access_key":
+            # First-Party
+            from mcpgateway.utils.error_formatter import PublicValidationError  # pylint: disable=import-outside-toplevel
+
+            raise PublicValidationError("sigv4_config.secret_access_key must be provided: no stored value exists to keep")
+        return None
     if is_encrypted_sigv4_secret(field, value):
         return value
     return encrypt_sigv4_secret(field, value)
 
 
-async def protect_sigv4_config_for_storage(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
-    """Encrypt the secret fields of a ``sigv4_config`` before persistence.
+def protect_sigv4_config_sync(sigv4_config: Optional[dict], existing_sigv4_config: Optional[dict] = None) -> Optional[dict]:
+    """Encrypt the secret fields of a ``sigv4_config`` before persistence, for synchronous callers.
 
     A masked placeholder keeps the stored ciphertext of the same field, so a client that
     echoes a masked read back on update does not overwrite the credential.

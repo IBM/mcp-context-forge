@@ -42,7 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_registry_cache,
     _get_tool_lookup_cache,
     _get_validator_class_and_check,
-    extract_using_jq,
+    apply_response_filter,
     ToolError,
     ToolInvocationError,
     ToolLockConflictError,
@@ -2970,6 +2970,26 @@ class TestCallA2AAgent:
     """Tests for _call_a2a_agent method."""
 
     @pytest.mark.asyncio
+    async def test_call_a2a_agent_passes_protocol_binding(self, tool_service):
+        """The stored protocol_binding is handed to prepare_a2a_invocation."""
+        agent = MagicMock()
+        agent.name = "binding-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.protocol_binding = "http_json"
+
+        prepare = MagicMock(side_effect=RuntimeError("stop here"))
+        with patch("mcpgateway.services.tool_service.prepare_a2a_invocation", prepare):
+            with pytest.raises(RuntimeError, match="stop here"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
+    @pytest.mark.asyncio
     async def test_call_a2a_jsonrpc_agent_with_query(self, tool_service):
         """Should build JSONRPC request for generic agent."""
         agent = MagicMock()
@@ -4455,36 +4475,31 @@ class TestConvertToolToReadMetrics:
 
 
 # ---------------------------------------------------------------------------
-# extract_using_jq — error paths (lines 286-289)
+# apply_response_filter — error paths
 # ---------------------------------------------------------------------------
 
 
-class TestExtractUsingJqErrors:
-    def test_jq_filter_returns_none_result(self):
-        """When jq filter produces [None], returns error TextContent in list."""
+class TestApplyResponseFilterErrors:
+    def test_filter_evaluation_error(self):
+        """When the expression fails at runtime, a fixed message is raised and the detail is kept aside."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.cel_runner import CelEvaluationError
 
-        with patch.object(ts, "run_jq_filter", return_value=[None]):
-            result = extract_using_jq({"key": "value"}, ".x")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
+        with patch.object(ts, "evaluate_value", side_effect=CelEvaluationError("KeyError: 'x'")):
+            with pytest.raises(ts.ResponseFilterError, match="^Error applying jsonpath filter$") as excinfo:
+                apply_response_filter({"key": "value"}, "response.x")
+        assert excinfo.value.detail == "KeyError: 'x'"
 
-    def test_jq_filter_exception(self):
-        """When the filter engine raises, a fixed error message is returned."""
+    def test_filter_syntax_error(self):
+        """When the expression does not compile, the message names the engine without the detail."""
         # First-Party
         import mcpgateway.services.tool_service as ts
-        from mcpgateway.utils.jq_runner import JqFilterError
+        from mcpgateway.utils.cel_runner import CelSyntaxError
 
-        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
-            result = extract_using_jq({"data": 1}, "bad_filter")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
-        assert "bad filter" not in result[0].text
+        with patch.object(ts, "evaluate_value", side_effect=CelSyntaxError("bad filter")):
+            with pytest.raises(ts.ResponseFilterError, match="^jsonpath filter is not a valid CEL expression$"):
+                apply_response_filter({"data": 1}, "bad_filter")
 
 
 # ---------------------------------------------------------------------------

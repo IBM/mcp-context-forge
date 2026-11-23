@@ -10,6 +10,7 @@ Unit tests for the SigV4 request signer.
 from datetime import datetime, timedelta, timezone
 import hashlib
 import re
+import time
 from unittest.mock import patch
 
 # Third-Party
@@ -28,6 +29,8 @@ from mcpgateway.utils.sigv4 import (
     decrypt_sigv4_secret,
     derive_signing_key,
     encrypt_sigv4_secret,
+    access_key_fingerprint,
+    sigv4_audit_values,
     SigV4Auth,
     SigV4ConfigError,
     SigV4Credentials,
@@ -183,6 +186,38 @@ class TestSigner:
         other = self._signer()
         args = ("GET", "https://b.s3.amazonaws.com/a%20b", {"host": "b.s3.amazonaws.com"}, b"")
         assert s3.sign(*args)["Authorization"] != other.sign(*args)["Authorization"]
+
+
+class TestSigningOverhead:
+    """Signing adds a small, bounded cost to each upstream request."""
+
+    REQUESTS = 1000
+    WARMUP = 200
+    P99_BUDGET_MS = 0.2
+    CI_P99_LIMIT_MS = 2.0
+
+    @staticmethod
+    def _p99_ms(signer: SigV4Signer, body: bytes) -> float:
+        headers = {"host": "api.example.com", "content-type": "application/json"}
+        url = "https://api.example.com/v1/tools/call?b=2&a=1"
+        for _ in range(TestSigningOverhead.WARMUP):
+            signer.sign("POST", url, headers, body)
+        samples = []
+        for _ in range(TestSigningOverhead.REQUESTS):
+            start = time.perf_counter_ns()
+            signer.sign("POST", url, headers, body)
+            samples.append(time.perf_counter_ns() - start)
+        samples.sort()
+        return samples[int(len(samples) * 0.99) - 1] / 1_000_000
+
+    def test_signing_p99_stays_within_bound(self):
+        creds = SigV4Credentials.from_config({**VALID_CONFIG, "session_token": "session-token-value"})  # pragma: allowlist secret
+        signer = SigV4Signer(creds)
+
+        p99 = self._p99_ms(signer, b'{"message": "hello"}' * 25)
+
+        print(f"SigV4 sign() p99 over {self.REQUESTS} requests: {p99:.4f} ms (budget {self.P99_BUDGET_MS} ms)")
+        assert p99 < self.CI_P99_LIMIT_MS
 
 
 class TestAuthFlow:
@@ -378,3 +413,43 @@ class TestGatewayHelpers:
             assert client.headers["X-Test"] == "1"
         finally:
             await client.aclose()
+
+
+class TestAuditValues:
+    """``sigv4_audit_values`` reports registration, rotation and removal with fingerprints only."""
+
+    FINGERPRINT = access_key_fingerprint(VALID_CONFIG["access_key_id"])
+
+    @pytest.fixture(autouse=True)
+    def _encryption_secret(self, monkeypatch):
+        # First-Party
+        from mcpgateway.utils import services_auth
+
+        monkeypatch.setattr(services_auth.settings, "auth_encryption_secret", "audit-values-secret")  # pragma: allowlist secret
+
+    @staticmethod
+    def _stored(**overrides):
+        config = {**VALID_CONFIG, **overrides}
+        config["secret_access_key"] = encrypt_sigv4_secret("secret_access_key", config["secret_access_key"])
+        return config
+
+    def test_removal_reports_the_previous_fingerprint_only(self):
+        values = sigv4_audit_values(None, self._stored())
+
+        assert values == {"sigv4_credential_removed": True, "sigv4_previous_key_fingerprint": self.FINGERPRINT}
+
+    def test_removal_with_an_empty_config_reports_the_previous_fingerprint(self):
+        assert sigv4_audit_values({}, self._stored())["sigv4_credential_removed"] is True
+
+    def test_nothing_before_and_nothing_after_is_not_a_removal(self):
+        assert sigv4_audit_values(None, None) == {}
+        assert sigv4_audit_values(None, {}) == {}
+
+    def test_registration_never_reports_a_removal(self):
+        assert sigv4_audit_values(None, self._stored(), registration=True) == {}
+
+    def test_removal_holds_no_credential(self):
+        rendered = repr(sigv4_audit_values(None, self._stored(session_token="SESSIONTOKENVALUE")))  # pragma: allowlist secret
+
+        for forbidden in (VALID_CONFIG["access_key_id"], VALID_CONFIG["secret_access_key"], "SESSIONTOKENVALUE"):
+            assert forbidden not in rendered

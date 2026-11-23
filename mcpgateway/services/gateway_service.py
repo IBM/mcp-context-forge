@@ -144,7 +144,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
-from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
@@ -182,7 +182,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
-from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, SigV4ConfigError, with_sigv4_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -1148,6 +1148,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
+
+        # authorization_code gateways already reported as needing a manual refresh, so the
+        # auto-refresh skip is logged once per gateway rather than on every health cycle
+        self._manual_refresh_notified: Set[str] = set()
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
@@ -2455,7 +2459,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
-        sigv4_config = await protect_sigv4_config_for_storage(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
+        sigv4_config = protect_sigv4_config_sync(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
@@ -3059,6 +3063,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     "tools_count": len(tools),
                     "resources_count": len(db_resources),
                     "prompts_count": len(db_prompts),
+                    **sigv4_audit_values(getattr(db_gateway, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -4051,7 +4056,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if gateway_update.sigv4_config is not None:
                     if gateway.auth_type != "sigv4":
                         raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
-                    gateway.sigv4_config = await protect_sigv4_config_for_storage(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
+                    gateway.sigv4_config = protect_sigv4_config_sync(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
                 elif gateway.auth_type == "sigv4" and not getattr(gateway, "sigv4_config", None):
                     raise PublicValidationError("auth_type 'sigv4' requires sigv4_config")
 
@@ -4264,6 +4269,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             "url": gateway.url,
                             "version": gateway.version,
                             "status": gateway.status,
+                            **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                         },
                         context={
                             "modified_via": modified_via,
@@ -4485,6 +4491,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "name": gateway.name,
                         "url": gateway.url,
                         "version": gateway.version,
+                        **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                     },
                     context={
                         "modified_via": modified_via,
@@ -6287,6 +6294,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 should_auto_refresh = True
                         else:
                             should_auto_refresh = True
+
+                    if should_auto_refresh and self._skip_auto_refresh_without_user_token(gateway_id, gateway_name, gateway_auth_type, gateway_oauth_config, headers):
+                        should_auto_refresh = False
 
                     if should_auto_refresh:
                         try:
@@ -8398,6 +8408,58 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if gateway_id not in self._refresh_locks:
             self._refresh_locks[gateway_id] = asyncio.Lock()
         return self._refresh_locks[gateway_id]
+
+    def _skip_auto_refresh_without_user_token(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        auth_type: Optional[str],
+        oauth_config: Optional[Dict[str, Any]],
+        headers: Optional[Dict[str, str]],
+    ) -> bool:
+        """Decide whether background auto-refresh must skip an authorization_code gateway.
+
+        Background refresh has no request-scoped user, so it can only authenticate to an
+        authorization_code gateway with the stored token the health check already placed in
+        ``headers``. Without one the refresh would fetch nothing and change nothing, so it is
+        skipped and the operator is told, once per gateway, that the server needs a manual
+        refresh. The notice is re-armed once the gateway is reachable with a token again.
+
+        Args:
+            gateway_id: ID of the gateway being health-checked.
+            gateway_name: Name of the gateway, for the log message.
+            auth_type: The gateway's auth type.
+            oauth_config: The gateway's OAuth configuration, if any.
+            headers: Headers the health check built for this gateway.
+
+        Returns:
+            bool: True if auto-refresh should be skipped for this gateway.
+
+        Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> service = GatewayService()
+            >>> auth_code = {"grant_type": "authorization_code"}
+            >>> service._skip_auto_refresh_without_user_token("gw-1", "gw", "oauth", auth_code, {})
+            True
+            >>> service._skip_auto_refresh_without_user_token("gw-1", "gw", "oauth", auth_code, {"Authorization": "Bearer t"})
+            False
+            >>> service._skip_auto_refresh_without_user_token("gw-2", "gw", "oauth", {"grant_type": "client_credentials"}, {})
+            False
+            >>> service._skip_auto_refresh_without_user_token("gw-3", "gw", "basic", None, {})
+            False
+        """
+        is_auth_code = auth_type == "oauth" and isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code"
+        has_authorization = any(key.lower() == "authorization" for key in (headers or {}))
+        if not is_auth_code or has_authorization:
+            self._manual_refresh_notified.discard(gateway_id)
+            return False
+        if gateway_id not in self._manual_refresh_notified:
+            self._manual_refresh_notified.add(gateway_id)
+            logger.info(
+                "Auto-refresh skipped for gateway %s: authorization_code servers require a manual refresh",
+                SecurityValidator.sanitize_log_message(gateway_name),
+            )
+        return True
 
     async def refresh_gateway_manually(
         self,

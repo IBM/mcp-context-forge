@@ -102,21 +102,6 @@ _STRONG_SECRET_FIELDS: frozenset[str] = frozenset({"JWT_SECRET_KEY", "AUTH_ENCRY
 _ROTATION_GUARDED_FIELDS: frozenset[str] = frozenset({"AUTH_ENCRYPTION_SECRET"})
 
 
-def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
-    """Return True when *val* passes all startup compliance checks.
-
-    Mirrors the predicate in :func:`ensure_env_file_secrets` so the rotation-guard
-    check uses identical criteria.
-    """
-    if not val.strip():
-        return False
-    if val.lower() in weak_values or val.lower().startswith(("__replace_me__", "replaceme")):
-        return False
-    if len(val) < _MIN_SECRET_LENGTH or calculate_entropy(val) < _MIN_ENTROPY:
-        return False
-    return True
-
-
 def _read_env_file(path: str) -> dict[str, str]:
     """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
 
@@ -256,7 +241,7 @@ def ensure_env_file_secrets(
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
-        current = env_val if env_val is not None else _env_file_ci.get(field.lower(), "changeme")
+        current = env_val if env_val is not None else _env_file_ci.get(field.lower(), "__replace_me__")
         # Base checks apply to all fields: empty, known-weak name, placeholder.
         is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith(("__replace_me__", "replaceme"))
         # Length and entropy checks apply only to secrets that Settings hard-fails on startup.

@@ -34,7 +34,7 @@ import httpx2
 ALGORITHM = "AWS4-HMAC-SHA256"
 UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
 SIGV4_SENSITIVE_KEYS = frozenset({"secret_access_key", "session_token"})
-SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service"})
+SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service", "unsigned_payload"})
 _SCOPE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")
 _WHITESPACE = re.compile(r"\s+")
@@ -97,7 +97,27 @@ class SigV4Credentials:
         Returns:
             str: First 12 hex characters of the SHA-256 of the access key ID.
         """
-        return hashlib.sha256(self.access_key_id.encode("utf-8")).hexdigest()[:12]
+        return access_key_fingerprint(self.access_key_id)
+
+
+def access_key_fingerprint(access_key_id: str) -> str:
+    """Return a non-secret identifier for an access key ID, safe for audit records.
+
+    Args:
+        access_key_id: AWS access key ID.
+
+    Returns:
+        str: First 12 hex characters of the SHA-256 of the access key ID.
+
+    Examples:
+        >>> len(access_key_fingerprint("AKIDEXAMPLE0000000"))
+        12
+        >>> access_key_fingerprint("AKIDEXAMPLE0000000") == access_key_fingerprint("AKIDEXAMPLE0000000")
+        True
+        >>> "AKIDEXAMPLE" in access_key_fingerprint("AKIDEXAMPLE0000000")
+        False
+    """
+    return hashlib.sha256(access_key_id.encode("utf-8")).hexdigest()[:12]
 
 
 def validate_sigv4_config(config: Any) -> Dict[str, Any]:
@@ -111,11 +131,13 @@ def validate_sigv4_config(config: Any) -> Dict[str, Any]:
 
     Raises:
         SigV4ConfigError: If ``config`` is not a mapping, has unknown keys, lacks a required
-            field, or holds a malformed region, service or access key ID.
+            field, or holds a malformed region, service, access key ID or ``unsigned_payload`` flag.
 
     Examples:
         >>> validate_sigv4_config({"access_key_id": "AKIDEXAMPLE0000000", "secret_access_key": "x", "region": "us-east-1", "service": "s3"})["service"]
         's3'
+        >>> validate_sigv4_config({"access_key_id": "AKIDEXAMPLE0000000", "secret_access_key": "x", "region": "us-east-1", "service": "s3", "unsigned_payload": True})["unsigned_payload"]
+        True
         >>> validate_sigv4_config({"region": "us-east-1"})  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
@@ -144,7 +166,34 @@ def validate_sigv4_config(config: Any) -> Dict[str, Any]:
             raise SigV4ConfigError("sigv4_config.session_token must be a string")
         if session_token.strip():
             cleaned["session_token"] = session_token.strip()
+    unsigned_payload = config.get("unsigned_payload")
+    if unsigned_payload is not None:
+        if not isinstance(unsigned_payload, bool):
+            raise SigV4ConfigError("sigv4_config.unsigned_payload must be a boolean")
+        cleaned["unsigned_payload"] = unsigned_payload
     return cleaned
+
+
+def has_query_signature(url: Any) -> bool:
+    """Report whether a URL already carries an AWS query-string signature.
+
+    Args:
+        url: Candidate URL.
+
+    Returns:
+        bool: True when the query holds ``X-Amz-Signature``.
+
+    Examples:
+        >>> has_query_signature("https://b.s3.amazonaws.com/k?X-Amz-Signature=abc&X-Amz-Date=1")
+        True
+        >>> has_query_signature("https://api.example.com/x?a=1")
+        False
+        >>> has_query_signature(None)
+        False
+    """
+    if not isinstance(url, str):
+        return False
+    return any(key.lower() == "x-amz-signature" for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
 
 def _hmac(key: bytes, message: str) -> bytes:
@@ -531,6 +580,89 @@ def decrypt_stored_sigv4_config(stored: Mapping[str, Any]) -> Dict[str, Any]:
     return plain
 
 
+_ROTATION_FIELDS = ("access_key_id", "secret_access_key", "session_token", "region", "service")
+
+
+def sigv4_credential_changed(previous: Optional[Mapping[str, Any]], current: Optional[Mapping[str, Any]]) -> bool:
+    """Report whether a stored ``sigv4_config`` holds a different credential than before.
+
+    An encrypted secret differs on every write, so two different ciphertexts that decrypt
+    to the same plaintext do not count as a change. A masked placeholder keeps the stored
+    ciphertext and so also does not count.
+
+    Args:
+        previous: Stored configuration before the update, or None.
+        current: Stored configuration after the update, or None.
+
+    Returns:
+        bool: True when the access key, a secret, the region or the service changed.
+
+    Examples:
+        >>> base = {"access_key_id": "AKIDEXAMPLE0000000", "region": "us-east-1", "service": "s3"}
+        >>> sigv4_credential_changed(base, dict(base))
+        False
+        >>> sigv4_credential_changed(base, {**base, "region": "eu-west-1"})
+        True
+        >>> sigv4_credential_changed(None, base)
+        True
+    """
+    if not previous or not current:
+        return bool(previous) != bool(current)
+    for field_name in _ROTATION_FIELDS:
+        before, after = previous.get(field_name) or None, current.get(field_name) or None
+        if before == after:
+            continue
+        if field_name in SIGV4_SENSITIVE_KEYS and before and after:
+            plain_before = decrypt_sigv4_secret(field_name, before)
+            if plain_before is not None and plain_before == decrypt_sigv4_secret(field_name, after):
+                continue
+        return True
+    return False
+
+
+def sigv4_audit_values(current: Any, previous: Any = None, *, registration: bool = False) -> Dict[str, Any]:
+    """Build the non-secret audit fields for a SigV4 registration, rotation or removal.
+
+    The result holds key fingerprints only. It never holds the access key ID, a secret or a session token.
+
+    Args:
+        current: Stored ``sigv4_config`` after the operation.
+        previous: Stored ``sigv4_config`` before an update. Ignored for a registration.
+        registration: True for a create operation, which always reports the fingerprint.
+
+    Returns:
+        Dict[str, Any]: Fields to merge into ``new_values``. A removal reports ``sigv4_credential_removed`` and the
+        previous fingerprint. Empty when the operation involves no SigV4 credential change, so audit entries of other operations stay unchanged.
+
+    Examples:
+        >>> cfg = {"access_key_id": "AKIDEXAMPLE0000000", "region": "us-east-1", "service": "s3"}
+        >>> values = sigv4_audit_values(cfg, registration=True)
+        >>> values["auth_type"], len(values["sigv4_key_fingerprint"])
+        ('sigv4', 12)
+        >>> sigv4_audit_values(cfg, dict(cfg))
+        {}
+        >>> sigv4_audit_values(None, registration=True)
+        {}
+        >>> removed = sigv4_audit_values(None, cfg)
+        >>> removed["sigv4_credential_removed"], len(removed["sigv4_previous_key_fingerprint"])
+        (True, 12)
+    """
+    previous_config = previous if isinstance(previous, Mapping) and previous.get("access_key_id") else None
+    if not isinstance(current, Mapping) or not current.get("access_key_id"):
+        if registration or previous_config is None:
+            return {}
+        return {"sigv4_credential_removed": True, "sigv4_previous_key_fingerprint": access_key_fingerprint(str(previous_config["access_key_id"]))}
+    values: Dict[str, Any] = {"auth_type": "sigv4", "sigv4_key_fingerprint": access_key_fingerprint(str(current["access_key_id"]))}
+    if registration:
+        return values
+    if not sigv4_credential_changed(previous_config, current):
+        return {}
+    values["sigv4_credential_rotated"] = True
+    if previous_config:
+        values["sigv4_previous_key_fingerprint"] = access_key_fingerprint(str(previous_config["access_key_id"]))
+    return values
+
+
 def build_stored_sigv4_auth(stored: Optional[Mapping[str, Any]]) -> Optional[SigV4Auth]:
     """Build an httpx2 auth object from a persisted ``sigv4_config``.
 
@@ -545,18 +677,24 @@ def build_stored_sigv4_auth(stored: Optional[Mapping[str, Any]]) -> Optional[Sig
     return SigV4Auth(build_sigv4_signer(decrypt_stored_sigv4_config(stored)))
 
 
-def build_stored_sigv4_httpx_auth(stored: Optional[Mapping[str, Any]]) -> Optional[SigV4HttpxAuth]:
+def build_stored_sigv4_httpx_auth(stored: Optional[Mapping[str, Any]], *, clock: Optional[Callable[[], datetime]] = None) -> Optional[SigV4HttpxAuth]:
     """Build an httpx auth object from a persisted ``sigv4_config``.
+
+    The ``unsigned_payload`` flag of the configuration selects ``UNSIGNED-PAYLOAD``. The
+    httpx2 builders ignore the flag, so MCP transport signing keeps hashing the body.
 
     Args:
         stored: Persisted configuration, or None for a gateway without SigV4.
+        clock: Optional time source for the signer. Defaults to the system clock.
 
     Returns:
         Optional[SigV4HttpxAuth]: The auth object, or None when ``stored`` is empty.
     """
     if not stored:
         return None
-    return SigV4HttpxAuth(build_sigv4_signer(decrypt_stored_sigv4_config(stored)))
+    plain = decrypt_stored_sigv4_config(stored)
+    signer = SigV4Signer(SigV4Credentials.from_config(plain), unsigned_payload=plain.get("unsigned_payload") is True, clock=clock)
+    return SigV4HttpxAuth(signer)
 
 
 def with_sigv4_auth(client_factory: Callable[..., Any], signing_auth: Optional[httpx2.Auth]) -> Callable[..., Any]:

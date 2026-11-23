@@ -7671,6 +7671,7 @@ class TestInvokeResourceCoverageEdges:
         cs_session = AsyncMock()
         cs_session.initialize = AsyncMock(return_value=None)
         cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+        cs_session.send_request.return_value = cs_session.read_resource.return_value
         cs_session.session = cs_session
 
         captured_headers: dict[str, object] = {}

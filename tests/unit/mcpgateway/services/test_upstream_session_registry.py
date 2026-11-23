@@ -568,6 +568,24 @@ async def test_gateway_internal_session_headers_are_stripped_before_upstream(reg
     assert forwarded_headers.get("Accept") == "application/json, text/event-stream"
 
 
+@pytest.mark.asyncio
+async def test_claims_signature_header_is_not_persisted_on_pooled_session(registry, factory_and_records):
+    """An expiring claims JWS must not become a persistent default header."""
+    _, created = factory_and_records
+    async with registry.acquire(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        headers={"Authorization": "Bearer token", "X-Forwarded-User-Claims-Signature": "jws", "X-Custom-Claims-Signature": "jws"},
+        transport_type=TransportType.STREAMABLE_HTTP,
+    ):
+        pass
+
+    forwarded_headers = created[0][0].headers
+    assert forwarded_headers.get("Authorization") == "Bearer token"
+    assert not [key for key in forwarded_headers if key.lower().endswith("-claims-signature")]
+
+
 # --------------------------------------------------------------------------- #
 # Singleton accessors                                                          #
 # --------------------------------------------------------------------------- #

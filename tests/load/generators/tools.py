@@ -100,7 +100,7 @@ class ToolGenerator(BaseGenerator):
                     reachable=random.choice([True, True, True, False]),
                     integration_type="MCP",
                     request_type="POST",
-                    jsonpath_filter="$",
+                    jsonpath_filter="response",
                     input_schema={
                         "type": "object",
                         "properties": {

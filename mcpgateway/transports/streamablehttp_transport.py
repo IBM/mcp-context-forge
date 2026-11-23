@@ -38,11 +38,9 @@ from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
-import ipaddress
 import re
 import time
 from typing import Any, assert_never, AsyncGenerator, Callable, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -62,7 +60,7 @@ import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 import orjson
-from sqlalchemy import select, union
+from sqlalchemy import select, union, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -79,13 +77,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
+from mcpgateway.services.completion_service import completion_error_code, CompletionError, CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -119,16 +116,17 @@ from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationEr
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
-from mcpgateway.utils.identity_propagation import build_identity_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, IdentitySigningError
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.server_oauth import resolve_server_oauth_issuers, server_oauth_context_is_current, server_oauth_is_approved
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, sigv4_client_factory
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -536,6 +534,8 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
 
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
+_oauth_validation_request_var: contextvars.ContextVar[Optional[object]] = contextvars.ContextVar("oauth_validation_request", default=None)
+_oauth_validated_context_var: contextvars.ContextVar[Optional[tuple[Any, ...]]] = contextvars.ContextVar("oauth_validated_context", default=None)
 # Server scope of the request being served, as resolved by _get_request_context_or_default();
 # the modern-path list/discover adapters read it to size ttlMs. None when unscoped.
 _request_server_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_server_id", default=None)
@@ -568,46 +568,7 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
         A list of allowed issuer URLs, with surrounding whitespace stripped.
     """
 
-    def _is_allowed_url(value: str) -> bool:
-        """Return whether an issuer URL uses an allowed scheme and host."""
-        try:
-            parts = urlsplit(value)
-            hostname = parts.hostname
-            # Accessing port validates malformed port values.
-            _ = parts.port
-        except ValueError:
-            return False
-        if not parts.netloc or not hostname:
-            return False
-        if parts.scheme.lower() == "https":
-            return True
-        if parts.scheme.lower() != "http" or not settings.ssrf_allow_localhost:
-            return False
-        hostname = hostname.rstrip(".").lower()
-        if hostname in {"localhost", "localhost.localdomain"}:
-            return True
-        try:
-            return ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            return False
-
-    servers = oauth_config.get("authorization_servers") or []
-    if isinstance(servers, list):
-        cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
-        if cleaned:
-            rejected = [s for s in cleaned if not _is_allowed_url(s)]
-            if rejected:
-                logger.warning("Ignoring invalid authorization_servers (SSRF risk): %s", rejected)
-                cleaned = [s for s in cleaned if _is_allowed_url(s)]
-            return cleaned
-    singular = oauth_config.get("authorization_server")
-    if isinstance(singular, str) and singular.strip():
-        url = singular.strip()
-        if not _is_allowed_url(url):
-            logger.warning("Ignoring invalid authorization_server (SSRF risk): %s", url)
-            return []
-        return [url]
-    return []
+    return resolve_server_oauth_issuers(oauth_config)
 
 
 _shared_session_registry: Optional[Any] = None
@@ -1133,7 +1094,7 @@ def _is_valid_audience(value: Any) -> bool:
     return False
 
 
-def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session) -> None:
+def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session, *, generation: str | None = None) -> None:
     """Persist the ``aud`` claim from a verified OAuth token as ``resource``.
 
     Called after successful signature + issuer verification of an inbound MCP
@@ -1175,6 +1136,7 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
         server_id: Virtual-server identifier.
         verified_claims: Decoded and *signature-verified* JWT claims.
         db: Active database session.
+        generation: Approved configuration generation used during token verification.
     """
     raw_aud = verified_claims.get("aud")
     if not _is_valid_audience(raw_aud):
@@ -1188,7 +1150,7 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
 
     try:
         server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
-        if server is None or not server.oauth_config:
+        if not generation or not server_oauth_is_approved(server, generation) or not server.oauth_config:
             return
 
         # First-write-only: do not overwrite an existing usable resource.
@@ -1201,14 +1163,59 @@ def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, 
 
         updated_config = dict(server.oauth_config)
         updated_config["resource"] = raw_aud
-        server.oauth_config = updated_config
-        db.flush()
+        result = db.execute(
+            update(DbServer)
+            .where(
+                DbServer.id == server_id,
+                DbServer.oauth_config_approved.is_(True),
+                DbServer.oauth_config_generation == generation,
+                DbServer.version == server.version,
+            )
+            .values(oauth_config=updated_config, version=DbServer.version + 1)
+        )
+        db.commit()
+        if result.rowcount != 1:
+            return
         logger.info(
             "Learned OAuth audience from IdP token for server %s; persisted as resource",
             sanitize_for_log(server_id),
         )
     except Exception:
         logger.warning("Failed to persist learned audience for server %s", server_id, exc_info=True)
+
+
+async def _validate_server_oauth_context(server_id: str | None, context: Optional[dict[str, Any]], *, fresh: bool = False) -> None:
+    """Reject stale OAuth identities before cached authentication or session dispatch.
+
+    Args:
+        server_id: Current request server identifier.
+        context: Trusted identity recovered from request or session state.
+        fresh: Whether to bypass request-local validation after token verification.
+
+    Raises:
+        HTTPException: If approval expires or its database lookup fails.
+    """
+    if not isinstance(context, dict) or context.get("auth_method") != "oauth_access_token":
+        return
+    request = _oauth_validation_request_var.get()
+    try:
+        sdk_request = mcp_app.request_context.request
+        request = sdk_request.scope.get("mcpgateway.oauth_validation_request") if sdk_request is not None else None
+    except (LookupError, AttributeError):
+        pass
+    key = (request, context.get("user_id"), context.get("email"), context.get("oauth_server_id"), server_id, context.get("oauth_config_generation"))
+    if not fresh and request is not None and _oauth_validated_context_var.get() == key:
+        return
+    _oauth_validated_context_var.set(None)
+    try:
+        async with get_db() as db:
+            current = server_oauth_context_is_current(db, context, server_id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Unable to verify OAuth approval") from exc
+    if not current:
+        raise HTTPException(status_code=401, detail="OAuth configuration requires administrator approval or session reauthentication")
+    if request is not None:
+        _oauth_validated_context_var.set(key)
 
 
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
@@ -1239,6 +1246,7 @@ async def _check_server_oauth_enforcement(server_id: str, user_context: Optional
             unavailable and the server's ``oauth_enabled`` flag cannot be
             verified (fail-closed).
     """
+    await _validate_server_oauth_context(server_id, user_context)
     if _oauth_checked_var.get(False):
         return  # Already checked during this request
 
@@ -1576,6 +1584,20 @@ def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, 
     return headers
 
 
+def _identity_signing_error(gateway_id: Any, exc: IdentitySigningError) -> MCPError:
+    """Log an identity signing failure and map it to an MCP configuration error.
+
+    Args:
+        gateway_id: Gateway whose upstream call needed signed identity claims.
+        exc: The signing failure.
+
+    Returns:
+        The MCP error to raise.
+    """
+    logger.error("Identity claim signing is misconfigured for gateway %s: %s", gateway_id, exc)
+    return MCPError(code=types.INTERNAL_ERROR, message="Identity claim signing is misconfigured")
+
+
 async def _proxy_list_tools_to_gateway(
     gateway: Any,
     request_headers: dict,
@@ -1619,6 +1641,8 @@ async def _proxy_list_tools_to_gateway(
                 tools_result = await client.list_tools()
             return filter_model_visible_tools(tools_result.tools)
 
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         if paginate:
             log_proxy_catalog_failure(gateway.id, "tools/list", e)
@@ -1680,6 +1704,8 @@ async def _proxy_list_resources_to_gateway(
             logger.info("Received %s resources from gateway %s", len(resource_list), gateway.id)
             return resource_list
 
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         if paginate:
             log_proxy_catalog_failure(gateway.id, "resources/list", e)
@@ -1769,6 +1795,8 @@ async def _proxy_read_resource_to_gateway(  # pylint: disable=unused-argument
 
     except ResourceInputRequired:
         raise
+    except IdentitySigningError as e:
+        raise _identity_signing_error(gateway.id, e) from e
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
         return []
@@ -2828,6 +2856,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         Tuple[str, dict[str, Any], dict[str, Any]]: ``(server_id, request_headers, user_context)``.
     """
     server_id, request_headers, user_context = await _resolve_request_context()
+    await _validate_server_oauth_context(server_id, user_context)
     _request_server_id_var.set(server_id if server_id and server_id != "default_server_id" else None)
     return server_id, request_headers, user_context
 
@@ -2906,7 +2935,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     # First-Party
                     from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
 
-                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti, payload)
                     if batched_ctx.get("is_token_revoked", False):
                         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
                     batched_user = batched_ctx.get("user")
@@ -3134,6 +3163,8 @@ async def list_tools() -> List[types.Tool]:
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return _tools_for_client(tools)
+        except MCPError:
+            raise
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -3409,6 +3440,8 @@ async def list_resources() -> List[types.Resource]:
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [_to_mcp_resource(resource) for resource in resources]
+        except MCPError:
+            raise
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -6410,6 +6443,8 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "permission_is_admin",
         "scoped_permissions",
         "scoped_server_id",
+        "oauth_server_id",
+        "oauth_config_generation",
     ):
         if key not in user_context:
             continue
@@ -6505,6 +6540,10 @@ class _StreamableHttpAuthHandler:
         # Reset per-request OAuth enforcement cache so keep-alive connections
         # re-evaluate on every request instead of inheriting a stale True.
         _oauth_checked_var.set(False)
+        request_marker = object()
+        self.scope["mcpgateway.oauth_validation_request"] = request_marker
+        _oauth_validation_request_var.set(request_marker)
+        _oauth_validated_context_var.set(None)
 
         headers = Headers(scope=self.scope)
 
@@ -6674,7 +6713,7 @@ class _StreamableHttpAuthHandler:
 
             if user_email and cached_ctx is None and settings.auth_cache_batch_queries:
                 try:
-                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti)
+                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti, user_payload)
                     _record_mcp_auth_cache_event("auth_context_batch_hit")
                     if batched_auth_ctx.get("is_token_revoked", False):
                         _record_mcp_auth_cache_event("auth_context_batch_revoked")
@@ -6714,7 +6753,7 @@ class _StreamableHttpAuthHandler:
             if user_email and cached_ctx is None and batched_auth_ctx is None:
                 _record_mcp_auth_cache_event("auth_context_fallback")
                 # First-Party
-                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync, session_predates_password_change  # pylint: disable=import-outside-toplevel
 
                 is_revoked = False
                 if jti:
@@ -6737,6 +6776,8 @@ class _StreamableHttpAuthHandler:
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+                    if user_record and session_predates_password_change(user_payload, getattr(user_record, "password_changed_at", None)):
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
                     if user_record:
                         db_user_is_admin = bool(getattr(user_record, "is_admin", False))
                     if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
@@ -7022,6 +7063,11 @@ class _StreamableHttpAuthHandler:
             )
             return OAuthAuthResult.NOT_APPLICABLE
 
+        if not server_oauth_is_approved(server):
+            await self._send_error(detail="OAuth configuration requires administrator approval", status_code=503)
+            return OAuthAuthResult.FAILED
+        oauth_generation = server.oauth_config_generation
+
         # Audience enforcement strategy:
         #
         # 1. ``resource`` configured (operator-set or previously learned)
@@ -7072,7 +7118,7 @@ class _StreamableHttpAuthHandler:
         # is a no-op when ``resource`` is already set.
         try:
             async with get_db() as db:
-                _persist_learned_server_audience(server_id, claims, db)
+                _persist_learned_server_audience(server_id, claims, db, generation=oauth_generation)
         except Exception:
             logger.warning("Failed to persist learned audience for server %s (caller guard)", server_id, exc_info=True)
 
@@ -7133,8 +7179,16 @@ class _StreamableHttpAuthHandler:
                 "exp": claims.get("exp"),
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
+                "oauth_server_id": server_id,
+                "oauth_config_generation": oauth_generation,
             }
         )
+        try:
+            await _validate_server_oauth_context(server_id, user_context_var.get(), fresh=True)
+        except HTTPException as exc:
+            user_context_var.set({})
+            await self._send_error(detail=exc.detail, status_code=exc.status_code)
+            return OAuthAuthResult.FAILED
         _oauth_checked_var.set(True)
         return OAuthAuthResult.SUCCESS
 

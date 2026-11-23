@@ -311,6 +311,7 @@ def test_get_user_by_email_sync(monkeypatch):
         auth_provider="local",
         password_hash_type="argon2id",
         password_change_required=False,
+        password_changed_at=None,
     )
     session = DummySession(results=[user])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
@@ -351,3 +352,49 @@ def test_get_auth_context_batched_sync(monkeypatch):
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._get_auth_context_batched_sync("missing@example.com")
     assert result["user"] is None
+
+
+def test_session_predates_password_change():
+    changed = datetime(2026, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+    changed_ts = int(changed.timestamp())
+    session = {"token_use": "session", "iat": changed_ts - 1}
+
+    assert auth.session_predates_password_change(session, changed) is True
+    assert auth.session_predates_password_change(session, changed.replace(tzinfo=None)) is True  # SQLite returns naive datetimes
+    assert auth.session_predates_password_change({**session, "iat": changed_ts}, changed) is False  # same second stays valid
+    assert auth.session_predates_password_change({**session, "token_use": "api"}, changed) is False
+    assert auth.session_predates_password_change({"token_use": "session"}, changed) is False
+    assert auth.session_predates_password_change(session, None) is False
+
+
+def test_session_predates_password_change_respects_setting(monkeypatch):
+    monkeypatch.setattr(auth.settings, "password_reset_invalidate_sessions", False)
+    changed = datetime(2026, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+    assert auth.session_predates_password_change({"token_use": "session", "iat": 1}, changed) is False
+
+
+def test_get_auth_context_batched_sync_revokes_stale_session(monkeypatch):
+    changed = datetime(2026, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+    user = SimpleNamespace(
+        email="user@example.com",
+        password_hash="hash",
+        full_name="User",
+        is_admin=False,
+        is_active=True,
+        email_verified_at=None,
+        created_at=changed,
+        updated_at=changed,
+        auth_provider="local",
+        password_hash_type="argon2id",
+        password_change_required=False,
+        password_changed_at=changed,
+    )
+    changed_ts = int(changed.timestamp())
+
+    def _run(iat):
+        session = DummySession(results=[user, None, [], None])  # user, personal team, memberships, no revocation row
+        monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
+        return auth._get_auth_context_batched_sync("user@example.com", "jti-1", {"token_use": "session", "iat": iat})
+
+    assert _run(changed_ts - 1)["is_token_revoked"] is True
+    assert _run(changed_ts)["is_token_revoked"] is False

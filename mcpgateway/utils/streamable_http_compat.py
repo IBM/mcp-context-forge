@@ -200,8 +200,9 @@ async def streamable_http_client(
         httpx_client_factory: Optional factory returning a configured
             ``httpx2.AsyncClient``. When supplied, ``headers``/``timeout``/``auth``
             are forwarded as keyword arguments to the factory; otherwise a fresh
-            ``httpx2.AsyncClient`` is created here with ``follow_redirects=True``
-            (matching v1's internal client behavior).
+            ``httpx2.AsyncClient`` is created here with ``follow_redirects=False``
+            so a redirect cannot reach a destination that outbound URL validation
+            never checked.
         session_info: Optional connection-local upstream session ID tracker.
 
     Yields:
@@ -210,7 +211,7 @@ async def streamable_http_client(
     if httpx_client_factory is not None:
         http_client = httpx_client_factory(headers=headers, timeout=timeout, auth=auth)
     else:
-        kwargs: dict[str, Any] = {"follow_redirects": True}
+        kwargs: dict[str, Any] = {"follow_redirects": False}
         if headers is not None:
             kwargs["headers"] = headers
         if timeout is not None:

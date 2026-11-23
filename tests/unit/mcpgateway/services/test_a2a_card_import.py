@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 # Third-Party
 from fastapi import HTTPException, Request
 import httpx
+import orjson
 import pytest
 
 # First-Party
@@ -102,7 +103,7 @@ def fetch(monkeypatch):
     responses = {}
     seen = []
 
-    async def _get_json(url, headers):
+    async def _get_json(url, headers, payload=None):
         seen.append((url, headers))
         outcome = responses.get(url, (404, None, None))
         return outcome if isinstance(outcome, CardResponse) else CardResponse(*outcome)
@@ -731,20 +732,25 @@ class TestGetJsonOutcomes:
 
     @pytest.mark.parametrize("resolved_ips", [("2001:db8::1", "192.0.2.1"), ("192.0.2.1", "2001:db8::1")])
     @pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ConnectTimeout])
-    async def test_connection_failure_tries_next_validated_address(self, monkeypatch, resolved_ips, error_type):
+    @pytest.mark.parametrize("payload", [None, {"jsonrpc": "2.0", "id": "1", "method": "GetExtendedAgentCard", "params": {}}])
+    async def test_connection_failure_tries_next_validated_address(self, monkeypatch, resolved_ips, error_type, payload):
         """Retry connection failures with the validated Host header and TLS hostname on every attempt."""
         stream = _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'), resolved_ips=resolved_ips)
         stream.side_effect = [error_type("Connection failed"), stream.return_value]
 
-        result = await a2a_card_import._get_json("https://a.example.com/card.json", {"Host": "untrusted.example", "X-K": "v"})  # pylint: disable=protected-access
+        result = await a2a_card_import._get_json("https://a.example.com/card.json", {"Host": "untrusted.example", "X-K": "v"}, payload)  # pylint: disable=protected-access
 
         assert result == CardResponse(200, {"name": "a"})
         assert stream.call_count == 2
         for call, address in zip(stream.call_args_list, resolved_ips):
             authority = f"[{address}]" if ":" in address else address
-            assert call.args == ("GET", f"https://{authority}/card.json")
-            assert call.kwargs["headers"] == {"Accept": "application/json", "Accept-Encoding": "identity", "Host": "a.example.com", "X-K": "v"}
+            assert call.args == ("GET" if payload is None else "POST", f"https://{authority}/card.json")
+            expected_headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Host": "a.example.com", "X-K": "v"}
+            if payload is not None:
+                expected_headers["Content-Type"] = "application/json"
+            assert call.kwargs["headers"] == expected_headers
             assert call.kwargs["extensions"] == {"sni_hostname": "a.example.com"}
+            assert call.kwargs["content"] == (None if payload is None else orjson.dumps(payload))
 
     async def test_all_addresses_refused_reports_unreachable(self, monkeypatch):
         """Return no status after every validated address refuses the connection."""
@@ -958,3 +964,68 @@ class TestRouteAuthorization:
         await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), request=request, user={"email": "u@example.com", "db": MagicMock()})
 
         assert seen["request"] is request
+
+
+@pytest.mark.asyncio
+class TestGetJsonTransport:
+    """The real request that ``_get_json`` sends, with the HTTP client replaced (M5)."""
+
+    @pytest.fixture
+    def sent(self, monkeypatch):
+        """Record the call that reaches the isolated client."""
+        record = {}
+        target = PinnedTarget("https://a.example.com/rpc", "a.example.com", "a.example.com", ("1.2.3.4",))
+        monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
+
+        class _Resp:
+            status_code = 200
+            headers = {"etag": '"e"'}
+
+            async def aiter_raw(self):
+                yield b'{"ok": true}'
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Resp()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def stream(self, method, url, **kwargs):
+                record.update(method=method, url=url, **kwargs)
+                return _Stream()
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Client()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
+        return record
+
+    async def test_payload_is_posted_as_json_to_the_pinned_host(self, sent):
+        """A payload makes a POST with a JSON body, the JSON content type, the credential, and the pinned address."""
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "GetExtendedAgentCard", "params": {}}
+        result = await a2a_card_import._get_json("https://a.example.com/rpc", {"Authorization": "Bearer t"}, payload)  # pylint: disable=protected-access
+        assert result == CardResponse(200, {"ok": True}, etag='"e"')
+        assert (sent["method"], sent["url"]) == ("POST", "https://1.2.3.4/rpc")
+        assert orjson.loads(sent["content"]) == payload
+        assert sent["headers"]["Content-Type"] == "application/json"
+        assert sent["headers"]["Authorization"] == "Bearer t"
+        assert sent["extensions"] == {"sni_hostname": "a.example.com"}
+
+    async def test_without_payload_stays_a_get_with_no_body(self, sent):
+        """No payload means a GET, no body, and no content type."""
+        await a2a_card_import._get_json("https://a.example.com/rpc", None)  # pylint: disable=protected-access
+        assert (sent["method"], sent["content"]) == ("GET", None)
+        assert "Content-Type" not in sent["headers"]
+
+    async def test_caller_content_type_overrides_the_default(self, sent):
+        """A caller Content-Type wins over the default, and the request is still a POST with a JSON body."""
+        await a2a_card_import._get_json("https://a.example.com/rpc", {"Content-Type": "application/a2a+json"}, {"id": "1"})  # pylint: disable=protected-access
+        assert sent["method"] == "POST"
+        assert sent["headers"]["Content-Type"] == "application/a2a+json"
+        assert orjson.loads(sent["content"]) == {"id": "1"}

@@ -429,6 +429,27 @@ Generated via the Admin UI or API for automation:
 
 **Behavior**: Access restricted to public resources plus resources owned by specified teams.
 
+### Team Management
+
+Protected team-management operations require a token that includes the target team.
+Database membership or ownership alone does not expand the token's team scope.
+A token that defaults to your personal team only authorizes that team's protected management operations.
+For automation on another team, create the token through `POST /tokens` with that team's `team_id`.
+The caller still needs the required RBAC permissions.
+
+Team scope and action permission scopes are separate controls.
+Empty action permission scopes inherit RBAC permissions.
+Explicit action permission scopes remain subject to the existing middleware route mappings.
+
+Admin UI edit, update, and delete require team ownership or platform-administrator permission.
+Platform-administrator permission also controls the member-limit exemption, matching REST behavior.
+Requester cancellation must match the caller's pending request and its URL team.
+An unavailable request returns `404` instead of `400`.
+
+After authentication and action authorization, invitation cancellation returns identical generic `404` responses for missing and out-of-scope invitations.
+An in-scope caller still needs owner or inviter authority under the existing cancellation rules.
+Public-team onboarding and caller-owned withdrawal retain their existing policies.
+
 ### Scoped Automation Tokens
 
 For CI/CD, monitoring, or public API access:
@@ -554,6 +575,13 @@ See [OAuth token retrieval](oauth.md#retrieve-your-stored-access-token) for conf
     (plus team roles with `scope_id=NULL`, i.e. roles that apply to every team) are evaluated. A
     role granted on a specific team does **not** satisfy the permission on any of these routes,
     even for a gateway owned by that team.
+
+!!! warning "Global-only administration permissions"
+    `admin.user_management`, `admin.security_audit` and `admin.sso_providers:*` administer users,
+    roles and identity providers across every team. `PermissionService.check_permission()` evaluates
+    them against global and personal roles only (`GLOBAL_ONLY_PERMISSIONS` in
+    `mcpgateway/services/permission_service.py`), on every route. Grant them through a
+    **global**-scope role. A team-scoped grant of these permissions has no effect.
 
 ### Token Scope Semantics
 

@@ -488,7 +488,6 @@ fi
 
 cmd+=(
     --error-logfile -
-    --forwarded-allow-ips="*"
     --pid "${LOCK_FILE}"  # Use lock file as PID file
 )
 

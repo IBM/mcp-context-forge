@@ -89,6 +89,10 @@ SENSITIVE_KEYS = frozenset(
         "auth_token",
         "jwt_token",
         "private_key",
+        "secret_access_key",
+        "x_amz_security_token",
+        "x_amz_signature",
+        "x_amz_credential",
     }
 )
 _NON_SENSITIVE_KEY_SUFFIXES = (

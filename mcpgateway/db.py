@@ -43,6 +43,8 @@ from sqlalchemy import (
     ForeignKey,
     func,
     Index,
+)
+from sqlalchemy import (
     Integer,
     JSON,
     make_url,
@@ -3371,6 +3373,9 @@ class Tool(Base):
     # Request type and authentication fields
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    sigv4_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, comment="AWS SigV4 configuration: access_key_id, region, service, unsigned_payload, encrypted secret_access_key and session_token"
+    )
 
     # custom_name,custom_name_slug, display_name
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
@@ -4711,6 +4716,8 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    oauth_config_approved: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    oauth_config_generation: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     # Operator-set instructions text. NULL: not set. Empty string: send no instructions.
     instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -5011,6 +5018,7 @@ class A2AAgent(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
+    protocol_binding: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)  # "jsonrpc" or "http_json"; NULL uses the URL heuristic
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     skills: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=None)
@@ -5222,7 +5230,8 @@ class A2AAgentCard(Base):
     """An Agent Card stored as fetched, one row per fetched version.
 
     The card document stays separate from the deployment settings on ``A2AAgent``.
-    The highest ``version`` of an agent is its current card.
+    ``kind`` is ``public`` for the card read without credentials and ``extended`` for the
+    authenticated extended card. The highest ``version`` of a kind is its current card.
     """
 
     __tablename__ = "a2a_agent_cards"
@@ -5230,6 +5239,7 @@ class A2AAgentCard(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="public", server_default="public")
     card: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
     detected_version: Mapped[str] = mapped_column(String(20), nullable=False)
     source_url: Mapped[str] = mapped_column(String(2048), nullable=False)

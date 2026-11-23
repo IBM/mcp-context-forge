@@ -52,6 +52,7 @@ _V1_TO_LEGACY_METHODS = {value: key for key, value in _LEGACY_TO_V1_METHODS.item
 _V1_TO_LEGACY_METHODS["GetExtendedAgentCard"] = "agent/getAuthenticatedExtendedCard"
 _LEGACY_ROLE_TO_V1 = {"user": "ROLE_USER", "agent": "ROLE_AGENT", "system": "ROLE_SYSTEM"}
 _V1_ROLE_TO_LEGACY = {value: key for key, value in _LEGACY_ROLE_TO_V1.items()}
+# v0.3 spells these states with hyphens; underscore forms are also accepted on input for peers that send them.
 _LEGACY_TASK_STATE_TO_V1 = {
     "submitted": "TASK_STATE_SUBMITTED",
     "working": "TASK_STATE_WORKING",
@@ -68,11 +69,11 @@ _LEGACY_TASK_STATE_TO_V1 = {
 _V1_TASK_STATE_TO_LEGACY = {
     "TASK_STATE_SUBMITTED": "submitted",
     "TASK_STATE_WORKING": "working",
-    "TASK_STATE_INPUT_REQUIRED": "input_required",
+    "TASK_STATE_INPUT_REQUIRED": "input-required",
     "TASK_STATE_COMPLETED": "completed",
     "TASK_STATE_CANCELED": "canceled",
     "TASK_STATE_FAILED": "failed",
-    "TASK_STATE_AUTH_REQUIRED": "auth_required",
+    "TASK_STATE_AUTH_REQUIRED": "auth-required",
     "TASK_STATE_REJECTED": "rejected",
 }
 
@@ -257,8 +258,21 @@ def normalize_a2a_version_header(protocol_version: Optional[str]) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str]) -> bool:
-    """Return whether the registered agent should be invoked as JSON-RPC A2A."""
+def is_jsonrpc_a2a_agent(agent_type: Optional[str], endpoint_url: Optional[str], protocol_binding: Optional[str] = None) -> bool:
+    """Return whether the registered agent should be invoked as JSON-RPC A2A.
+
+    A stored ``protocol_binding`` decides. Agents without one fall back to the ``agent_type`` and trailing slash heuristic.
+
+    Args:
+        agent_type: Registered agent type.
+        endpoint_url: Registered endpoint URL.
+        protocol_binding: Stored binding, ``jsonrpc`` or ``http_json``, or ``None`` when not set.
+
+    Returns:
+        bool: True when the agent is invoked with a JSON-RPC body.
+    """
+    if protocol_binding in {"jsonrpc", "http_json"}:
+        return protocol_binding == "jsonrpc"
     return str(agent_type or "").lower() in {"generic", "jsonrpc"} or str(endpoint_url or "").endswith("/")
 
 
@@ -487,6 +501,7 @@ def prepare_a2a_invocation(
     plugin_input_headers: Optional[Mapping[str, str]] = None,
     plugin_output_headers: Optional[Mapping[str, str]] = None,
     correlation_id: Optional[str] = None,
+    protocol_binding: Optional[str] = None,
 ) -> PreparedA2AInvocation:
     """Prepare endpoint, headers, and request body for an outbound A2A invocation."""
     caller_headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
@@ -545,7 +560,7 @@ def prepare_a2a_invocation(
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)
 
-    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url)
+    uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url, protocol_binding)
     protocol_version_header = normalize_a2a_version_header(protocol_version)
     headers = resolve_a2a_headers(
         caller_headers=caller_headers,

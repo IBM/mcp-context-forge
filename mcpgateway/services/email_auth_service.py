@@ -43,6 +43,7 @@ from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH, is_passwordless
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import (
+    EmailApiToken,
     EmailAuthEvent,
     EmailTeam,
     EmailTeamInvitation,
@@ -480,6 +481,41 @@ class EmailAuthService:
             logger.warning("Auth cache invalidation timed out for %s - continuing", email)
         except Exception as cache_error:  # nosec B110
             logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
+
+    async def _invalidate_user_sessions(self, email: str, reason: str) -> None:
+        """Cut off a user's credentials after a password change.
+
+        Session tokens need no revocation row: ``session_predates_password_change`` rejects
+        them against ``password_changed_at``. API tokens do not depend on a session, so they
+        are revoked here in one transaction: all tokens are revoked or none are.
+        Both steps follow ``PASSWORD_RESET_INVALIDATE_SESSIONS``.
+
+        Args:
+            email: Email of the user whose password changed.
+            reason: Revocation reason recorded for each API token.
+        """
+        revoked_jtis: list[str] = []
+        try:
+            if getattr(settings, "password_reset_invalidate_sessions", True):
+                tokens = self.db.execute(select(EmailApiToken).where(EmailApiToken.user_email == email, EmailApiToken.is_active.is_(True))).scalars().all()
+                for token in tokens:
+                    token.is_active = False
+                    self.db.add(TokenRevocation(jti=token.jti, revoked_by=email, reason=reason))
+                    revoked_jtis.append(token.jti)
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        finally:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                for jti in revoked_jtis:
+                    await auth_cache.invalidate_revocation(jti)
+                await self._invalidate_user_auth_cache(email)
+            except Exception as cache_error:  # nosec B110 - best effort cache invalidation
+                logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
 
     async def _invalidate_deleted_user_auth_caches(self, email: str) -> None:
         """Invalidate all auth-cache entries affected by permanent user deletion.
@@ -1313,8 +1349,7 @@ class EmailAuthService:
 
         self.db.commit()
 
-        if getattr(settings, "password_reset_invalidate_sessions", True):
-            await self._invalidate_user_auth_cache(user.email)
+        await self._invalidate_user_sessions(user.email, "password_reset")
 
         email_sent = False
         try:
@@ -1459,12 +1494,7 @@ class EmailAuthService:
 
             self.db.commit()
             success = True
-
-            # Invalidate auth cache for user
-            try:
-                await self._invalidate_user_auth_cache(normalized_email)
-            except Exception as cache_error:  # nosec B110 - best effort cache invalidation
-                logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
+            await self._invalidate_user_sessions(normalized_email, "password_change")
 
             logger.info("Password changed successfully for %s", SecurityValidator.sanitize_log_message(normalized_email))
 
@@ -2132,7 +2162,10 @@ class EmailAuthService:
 
             self.db.commit()
             notify_dataplane()
-            await self._invalidate_user_auth_cache(email)
+            if password is not None:
+                await self._invalidate_user_sessions(email, "admin_password_reset")
+            else:
+                await self._invalidate_user_auth_cache(email)
 
             return user
 

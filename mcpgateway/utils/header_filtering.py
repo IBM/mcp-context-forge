@@ -7,6 +7,10 @@ Header filtering utilities for sensitive credential removal.
 
 This module provides utilities to strip sensitive headers before passing
 them to plugins or external services.
+
+The filter also removes the AWS SigV4 headers ``X-Amz-Security-Token``, ``X-Amz-Signature`` and ``X-Amz-Credential``.
+This applies to plugin input and to the downstream A2A agent call when ``ENABLE_SENSITIVE_HEADER_PASSTHROUGH`` is ``false``,
+even when the operator lists these headers in a passthrough allowlist.
 """
 
 # Standard
@@ -20,6 +24,7 @@ _SENSITIVE_REQUEST_HEADER_PATTERNS = (
     re.compile(r"^api-key$", re.IGNORECASE),
     re.compile(r"^apikey$", re.IGNORECASE),
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^x-amz-(?:security-token|signature|credential)$", re.IGNORECASE),
     re.compile(r"^cookie$", re.IGNORECASE),
     re.compile(r"^set-cookie$", re.IGNORECASE),
     re.compile(r"^host$", re.IGNORECASE),

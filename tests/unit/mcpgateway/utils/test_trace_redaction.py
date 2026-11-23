@@ -218,3 +218,48 @@ def test_sanitize_trace_attribute_value_sanitizes_generic_string_values(monkeypa
     assert "abc123" not in sanitized
     assert "token=REDACTED" in sanitized
     assert "Bearer ***" in sanitized
+
+
+def test_default_fields_redact_sigv4_credentials(monkeypatch):
+    monkeypatch.delenv("OTEL_REDACT_FIELDS", raising=False)
+    reload_trace_redaction_config()
+
+    payload = {
+        "sigv4_config": {"access_key_id": "AKIAEXAMPLE", "secret_access_key": "SECRETVALUE", "session_token": "SESSIONVALUE"},  # pragma: allowlist secret
+        "headers": {"x-amz-security-token": "TOKENVALUE", "X-Amz-Signature": "SIGVALUE", "X-Amz-Credential": "CREDVALUE", "x-amz-date": "20260101T000000Z"},
+    }
+    rendered = serialize_trace_payload(payload)
+
+    for leaked in ("SECRETVALUE", "SESSIONVALUE", "TOKENVALUE", "SIGVALUE", "CREDVALUE"):
+        assert leaked not in rendered
+    assert "20260101T000000Z" in rendered
+
+
+def test_default_fields_redact_sigv4_values_in_free_text(monkeypatch):
+    monkeypatch.delenv("OTEL_REDACT_FIELDS", raising=False)
+    reload_trace_redaction_config()
+
+    sanitized = sanitize_trace_text("failed: x-amz-security-token: TOKENVALUE and secret_access_key=SECRETVALUE for https://h.example/x?X-Amz-Signature=SIGVALUE")  # pragma: allowlist secret
+
+    for leaked in ("TOKENVALUE", "SECRETVALUE", "SIGVALUE"):
+        assert leaked not in sanitized
+
+
+def test_config_default_matches_module_default(monkeypatch):
+    monkeypatch.delenv("OTEL_REDACT_FIELDS", raising=False)
+    # First-Party
+    from mcpgateway.config import Settings
+    from mcpgateway.utils.trace_redaction import _DEFAULT_REDACT_FIELDS
+
+    assert set(Settings.model_fields["otel_redact_fields"].default.split(",")) == set(_DEFAULT_REDACT_FIELDS.split(","))
+
+
+def test_sigv4_authorization_header_value_is_redacted_in_free_text(monkeypatch):
+    monkeypatch.delenv("OTEL_REDACT_FIELDS", raising=False)
+    reload_trace_redaction_config()
+    signature = "c" * 64
+    value = f"AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature={signature}"  # pragma: allowlist secret
+
+    for text in (f"Authorization: {value}", f"{{'authorization': '{value}'}}", f"upstream rejected {value}"):
+        assert signature not in sanitize_trace_text(text)
+    assert signature not in serialize_trace_payload({"error": f"Authorization: {value}"})

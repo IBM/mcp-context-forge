@@ -251,6 +251,53 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    @pytest.mark.parametrize(
+        ("method", "path", "allowed"),
+        [
+            ("GET", "/export", Permissions.ADMIN_EXPORT),
+            ("POST", "/export/selective", Permissions.ADMIN_EXPORT),
+            ("POST", "/import", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status/abc", Permissions.ADMIN_IMPORT),
+            ("POST", "/import/cleanup", Permissions.ADMIN_IMPORT),
+        ],
+    )
+    def test_export_import_routes_map_to_handler_permissions(self, middleware, method, path, allowed):
+        """Scoped tokens must reach the export/import routes their handlers allow (#7436)."""
+        denied = Permissions.ADMIN_IMPORT if allowed == Permissions.ADMIN_EXPORT else Permissions.ADMIN_EXPORT
+
+        assert middleware._check_permission_restrictions(path, method, [allowed]) is True
+        assert middleware._check_permission_restrictions(path, method, [denied]) is False
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("DELETE", "/export"),
+            ("PUT", "/import"),
+            ("GET", "/import/cleanup"),
+        ],
+    )
+    def test_export_import_routes_stay_default_deny_without_a_mapping(self, middleware, method, path):
+        assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_EXPORT, Permissions.ADMIN_IMPORT]) is False
+
+    def test_extended_card_route_denied_for_read_only_token(self, middleware):
+        """A token with only a2a.read cannot reach the stored extended card. a2a.update can."""
+        path = "/a2a/agent-1/stored-card/extended"
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_READ]) is False
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_UPDATE]) is True
+        assert middleware._check_permission_restrictions(path + "/", "GET", [Permissions.A2A_UPDATE]) is True
+
+    def test_stored_card_route_still_requires_read(self, middleware):
+        """The public stored card keeps the a2a.read mapping."""
+        path = "/a2a/agent-1/stored-card"
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_READ]) is True
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_UPDATE]) is False
+
+    def test_extended_route_pattern_rejects_a_suffix(self, middleware):
+        """A path that only starts like the extended route needs no a2a.update, so it is not the extended mapping."""
+        assert middleware._check_permission_restrictions("/a2a/agent-1/stored-card/extendedfoo", "GET", [Permissions.A2A_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/a2a/agent-1/stored-card/extendedfoo", "GET", [Permissions.A2A_READ]) is True
+
     def test_tools_preview_precedes_tools_update_catchall(self, middleware):
         """POST /tools/preview/{name} must map to tools.preview, not the /tools/[^/]+/
         catch-all mapped to tools.update -- the preview pattern must be listed first (#5629)."""
