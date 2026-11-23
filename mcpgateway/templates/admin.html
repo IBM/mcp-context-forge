@@ -3467,7 +3467,7 @@
       },
       "required": ["q"]
     },
-    "jsonpath_filter": "$.main",
+    "jsonpath_filter": "response.main",
     "tags": ["weather", "api", "external"]
   }
 ]</code></pre>
@@ -3835,11 +3835,12 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Json Path Filter</label
+                  >Response Filter (CEL)</label
                 >
                 <input
                   type="text"
                   name="jsonpath_filter"
+                  placeholder="response.data.items.map(i, i.name)"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -15328,7 +15329,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               },
               "required": ["q"]
             },
-            "jsonpath_filter": "$.main",
+            "jsonpath_filter": "response.main",
             "tags": ["weather", "api", "external"]
           },
           {

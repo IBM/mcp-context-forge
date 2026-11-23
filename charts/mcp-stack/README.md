@@ -656,6 +656,8 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.CEL_EXECUTION | string | `"subprocess"` | Where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess |
 | mcpContextForge.config.CEL_TIMEOUT_SECONDS | string | `"1.0"` | Wall-clock limit for one policy evaluation (seconds, at most 1.0) |
 | mcpContextForge.config.CEL_WORKERS | string | `"2"` | Policy sandbox worker processes per gateway process |
+| mcpContextForge.config.CEL_FILTER_TIMEOUT_SECONDS | string | `"2.0"` | Wall-clock limit for one tool response filter (seconds, at most 60) |
+| mcpContextForge.config.CEL_FILTER_WORKERS | string | `"2"` | Response-filter sandbox worker processes per gateway process |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |

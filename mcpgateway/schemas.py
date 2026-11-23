@@ -66,8 +66,7 @@ from mcpgateway.common.oauth import (
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
-from mcpgateway.utils.cel_runner import CelError, evaluate_expression, MAX_EXPRESSION_LENGTH
-from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.cel_runner import CelError, check_expression, evaluate_expression, MAX_EXPRESSION_LENGTH
 from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sigv4 import has_query_signature, SIGV4_SENSITIVE_KEYS, SigV4ConfigError, validate_sigv4_config
@@ -1151,23 +1150,37 @@ def _assemble_tool_authheaders(values: Dict[str, Any]) -> Dict[str, Any]:
     return {"auth_type": "authheaders", "auth_value": None}
 
 
+# The name a response filter uses for the tool's response.
+RESPONSE_FILTER_VARIABLE = "response"
+
+
 def _validate_jsonpath_filter_value(value: Optional[str]) -> Optional[str]:
-    """Reject jq filters that use restricted built-ins.
+    """Prove a response filter is a CEL expression that can run.
 
     Shared by ``ToolCreate.validate_jsonpath_filter`` and
     ``ToolUpdate.validate_jsonpath_filter`` so the check has one implementation.
+    The filter is compiled and may reference only ``response``; it is not run,
+    because the response it will see is unknown until the tool is called.
 
     Args:
-        value: The submitted jq filter.
+        value: The submitted filter.
 
     Returns:
-        The filter unchanged when it is safe.
+        The filter unchanged when it compiles.
 
     Raises:
-        ValueError: If the filter uses a restricted jq built-in.
+        ValueError: If the filter is a jq or JSONPath path, or is not a CEL expression over ``response``.
     """
-    if value:
-        assert_safe_jq_filter(value)
+    if value and value.strip():
+        expression = value.strip()
+        if expression.startswith((".", "$")):
+            raise ValueError(
+                f"jsonpath_filter is a jq or JSONPath filter, which is no longer supported; write a CEL expression over '{RESPONSE_FILTER_VARIABLE}', for example '{RESPONSE_FILTER_VARIABLE}.items.map(i, i.name)'"
+            )
+        try:
+            check_expression(expression, {RESPONSE_FILTER_VARIABLE})
+        except CelError as exc:
+            raise ValueError(f"jsonpath_filter is not a valid CEL expression: {exc}") from exc
     return value
 
 
@@ -1211,7 +1224,7 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
         output_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool output. Alias 'outputSchema'.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
-        jsonpath_filter (Optional[str]): JSON modification filter.
+        jsonpath_filter (Optional[str]): CEL expression applied to the tool response.
         auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
@@ -1240,7 +1253,7 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
     )
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
-    jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
+    jsonpath_filter: Optional[str] = Field(default="", description="CEL expression applied to the tool response, which it sees as `response`")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
@@ -1468,16 +1481,16 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     @field_validator("jsonpath_filter")
     @classmethod
     def validate_jsonpath_filter(cls, value: Optional[str]) -> Optional[str]:
-        """Reject jq filters that use restricted built-ins.
+        """Prove the response filter is a CEL expression over ``response``.
 
         Args:
-            value: The submitted jq filter.
+            value: The submitted filter.
 
         Returns:
-            The filter unchanged when it is safe.
+            The filter unchanged when it compiles.
 
         Raises:
-            ValueError: If the filter uses a restricted jq built-in.
+            ValueError: If the filter is not a CEL expression over ``response``.
         """
         return _validate_jsonpath_filter_value(value)
 
@@ -1907,7 +1920,7 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     output_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool output")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
-    jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
+    jsonpath_filter: Optional[str] = Field(None, description="CEL expression applied to the tool response, which it sees as `response`")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
@@ -2085,16 +2098,16 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
     @field_validator("jsonpath_filter")
     @classmethod
     def validate_jsonpath_filter(cls, value: Optional[str]) -> Optional[str]:
-        """Reject jq filters that use restricted built-ins.
+        """Prove the response filter is a CEL expression over ``response``.
 
         Args:
-            value: The submitted jq filter.
+            value: The submitted filter.
 
         Returns:
-            The filter unchanged when it is safe.
+            The filter unchanged when it compiles.
 
         Raises:
-            ValueError: If the filter uses a restricted jq built-in.
+            ValueError: If the filter is not a CEL expression over ``response``.
         """
         return _validate_jsonpath_filter_value(value)
 
