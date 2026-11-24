@@ -55,6 +55,7 @@ from mcpgateway.utils.services_auth import decode_auth
 logger = logging.getLogger(__name__)
 
 REKEY_SECRET_REMOVED = "Import does not support rekey_secret. Use python -m mcpgateway.scripts.migrate_enc_secret to rotate the encryption secret."
+_DESTINATION_TEAM_REQUIRED = "Team-visible entities require a destination team. Specify team_name or set up a personal team."
 
 
 EntityData = dict[str, Any]
@@ -110,6 +111,10 @@ class ImportValidationError(ImportError):
         >>> isinstance(error, ImportError)
         True
     """
+
+
+class _ImportDestinationTeamRequired(ImportValidationError):
+    """A team-visible create has no destination team."""
 
 
 class ImportConflictError(ImportError):
@@ -721,6 +726,8 @@ class ImportService:
                     raise PermissionError("Caller cannot update a token-exchange gateway")
                 if existing is None and not admin and token_teams is not None and status.team_id not in token_teams:
                     raise PermissionError("Caller cannot create this entity in the destination team")
+                if existing is None and status.team_id is None and clean.get("visibility", "team") == "team":
+                    raise _ImportDestinationTeamRequired(_DESTINATION_TEAM_REQUIRED)
                 if dry_run:
                     if kind == "gateways":
                         item["upstream_check"] = "unknown"
@@ -817,7 +824,8 @@ class ImportService:
                 raise
             item["outcome"] = "failed"
             status.failed_entities += 1
-            status.errors.append(f"{kind} item {item['identifier']}: {type(exc).__name__}")
+            reason = _DESTINATION_TEAM_REQUIRED if isinstance(exc, _ImportDestinationTeamRequired) else type(exc).__name__
+            status.errors.append(f"{kind} item {item['identifier']}: {reason}")
             logger.warning("Import %s item %d (%s): %s", status.import_id, status.processed_entities, kind, type(exc).__name__)
         finally:
             status.warnings.extend(local_warnings)

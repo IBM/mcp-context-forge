@@ -155,6 +155,8 @@ Without `--team-name`, new entities go into your personal team. With `--team-nam
 
 A file containing roots requires an unrestricted platform administrator, even when the selection omits roots.
 
+If you have no personal team, specify `team_name` in the API or Admin UI, or `--team-name` in the CLI, to create team-visible entities. Updates keep the destination entity's team.
+
 This release removes `--rekey-secret` and `rekey_secret`. The CLI rejects the flag. After authorization, the API and Admin import endpoints return HTTP 400 if the field is present, including when its value is `null`. Use `python -m mcpgateway.scripts.migrate_enc_secret` for [encryption secret rotation](../operations/auth-encryption-secret-rotation.md).
 
 Live import uses one transaction so a fatal error can roll back all registry changes. On PostgreSQL, row locks from successful items can remain held during upstream gateway discovery until the import commits.

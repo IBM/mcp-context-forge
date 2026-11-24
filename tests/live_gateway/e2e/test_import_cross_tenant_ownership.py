@@ -18,7 +18,10 @@ from __future__ import annotations
 
 # Standard
 from collections.abc import Iterator
+from contextlib import closing
+from pathlib import Path
 import socket
+import sqlite3
 import threading
 import time
 from typing import Any
@@ -353,6 +356,24 @@ def test_gateway_selection_discovers_tools_and_import_uses_their_destination_ids
     assert binding["original_name"] == "shared_lookup"
     assert binding["id"] != source_tool_id
     assert binding["gateway_id"] == gateway["id"] != source_gateway_id
+
+
+def test_team_visible_import_requires_destination_for_admin_without_personal_team(isolated_gateway: _GatewayFixture, tmp_path: Path) -> None:  # noqa: F811  pylint: disable=redefined-outer-name
+    """Report missing destinations in dry run before rejecting the same live create."""
+    admin, _, _, _ = isolated_gateway
+    with closing(sqlite3.connect(tmp_path / "gateway.db")) as registry:
+        registry.execute("UPDATE email_teams SET is_personal = 0 WHERE created_by = ?", ("admin@example.com",))
+        registry.commit()
+    config = _import_payload(_VICTIM_URL)["import_data"]
+    config["entities"] = {"servers": [{"name": "no-team-server"}], "resources": [{"name": "no-team-resource", "uri": "test://no-team", "content": "fixture"}]}
+    dry = _api(admin, "POST", "/v1/import", json={"import_data": config, "dry_run": True})
+    live = _api(admin, "POST", "/v1/import", json={"import_data": config})
+    assert live["progress"] == dry["progress"] == {"total": 2, "processed": 2, "created": 0, "updated": 0, "skipped": 0, "failed": 2}
+    assert live["errors"] == dry["errors"]
+    assert all("Specify team_name or set up a personal team" in error for error in live["errors"])
+    entities = _api(admin, "GET", "/v1/export?types=resources,servers")["entities"]
+    assert not entities.get("servers")
+    assert not entities.get("resources")
 
 
 def test_import_reports_credential_blocked_gateway_dependents_as_skipped(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811  pylint: disable=redefined-outer-name

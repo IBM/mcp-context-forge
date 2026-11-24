@@ -142,6 +142,40 @@ async def test_null_visibility_uses_team_default_and_preserves_updates(registry,
 
 
 @pytest.mark.asyncio
+async def test_team_visible_creates_require_resolved_destination(registry, importer, monkeypatch):
+    """Reject missing teams consistently and keep teamless updates and roots available."""
+    actor = "admin-without-team@example.com"
+    registry.add(EmailUser(email=actor, password_hash="unused", full_name="Import admin", is_admin=True))
+    registry.commit()
+    scope = {"imported_by": actor, "unrestricted_admin": True}
+    config = envelope(servers=[{"name": "server", "visibility": None}], resources=[{"name": "resource", "uri": "test://resource", "content": "fixture"}])
+    preview = await importer.preview_import(registry, config, **scope)
+    dry = await importer.import_configuration(registry, config, **scope, dry_run=True)
+    live = await importer.import_configuration(registry, config, **scope)
+    report = live.to_dict()
+    assert preview["outcomes"]["progress"] == dry.to_dict()["progress"] == report["progress"]
+    assert (live.created_entities, live.failed_entities) == (0, 2)
+    assert preview["outcomes"]["errors"] == dry.errors == live.errors
+    assert all("Specify team_name or set up a personal team" in error for error in live.errors)
+    assert all(registry.scalar(select(model.id)) is None for model in (Server, Resource))
+
+    narrowed = await importer.import_configuration(registry, config, imported_by=actor, token_teams=["target"])
+    assert narrowed.failed_entities == 2
+    assert all("PermissionError" in error for error in narrowed.errors)
+    created = await importer.import_configuration(registry, config, **scope, team_name="Target")
+    assert (created.created_entities, created.failed_entities) == (2, 0)
+    config["entities"]["servers"][0]["description"] = "updated without destination team"
+    updated = await importer.import_configuration(registry, config, **scope)
+    assert (updated.updated_entities, updated.failed_entities) == (2, 0)
+    server = registry.scalars(select(Server)).one()
+    assert (server.team_id, server.visibility, server.description) == ("target", "team", "updated without destination team")
+
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+    root = envelope(roots=[{"name": "root", "uri": "https://example.com/root"}])
+    assert (await importer.import_configuration(registry, root, **scope)).created_entities == 1
+
+
+@pytest.mark.asyncio
 async def test_import_rejects_unavailable_destination_teams(registry, importer):
     """Reject team names outside membership or scope and ambiguous admin targets."""
     registry.add_all([EmailTeam(id="outsider", name="Outsider", slug="outsider", created_by=ACTOR), EmailTeam(id="duplicate", name="Target", slug="duplicate-target", created_by=ACTOR)])
