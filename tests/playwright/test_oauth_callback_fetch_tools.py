@@ -236,6 +236,7 @@ def _render_callback_html() -> str:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as manager_class:
             manager = Mock()
             manager.resolve_gateway_id_from_state = AsyncMock(return_value=_GATEWAY_ID)
+            manager.consume_and_validate_authorization_state = AsyncMock(return_value={"app_user_email": "user@example.com", "team_id": None})
             manager.complete_authorization_code_flow = AsyncMock(
                 return_value={
                     "user_id": "user@example.com",
