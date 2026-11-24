@@ -5936,10 +5936,12 @@ compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 	fi
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
 
+# Gateway, nginx and the helper services are built locally, so skip them on
+# pull; the build step below still rebuilds them before bringing the stack up.
 .PHONY: compose-restart
 compose-restart:
 	@echo "🔄  Restarting stack..."
-	$(COMPOSE) pull
+	$(COMPOSE) pull --ignore-buildable
 	$(COMPOSE) build
 	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d
 
